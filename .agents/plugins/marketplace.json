@@ -1,0 +1,20 @@
+{
+  "name": "atlas-workflow",
+  "interface": {
+    "displayName": "Atlas Workflow"
+  },
+  "plugins": [
+    {
+      "name": "atlas-workflow-orchestrator",
+      "source": {
+        "source": "local",
+        "path": "./plugins/atlas-workflow-orchestrator"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

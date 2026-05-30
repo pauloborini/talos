@@ -1,0 +1,35 @@
+{
+  "name": "atlas-workflow-orchestrator",
+  "version": "0.1.6+codex.20260530212934",
+  "description": "Orquestra pipelines Atlas no Codex via sub-agents: PRD, entrevista, plan handoff, execucao, validator e review.",
+  "author": {
+    "name": "Paulo Borini"
+  },
+  "keywords": [
+    "atlas",
+    "workflow",
+    "orchestration",
+    "prd",
+    "planning",
+    "execution",
+    "codex"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Atlas Workflow Orchestrator",
+    "shortDescription": "Workflow Atlas completo para Codex.",
+    "longDescription": "Porta o Atlas Workflow Orchestrator para Codex como skill: o orquestrador decide fases e despacha sub-agents bloqueantes para PRD, entrevista, codex-plan-handoff, codex-plan-execute, codex-task-validator e codex-slice-review opcional.",
+    "developerName": "Paulo Borini",
+    "category": "Development Automation",
+    "capabilities": [
+      "Planning",
+      "Write",
+      "Review"
+    ],
+    "defaultPrompt": [
+      "workflow codex full backlog-item S05",
+      "workflow codex direct prd PRD_S05.md --review",
+      "workflow codex interview-only brainstorm nova ideia"
+    ]
+  }
+}
