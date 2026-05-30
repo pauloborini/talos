@@ -1,0 +1,13 @@
+{
+  "name": "atlas-workflow",
+  "owner": {
+    "name": "Paulo Borini"
+  },
+  "plugins": [
+    {
+      "name": "atlas-workflow-orchestrator",
+      "source": "./atlas-workflow-orchestrator",
+      "description": "Orquestra pipelines completos de desenvolvimento de features no Atlas — PRD generation, validação, entrevista, planejamento e execução sob demanda."
+    }
+  ]
+}
