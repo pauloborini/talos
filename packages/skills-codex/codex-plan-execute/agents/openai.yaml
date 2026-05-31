@@ -1,0 +1,7 @@
+interface:
+  display_name: "Codex Plan Execute"
+  short_description: "Bounded plan execution with gates (codex-plan-execute)"
+  default_prompt: "Use $codex-plan-execute to execute this handoff plan task by task with explicit invariants, focused validation, bounded self-repair, and clear stop conditions."
+
+policy:
+  allow_implicit_invocation: true

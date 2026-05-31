@@ -1,0 +1,7 @@
+interface:
+  display_name: "Codex Plan Handoff"
+  short_description: "Handoff executável da família codex-* com prefixo e modo fechados"
+  default_prompt: "Use $codex-plan-handoff para produzir um plano executável da cadeia codex-* com prefixo fechado, execution mode explícito, executor correto, validator interno obrigatório e review externo opcional."
+
+policy:
+  allow_implicit_invocation: true
