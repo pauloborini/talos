@@ -20,18 +20,17 @@ claude:
 # Proibido substituir por variante (-orchestrated) salvo flag explícita do usuário.
 ```
 
-### Cursor (Futuro)
+### Cursor
 
 ```yaml
 cursor:
-  prd_generator: claude-sprint-prd-generator   # fallback POR-SKILL declarado (G10): cursor não tem prd-generator próprio
+  prd_generator: cursor-sprint-prd-generator
   prd_interview: cursor-prd-interview
   plan_handoff: cursor-plan-handoff
   plan_execute: cursor-plan-execute             # id EXATO; NUNCA cursor-plan-execute-orchestrated sem flag (G10)
   slice_review: cursor-slice-review
   task_validator: cursor-task-validator         # sub-agent frio dentro de execute
-# Família cursor-* só quando <tool>=cursor. prd_generator é a ÚNICA exceção cross-família,
-# declarada por-skill (não é "trocar a família inteira"). Resto permanece cursor-*.
+# Família cursor-* só quando <tool>=cursor. Todos os ids são exatos; sem fallback cross-família.
 ```
 
 ### Codex
@@ -171,7 +170,7 @@ hard_gates:
     rule: "cada fase invoca a skill via Skill tool (validador via Agent tool); proibido emular/absorver inline (plano no §10 do PRD NÃO substitui PLAN_*.md)"
     applies: all
   G4_cold_validator:
-    rule: "task-validator roda em contexto isolado (sub-agent), recebe git diff + plano; executor não valida o próprio trabalho"
+    rule: "task-validator roda como sub-agent filho de plan_execute, recebe git diff + plano, devolve findings ao executor e alimenta reparo limitado; orquestrador só verifica despachabilidade no pré-flight"
     applies: execution
   G5_deterministic_scan:
     rule: "ver validation.skip_rule — pular entrevista só com 0 padrões logados"
@@ -192,7 +191,7 @@ hard_gates:
     applies: orchestrator
     rationale: "GF08 — orquestrador implementou inline em paralelo ao sub-agent de execução (contexto 87%)"
   G10_tool_authoritative_routing:
-    rule: "família de skills = <tool> do comando, NUNCA o host; família única por run (sem mistura); id exato sempre (proibido variante -orchestrated sem flag); skill ausente => fallback por-skill declarado, senão aborta (nunca troca família inteira)"
+    rule: "família de skills = <tool> do comando, NUNCA o host; família única por run; id exato sempre; skill ausente => aborta"
     applies: routing
     rationale: "GF09 — 'claude' roteou pra cursor-*, pegou variante -orchestrated, misturou famílias"
   G11_full_must_execute_after_plan:
@@ -235,12 +234,13 @@ preflight:
     rule: "usar SEMPRE o id exato mapeado; proibido substituir por variante (-orchestrated, -experimental) salvo flag explícita"
     rationale: "GF09 — pegou cursor-plan-execute-orchestrated no lugar de cursor-plan-execute"
   on_missing_skill:
-    action: "usar fallback POR-SKILL declarado p/ aquele id; se não houver => ABORTAR"
+    action: "ABORTAR"
     forbidden_fallbacks:
       - "trocar a família inteira por causa de uma skill ausente"
+      - "usar skill de outra família"
       - "implementação direta inline"
       - "contratos equivalentes no fio do orquestrador"
-    rationale: "fallback inline proibido (G7); troca de família proibida (G10)"
+    rationale: "famílias completas; fallback inline proibido (G7); troca de família proibida (G10)"
   mode_mismatch:
     rule: "se o input trouxer 'sem patch', 'sem editar codigo', 'planejamento apenas', 'handoff only' ou equivalente junto com mode full/direct, NÃO gerar plano e parar; reportar conflito: full/direct executam plan_execute. Usuário deve rodar modo de planejamento explícito fora deste pipeline."
     forbidden: "interpretar full como plan-only"
@@ -364,8 +364,8 @@ Durante validação de PRD, plugin verifica:
 PERGUNTAS_EM_ABERTO.md
   ↓
   Tem Q-… abertas para esta sprint?
-  ├─ SIM: informa ao usuário, sugere rodar open-questions-interview
-  │       (fora do pipeline automatizado)
+  ├─ SIM: informa ao usuário e para/aguarda decisão
+  │       (não despacha open-questions automaticamente)
   └─ NÃO: continua
 ```
 
@@ -386,7 +386,6 @@ PERGUNTAS_EM_ABERTO.md
 
 ## Próximas fases de expansão
 
-- **v0.2** Cursor support (mesmo config, skills do cursor)
+- **v0.2** Cursor hardening (mesmo config, skills do cursor)
 - **v0.3** Codex hardening
-- **v0.4** Antigravity support
 - **v1.0** Full parity, smart tool detection

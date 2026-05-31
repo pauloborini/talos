@@ -5,7 +5,7 @@ Orquestra pipelines completos de desenvolvimento de features no projeto Atlas, a
 ## Quick Start
 
 ```bash
-/workflow claude full backlog-item "S05"
+/workflow <tool> full backlog-item "S05"
 ```
 
 Pipeline completo executado automaticamente:
@@ -25,8 +25,8 @@ Pipeline completo executado automaticamente:
 ### Tools
 
 - `claude` — Claude (MVP)
-- `cursor` — Cursor (futuro)
-- `codex` — Codex (futuro)
+- `cursor` — Cursor
+- `codex` — Codex
 
 ### Modes
 
@@ -52,7 +52,7 @@ Pipeline completo executado automaticamente:
 ### Full pipeline com sprint S05
 
 ```
-/workflow claude full backlog-item "S05"
+/workflow <tool> full backlog-item "S05"
 ```
 
 Output:
@@ -74,19 +74,19 @@ Status:
 ### Direct pipeline com PRD existente + review
 
 ```
-/workflow claude direct prd "/path/to/PRD_S05.md" --review
+/workflow <tool> direct prd "/path/to/PRD_S05.md" --review
 ```
 
 ### Entrevista de brainstorm
 
 ```
-/workflow claude interview-only brainstorm "Que tal adicionar dark mode?"
+/workflow <tool> interview-only brainstorm "Que tal dark mode?"
 ```
 
 ### Force entrevista mesmo sem ambiguidades
 
 ```
-/workflow claude full idea "melhorar performance" --interview
+/workflow <tool> full idea "melhorar performance" --interview
 ```
 
 ## Como funciona
@@ -96,7 +96,7 @@ Status:
 ```
 1. Parse input (resolve sprint/indicação)
    ↓
-2. Generate PRD (claude-sprint-prd-generator)
+2. Generate PRD (skill `prd_generator` resolvida por `<tool>`)
    ↓
 3. Validate PRD (busca TBD, "a confirmar", gaps)
    ↓
@@ -172,12 +172,12 @@ Você escolhe A/B/C → pipeline continua conforme.
 
 1. Análise de sprints futuras
 2. Preenchimento de `PERGUNTAS_EM_ABERTO.md` (fora do plugin)
-3. Rodada de `open-questions-interview` skill (se necessário)
+3. Resolver perguntas abertas fora do pipeline (se necessário)
 
 ### Ao rodar workflow
 
 ```
-/workflow claude full backlog-item "S05"
+/workflow <tool> full backlog-item "S05"
 ```
 
 Plugin automatiza tudo. Você valida output.
@@ -185,7 +185,7 @@ Plugin automatiza tudo. Você valida output.
 ### Depois de workflow
 
 1. Validação de output do executor
-2. (Opcional) Rodada de slice-review: `/workflow claude slice-review /path/to/output`
+2. (Opcional) Rodada de slice-review quando suportada pelo modo/família
 3. Avança para S06
 
 ## Skills envolvidas
@@ -218,7 +218,6 @@ Sem config → usa defaults (Claude skills).
 
 - **v0.2** Cursor support
 - **v0.3** Codex hardening
-- **v0.4** Antigravity support
 - **v1.0** Full feature parity + smart tool detection
 
 ## Dúvidas?
@@ -227,9 +226,22 @@ Veja `atlas_workflows_config.md` para detalhes técnicos e mapeamentos completos
 
 ---
 
-**Plugin version:** 0.1.7  
+**Plugin version:** 0.1.9  
 **Author:** Paulo Borini  
 **Last updated:** 2026-05-30
+
+### Novidades v0.1.9 — famílias completas
+
+Remove a exceção cross-family: `cursor.prd_generator` agora usa `cursor-sprint-prd-generator`. As famílias `claude`, `cursor` e `codex` são completas; skill ausente aborta sem fallback.
+
+### Novidades v0.1.8 — família sem ambiguidade
+
+Conserta ambiguidades antes de melhorias maiores:
+
+- Mantém o workflow limitado às famílias `claude`, `cursor` e `codex`.
+- Atualiza o status de Cursor/Codex no comando e documentação.
+- Clarifica que `task_validator` é verificado no pré-flight, mas despachado por `plan_execute` como sub-agent filho.
+- `PERGUNTAS_EM_ABERTO.md` só bloqueia/avisa; não despacha open-questions automaticamente.
 
 ### Novidades v0.1.7 — full não para no handoff
 
@@ -252,7 +264,7 @@ Conserta inconsistências de versão/config e remove hardcode operacional `claud
 Conserta falha do GF09 (comando `claude` roteou pra `cursor-*`, pegou a variante `-orchestrated` errada e misturou famílias PRD-claude / resto-cursor):
 
 - **Gate G10 — `<tool>` autoritativo:** a família de skills é definida **só** pelo argumento `<tool>` (`claude`→`claude-*`, `cursor`→`cursor-*`, `codex`→`codex-*`). O **host não escolhe família** — o Cursor enxerga e despacha as três; ele é só onde roda.
-- **Família única por run:** proibido misturar (PRD em claude, plano em cursor). Skill ausente → fallback **por-skill** declarado na config, senão aborta. Nunca troca a família inteira.
+- **Família única por run:** proibido misturar (PRD em claude, plano em cursor). Skill ausente → aborta. Nunca troca a família inteira.
 - **Id exato:** proibido substituir por variante (`-orchestrated`, `-experimental`) sem flag explícita do usuário.
 
 ### Novidades v0.1.4 — orquestrador de mãos atadas
