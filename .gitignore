@@ -1,3 +1,15 @@
+# Sistema
 .DS_Store
 **/.DS_Store
+
+# Vault local
 .app-vault/
+
+# Build artifacts (gerados por build/build-plugins.sh em S02)
+dist/
+
+# Dependências Node (MCP server em S04+)
+node_modules/
+
+# Estado de runs do orquestrador
+.atlas-run/

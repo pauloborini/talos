@@ -1,49 +1,29 @@
 # Atlas Workflow
 
-Marketplace de plugins para orquestrar pipelines de desenvolvimento no ecossistema Atlas (PRD → validação → entrevista → plano → execução → review).
+Monorepo do plugin Atlas Workflow Orchestrator v0.2: skills, templates, MCP server e manifests dos hosts (Claude Code + Codex) num único pacote versionado.
 
-## Plugin
-
-| Nome | Versão | Descrição |
-|------|--------|-----------|
-| `atlas-workflow-orchestrator` | 0.1.10 | Orquestrador G1–G11 com defaults empacotados, sub-agent carregando `SKILL.md` real e roteamento por `<tool>` |
+**Versão atual:** veja [`VERSION`](VERSION) (`0.2.0-dev`).
 
 ## Estrutura
 
-```
-.claude-plugin/marketplace.json   # Claude Code marketplace
-.agents/plugins/marketplace.json # Codex / Agents marketplace
-atlas-workflow-orchestrator/     # Fonte do plugin (Claude)
-plugins/atlas-workflow-orchestrator/  # Cópia para layout Codex
-```
+| Item | Papel |
+|------|-------|
+| [`packages/`](packages/) | Skills (`skills-{claude,cursor,codex}/`), templates canônicos e MCP server (S04+) |
+| [`plugin-manifests/`](plugin-manifests/) | Manifests dos hosts (Claude Code + Codex) — preenchida em S02 |
+| [`build/`](build/) | Script de build que gera os `.plugin` em `dist/` — preenchida em S02 |
+| [`hooks/`](hooks/) | Hooks opcionais de backstop — preenchida em S11 |
+| [`raycast/`](raycast/) | Snippets do Raycast (uso pessoal, independente do plugin v0.2) |
+| [`archive/v0.1.10/`](archive/v0.1.10/) | Plugin v0.1.10 arquivado (rollback emergencial) |
+| `.app-vault/` | Documentos de planejamento locais (gitignored) — backlog mestre vive aqui |
+| [`VERSION`](VERSION) | Semver canônico do plugin |
+| [`CHANGELOG.md`](CHANGELOG.md) | Histórico de releases |
+| [`PATCH_PROCEDURE.md`](PATCH_PROCEDURE.md) | Procedimento de patch |
 
-## Uso local (Claude Code)
+## Onde encontrar
 
-1. **Marketplace por pasta** (desenvolvimento direto neste clone):
-
-   ```bash
-   claude plugin marketplace add /Volumes/Dados/projetos/atlas-workflow
-   claude plugin install atlas-workflow-orchestrator@atlas-workflow
-   ```
-
-2. **Marketplace pelo GitHub** (mesmo conteúdo, atualizado via `git pull` no cache do Claude):
-
-   ```bash
-   claude plugin marketplace add pauloborini/atlas-workflow
-   claude plugin install atlas-workflow-orchestrator@atlas-workflow
-   ```
-
-3. Comando: `/workflow <tool> <mode> <input-type> [flags]`
-
-## Publicar atualizações
-
-Antes de qualquer patch/versionamento, siga [PATCH_PROCEDURE.md](PATCH_PROCEDURE.md).
-
-1. Edite em `atlas-workflow-orchestrator/` e sincronize `plugins/atlas-workflow-orchestrator/`.
-2. Atualize manifests, changelog e README conforme o procedimento.
-3. Regenere `atlas-workflow-orchestrator.plugin` quando a fonte do plugin mudar.
-4. Commit, push para `main`.
-5. No host alvo: atualize marketplace/reinstale para pegar a nova versão no cache.
+- **Backlog mestre v0.2:** [`.app-vault/docs/BACKLOG_MESTRE.md`](.app-vault/docs/BACKLOG_MESTRE.md) (15 sprints, 14 decisões fechadas)
+- **Templates canônicos (PRD, PLAN, BOUNDARY, BACKLOG, PERGUNTAS):** [`packages/templates/`](packages/templates/)
+- **Plugin v0.1.10 (arquivado):** [`archive/v0.1.10/atlas-workflow-orchestrator/`](archive/v0.1.10/atlas-workflow-orchestrator/) — reinstalar via `claude plugin marketplace add <path>` para rollback
 
 ## Repositório
 
