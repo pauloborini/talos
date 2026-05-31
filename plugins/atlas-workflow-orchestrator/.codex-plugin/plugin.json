@@ -1,6 +1,6 @@
 {
   "name": "atlas-workflow-orchestrator",
-  "version": "0.1.6+codex.20260530212934",
+  "version": "0.1.7",
   "description": "Orquestra pipelines Atlas no Codex via sub-agents: PRD, entrevista, plan handoff, execucao, validator e review.",
   "author": {
     "name": "Paulo Borini"

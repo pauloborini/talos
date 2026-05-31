@@ -34,16 +34,17 @@ cursor:
 # declarada por-skill (não é "trocar a família inteira"). Resto permanece cursor-*.
 ```
 
-### Codex (Futuro)
+### Codex
 
 ```yaml
 codex:
-  prd_generator: sprint-prd-generator (ou codex-sprint-prd-generator)
-  prd_interview: (não tem — usar claude-prd-interview)
+  prd_generator: codex-sprint-prd-generator
+  prd_interview: codex-prd-interview
   plan_handoff: codex-plan-handoff
   plan_execute: codex-plan-execute
   slice_review: codex-slice-review
-  task_validator: (sub-agent dentro de execute)
+  task_validator: codex-task-validator
+# Família codex-* só quando <tool>=codex. Todos os ids são exatos; sem fallback cross-família.
 ```
 
 ---
@@ -65,8 +66,9 @@ full:
     - plan_execute (com task-validator frio via sub-agent)  # artefato: diff + relatório validador (gate G3+G4)
     - slice_review (if --review flag)
   required_artifacts: [PRD_*.md, PLAN_*.md, code_diff, validator_report]
-  hard_gates: [G1, G2, G3, G4, G5, G6, G7, G8, G9, G10]
+  hard_gates: [G1, G2, G3, G4, G5, G6, G7, G8, G9, G10, G11]
   subagent_order: [prd_generator, plan_handoff, plan_execute → task-validator, slice_review (if --review)]
+  after_plan_rule: "PLAN_*.md validado => próxima ação obrigatória é despachar plan_execute blocking; output final antes do executor = violação G11"
 
   decision_on_plan_gap:
     - option_a: volta_para_entrevista
@@ -193,6 +195,10 @@ hard_gates:
     rule: "família de skills = <tool> do comando, NUNCA o host; família única por run (sem mistura); id exato sempre (proibido variante -orchestrated sem flag); skill ausente => fallback por-skill declarado, senão aborta (nunca troca família inteira)"
     applies: routing
     rationale: "GF09 — 'claude' roteou pra cursor-*, pegou variante -orchestrated, misturou famílias"
+  G11_full_must_execute_after_plan:
+    rule: "em full, depois que PLAN_*.md existir e passar gates G1/G2/G7, a próxima ação do orquestrador é obrigatoriamente despachar plan_execute como sub-agent blocking; proibido finalizar, resumir, pedir validação humana ou marcar completed só com handoff"
+    applies: full
+    rationale: "GF11.5 — Codex gerou handoff e parou; full precisa executar pós-plano"
 ```
 
 ### Política de dispatch
@@ -204,6 +210,7 @@ dispatch_policy:
   background: forbidden     # run_in_background proibido para fases do pipeline
   orchestrator_tools_after_phase0: [dispatch_subagent, read_artifact, emit_output]
   orchestrator_forbidden: [edit_file, write_code, mutating_bash, parallel_impl]
+  full_after_plan_next_action: dispatch_plan_execute_blocking
 ```
 
 ---
@@ -218,6 +225,7 @@ preflight:
     - resolve_exact_skill_ids    # ids exatos da família, sem variante
     - verify_subagent_dispatch   # cada id despachável via Agent tool neste host?
     - declare_execution_plan     # modo, família, ids, ORDEM dos sub-agents, artefatos, gates
+    - reject_mode_mismatch       # se usuário pediu "sem patch"/"só plano" junto com full/direct, aborta e pede modo adequado
   family_selection:
     rule: "família = <tool> do comando (claude=>claude-*, cursor=>cursor-*, codex=>codex-*)"
     host_role: "host só executa; NÃO escolhe família. Cursor despacha claude-*/cursor-*/codex-*"
@@ -233,6 +241,9 @@ preflight:
       - "implementação direta inline"
       - "contratos equivalentes no fio do orquestrador"
     rationale: "fallback inline proibido (G7); troca de família proibida (G10)"
+  mode_mismatch:
+    rule: "se o input trouxer 'sem patch', 'sem editar codigo', 'planejamento apenas', 'handoff only' ou equivalente junto com mode full/direct, NÃO gerar plano e parar; reportar conflito: full/direct executam plan_execute. Usuário deve rodar modo de planejamento explícito fora deste pipeline."
+    forbidden: "interpretar full como plan-only"
 ```
 
 ---
@@ -332,7 +343,7 @@ Status:
   ✅/❌ PRD valid
   ✅/❌ Ambiguidades (resolvidas/pendentes)
   ✅/❌ Plano generated (se aplicável)
-  ✅/❌ Executor output ready
+  ✅/❌ Executor output ready (obrigatório em full/direct; sem executor => incomplete)
   ⏭️  Slice review: (executed/not executed)
 
 Próximo passo:
@@ -340,6 +351,8 @@ Próximo passo:
   - [ ] Rodar slice-review (se necessário)
   - [ ] Avançar para próxima sprint
 ```
+
+Regra de status: em `full`, `completed` exige `PLAN_*.md` verificado **e** retorno de `plan_execute`. `PLAN_*.md` sem executor = `incomplete` por G11.
 
 ---
 
@@ -374,6 +387,6 @@ PERGUNTAS_EM_ABERTO.md
 ## Próximas fases de expansão
 
 - **v0.2** Cursor support (mesmo config, skills do cursor)
-- **v0.3** Codex support (sem prd-interview nativa)
+- **v0.3** Codex hardening
 - **v0.4** Antigravity support
 - **v1.0** Full parity, smart tool detection

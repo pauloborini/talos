@@ -67,7 +67,7 @@ Status:
   ✅ PRD valid
   ✅ Ambiguidades resolvidas (2 decisões coletadas)
   ✅ Plano generated
-  ✅ Executor output ready
+  ✅ Executor output ready (required in full/direct)
   ⏭️  Slice review: not executed
 ```
 
@@ -103,15 +103,15 @@ Status:
 4. Interview (automático se ambiguidades OU --interview)
    └─ Atualiza PRD com decisões coletadas
    ↓
-5. Plan (claude-plan-handoff)
+5. Plan (skill `plan_handoff` resolvida por `<tool>`)
    ↓
 6. Validate Plan (tem gaps?)
    └─ Pergunta: volta? continua TBD? adia?
    ↓
-7. Execute (claude-plan-execute com task-validator sub-agent)
+7. Execute obrigatório em `full` (skill `plan_execute` resolvida por `<tool>`, com `task_validator` sub-agent)
    ↓
 8. Review (se --review)
-   └─ claude-slice-review
+   └─ skill `slice_review` resolvida por `<tool>`
    ↓
 9. Output (resumo + próximos passos)
 ```
@@ -147,7 +147,7 @@ Plugin detecta ambiguidades em:
 - **Experiência (§8):** gaps, "a definir"
 - **Contratos (§9):** "ainda não definido", "mock"
 
-Se encontra ambiguidades → dispara `claude-prd-interview` automaticamente.
+Se encontra ambiguidades → dispara a skill `prd_interview` resolvida por `<tool>` automaticamente.
 
 ## Lógica de decisão
 
@@ -188,15 +188,15 @@ Plugin automatiza tudo. Você valida output.
 2. (Opcional) Rodada de slice-review: `/workflow claude slice-review /path/to/output`
 3. Avança para S06
 
-## Skills envolvidas (Claude MVP)
+## Skills envolvidas
 
 | Skill | Função |
 |-------|--------|
-| `claude-sprint-prd-generator` | Gera PRD a partir de sprint/indicação |
-| `claude-prd-interview` | Entrevista de PRD (resolve ambiguidades) |
-| `claude-plan-handoff` | Cria plano executável |
-| `claude-plan-execute` | Executa plano (com task-validator sub-agent) |
-| `claude-slice-review` | Review fria de implementação |
+| `prd_generator` resolvida por `<tool>` | Gera PRD a partir de sprint/indicação |
+| `prd_interview` resolvida por `<tool>` | Entrevista de PRD (resolve ambiguidades) |
+| `plan_handoff` resolvida por `<tool>` | Cria plano executável |
+| `plan_execute` resolvida por `<tool>` | Executa plano (com task-validator sub-agent) |
+| `slice_review` resolvida por `<tool>` | Review fria de implementação |
 
 ## Configuração
 
@@ -217,7 +217,7 @@ Sem config → usa defaults (Claude skills).
 ## Próximas versões
 
 - **v0.2** Cursor support
-- **v0.3** Codex support
+- **v0.3** Codex hardening
 - **v0.4** Antigravity support
 - **v1.0** Full feature parity + smart tool detection
 
@@ -227,9 +227,25 @@ Veja `atlas_workflows_config.md` para detalhes técnicos e mapeamentos completos
 
 ---
 
-**Plugin version:** 0.1.5  
+**Plugin version:** 0.1.7  
 **Author:** Paulo Borini  
 **Last updated:** 2026-05-30
+
+### Novidades v0.1.7 — full não para no handoff
+
+Conserta falha do GF11.5 (Codex gerou handoff e parou antes de despachar execução):
+
+- **Gate G11 — `full` deve executar pós-plano:** depois de `PLAN_*.md` validado, próxima ação obrigatória é despachar `plan_execute` como sub-agent blocking.
+- **Proibido completed só com plano:** se `PLAN_*.md` existe mas `plan_execute` não rodou, status final é `incomplete`, com violação G11.
+- **Conflito de modo:** `full/direct` + "sem patch", "sem editar código", "só plano" ou equivalente aborta no pré-flight. Não existe plan-only implícito dentro de `full`.
+
+### Novidades v0.1.6 — sincronização Codex + ids exatos
+
+Conserta inconsistências de versão/config e remove hardcode operacional `claude-*` do fluxo genérico:
+
+- Manifests e README alinhados em `0.1.6`.
+- Codex usa ids exatos `codex-*` no config (`codex-sprint-prd-generator`, `codex-prd-interview`, `codex-plan-handoff`, `codex-plan-execute`, `codex-slice-review`, `codex-task-validator`).
+- O fluxo fala em skills resolvidas por `<tool>`, mantendo G10 consistente.
 
 ### Novidades v0.1.5 — roteamento por `<tool>`, não por host
 
@@ -260,5 +276,5 @@ Conserta falhas observadas no GF07 (plano sem template, validator+slice em paral
 Conserta a degradação onde `full` virava "só coda" (sem plano, sem validador frio, auto-aprovando):
 
 - **Fase 0 pré-flight:** verifica se as skills exigidas existem como invocáveis no host. Se faltar → para e reporta; **nunca emula a skill inline**.
-- **Gates duros G1–G6:** cada fase só conclui com artefato em disco (G1); em `full`, zero código antes de `PLAN_*.md` validado (G2); skills invocadas de verdade, não absorvidas no §10 do PRD (G3); validador frio como sub-agent separado (G4); scan de ambiguidade determinístico e logado, sem escape hatch "tenho certeza" (G5); status verificado contra disco (G6).
+- **Gates duros G1–G11:** cada fase só conclui com artefato em disco (G1); em `full`, zero código antes de `PLAN_*.md` validado (G2); skills invocadas de verdade, não absorvidas no §10 do PRD (G3); validador frio como sub-agent separado (G4); scan de ambiguidade determinístico e logado (G5); status verificado contra disco (G6); sub-agent obrigatório (G7); validator antes de review (G8); orquestrador de mãos atadas (G9); roteamento por `<tool>` com id exato (G10); `full` executa pós-plano (G11).
 - **`direct` ≠ `full` de verdade:** `direct` não produz `PLAN_*.md` por design; `full` exige o plano antes de qualquer código.
