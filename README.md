@@ -37,10 +37,13 @@ plugins/atlas-workflow-orchestrator/  # Cópia para layout Codex
 
 ## Publicar atualizações
 
-1. Edite em `atlas-workflow-orchestrator/` (e sincronize `plugins/` se usar Codex).
-2. Suba `version` em `atlas-workflow-orchestrator/.claude-plugin/plugin.json` e `plugins/atlas-workflow-orchestrator/.codex-plugin/plugin.json`.
-3. Commit, push para `main`.
-4. No Claude: atualize o marketplace e reinstale o plugin para pegar a nova versão no cache.
+Antes de qualquer patch/versionamento, siga [PATCH_PROCEDURE.md](PATCH_PROCEDURE.md).
+
+1. Edite em `atlas-workflow-orchestrator/` e sincronize `plugins/atlas-workflow-orchestrator/`.
+2. Atualize manifests, changelog e README conforme o procedimento.
+3. Regenere `atlas-workflow-orchestrator.plugin` quando a fonte do plugin mudar.
+4. Commit, push para `main`.
+5. No host alvo: atualize marketplace/reinstale para pegar a nova versão no cache.
 
 ## Repositório
 
