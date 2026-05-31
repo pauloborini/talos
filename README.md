@@ -6,7 +6,7 @@ Marketplace de plugins para orquestrar pipelines de desenvolvimento no ecossiste
 
 | Nome | Versão | Descrição |
 |------|--------|-----------|
-| `atlas-workflow-orchestrator` | 0.1.9 | Orquestrador com gates G1–G11 e roteamento por `<tool>` (`claude-*` / `cursor-*` / `codex-*`) |
+| `atlas-workflow-orchestrator` | 0.1.10 | Orquestrador G1–G11 com defaults empacotados, sub-agent carregando `SKILL.md` real e roteamento por `<tool>` |
 
 ## Estrutura
 

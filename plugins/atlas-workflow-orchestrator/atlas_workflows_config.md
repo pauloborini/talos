@@ -1,6 +1,12 @@
 # Atlas Workflows Configuration
 
-Mapeamento de ferramentas, modos, skills e validadores para o plugin Atlas Workflow Orchestrator.
+Mapeamento de ferramentas, modos, skills, validadores e defaults para o plugin Atlas Workflow Orchestrator.
+
+Esta config é empacotada no plugin e é a fonte padrão do workflow. Não exige cópia na raiz do repositório usuário.
+
+Arquivos auxiliares empacotados:
+- `defaults/paths.md`
+- `references/subagent_dispatch.md`
 
 ---
 
@@ -13,11 +19,11 @@ claude:
   prd_generator: claude-sprint-prd-generator
   prd_interview: claude-prd-interview
   plan_handoff: claude-plan-handoff
-  plan_execute: claude-plan-execute        # id EXATO; NUNCA claude-plan-execute-orchestrated sem flag (G10)
+  plan_execute: claude-plan-execute        # id EXATO (G10)
   slice_review: claude-slice-review
   task_validator: claude-task-validator    # sub-agent frio dentro de execute
 # G10: estes ids são autoritativos quando <tool>=claude, independente do host.
-# Proibido substituir por variante (-orchestrated) salvo flag explícita do usuário.
+# Proibido substituir por variante de executor.
 ```
 
 ### Cursor
@@ -27,7 +33,7 @@ cursor:
   prd_generator: cursor-sprint-prd-generator
   prd_interview: cursor-prd-interview
   plan_handoff: cursor-plan-handoff
-  plan_execute: cursor-plan-execute             # id EXATO; NUNCA cursor-plan-execute-orchestrated sem flag (G10)
+  plan_execute: cursor-plan-execute             # id EXATO (G10)
   slice_review: cursor-slice-review
   task_validator: cursor-task-validator         # sub-agent frio dentro de execute
 # Família cursor-* só quando <tool>=cursor. Todos os ids são exatos; sem fallback cross-família.
@@ -146,9 +152,13 @@ validation:
   threshold: 1
 
   # Gate G5 — decisão determinística, sem escape hatch.
+  # Exceção estreita: ocorrências em frases de sucesso/resultado que apenas descrevem
+  # dependência operacional já planejada não contam como bloqueantes.
+  exclude_if_line_contains:
+    - "depende de plano"
   # Pular entrevista SÓ é válido se scan retornar 0 padrões E o resultado for logado no output.
   # Não existe "pular porque tenho certeza". --interview sempre força.
-  skip_rule: "skip_only_if(matches == 0) AND log('Ambiguity scan: 0 padrões — entrevista pulada')"
+  skip_rule: "skip_only_if(blocking_matches == 0) AND log('Ambiguity scan: 0 padrões bloqueantes — entrevista pulada')"
   force_flag: "--interview"
 ```
 
@@ -167,7 +177,7 @@ hard_gates:
     rule: "em full, proibido escrever código (Dart) antes de PLAN_*.md validado existir; sem plano = usar direct"
     applies: full
   G3_real_skill_invocation:
-    rule: "cada fase invoca a skill via Skill tool (validador via Agent tool); proibido emular/absorver inline (plano no §10 do PRD NÃO substitui PLAN_*.md)"
+    rule: "cada fase invoca a skill real; sub-agent deve carregar o SKILL.md do id resolvido antes de agir; proibido emular/absorver inline (plano no §10 do PRD NÃO substitui PLAN_*.md)"
     applies: all
   G4_cold_validator:
     rule: "task-validator roda como sub-agent filho de plan_execute, recebe git diff + plano, devolve findings ao executor e alimenta reparo limitado; orquestrador só verifica despachabilidade no pré-flight"
@@ -193,7 +203,7 @@ hard_gates:
   G10_tool_authoritative_routing:
     rule: "família de skills = <tool> do comando, NUNCA o host; família única por run; id exato sempre; skill ausente => aborta"
     applies: routing
-    rationale: "GF09 — 'claude' roteou pra cursor-*, pegou variante -orchestrated, misturou famílias"
+    rationale: "GF09 — 'claude' roteou pra cursor-* e misturou famílias"
   G11_full_must_execute_after_plan:
     rule: "em full, depois que PLAN_*.md existir e passar gates G1/G2/G7, a próxima ação do orquestrador é obrigatoriamente despachar plan_execute como sub-agent blocking; proibido finalizar, resumir, pedir validação humana ou marcar completed só com handoff"
     applies: full
@@ -207,6 +217,8 @@ dispatch_policy:
   mode: blocking            # despacha 1 sub-agent, ESPERA retorno, então segue
   concurrency: 1            # nunca 2 sub-agents simultâneos
   background: forbidden     # run_in_background proibido para fases do pipeline
+  contract_file: references/subagent_dispatch.md
+  subagent_first_action: read_skill_md
   orchestrator_tools_after_phase0: [dispatch_subagent, read_artifact, emit_output]
   orchestrator_forbidden: [edit_file, write_code, mutating_bash, parallel_impl]
   full_after_plan_next_action: dispatch_plan_execute_blocking
@@ -220,8 +232,10 @@ dispatch_policy:
 preflight:
   steps:
     - parse_args                 # inválido/--help => mostra sintaxe e para
+    - load_plugin_bundle_config  # atlas_workflows_config.md + defaults/ + references/
     - select_family_from_tool    # <tool> AUTORITATIVO define a família (G10)
-    - resolve_exact_skill_ids    # ids exatos da família, sem variante
+    - resolve_exact_skill_ids    # ids exatos da família, sem variante de executor
+    - resolve_skill_md_paths     # sub-agent precisa carregar a skill real
     - verify_subagent_dispatch   # cada id despachável via Agent tool neste host?
     - declare_execution_plan     # modo, família, ids, ORDEM dos sub-agents, artefatos, gates
     - reject_mode_mismatch       # se usuário pediu "sem patch"/"só plano" junto com full/direct, aborta e pede modo adequado
@@ -231,8 +245,8 @@ preflight:
     forbidden: "trocar família por causa do host; misturar famílias numa run (G10)"
     rationale: "GF09 — comando 'claude' roteou pra cursor-* porque a regra antiga olhava o host"
   variant_policy:
-    rule: "usar SEMPRE o id exato mapeado; proibido substituir por variante (-orchestrated, -experimental) salvo flag explícita"
-    rationale: "GF09 — pegou cursor-plan-execute-orchestrated no lugar de cursor-plan-execute"
+    rule: "usar SEMPRE o id exato mapeado; proibido substituir por variante de executor"
+    rationale: "executor oficial do pipeline é sempre o plan_execute mapeado para a família"
   on_missing_skill:
     action: "ABORTAR"
     forbidden_fallbacks:
@@ -244,6 +258,16 @@ preflight:
   mode_mismatch:
     rule: "se o input trouxer 'sem patch', 'sem editar codigo', 'planejamento apenas', 'handoff only' ou equivalente junto com mode full/direct, NÃO gerar plano e parar; reportar conflito: full/direct executam plan_execute. Usuário deve rodar modo de planejamento explícito fora deste pipeline."
     forbidden: "interpretar full como plan-only"
+```
+
+### Defaults empacotados
+
+```yaml
+embedded_defaults:
+  paths_file: defaults/paths.md
+  dispatch_contract_file: references/subagent_dispatch.md
+  config_source: plugin_bundle
+  repo_root_config_required: false
 ```
 
 ---

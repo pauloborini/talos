@@ -8,7 +8,7 @@ category: Development Automation
 
 Orquestra pipelines de desenvolvimento de features no projeto Atlas, automatizando a sequência de skills sob demanda com um único comando.
 
-> **v0.1.9 — famílias completas + `full` não termina no plano.** Cada fase do pipeline só é considerada concluída se produzir um **arquivo verificável em disco**. A próxima fase lê esse arquivo. A família vem de `<tool>` e não mistura skills. Em `full`, depois de `PLAN_*.md` validado, a próxima ação obrigatória é despachar `plan_execute` como sub-agent blocking. Sem executor → workflow `incomplete`, nunca `completed`.
+> **v0.1.10 — defaults autocontidos + skill real no sub-agent.** Cada fase só conclui com **arquivo verificável em disco**. A config/defaults vêm do pacote do plugin. A família vem de `<tool>` e não mistura skills. Todo sub-agent deve carregar o `SKILL.md` do id resolvido antes de agir. Em `full`, depois de `PLAN_*.md` validado, a próxima ação obrigatória é despachar `plan_execute` como sub-agent blocking. Sem executor → workflow `incomplete`, nunca `completed`.
 
 ## Sintaxe
 
@@ -64,11 +64,13 @@ Orquestra pipelines de desenvolvimento de features no projeto Atlas, automatizan
 Executar **antes** de iniciar o pipeline. Se qualquer item falhar, **parar e reportar** — nunca emular.
 
 1. **Parse** dos argumentos `<tool> <mode> <input-type> [input] [flags]`. Se inválido ou `--help` → mostrar sintaxe e parar.
-2. **`<tool>` é autoritativo — define a família de skills.** `claude` → família `claude-*`, `cursor` → `cursor-*`, `codex` → `codex-*`. **O host (Cursor/Codex/Claude Code) NÃO escolhe a família.** Host é só o lugar onde roda; um host como o Cursor enxerga e despacha as três famílias. Proibido trocar a família por causa do host. Resolver os ids exatos via `atlas_workflows_config.md` (ver Gate G10).
-3. **Verificar despachabilidade da família escolhida.** Para cada skill exigida pelo modo, confirmar que o **id exato** daquela família é invocável via Skill tool e despachável via Agent tool neste host.
+2. **Carregar config/defaults do pacote do plugin.** Usar `atlas_workflows_config.md`, `defaults/paths.md` e `references/subagent_dispatch.md` empacotados. Não exigir config na raiz do repositório usuário.
+3. **`<tool>` é autoritativo — define a família de skills.** `claude` → família `claude-*`, `cursor` → `cursor-*`, `codex` → `codex-*`. **O host (Cursor/Codex/Claude Code) NÃO escolhe a família.** Host é só o lugar onde roda; um host como o Cursor enxerga e despacha as três famílias. Proibido trocar a família por causa do host. Resolver os ids exatos via `atlas_workflows_config.md` (ver Gate G10).
+4. **Verificar despachabilidade da família escolhida.** Para cada skill exigida pelo modo, confirmar que o **id exato** daquela família é invocável via Skill tool e despachável via Agent tool neste host.
    - **Família mista é proibida** (Gate G10): não rode PRD em `claude-*` e plano em `cursor-*`. Toda a run usa uma família.
    - As três famílias são completas. Se uma skill específica da família **não existir** → **ABORTAR**, não trocar a família inteira.
-   - **Nunca substituir por variante** (ex: `-orchestrated`, `-experimental`) salvo flag explícita do usuário (Gate G10).
+   - **Nunca substituir por variante de executor** (Gate G10).
+   - Resolver como o sub-agent carregará o `SKILL.md` real do id antes de executar (ver `references/subagent_dispatch.md`).
    ```text
    ⛔ Pré-flight falhou
       Família (<tool>): <claude-*|cursor-*|codex-*>
@@ -77,8 +79,8 @@ Executar **antes** de iniciar o pipeline. Se qualquer item falhar, **parar e rep
       Ação: rodar onde a família <tool> esteja disponível, ou trocar o <tool> do comando
    ```
    **PROIBIDO o fallback "implementação direta" / "contratos equivalentes inline".** Não existe caminho onde o orquestrador faz plano ou código no próprio fio. Emulação inline e fallback direto são a falha-raiz que esta skill proíbe — se não há sub-agent, **para**. (Gate G7.)
-4. **Rejeitar conflito de modo:** se o pedido tiver `full`/`direct` junto com "sem patch", "sem editar código", "planejamento apenas", "handoff only" ou equivalente, **pare antes de gerar artefatos**. `full`/`direct` executam `plan_execute`; não existe interpretação plan-only implícita.
-5. **Declarar o plano de execução** (1 bloco curto): modo, **família escolhida + ids exatos de cada sub-agent**, sequência de fases e ordem dos sub-agents (plan_handoff → execute[→task-validator] → slice-review), artefatos esperados, gates aplicáveis. Só então iniciar a Fase 1.
+5. **Rejeitar conflito de modo:** se o pedido tiver `full`/`direct` junto com "sem patch", "sem editar código", "planejamento apenas", "handoff only" ou equivalente, **pare antes de gerar artefatos**. `full`/`direct` executam `plan_execute`; não existe interpretação plan-only implícita.
+6. **Declarar o plano de execução** (1 bloco curto): modo, **família escolhida + ids exatos de cada sub-agent**, sequência de fases e ordem dos sub-agents (plan_handoff → execute[→task-validator] → slice-review), artefatos esperados, gates aplicáveis. Só então iniciar a Fase 1.
 
 ---
 
@@ -100,13 +102,13 @@ Regras inegociáveis. Violação = parar, não contornar.
 |---|------|----------|
 | G1 | **Artefato antes de avançar.** Uma fase só conta como concluída se o arquivo que ela produz existir em disco. Verificar com leitura real do arquivo (Read/ls), nunca por auto-relato. | todas |
 | G2 | **Em `full`, proibido escrever qualquer código (Dart) antes de existir `PLAN_*.md` validado em disco.** Se for escrever código sem plano, o modo correto é `direct` — então pare e avise o usuário do mismatch. | `full` |
-| G3 | **Skills invocadas de verdade.** Cada fase invoca a skill correspondente via Skill tool (ou sub-agent via Agent tool para o validador). Proibido absorver o trabalho da skill no mesmo turno "implicitamente" (ex: plano dentro do §10 do PRD não substitui `PLAN_*.md`). | todas |
+| G3 | **Skills invocadas de verdade.** Cada fase invoca a skill correspondente via Skill tool ou sub-agent. O sub-agent deve carregar o `SKILL.md` do id resolvido antes de agir; prompt "aja como X" não basta. Proibido absorver o trabalho da skill no mesmo turno "implicitamente" (ex: plano dentro do §10 do PRD não substitui `PLAN_*.md`). | todas |
 | G4 | **Validador frio é sub-agent separado dentro do executor.** O orquestrador verifica no pré-flight que `task_validator` existe, mas quem despacha esse sub-agent é `plan_execute`, para receber findings e aplicar reparo limitado antes do relatório final. O executor não valida o próprio trabalho no mesmo contexto. | execução |
 | G5 | **Scan de ambiguidade determinístico e logado.** A decisão de pular a entrevista só é válida se o scan retornar **zero** padrões e esse resultado for registrado no output. Não existe "pular porque tenho certeza". `--interview` sempre força. | validação PRD |
 | G6 | **Status verificado, não auto-reportado.** O ✅ de cada item no output só pode ser marcado após confirmar o artefato em disco. Faltou artefato exigido pelo modo → status final `incomplete`, nunca `completed`. | output |
 | G7 | **Plano e execução rodam como sub-agent despachado (Agent tool), nunca no contexto do orquestrador.** As fases `plan_handoff` e `plan_execute` **devem** ser disparadas como sub-agents. Proibido produzir o plano ou escrever o código no próprio fio do orquestrador. Além disso, o `PLAN_*.md` **deve** conformar ao template da skill `plan_handoff` (§2 invariantes, §10 contratos, §11 riscos, §14 checklist, tasks numeradas T01..Tn). Plano sem essas seções = G7 violado → refazer via sub-agent. | plano + execução |
 | G8 | **Ordem fixa de validação: `task-validator` ANTES, `slice-review` POR ÚLTIMO. Nunca em paralelo.** O `task-validator` é sub-agent filho de `plan_execute` e roda **dentro/antes** do relatório final do executor (alimenta o reparo, bloqueia o relatório). O `slice-review` (se `--review`) roda como sub-agent de fase final **separada** despachada pelo orquestrador, só **depois** do executor retornar 100%. É proibido disparar `slice-review` enquanto o executor ou o `task-validator` ainda estão rodando. | validação + review |
-| G10 | **`<tool>` autoritativo, família única, id exato.** A família de skills é definida **exclusivamente** pelo argumento `<tool>` do comando, nunca pelo host. Proibido misturar famílias numa run. Usar sempre o **id exato** mapeado; proibido substituir por variante (`-orchestrated`, `-experimental`, etc.) salvo flag explícita. Skill ausente → aborta, nunca troca a família inteira. | roteamento |
+| G10 | **`<tool>` autoritativo, família única, id exato.** A família de skills é definida **exclusivamente** pelo argumento `<tool>` do comando, nunca pelo host. Proibido misturar famílias numa run. Usar sempre o **id exato** mapeado; proibido substituir por variante de executor. Skill ausente → aborta, nunca troca a família inteira. | roteamento |
 | G9 | **Orquestrador é coordenador de mãos atadas.** Depois da Fase 0, o orquestrador **NÃO** edita arquivos, **NÃO** escreve código, **NÃO** roda comando mutante (flutter/test/git write), **NÃO** "ajuda" o sub-agent. Suas únicas ações permitidas: despachar sub-agent, ler artefato em disco para verificação de gate, e produzir o output final. **Dispatch é blocking**: despacha **um** sub-agent por vez (Agent tool em foreground), **espera o retorno**, só então segue. Proibido `run_in_background` para fases do pipeline e proibido o orquestrador implementar "em paralelo" enquanto um sub-agent roda. Se o orquestrador tocar em código = G9 violado. | orquestrador |
 | G11 | **`full` deve executar depois do plano.** Depois que `PLAN_*.md` existe e passa G1/G2/G7, a próxima ação obrigatória é despachar `plan_execute` como sub-agent blocking. Proibido finalizar, pedir validação humana, resumir ou marcar `completed` só com handoff. Pedido `full` + "sem patch"/"só plano" é conflito de modo e deve abortar no pré-flight. | `full` |
 
@@ -158,7 +160,9 @@ O scan é **determinístico**. Marca ambiguidade quando uma seção contém qual
 - **§8 Experiência:** `a definir`, `gap`, `depende de`
 - **§9 Dados/contratos:** `ainda não definido`, `mock apenas`, `a confirmar`
 
-**Threshold = 1.** Se ≥ 1 padrão → dispara o `prd_interview` resolvido por `<tool>`. **Gate G5:** se 0 padrões, registrar `Ambiguity scan: 0 padrões — entrevista pulada` no output. Não há decisão subjetiva de "tenho certeza, pulo".
+Antes de contar bloqueantes, aplicar exclusões estreitas do config (`exclude_if_line_contains`, hoje `depende de plano`) para frases de sucesso/resultado que descrevem dependência operacional já planejada. Não usar julgamento livre: a exclusão precisa estar no config e ser logada.
+
+**Threshold = 1.** Se ≥ 1 padrão bloqueante → dispara o `prd_interview` resolvido por `<tool>`. **Gate G5:** se 0 padrões bloqueantes, registrar `Ambiguity scan: 0 padrões bloqueantes — entrevista pulada` no output. Não há decisão subjetiva de "tenho certeza, pulo".
 
 ---
 
@@ -256,13 +260,13 @@ Plugin verifica `PERGUNTAS_EM_ABERTO.md` durante validação de PRD. Se houver Q
 
 ## Configuração
 
-Plugin referencia `atlas_workflows_config.md` para:
+Plugin referencia `atlas_workflows_config.md` empacotado para:
 - Mapeamento tool → skills
 - Padrões de ambiguidade (lista canônica)
 - Sequências de skill por modo + artefatos esperados
 - Gates duros
 
-Se não houver config → usa defaults (Claude skills) e os gates desta SKILL.
+Se a config empacotada estiver ausente, o pacote está inválido: abortar no pré-flight. Não cair para defaults Claude implícitos.
 
 ---
 
@@ -285,11 +289,12 @@ Regra de ouro: **um sub-agent por fase, em série, blocking**. O orquestrador es
 
 ## Changelog
 
+- **v0.1.10** — Config/defaults empacotados no plugin; sub-agent deve carregar o `SKILL.md` real do id resolvido; G5 ganha exclusão estreita para falso positivo `depende de plano`; executor permanece o `plan_execute` exato da família, sem variante.
 - **v0.1.9** — Remove exceção cross-family: famílias `claude`, `cursor` e `codex` completas, incluindo `cursor-sprint-prd-generator`; skill ausente agora aborta sem fallback.
 - **v0.1.8** — Limita o workflow às famílias `claude`, `cursor` e `codex`, clarifica `task_validator` como sub-agent filho de `plan_execute` e torna Open Questions apenas bloqueio/aviso fora do pipeline.
 - **v0.1.7** — Gate G11: em `full`, após `PLAN_*.md` validado, `plan_execute` é a próxima ação obrigatória; proíbe finalizar só com handoff e rejeita `full/direct` com "sem patch"/"só plano".
 - **v0.1.6** — Sincroniza versões/manifests, remove hardcode operacional `claude-*` no fluxo genérico e define ids Codex exatos (`codex-*`) para cumprir G10.
-- **v0.1.5** — Roteamento por `<tool>`, não por host. Gate G10: `<tool>` é autoritativo (define a família `claude-*`/`cursor-*`/`codex-*`); host NÃO escolhe família. Família única por run (proibido misturar), id exato (proibido variante `-orchestrated` sem flag). Fase 0 reescrita: removida a resolução "host Cursor ⇒ cursor-*" que ignorava o arg. Corrige GF09 (comando `claude` roteou pra `cursor-*`, pegou `cursor-plan-execute-orchestrated` errado e misturou famílias).
+- **v0.1.5** — Roteamento por `<tool>`, não por host. Gate G10: `<tool>` é autoritativo (define a família `claude-*`/`cursor-*`/`codex-*`); host NÃO escolhe família. Família única por run (proibido misturar), id exato. Fase 0 reescrita: removida a resolução "host Cursor ⇒ cursor-*" que ignorava o arg. Corrige GF09 (comando `claude` roteou pra `cursor-*` e misturou famílias).
 - **v0.1.4** — Orquestrador de mãos atadas. Gate G9 (orquestrador é coordenador: proibido editar código/rodar comando mutante/implementar em paralelo; dispatch blocking, um sub-agent por vez, sem `run_in_background`). G7 estendido ao `slice-review` (deve ser sub-agent despachado, não revisão inline). Corrige GF08: orquestrador implementou inline em paralelo ao sub-agent de execução (contexto 87%) e fez slice-review inline.
 - **v0.1.3** — Força sub-agent. Gate G7 (plano e execução despachados como sub-agent, nunca inline; `PLAN_*.md` deve conformar ao template da skill `plan_handoff`). Gate G8 (ordem fixa: `task-validator` antes/dentro do executor, `slice-review` por último, nunca em paralelo). Fase 0 reforçada: matou o fallback "implementação direta / contratos equivalentes inline" — host sem sub-agent despachável **aborta**. Corrige falhas observadas no GF07 (plano sem template, validator+slice em paralelo, fallback inline no Cursor).
 - **v0.1.2** — Pipeline orientado a artefato. Adicionados: Fase 0 pré-flight (verifica invocabilidade, proíbe emulação inline), Gates duros G1–G6, scan de ambiguidade determinístico (mata o escape hatch "tenho certeza"), validador frio obrigatório como sub-agent, ledger verificado contra disco. `direct` explicitamente não produz `PLAN_*.md`.

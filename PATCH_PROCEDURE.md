@@ -38,6 +38,8 @@ Atualizar se tocados:
 
 - `atlas-workflow-orchestrator/atlas_workflows_config.md`.
 - `plugins/atlas-workflow-orchestrator/atlas_workflows_config.md`.
+- `atlas-workflow-orchestrator/defaults/**` e `plugins/atlas-workflow-orchestrator/defaults/**`.
+- `atlas-workflow-orchestrator/references/**` e `plugins/atlas-workflow-orchestrator/references/**`.
 - `.claude-plugin/marketplace.json`.
 - `.agents/plugins/marketplace.json`.
 - `raycast/README.md`.

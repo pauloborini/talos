@@ -205,7 +205,7 @@ Plugin usa `atlas_workflows_config.md` para:
 - Validadores de ambiguidade
 - Sequências por modo
 
-Sem config → usa defaults (Claude skills).
+Config/defaults são empacotados no plugin. Se a config empacotada estiver ausente, o pacote está inválido e o pré-flight deve abortar.
 
 ## Error handling
 
@@ -226,9 +226,16 @@ Veja `atlas_workflows_config.md` para detalhes técnicos e mapeamentos completos
 
 ---
 
-**Plugin version:** 0.1.9  
-**Author:** Paulo Borini  
-**Last updated:** 2026-05-30
+**Plugin version:** 0.1.10
+**Author:** Paulo Borini
+**Last updated:** 2026-05-31
+
+### Novidades v0.1.10 — defaults autocontidos + skill real no sub-agent
+
+- **Config/defaults no pacote:** `atlas_workflows_config.md`, `defaults/paths.md` e `references/subagent_dispatch.md` viajam com o plugin; não exigem config na raiz do repositório usuário.
+- **Despacho de sub-agent:** cada sub-agent deve carregar o `SKILL.md` real do id resolvido antes de agir.
+- **Executor:** continua sendo o `plan_execute` exato da família `<tool>`; variantes de executor não fazem parte do workflow.
+- **Scan G5:** falso positivo `depende de plano` tratado por exclusão estreita configurada e logada.
 
 ### Novidades v0.1.9 — famílias completas
 
@@ -261,11 +268,11 @@ Conserta inconsistências de versão/config e remove hardcode operacional `claud
 
 ### Novidades v0.1.5 — roteamento por `<tool>`, não por host
 
-Conserta falha do GF09 (comando `claude` roteou pra `cursor-*`, pegou a variante `-orchestrated` errada e misturou famílias PRD-claude / resto-cursor):
+Conserta falha do GF09 (comando `claude` roteou pra `cursor-*` e misturou famílias PRD-claude / resto-cursor):
 
 - **Gate G10 — `<tool>` autoritativo:** a família de skills é definida **só** pelo argumento `<tool>` (`claude`→`claude-*`, `cursor`→`cursor-*`, `codex`→`codex-*`). O **host não escolhe família** — o Cursor enxerga e despacha as três; ele é só onde roda.
 - **Família única por run:** proibido misturar (PRD em claude, plano em cursor). Skill ausente → aborta. Nunca troca a família inteira.
-- **Id exato:** proibido substituir por variante (`-orchestrated`, `-experimental`) sem flag explícita do usuário.
+- **Id exato:** proibido substituir por variante de executor.
 
 ### Novidades v0.1.4 — orquestrador de mãos atadas
 
