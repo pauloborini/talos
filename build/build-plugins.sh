@@ -59,6 +59,7 @@ build_host() {
   cp -R "$ROOT/packages/skills-codex" "$stage_host/"
   cp -R "$ROOT/packages/templates" "$stage_host/"
   cp -R "$ROOT/packages/orchestrator" "$stage_host/"
+  cp -R "$ROOT/hooks" "$stage_host/"
 
   # Paths canônicos v0.2 usados pelas skills/MCP.
   mkdir -p "$stage_host/packages"
