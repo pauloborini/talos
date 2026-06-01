@@ -158,12 +158,17 @@ function parseWorkflowConfig() {
   return { ...source, families, modes };
 }
 
-function runRoot() {
-  return path.resolve(process.cwd(), RUN_DIR);
+function consumerRoot(args = {}) {
+  const explicitRoot = optionalString(args, 'project_root');
+  return path.resolve(explicitRoot && explicitRoot.trim() !== '' ? explicitRoot : process.cwd());
 }
 
-function ensureRunDir() {
-  const dir = runRoot();
+function runRoot(args = {}) {
+  return path.join(consumerRoot(args), RUN_DIR);
+}
+
+function ensureRunDir(args = {}) {
+  const dir = runRoot(args);
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   return dir;
 }
@@ -203,13 +208,13 @@ function requiredString(args, key) {
   return value;
 }
 
-function resolveConsumerPath(inputPath) {
+function resolveConsumerPath(inputPath, args = {}) {
   const value = requiredString({ value: inputPath }, 'value');
-  return path.resolve(process.cwd(), value);
+  return path.resolve(consumerRoot(args), value);
 }
 
-function statePath(runId) {
-  return path.join(ensureRunDir(), `${validateRunId(runId)}.json`);
+function statePath(runId, args = {}) {
+  return path.join(ensureRunDir(args), `${validateRunId(runId)}.json`);
 }
 
 function nowIso() {
@@ -228,9 +233,9 @@ function redact(value) {
   );
 }
 
-function logCall(entry) {
+function logCall(entry, args = {}) {
   const line = JSON.stringify({ timestamp: nowIso(), ...entry }) + '\n';
-  fs.appendFileSync(path.join(ensureRunDir(), 'mcp.log'), line, { mode: 0o600 });
+  fs.appendFileSync(path.join(ensureRunDir(args), 'mcp.log'), line, { mode: 0o600 });
 }
 
 function rpcError(code, message, data) {
@@ -319,8 +324,8 @@ function inspectRunStateFile(file) {
   }
 }
 
-function findActiveRunConflict(runId) {
-  const dir = ensureRunDir();
+function findActiveRunConflict(runId, args = {}) {
+  const dir = ensureRunDir(args);
   for (const name of fs.readdirSync(dir)) {
     if (!name.endsWith('.json')) continue;
     const file = path.join(dir, name);
@@ -344,8 +349,8 @@ function findActiveRunConflict(runId) {
   return { status: 'passed' };
 }
 
-function readState(runId) {
-  const file = statePath(runId);
+function readState(runId, args = {}) {
+  const file = statePath(runId, args);
   if (!fs.existsSync(file)) {
     throw rpcError(-32004, `Run inexistente: ${runId}`, { run_id: runId });
   }
@@ -382,7 +387,7 @@ function upsertState(args) {
   let previous = null;
 
   try {
-    previous = readState(runId);
+    previous = readState(runId, args);
   } catch (error) {
     if (error.code !== -32004) throw error;
   }
@@ -402,17 +407,17 @@ function upsertState(args) {
     },
   };
 
-  const target = statePath(runId);
+  const target = statePath(runId, args);
   const tmp = `${target}.${process.pid}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(next, null, 2) + '\n', { mode: 0o600 });
   fs.renameSync(tmp, target);
   return next;
 }
 
-function patchGateResult(runId, gate, result) {
+function patchGateResult(runId, gate, result, args = {}) {
   let previous = null;
   try {
-    previous = readState(runId);
+    previous = readState(runId, args);
   } catch (error) {
     if (error.code !== -32004) throw error;
   }
@@ -427,6 +432,7 @@ function patchGateResult(runId, gate, result) {
 
   return upsertState({
     run_id: runId,
+    project_root: args.project_root,
     phase: previous?.phase ?? 'gates',
     status: result.status === 'passed' ? 'gate_passed' : 'gate_blocked',
     summary: `${gate}: ${result.status}`,
@@ -434,10 +440,10 @@ function patchGateResult(runId, gate, result) {
   });
 }
 
-function patchTemplateConformanceResult(runId, result) {
+function patchTemplateConformanceResult(runId, result, args = {}) {
   let previous = null;
   try {
-    previous = readState(runId);
+    previous = readState(runId, args);
   } catch (error) {
     if (error.code !== -32004) throw error;
   }
@@ -453,6 +459,7 @@ function patchTemplateConformanceResult(runId, result) {
 
   return upsertState({
     run_id: runId,
+    project_root: args.project_root,
     phase: previous?.phase ?? 'template_conformance',
     status: result.status === 'passed' ? 'template_conformance_passed' : 'template_conformance_blocked',
     summary: `template_conformance: ${result.status}`,
@@ -460,10 +467,10 @@ function patchTemplateConformanceResult(runId, result) {
   });
 }
 
-function patchRoutingResult(runId, result) {
+function patchRoutingResult(runId, result, args = {}) {
   let previous = null;
   try {
-    previous = readState(runId);
+    previous = readState(runId, args);
   } catch (error) {
     if (error.code !== -32004) throw error;
   }
@@ -479,6 +486,7 @@ function patchRoutingResult(runId, result) {
 
   return upsertState({
     run_id: runId,
+    project_root: args.project_root,
     phase: previous?.phase ?? 'preflight',
     status: result.status === 'passed' ? 'preflight_passed' : 'preflight_blocked',
     summary: `G10: ${result.status}`,
@@ -486,8 +494,8 @@ function patchRoutingResult(runId, result) {
   });
 }
 
-function patchDispatchResult(runId, result) {
-  const previous = readState(runId);
+function patchDispatchResult(runId, result, args = {}) {
+  const previous = readState(runId, args);
   const currentDispatch = previous.data?.dispatch ?? {};
   const history = [
     ...(currentDispatch.history ?? []),
@@ -515,6 +523,7 @@ function patchDispatchResult(runId, result) {
 
   return upsertState({
     run_id: runId,
+    project_root: args.project_root,
     phase: previous.phase ?? 'dispatch',
     status: result.status === 'passed' ? 'dispatch_ok' : 'dispatch_blocked',
     summary: `${result.gate ?? 'G7'}: ${result.status}`,
@@ -524,7 +533,7 @@ function patchDispatchResult(runId, result) {
 
 function runState(args = {}) {
   const action = args.action ?? 'get';
-  if (action === 'get') return readState(validateRunId(args.run_id));
+  if (action === 'get') return readState(validateRunId(args.run_id), args);
   if (action === 'upsert') return upsertState(args);
   throw rpcError(-32602, `Ação inválida para atlas_run_state: ${action}`);
 }
@@ -532,7 +541,7 @@ function runState(args = {}) {
 function verifyArtifact(args = {}) {
   const runId = validateRunId(args.run_id);
   const artifactPath = requiredString(args, 'artifact_path');
-  const absolutePath = resolveConsumerPath(artifactPath);
+  const absolutePath = resolveConsumerPath(artifactPath, args);
   const timestamp = nowIso();
   let result;
 
@@ -570,7 +579,7 @@ function verifyArtifact(args = {}) {
     };
   }
 
-  patchGateResult(runId, 'G1', result);
+  patchGateResult(runId, 'G1', result, args);
   return result;
 }
 
@@ -639,7 +648,7 @@ function scanSectionPatterns(sections) {
 function scanPrd(args = {}) {
   const runId = validateRunId(args.run_id);
   const prdPath = requiredString(args, 'prd_path');
-  const absolutePath = resolveConsumerPath(prdPath);
+  const absolutePath = resolveConsumerPath(prdPath, args);
   const timestamp = nowIso();
   let result;
 
@@ -696,7 +705,7 @@ function scanPrd(args = {}) {
     };
   }
 
-  patchGateResult(runId, 'G5', result);
+  patchGateResult(runId, 'G5', result, args);
   return result;
 }
 
@@ -823,7 +832,7 @@ function verifyTemplateConformance(args = {}) {
   }
 
   const requiredStatus = optionalString(args, 'required_status');
-  const absolutePath = resolveConsumerPath(artifactPath);
+  const absolutePath = resolveConsumerPath(artifactPath, args);
   const timestamp = nowIso();
   let result;
 
@@ -881,7 +890,7 @@ function verifyTemplateConformance(args = {}) {
     };
   }
 
-  patchTemplateConformanceResult(runId, result);
+  patchTemplateConformanceResult(runId, result, args);
   return result;
 }
 
@@ -915,12 +924,12 @@ function preflight(args = {}) {
   const expectedVersion = optionalString(args, 'expected_version');
   const config = parseWorkflowConfig();
   const version = readVersionInfo();
-  const activeConflict = findActiveRunConflict(runId);
+  const activeConflict = findActiveRunConflict(runId, args);
   const timestamp = nowIso();
   let previous = null;
 
   try {
-    previous = readState(runId);
+    previous = readState(runId, args);
   } catch (error) {
     if (error.code !== -32004) throw error;
   }
@@ -1039,7 +1048,7 @@ function preflight(args = {}) {
     }
   }
 
-  patchRoutingResult(runId, result);
+  patchRoutingResult(runId, result, args);
   return result;
 }
 
@@ -1049,7 +1058,7 @@ function lockFamily(args = {}) {
   const role = optionalString(args, 'role');
   const expectedSkill = optionalString(args, 'expected_skill');
   const timestamp = nowIso();
-  const state = readState(runId);
+  const state = readState(runId, args);
   const routing = state.data?.routing;
 
   if (!routing) {
@@ -1061,7 +1070,7 @@ function lockFamily(args = {}) {
       error: 'Família ainda não travada: execute atlas_preflight antes de avançar',
       next_action: 'executar_preflight',
     };
-    patchRoutingResult(runId, result);
+    patchRoutingResult(runId, result, args);
     return result;
   }
 
@@ -1112,12 +1121,12 @@ function lockFamily(args = {}) {
     };
   }
 
-  patchRoutingResult(runId, result);
+  patchRoutingResult(runId, result, args);
   return result;
 }
 
-function getDispatchState(runId) {
-  const state = readState(runId);
+function getDispatchState(runId, args = {}) {
+  const state = readState(runId, args);
   const routing = state.data?.routing;
   if (!routing) {
     throw rpcError(-32011, 'Família não travada: execute atlas_preflight antes do dispatch', {
@@ -1357,20 +1366,20 @@ function lockDispatch(args = {}) {
     throw rpcError(-32602, `Ação inválida para atlas_lock_dispatch: ${action}`);
   }
 
-  const context = getDispatchState(runId);
+  const context = getDispatchState(runId, args);
   const result =
     action === 'start' ? startDispatch(args, context) :
     action === 'complete' ? completeDispatch(args, context) :
     abortDispatch(args, context);
 
-  patchDispatchResult(runId, result);
+  patchDispatchResult(runId, result, args);
   return result;
 }
 
 function assertAfterPlan(args = {}) {
   const runId = validateRunId(args.run_id);
   const attemptedAction = requiredString(args, 'attempted_action');
-  const { routing, dispatch } = getDispatchState(runId);
+  const { routing, dispatch } = getDispatchState(runId, args);
   const timestamp = nowIso();
   let result;
 
@@ -1412,7 +1421,7 @@ function assertAfterPlan(args = {}) {
     };
   }
 
-  patchDispatchResult(runId, result);
+  patchDispatchResult(runId, result, args);
   return result;
 }
 
@@ -1449,6 +1458,7 @@ function toolsList() {
           properties: {
             action: { type: 'string', enum: ['get', 'upsert'], default: 'get' },
             run_id: { type: 'string', minLength: 1 },
+            project_root: { type: 'string', minLength: 1 },
             phase: { type: 'string' },
             status: { type: 'string' },
             summary: { type: 'string' },
@@ -1465,6 +1475,7 @@ function toolsList() {
           required: ['run_id', 'artifact_path'],
           properties: {
             run_id: { type: 'string', minLength: 1 },
+            project_root: { type: 'string', minLength: 1 },
             artifact_path: { type: 'string', minLength: 1 },
           },
         },
@@ -1478,6 +1489,7 @@ function toolsList() {
           required: ['run_id', 'prd_path'],
           properties: {
             run_id: { type: 'string', minLength: 1 },
+            project_root: { type: 'string', minLength: 1 },
             prd_path: { type: 'string', minLength: 1 },
           },
         },
@@ -1491,6 +1503,7 @@ function toolsList() {
           required: ['run_id', 'artifact_path', 'artifact_type'],
           properties: {
             run_id: { type: 'string', minLength: 1 },
+            project_root: { type: 'string', minLength: 1 },
             artifact_path: { type: 'string', minLength: 1 },
             artifact_type: { type: 'string', enum: ['prd', 'plan'] },
             required_status: { type: 'string' },
@@ -1506,6 +1519,7 @@ function toolsList() {
           required: ['run_id', 'family', 'mode'],
           properties: {
             run_id: { type: 'string', minLength: 1 },
+            project_root: { type: 'string', minLength: 1 },
             family: { type: 'string', enum: ['claude', 'cursor', 'codex'] },
             mode: { type: 'string', enum: ['full', 'direct', 'interview-only', 'interview_only'] },
             expected_version: { type: 'string' },
@@ -1521,6 +1535,7 @@ function toolsList() {
           required: ['run_id', 'family'],
           properties: {
             run_id: { type: 'string', minLength: 1 },
+            project_root: { type: 'string', minLength: 1 },
             family: { type: 'string', enum: ['claude', 'cursor', 'codex'] },
             role: { type: 'string' },
             expected_skill: { type: 'string' },
@@ -1536,6 +1551,7 @@ function toolsList() {
           required: ['run_id', 'phase'],
           properties: {
             run_id: { type: 'string', minLength: 1 },
+            project_root: { type: 'string', minLength: 1 },
             action: { type: 'string', enum: ['start', 'complete', 'abort'], default: 'start' },
             phase: { type: 'string', enum: ['plan_handoff', 'plan_execute', 'slice_review'] },
             family: { type: 'string', enum: ['claude', 'cursor', 'codex'] },
@@ -1552,6 +1568,7 @@ function toolsList() {
           required: ['run_id', 'attempted_action'],
           properties: {
             run_id: { type: 'string', minLength: 1 },
+            project_root: { type: 'string', minLength: 1 },
             attempted_action: { type: 'string' },
           },
         },
@@ -1588,10 +1605,10 @@ function handleRequest(message) {
         name === 'atlas_lock_dispatch' ? lockDispatch(args) :
         name === 'atlas_assert_after_plan' ? assertAfterPlan(args) :
         (() => { throw rpcError(-32601, `Tool desconhecida: ${name}`); })();
-      logCall({ tool: name, run: args.run_id ?? null, status: 'ok' });
+      logCall({ tool: name, run: args.run_id ?? null, status: 'ok' }, args);
       return { id, result: toolResult(value) };
     } catch (error) {
-      logCall({ tool: name, run: args.run_id ?? null, status: 'error', error: error.message });
+      logCall({ tool: name, run: args.run_id ?? null, status: 'error', error: error.message }, args);
       throw error;
     }
   }
@@ -1602,7 +1619,7 @@ function handleRequest(message) {
 function send(message) {
   if (message === null || message.id === undefined) return;
   const body = JSON.stringify({ jsonrpc: '2.0', ...message });
-  process.stdout.write(`Content-Length: ${Buffer.byteLength(body, 'utf8')}\r\n\r\n${body}`);
+  process.stdout.write(`${body}\n`);
 }
 
 function parseMessages(buffer) {
@@ -1610,17 +1627,24 @@ function parseMessages(buffer) {
   let rest = buffer;
 
   while (true) {
-    const headerEnd = rest.indexOf('\r\n\r\n');
+    const crlfHeaderEnd = rest.indexOf('\r\n\r\n');
+    const lfHeaderEnd = rest.indexOf('\n\n');
+    const hasCrlfHeader = crlfHeaderEnd !== -1 && (lfHeaderEnd === -1 || crlfHeaderEnd <= lfHeaderEnd);
+    const headerEnd = hasCrlfHeader ? crlfHeaderEnd : lfHeaderEnd;
     if (headerEnd === -1) break;
     const header = rest.slice(0, headerEnd);
     const match = /^Content-Length:\s*(\d+)$/im.exec(header);
     if (!match) break;
     const length = Number(match[1]);
-    const bodyStart = headerEnd + 4;
+    const bodyStart = headerEnd + (hasCrlfHeader ? 4 : 2);
     const bodyEnd = bodyStart + length;
-    if (rest.length < bodyEnd) break;
+    if (rest.length < bodyEnd) return { messages, rest };
     messages.push(JSON.parse(rest.slice(bodyStart, bodyEnd)));
     rest = rest.slice(bodyEnd);
+  }
+
+  if (messages.length === 0 && /^Content-Length:/i.test(rest) && !/\r?\n\r?\n/.test(rest)) {
+    return { messages, rest };
   }
 
   if (messages.length === 0 && rest.includes('\n')) {

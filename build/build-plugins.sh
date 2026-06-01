@@ -67,6 +67,24 @@ build_host() {
   cp -R "$ROOT/packages/mcp-server" "$stage_host/packages/"
   cp "$ROOT/VERSION" "$stage_host/VERSION"
 
+  if [[ "$host" == "codex" ]]; then
+    cp -R "$ROOT/packages/skills-codex" "$stage_host/skills"
+    cat > "$stage_host/.mcp.json" <<'JSON'
+{
+  "mcpServers": {
+    "atlas-workflow": {
+      "command": "node",
+      "cwd": ".",
+      "args": [
+        "packages/mcp-server/server.js"
+      ],
+      "transport": "stdio"
+    }
+  }
+}
+JSON
+  fi
+
   # Manifest do host, com VERSION injetada
   local manifest_src="$ROOT/plugin-manifests/$host/plugin.json"
   local manifest_dir
