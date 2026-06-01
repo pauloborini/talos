@@ -264,6 +264,8 @@ preflight:
     - parse_args                 # inválido/--help => mostra sintaxe e para
     - load_plugin_bundle_config  # atlas_workflows_config.md + defaults/ + references/
     - select_family_from_tool    # <tool> AUTORITATIVO define a família (G10)
+    - check_version_drift        # expected_version opcional; VERSION/package.json precisam alinhar
+    - check_active_run_conflict  # estado .atlas-run com dispatch ativo bloqueia segunda run
     - resolve_exact_skill_ids    # ids exatos da família, sem variante de executor
     - resolve_skill_md_paths     # sub-agent precisa carregar a skill real
     - verify_subagent_dispatch   # cada id despachável via Agent tool neste host?
@@ -285,6 +287,18 @@ preflight:
       - "implementação direta inline"
       - "contratos equivalentes no fio do orquestrador"
     rationale: "famílias completas; fallback inline proibido (G7); troca de família proibida (G10)"
+  native_plugin_conflict:
+    rule: "se host expuser skill nativa e skill do plugin com o mesmo papel, usar somente o id exato retornado por atlas_preflight/atlas_lock_family; se a origem do id não puder ser comprovada, abortar e pedir remoção/desativação manual da nativa"
+    host_policy:
+      claude: "plugin Claude Code é fonte esperada; skill nativa homônima deve ser removida/desativada antes da run"
+      cursor: "Cursor herda plugin Claude Code; não trocar família por host nem preferir skill global"
+      codex: "Codex usa manifest próprio; skill local/global conflitante não substitui id do plugin"
+    forbidden: "resolver conflito por tentativa silenciosa ou escolher outra família"
+  edge_cases:
+    mcp_unavailable: "abort_phase; reportar gate/tool/status e próxima ação segura"
+    corrupted_state: "blocked; não converter JSON ilegível/parcial em ledger aprovado"
+    lock_conflict: "blocked; segunda run aguarda ou exige decisão explícita para liberar lock"
+    version_drift: "blocked no preflight antes de criar artefato dependente"
   mode_mismatch:
     rule: "se o input trouxer 'sem patch', 'sem editar codigo', 'planejamento apenas', 'handoff only' ou equivalente junto com mode full/direct, NÃO gerar plano e parar; reportar conflito: full/direct executam plan_execute. Usuário deve rodar modo de planejamento explícito fora deste pipeline."
     forbidden: "interpretar full como plan-only"

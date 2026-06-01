@@ -8,7 +8,7 @@ category: Development Automation
 
 Orquestra pipelines de desenvolvimento de features no projeto Atlas, automatizando a sequência de skills sob demanda com um único comando.
 
-> **v0.2 — MCP como fonte obrigatória de status.** Cada gate materializado deve ser consultado via MCP antes de avançar: `atlas_ping`, `atlas_preflight`, `atlas_lock_family`, `atlas_verify_artifact`, `atlas_scan_prd`, `atlas_verify_template_conformance`, `atlas_lock_dispatch` e `atlas_assert_after_plan`. Sem resposta MCP, sem resultado exigido ou status bloqueante → workflow abortado, sem fallback narrativo.
+> **v0.2 — MCP como fonte obrigatória de status.** Cada gate materializado deve ser consultado via MCP antes de avançar: `atlas_ping`, `atlas_preflight`, `atlas_lock_family`, `atlas_verify_artifact`, `atlas_scan_prd`, `atlas_verify_template_conformance`, `atlas_lock_dispatch` e `atlas_assert_after_plan`. Sem resposta MCP, sem resultado exigido ou status bloqueante → workflow abortado, sem fallback narrativo. Edge cases de ambiente (conflito plugin/nativo, MCP indisponível, estado corrompido, lock conflict e drift de versão) bloqueiam com causa, impacto e próxima ação segura.
 
 ## Sintaxe
 
@@ -64,13 +64,14 @@ Orquestra pipelines de desenvolvimento de features no projeto Atlas, automatizan
 Executar **antes** de iniciar o pipeline. Se qualquer item falhar, **parar e reportar** — nunca emular.
 
 1. **Parse** dos argumentos `<tool> <mode> <input-type> [input] [flags]`. Se inválido ou `--help` → mostrar sintaxe e parar.
-2. **Chamar MCP `atlas_ping`.** Se não responder, versão vier vazia ou capacidades não listarem os gates exigidos pelo modo → abortar com erro de MCP indisponível. Não seguir por prosa.
-3. **Chamar MCP `atlas_preflight`** com `run_id`, `<tool>` como `family` e `<mode>`. O resultado G10 é a fonte obrigatória de família, modo e ids oficiais.
+2. **Chamar MCP `atlas_ping`.** Se não responder, versão vier vazia, `version_check.status` vier bloqueado ou capacidades não listarem os gates exigidos pelo modo → abortar com erro de MCP indisponível/drift. Não seguir por prosa.
+3. **Chamar MCP `atlas_preflight`** com `run_id`, `<tool>` como `family`, `<mode>` e `expected_version` quando o host reportar versão. O resultado G10/edge é a fonte obrigatória de família, modo, versão, lock ativo e ids oficiais.
 4. **Chamar MCP `atlas_lock_family`** antes de despachar cada papel (`prd_generator`, `prd_interview`, `plan_handoff`, `plan_execute`, `task_validator`, `slice_review` quando aplicável), usando o id exato retornado no preflight.
 5. **Carregar config/defaults do pacote do plugin.** Usar `atlas_workflows_config.md`, `defaults/paths.md` e `references/subagent_dispatch.md` empacotados. Não exigir config na raiz do repositório usuário.
 6. **`<tool>` é autoritativo — define a família de skills.** `claude` → família `claude-*`, `cursor` → `cursor-*`, `codex` → `codex-*`. **O host (Cursor/Codex/Claude Code) NÃO escolhe a família.** Host é só o lugar onde roda; um host como o Cursor enxerga e despacha as três famílias. Proibido trocar a família por causa do host. Resolver os ids exatos pelo resultado de `atlas_preflight` (ver Gate G10).
 7. **Verificar despachabilidade da família escolhida.** Para cada skill exigida pelo modo, confirmar que o **id exato** daquela família é invocável via Skill tool e despachável via Agent tool neste host.
    - **Família mista é proibida** (Gate G10): não rode PRD em `claude-*` e plano em `cursor-*`. Toda a run usa uma família.
+   - **Conflito plugin × skill nativa:** use somente o id exato retornado pelo preflight. Se o host não permitir comprovar que a skill vem do plugin esperado, aborte e peça remoção/desativação manual da nativa; não resolva por tentativa silenciosa.
    - As três famílias são completas. Se uma skill específica da família **não existir** → **ABORTAR**, não trocar a família inteira.
    - **Nunca substituir por variante de executor** (Gate G10).
    - Resolver como o sub-agent carregará o `SKILL.md` real do id antes de executar (ver `references/subagent_dispatch.md`).
@@ -112,7 +113,7 @@ Regras inegociáveis. Violação = parar, não contornar.
 | G6 | **Status verificado, não auto-reportado.** O ✅ de cada item no output só pode ser marcado após confirmar o artefato em disco. Faltou artefato exigido pelo modo → status final `incomplete`, nunca `completed`. | output |
 | G7 | **Plano e execução rodam como sub-agent despachado (Agent tool), nunca no contexto do orquestrador.** Antes de iniciar/concluir fase, usar `atlas_lock_dispatch`; fase fora de ordem ou paralela bloqueia. Além disso, o `PLAN_*.md` deve passar TC. | plano + execução |
 | G8 | **Ordem fixa de validação: `task-validator` ANTES, `slice-review` POR ÚLTIMO. Nunca em paralelo.** Conclusão de `plan_execute` usa `atlas_lock_dispatch` com `validator_status: passed`; review só inicia após execução concluída. | validação + review |
-| G10 | **`<tool>` autoritativo, família única, id exato.** A família e os ids oficiais vêm de `atlas_preflight`/`atlas_lock_family`, nunca do host. Skill ausente ou troca de família → aborta, nunca troca a família inteira. | roteamento |
+| G10 | **`<tool>` autoritativo, família única, id exato.** A família e os ids oficiais vêm de `atlas_preflight`/`atlas_lock_family`, nunca do host. Skill ausente, troca de família, conflito de origem, lock ativo ou drift de versão → aborta com causa/impacto/próxima ação; nunca troca a família inteira. | roteamento |
 | G9 | **Orquestrador é coordenador de mãos atadas.** Depois da Fase 0, o orquestrador **NÃO** edita arquivos, **NÃO** escreve código, **NÃO** roda comando mutante (flutter/test/git write), **NÃO** "ajuda" o sub-agent. Suas únicas ações permitidas: despachar sub-agent, ler artefato em disco para verificação de gate, e produzir o output final. **Dispatch é blocking**: despacha **um** sub-agent por vez (Agent tool em foreground), **espera o retorno**, só então segue. Proibido `run_in_background` para fases do pipeline e proibido o orquestrador implementar "em paralelo" enquanto um sub-agent roda. Se o orquestrador tocar em código = G9 violado. | orquestrador |
 | G11 | **`full` deve executar depois do plano.** Depois que `PLAN_*.md` passa G1/G2/G7/TC, chamar `atlas_assert_after_plan`; a próxima ação obrigatória é despachar `plan_execute` como sub-agent blocking. Proibido completed só com handoff. | `full` |
 
@@ -230,6 +231,8 @@ Se algum resultado MCP exigido estiver ausente, indisponível ou bloqueante, o c
 ⚠️  Workflow: <tool> <mode> <input-type> aborted
    Gate MCP: <tool MCP ou gate>
    Status: <blocked|missing|unavailable>
+   Causa: <causa provável retornada pelo MCP ou indisponibilidade da fonte primária>
+   Impacto: <por que a fase não pode avançar sem risco de ledger falso>
    Próxima ação permitida: <next_action retornado pelo MCP ou restaurar serviço MCP>
 ```
 

@@ -67,26 +67,57 @@ const CONFIG_CANDIDATES = [
   path.resolve(SERVER_DIR, '../orchestrator/atlas_workflows_config.md'),
   path.resolve(SERVER_DIR, '../../orchestrator/atlas_workflows_config.md'),
 ];
+const VERSION_CANDIDATES = [
+  path.resolve(SERVER_DIR, '../../VERSION'),
+];
+const PACKAGE_VERSION_CANDIDATES = [
+  path.resolve(SERVER_DIR, 'package.json'),
+];
 
 function readVersion() {
-  const candidates = [
-    path.resolve(SERVER_DIR, '../../VERSION'),
-    path.resolve(SERVER_DIR, 'package.json'),
-  ];
+  const info = readVersionInfo();
+  return info.version;
+}
 
-  for (const candidate of candidates) {
+function readVersionInfo() {
+  let rootVersion = null;
+  let packageVersion = null;
+  const errors = [];
+
+  for (const candidate of VERSION_CANDIDATES) {
     try {
       if (!fs.existsSync(candidate)) continue;
-      if (candidate.endsWith('package.json')) {
-        return JSON.parse(fs.readFileSync(candidate, 'utf8')).version || 'unknown';
-      }
       const value = fs.readFileSync(candidate, 'utf8').trim();
-      if (value) return value;
-    } catch {
-      // Fall through to stable unknown version; ping still exposes identity.
+      if (value) {
+        rootVersion = value;
+        break;
+      }
+    } catch (error) {
+      errors.push({ path: candidate, cause: error.message });
     }
   }
-  return 'unknown';
+
+  for (const candidate of PACKAGE_VERSION_CANDIDATES) {
+    try {
+      if (!fs.existsSync(candidate)) continue;
+      packageVersion = JSON.parse(fs.readFileSync(candidate, 'utf8')).version || null;
+      if (packageVersion) break;
+    } catch (error) {
+      errors.push({ path: candidate, cause: error.message });
+    }
+  }
+
+  const version = rootVersion || packageVersion || 'unknown';
+  const mismatch = rootVersion && packageVersion && rootVersion !== packageVersion;
+  return {
+    version,
+    root_version: rootVersion,
+    package_version: packageVersion,
+    status: mismatch ? 'blocked' : 'passed',
+    error: mismatch ? `Drift de versão: VERSION=${rootVersion}, package.json=${packageVersion}` : null,
+    errors,
+    next_action: mismatch ? 'alinhar_versoes_do_plugin' : 'avançar',
+  };
 }
 
 function readWorkflowConfigText() {
@@ -210,10 +241,12 @@ function rpcError(code, message, data) {
 }
 
 function ping() {
+  const version = readVersionInfo();
   return {
-    status: 'alive',
+    status: version.status === 'passed' ? 'alive' : 'blocked',
     name: SERVER_NAME,
-    version: readVersion(),
+    version: version.version,
+    version_check: version,
     transport: 'stdio',
     capabilities: [
       'atlas_ping',
@@ -230,17 +263,111 @@ function ping() {
   };
 }
 
+function stateInvalid(message, cause, extra = {}) {
+  return {
+    status: 'blocked',
+    error: message,
+    cause,
+    impact: 'ledger_nao_confiavel_fase_bloqueada',
+    next_action: 'recuperar_ou_remover_estado_invalido_com_decisao_explicita',
+    ...extra,
+  };
+}
+
+function validateStateShape(state, source) {
+  if (!state || typeof state !== 'object' || Array.isArray(state)) {
+    return stateInvalid(`Estado local incompatível: ${source}`, 'state_nao_e_objeto');
+  }
+  if (typeof state.run_id !== 'string' || state.run_id.trim() === '') {
+    return stateInvalid(`Estado local parcial: ${source}`, 'run_id_ausente_ou_invalido');
+  }
+  if (typeof state.phase !== 'string' || state.phase.trim() === '') {
+    return stateInvalid(`Estado local parcial: ${source}`, 'phase_ausente_ou_invalida', { run_id: state.run_id });
+  }
+  if (typeof state.status !== 'string' || state.status.trim() === '') {
+    return stateInvalid(`Estado local parcial: ${source}`, 'status_ausente_ou_invalido', { run_id: state.run_id });
+  }
+  if (!state.data || typeof state.data !== 'object' || Array.isArray(state.data)) {
+    return stateInvalid(`Estado local parcial: ${source}`, 'data_ausente_ou_invalida', { run_id: state.run_id });
+  }
+  const stateVersion = state.data?.routing?.version;
+  const currentVersion = readVersionInfo().version;
+  if (stateVersion && stateVersion !== currentVersion) {
+    return stateInvalid(
+      `Estado local incompatível: ${source}`,
+      `routing.version=${stateVersion}, current=${currentVersion}`,
+      {
+        run_id: state.run_id,
+        impact: 'pipeline_hibrido_poderia_gerar_ledger_falso',
+        next_action: 'reiniciar_run_apos_alinhar_versao_do_plugin',
+      },
+    );
+  }
+  return { status: 'passed', state };
+}
+
+function inspectRunStateFile(file) {
+  try {
+    const state = JSON.parse(fs.readFileSync(file, 'utf8'));
+    return validateStateShape(state, path.basename(file));
+  } catch (error) {
+    return stateInvalid(
+      `Estado local corrompido: ${path.basename(file)}`,
+      error.message,
+      { next_action: 'recuperar_ou_remover_estado_corrompido_com_decisao_explicita' },
+    );
+  }
+}
+
+function findActiveRunConflict(runId) {
+  const dir = ensureRunDir();
+  for (const name of fs.readdirSync(dir)) {
+    if (!name.endsWith('.json')) continue;
+    const file = path.join(dir, name);
+    const inspected = inspectRunStateFile(file);
+    if (inspected.status === 'blocked') return inspected;
+    const state = inspected.state;
+    if (state.run_id === runId) continue;
+    const active = state.data?.dispatch?.active;
+    if (active?.phase) {
+      return {
+        status: 'blocked',
+        error: `Lock conflict: run ativa ${state.run_id} na fase ${active.phase}`,
+        cause: 'dispatch_ativo_em_outra_run',
+        impact: 'segunda_run_poderia_corromper_estado_ou_ledger',
+        conflicting_run_id: state.run_id,
+        active_phase: active.phase,
+        next_action: 'aguardar_ou_liberar_lock_com_decisao_explicita',
+      };
+    }
+  }
+  return { status: 'passed' };
+}
+
 function readState(runId) {
   const file = statePath(runId);
   if (!fs.existsSync(file)) {
     throw rpcError(-32004, `Run inexistente: ${runId}`, { run_id: runId });
   }
   try {
-    return JSON.parse(fs.readFileSync(file, 'utf8'));
+    const state = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const inspected = validateStateShape(state, `${runId}.json`);
+    if (inspected.status === 'blocked') {
+      throw rpcError(-32003, `Estado inválido para run: ${runId}`, {
+        run_id: runId,
+        cause: inspected.cause,
+        impact: inspected.impact,
+        next_action: inspected.next_action,
+      });
+    }
+    return state;
   } catch (cause) {
+    if (cause.code) throw cause;
     throw rpcError(-32003, `Estado inválido para run: ${runId}`, {
       run_id: runId,
       cause: cause.message,
+      impact: 'ledger_nao_confiavel_fase_bloqueada',
+      next_action: 'recuperar_ou_remover_estado_corrompido_com_decisao_explicita',
     });
   }
 }
@@ -346,7 +473,7 @@ function patchRoutingResult(runId, result) {
     routing: result.routing ?? previous?.data?.routing ?? null,
     gates: {
       ...(previous?.data?.gates ?? {}),
-      G10: redact(result),
+      [result.gate ?? 'G10']: redact(result),
     },
   };
 
@@ -785,7 +912,10 @@ function preflight(args = {}) {
   const runId = validateRunId(args.run_id);
   const family = requiredString(args, 'family');
   const mode = requiredString(args, 'mode');
+  const expectedVersion = optionalString(args, 'expected_version');
   const config = parseWorkflowConfig();
+  const version = readVersionInfo();
+  const activeConflict = findActiveRunConflict(runId);
   const timestamp = nowIso();
   let previous = null;
 
@@ -798,7 +928,48 @@ function preflight(args = {}) {
   const currentRouting = previous?.data?.routing;
   let result;
 
-  if (!config.modes.includes(mode)) {
+  if (version.status === 'blocked') {
+    result = {
+      gate: 'VERSION_DRIFT',
+      status: 'blocked',
+      timestamp,
+      family,
+      mode,
+      version,
+      error: version.error,
+      cause: version.error,
+      impact: 'pipeline_hibrido_poderia_gerar_artefato_invalido',
+      next_action: version.next_action,
+    };
+  } else if (expectedVersion && expectedVersion !== version.version) {
+    result = {
+      gate: 'VERSION_DRIFT',
+      status: 'blocked',
+      timestamp,
+      family,
+      mode,
+      expected_version: expectedVersion,
+      received_version: version.version,
+      error: `Drift de versão: esperado ${expectedVersion}, MCP reportou ${version.version}`,
+      cause: 'expected_version_diverge_do_mcp',
+      impact: 'pipeline_hibrido_poderia_gerar_artefato_invalido',
+      next_action: 'alinhar_versao_do_host_ou_reinstalar_plugin',
+    };
+  } else if (activeConflict.status === 'blocked') {
+    result = {
+      gate: 'LOCK_CONFLICT',
+      status: 'blocked',
+      timestamp,
+      family,
+      mode,
+      error: activeConflict.error,
+      cause: activeConflict.cause ?? null,
+      impact: activeConflict.impact ?? 'workflow_bloqueado_para_preservar_integridade_do_ledger',
+      conflicting_run_id: activeConflict.conflicting_run_id ?? null,
+      active_phase: activeConflict.active_phase ?? null,
+      next_action: activeConflict.next_action,
+    };
+  } else if (!config.modes.includes(mode)) {
     result = {
       gate: 'G10',
       status: 'blocked',
@@ -857,6 +1028,7 @@ function preflight(args = {}) {
           family,
           mode,
           skills: familyCheck.skills,
+          version: version.version,
           locked_at: currentRouting?.locked_at ?? timestamp,
           config_path: config.path,
           supported_families: Object.keys(config.families),
@@ -1327,7 +1499,7 @@ function toolsList() {
       },
       {
         name: 'atlas_preflight',
-        description: 'Gate G10: valida família, modo e skills oficiais pela config empacotada, travando a rota da run.',
+        description: 'Gate G10: valida família, modo, versão, lock ativo e skills oficiais pela config empacotada, travando a rota da run.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
@@ -1336,6 +1508,7 @@ function toolsList() {
             run_id: { type: 'string', minLength: 1 },
             family: { type: 'string', enum: ['claude', 'cursor', 'codex'] },
             mode: { type: 'string', enum: ['full', 'direct', 'interview-only', 'interview_only'] },
+            expected_version: { type: 'string' },
           },
         },
       },
