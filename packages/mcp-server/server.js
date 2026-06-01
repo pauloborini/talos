@@ -196,6 +196,8 @@ function ping() {
       'atlas_scan_prd',
       'atlas_preflight',
       'atlas_lock_family',
+      'atlas_lock_dispatch',
+      'atlas_assert_after_plan',
     ],
     state_dir: RUN_DIR,
   };
@@ -300,6 +302,42 @@ function patchRoutingResult(runId, result) {
     phase: previous?.phase ?? 'preflight',
     status: result.status === 'passed' ? 'preflight_passed' : 'preflight_blocked',
     summary: `G10: ${result.status}`,
+    data,
+  });
+}
+
+function patchDispatchResult(runId, result) {
+  const previous = readState(runId);
+  const currentDispatch = previous.data?.dispatch ?? {};
+  const history = [
+    ...(currentDispatch.history ?? []),
+    {
+      timestamp: result.timestamp,
+      phase: result.phase ?? null,
+      action: result.action ?? null,
+      status: result.status,
+      next_action: result.next_action ?? null,
+      error: result.error ?? null,
+    },
+  ];
+  const data = {
+    ...(previous.data ?? {}),
+    dispatch: {
+      ...currentDispatch,
+      ...(result.dispatch ?? {}),
+      history,
+    },
+    gates: {
+      ...(previous.data?.gates ?? {}),
+      [result.gate ?? 'G7']: redact(result),
+    },
+  };
+
+  return upsertState({
+    run_id: runId,
+    phase: previous.phase ?? 'dispatch',
+    status: result.status === 'passed' ? 'dispatch_ok' : 'dispatch_blocked',
+    summary: `${result.gate ?? 'G7'}: ${result.status}`,
     data,
   });
 }
@@ -668,6 +706,306 @@ function lockFamily(args = {}) {
   return result;
 }
 
+function getDispatchState(runId) {
+  const state = readState(runId);
+  const routing = state.data?.routing;
+  if (!routing) {
+    throw rpcError(-32011, 'Família não travada: execute atlas_preflight antes do dispatch', {
+      run_id: runId,
+    });
+  }
+  return { state, routing, dispatch: state.data?.dispatch ?? {} };
+}
+
+function assertDispatchFamily(routing, family) {
+  if (family && routing.family !== family) {
+    return `Família divergente: esperado ${routing.family}, recebido ${family}`;
+  }
+  return null;
+}
+
+function expectedNextPhase(routing, dispatch) {
+  if (dispatch.next_phase) return dispatch.next_phase;
+  if (routing.mode === 'full') return 'plan_handoff';
+  if (routing.mode === 'direct') return 'plan_execute';
+  return 'prd_interview';
+}
+
+function startDispatch(args, context) {
+  const phase = requiredString(args, 'phase');
+  const familyError = assertDispatchFamily(context.routing, args.family);
+  const timestamp = nowIso();
+
+  if (familyError) {
+    return {
+      gate: 'G10',
+      action: 'start',
+      phase,
+      status: 'blocked',
+      timestamp,
+      error: familyError,
+      current_phase: context.dispatch.active?.phase ?? null,
+      expected_phase: expectedNextPhase(context.routing, context.dispatch),
+      next_action: 'usar_familia_travada',
+    };
+  }
+
+  if (context.dispatch.active) {
+    return {
+      gate: 'G7',
+      action: 'start',
+      phase,
+      status: 'blocked',
+      timestamp,
+      error: `Dispatch paralelo bloqueado: fase ativa ${context.dispatch.active.phase}`,
+      current_phase: context.dispatch.active.phase,
+      expected_phase: context.dispatch.active.phase,
+      next_action: 'aguardar_fase_ativa',
+    };
+  }
+
+  if (phase === 'slice_review' && !context.dispatch.execution_completed) {
+    return {
+      gate: 'G8',
+      action: 'start',
+      phase,
+      status: 'blocked',
+      timestamp,
+      error: 'Review bloqueado: execução ainda não concluída com validator',
+      current_phase: context.dispatch.previous_phase ?? null,
+      expected_phase: 'plan_execute',
+      next_action: 'dispatch_plan_execute_blocking',
+    };
+  }
+
+  const expected = expectedNextPhase(context.routing, context.dispatch);
+  if (phase !== expected && phase !== 'slice_review') {
+    return {
+      gate: 'G7',
+      action: 'start',
+      phase,
+      status: 'blocked',
+      timestamp,
+      error: `Fase fora de ordem: esperado ${expected}, recebido ${phase}`,
+      current_phase: context.dispatch.previous_phase ?? null,
+      expected_phase: expected,
+      next_action: `dispatch_${expected}`,
+    };
+  }
+
+  return {
+    gate: 'G7',
+    action: 'start',
+    phase,
+    status: 'passed',
+    timestamp,
+    current_phase: phase,
+    expected_phase: expected,
+    dispatch: {
+      active: { phase, family: context.routing.family, started_at: timestamp },
+      previous_phase: context.dispatch.previous_phase ?? null,
+      next_phase: null,
+      next_action: `complete_${phase}`,
+    },
+    next_action: `complete_${phase}`,
+  };
+}
+
+function completeDispatch(args, context) {
+  const phase = requiredString(args, 'phase');
+  const timestamp = nowIso();
+  const active = context.dispatch.active;
+
+  if (!active || active.phase !== phase) {
+    return {
+      gate: 'G7',
+      action: 'complete',
+      phase,
+      status: 'blocked',
+      timestamp,
+      error: `Conclusão fora de ordem: fase ativa ${active?.phase ?? 'nenhuma'}, recebido ${phase}`,
+      current_phase: active?.phase ?? null,
+      expected_phase: active?.phase ?? expectedNextPhase(context.routing, context.dispatch),
+      next_action: active ? `complete_${active.phase}` : `dispatch_${expectedNextPhase(context.routing, context.dispatch)}`,
+    };
+  }
+
+  if (phase === 'plan_handoff' && context.routing.mode === 'full') {
+    return {
+      gate: 'G11',
+      action: 'complete',
+      phase,
+      status: 'passed',
+      timestamp,
+      dispatch: {
+        active: null,
+        previous_phase: phase,
+        plan_validated: true,
+        next_phase: 'plan_execute',
+        next_action: 'dispatch_plan_execute_blocking',
+      },
+      next_action: 'dispatch_plan_execute_blocking',
+    };
+  }
+
+  if (phase === 'plan_execute') {
+    const validatorStatus = requiredString(args, 'validator_status');
+    if (validatorStatus !== 'passed') {
+      return {
+        gate: 'G8',
+        action: 'complete',
+        phase,
+        status: 'blocked',
+        timestamp,
+        error: `Execução não pode concluir sem validator passed; recebido ${validatorStatus}`,
+        current_phase: phase,
+        expected_phase: 'task_validator',
+        next_action: 'rodar_task_validator_antes_do_review',
+      };
+    }
+    return {
+      gate: 'G8',
+      action: 'complete',
+      phase,
+      status: 'passed',
+      timestamp,
+      validator_status: validatorStatus,
+      dispatch: {
+        active: null,
+        previous_phase: phase,
+        execution_completed: true,
+        validator_status: validatorStatus,
+        next_phase: 'slice_review',
+        next_action: 'review_optional_or_complete',
+      },
+      next_action: 'review_optional_or_complete',
+    };
+  }
+
+  if (phase === 'slice_review') {
+    return {
+      gate: 'G8',
+      action: 'complete',
+      phase,
+      status: 'passed',
+      timestamp,
+      dispatch: {
+        active: null,
+        previous_phase: phase,
+        review_completed: true,
+        next_phase: null,
+        next_action: 'complete_allowed',
+      },
+      next_action: 'complete_allowed',
+    };
+  }
+
+  return {
+    gate: 'G7',
+    action: 'complete',
+    phase,
+    status: 'passed',
+    timestamp,
+    dispatch: {
+      active: null,
+      previous_phase: phase,
+      next_phase: expectedNextPhase(context.routing, context.dispatch),
+      next_action: `dispatch_${expectedNextPhase(context.routing, context.dispatch)}`,
+    },
+    next_action: `dispatch_${expectedNextPhase(context.routing, context.dispatch)}`,
+  };
+}
+
+function abortDispatch(args, context) {
+  const phase = requiredString(args, 'phase');
+  const timestamp = nowIso();
+  const active = context.dispatch.active;
+  const result = {
+    gate: 'G7',
+    action: 'abort',
+    phase,
+    status: active?.phase === phase ? 'passed' : 'blocked',
+    timestamp,
+    error: active?.phase === phase ? null : `Abort fora de ordem: fase ativa ${active?.phase ?? 'nenhuma'}, recebido ${phase}`,
+    current_phase: active?.phase ?? null,
+    expected_phase: active?.phase ?? null,
+    dispatch: active?.phase === phase ? {
+      active: null,
+      previous_phase: phase,
+      next_phase: phase,
+      next_action: `retry_${phase}`,
+    } : {},
+    next_action: active?.phase === phase ? `retry_${phase}` : `complete_${active?.phase ?? expectedNextPhase(context.routing, context.dispatch)}`,
+  };
+  return result;
+}
+
+function lockDispatch(args = {}) {
+  const runId = validateRunId(args.run_id);
+  const action = args.action ?? 'start';
+  if (!['start', 'complete', 'abort'].includes(action)) {
+    throw rpcError(-32602, `Ação inválida para atlas_lock_dispatch: ${action}`);
+  }
+
+  const context = getDispatchState(runId);
+  const result =
+    action === 'start' ? startDispatch(args, context) :
+    action === 'complete' ? completeDispatch(args, context) :
+    abortDispatch(args, context);
+
+  patchDispatchResult(runId, result);
+  return result;
+}
+
+function assertAfterPlan(args = {}) {
+  const runId = validateRunId(args.run_id);
+  const attemptedAction = requiredString(args, 'attempted_action');
+  const { routing, dispatch } = getDispatchState(runId);
+  const timestamp = nowIso();
+  let result;
+
+  if (routing.mode === 'full' && dispatch.plan_validated && !dispatch.execution_completed) {
+    if (attemptedAction === 'dispatch_plan_execute') {
+      result = {
+        gate: 'G11',
+        action: 'assert_after_plan',
+        phase: 'after_plan',
+        status: 'passed',
+        timestamp,
+        current_phase: dispatch.previous_phase ?? null,
+        expected_phase: 'plan_execute',
+        next_action: 'dispatch_plan_execute_blocking',
+      };
+    } else {
+      result = {
+        gate: 'G11',
+        action: 'assert_after_plan',
+        phase: 'after_plan',
+        status: 'blocked',
+        timestamp,
+        error: `Conclusão prematura bloqueada no full: ${attemptedAction}`,
+        current_phase: dispatch.previous_phase ?? null,
+        expected_phase: 'plan_execute',
+        next_action: 'dispatch_plan_execute_blocking',
+      };
+    }
+  } else {
+    result = {
+      gate: 'G11',
+      action: 'assert_after_plan',
+      phase: 'after_plan',
+      status: 'passed',
+      timestamp,
+      current_phase: dispatch.previous_phase ?? null,
+      expected_phase: dispatch.next_phase ?? null,
+      next_action: dispatch.next_action ?? 'avançar',
+    };
+  }
+
+  patchDispatchResult(runId, result);
+  return result;
+}
+
 function toolResult(value) {
   return {
     content: [
@@ -763,6 +1101,35 @@ function toolsList() {
           },
         },
       },
+      {
+        name: 'atlas_lock_dispatch',
+        description: 'Gates G7/G8: controla fase ativa, transições de dispatch, validator antes de review e concorrência 1.',
+        inputSchema: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['run_id', 'phase'],
+          properties: {
+            run_id: { type: 'string', minLength: 1 },
+            action: { type: 'string', enum: ['start', 'complete', 'abort'], default: 'start' },
+            phase: { type: 'string', enum: ['plan_handoff', 'plan_execute', 'slice_review'] },
+            family: { type: 'string', enum: ['claude', 'cursor', 'codex'] },
+            validator_status: { type: 'string' },
+          },
+        },
+      },
+      {
+        name: 'atlas_assert_after_plan',
+        description: 'Gate G11: bloqueia encerramento prematuro do modo full após plano validado e antes da execução.',
+        inputSchema: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['run_id', 'attempted_action'],
+          properties: {
+            run_id: { type: 'string', minLength: 1 },
+            attempted_action: { type: 'string' },
+          },
+        },
+      },
     ],
   };
 }
@@ -791,6 +1158,8 @@ function handleRequest(message) {
         name === 'atlas_scan_prd' ? scanPrd(args) :
         name === 'atlas_preflight' ? preflight(args) :
         name === 'atlas_lock_family' ? lockFamily(args) :
+        name === 'atlas_lock_dispatch' ? lockDispatch(args) :
+        name === 'atlas_assert_after_plan' ? assertAfterPlan(args) :
         (() => { throw rpcError(-32601, `Tool desconhecida: ${name}`); })();
       logCall({ tool: name, run: args.run_id ?? null, status: 'ok' });
       return { id, result: toolResult(value) };
