@@ -6,7 +6,7 @@ description: >
 
 # Sprint PRD Generator (Claude)
 
-Gere PRDs de Sprint em PT-BR ancorados no backlog/roadmap real, no template real e no código real do repositório atual. Não invente contrato.
+Gere PRDs de Sprint em PT-BR ancorados no backlog/roadmap real, no template canônico empacotado e no código real do repositório atual. Não invente contrato.
 
 Todo PRD gerado por esta skill deve focar estritamente no comportamento funcional de produto (O QUÊ e POR QUÊ), deixando a implementação de código (COMO e ONDE) sob responsabilidade exclusiva do plano de execução posterior.
 
@@ -24,10 +24,18 @@ Todo PRD gerado por esta skill deve focar estritamente no comportamento funciona
 
 ## Workflow Obrigatório
 
-1. **Localizar Insumos:** Descubra a raiz do repo com `git rev-parse --show-toplevel`. Localize o template (`**/PRD_TEMPLATE*.md`) e o backlog/roadmap (`**/BACKLOG_MESTRE*.md`).
+1. **Localizar Insumos:** Descubra a raiz do repo com `git rev-parse --show-toplevel`. Localize o template canônico em `<raiz-do-plugin>/packages/templates/PRD_TEMPLATE.md`. Localize o backlog/roadmap no repo ativo (`**/BACKLOG_MESTRE*.md`).
 2. **Extração da Sprint:** Leia o backlog real e localize a sprint, extraindo fase-fonte, objetivo, dependências de produto e links.
 3. **Inspecionar Código:** Investigue o codebase real para identificar APIs, rotas e componentes de design system que afetam funcionalmente o fluxo do usuário.
 4. **Redação do PRD:** Siga o layout enxuto do `PRD_TEMPLATE.md` (teto orientativo de ~180-220 linhas), separando dores e regras de negócio de implementações técnicas.
+
+### Resolução Canônica de Templates
+
+* Fonte única: `packages/templates/` empacotado no plugin Atlas Workflow.
+* Resolver `PRD_TEMPLATE.md` a partir da raiz do plugin/bundle, antes de olhar qualquer arquivo do repo consumidor.
+* Template local do repo consumidor nunca sobrepõe o template empacotado.
+* Se `packages/templates/PRD_TEMPLATE.md` não existir, abortar com erro claro: `Template canônico ausente: PRD_TEMPLATE.md`.
+* Não usar fallback silencioso para cópias antigas, vault local ou templates globais.
 
 ---
 

@@ -12,6 +12,14 @@ description: >-
 
 Entrevista guiada para endurecer um **PRD já escrito** antes de planejamento ou implementação técnica.
 
+## Resolução Canônica de Templates
+
+* Fonte única: `packages/templates/` empacotado no plugin Atlas Workflow.
+* Antes da entrevista, resolver `PRD_TEMPLATE.md` a partir da raiz do plugin/bundle.
+* Template local do repo consumidor nunca sobrepõe o template empacotado.
+* Se `packages/templates/PRD_TEMPLATE.md` não existir, abortar com erro claro: `Template canônico ausente: PRD_TEMPLATE.md`.
+* Não usar fallback silencioso para cópias antigas, vault local ou templates globais.
+
 ---
 
 ## Ativação

@@ -38,7 +38,15 @@ Inspecione diretamente o codebase real antes de redigir o plano. Confirme:
 Use `AskUserQuestion` para sanar questões críticas que afetam diretamente o escopo ou arquitetura técnica. Salve as respostas como decisões fechadas no plano.
 
 ### Fase 4 — Escrita do Plano
-Escreva o artefato em `.claude/plans/<nome-descritivo>.md` seguindo `PLAN_TEMPLATE.md` e `BOUNDARY_PRD_PLAN.md` — **localize ambos via `Glob **/PLAN_TEMPLATE*.md` e `**/BOUNDARY_PRD_PLAN.md` no repo ativo** (não dependa de paths fixos do vault).
+Escreva o artefato em `.claude/plans/<nome-descritivo>.md` seguindo `PLAN_TEMPLATE.md` e `BOUNDARY_PRD_PLAN.md` — **localize ambos em `<raiz-do-plugin>/packages/templates/`**.
+
+### Resolução Canônica de Templates
+
+* Fonte única: `packages/templates/` empacotado no plugin Atlas Workflow.
+* Resolver `PLAN_TEMPLATE.md` e `BOUNDARY_PRD_PLAN.md` a partir da raiz do plugin/bundle, antes de olhar qualquer arquivo do repo consumidor.
+* Template local do repo consumidor nunca sobrepõe o template empacotado.
+* Se `packages/templates/PLAN_TEMPLATE.md` ou `packages/templates/BOUNDARY_PRD_PLAN.md` não existir, abortar com erro claro: `Template canônico ausente: <nome-do-template>`.
+* Não usar fallback silencioso para cópias antigas, vault local ou templates globais.
 
 ---
 
@@ -82,7 +90,7 @@ O plano final gerado deve ser compacto (teto orientativo de ~250-350 linhas, at�
 
 ### 5. Tarefas de execução
 * As tarefas T01...TNN numeradas e sequenciadas logicamente. Se `execution_mode: orchestrated-per-slice`, agrupe-as em Slices.
-* Cada tarefa `#### TNN.` deve detalhar, conforme o schema de `BOUNDARY_PRD_PLAN.md` (localizado via `Glob` no repo ativo), quando aplicável:
+* Cada tarefa `#### TNN.` deve detalhar, conforme o schema de `BOUNDARY_PRD_PLAN.md` canônico empacotado, quando aplicável:
   * **Objetivo:** resultado específico e observável.
   * **Referência:** padrão de pasta/módulo no repo (evite listas longas de paths).
   * **Pré-condições:** o que deve ser verdade antes de iniciar.

@@ -25,6 +25,12 @@ Monorepo do plugin Atlas Workflow Orchestrator v0.2: skills, templates, MCP serv
 - **Templates canônicos (PRD, PLAN, BOUNDARY, BACKLOG, PERGUNTAS):** [`packages/templates/`](packages/templates/)
 - **Plugin v0.1.10 (arquivado):** [`archive/v0.1.10/atlas-workflow-orchestrator/`](archive/v0.1.10/atlas-workflow-orchestrator/) — reinstalar via `claude plugin marketplace add <path>` para rollback
 
+## Templates canônicos
+
+`packages/templates/` é a fonte única dos templates empacotados no plugin v0.2. Skills de PRD, entrevista e plano devem resolver PRD, PLAN, boundary, backlog e perguntas por essa pasta do bundle antes de considerar qualquer arquivo do repo consumidor.
+
+Se um template canônico exigido não existir no bundle, o workflow deve parar com erro explícito nomeando o template ausente. Não há fallback silencioso para cópias antigas, vault local ou templates globais.
+
 ## Repositório
 
 https://github.com/pauloborini/atlas-workflow

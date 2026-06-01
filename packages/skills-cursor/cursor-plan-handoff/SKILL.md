@@ -7,7 +7,15 @@ description: Produz planos handoff-grade no Cursor Plan Mode para execução em 
 
 Use esta skill no Cursor Plan Mode quando o objetivo principal é **planejar**, especialmente quando o plano resultante será executado em outro chat, por outro modelo, ou após reset de contexto. O plano resultante funciona como o guia definitivo de execução técnica, enxuto e prático.
 
-Templates canônicos (localize com `Glob` no repo): `**/PLAN_TEMPLATE.md`, `**/BOUNDARY_PRD_PLAN.md`.
+Templates canônicos: `<raiz-do-plugin>/packages/templates/PLAN_TEMPLATE.md` e `<raiz-do-plugin>/packages/templates/BOUNDARY_PRD_PLAN.md`.
+
+## Resolução Canônica de Templates
+
+* Fonte única: `packages/templates/` empacotado no plugin Atlas Workflow.
+* Resolver `PLAN_TEMPLATE.md` e `BOUNDARY_PRD_PLAN.md` a partir da raiz do plugin/bundle, antes de olhar qualquer arquivo do repo consumidor.
+* Template local do repo consumidor nunca sobrepõe o template empacotado.
+* Se `packages/templates/PLAN_TEMPLATE.md` ou `packages/templates/BOUNDARY_PRD_PLAN.md` não existir, abortar com erro claro: `Template canônico ausente: <nome-do-template>`.
+* Não usar fallback silencioso para cópias antigas, vault local ou templates globais.
 
 ---
 

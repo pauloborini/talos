@@ -7,7 +7,15 @@ description: Skill `codex-plan-handoff`. Produz um handoff executável da famíl
 
 Use esta skill quando o usuário pedir um plano executável da cadeia `codex-*`.
 
-O artefato segue `PLAN_TEMPLATE.md` e `BOUNDARY_PRD_PLAN.md` — **localize ambos via `Glob **/PLAN_TEMPLATE*.md` e `**/BOUNDARY_PRD_PLAN.md` no repo ativo** (não dependa de paths fixos do vault). O plano **não** depende de memória do chat para prefixo, modo ou executor.
+O artefato segue `PLAN_TEMPLATE.md` e `BOUNDARY_PRD_PLAN.md` — **localize ambos em `<raiz-do-plugin>/packages/templates/`**. O plano **não** depende de memória do chat para prefixo, modo ou executor.
+
+## Resolução Canônica de Templates
+
+* Fonte única: `packages/templates/` empacotado no plugin Atlas Workflow.
+* Resolver `PLAN_TEMPLATE.md` e `BOUNDARY_PRD_PLAN.md` a partir da raiz do plugin/bundle, antes de olhar qualquer arquivo do repo consumidor.
+* Template local do repo consumidor nunca sobrepõe o template empacotado.
+* Se `packages/templates/PLAN_TEMPLATE.md` ou `packages/templates/BOUNDARY_PRD_PLAN.md` não existir, abortar com erro claro: `Template canônico ausente: <nome-do-template>`.
+* Não usar fallback silencioso para cópias antigas, vault local ou templates globais.
 
 ## Cadeia de execução
 
@@ -69,7 +77,7 @@ Regras:
 
 ### 5. Tarefas de execução
 
-Tarefas `#### T01.` … `#### TNN.` com schema de `BOUNDARY_PRD_PLAN.md` (localizado via `Glob` no repo ativo):
+Tarefas `#### T01.` … `#### TNN.` com schema de `BOUNDARY_PRD_PLAN.md` canônico empacotado:
 
 - **Objetivo**
 - **Referência** (módulo/padrão no monorepo — evite listas longas de paths; o executor descobre no repo)
