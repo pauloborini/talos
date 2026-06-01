@@ -29,6 +29,18 @@ const SECTION_HEADING = {
   section_8_experience: /^##\s+8\.\s+/,
   section_9_contracts: /^##\s+9\.\s+/,
 };
+const REQUIRED_SKILL_ROLES = [
+  'prd_generator',
+  'prd_interview',
+  'plan_handoff',
+  'plan_execute',
+  'slice_review',
+  'task_validator',
+];
+const CONFIG_CANDIDATES = [
+  path.resolve(SERVER_DIR, '../orchestrator/atlas_workflows_config.md'),
+  path.resolve(SERVER_DIR, '../../orchestrator/atlas_workflows_config.md'),
+];
 
 function readVersion() {
   const candidates = [
@@ -49,6 +61,44 @@ function readVersion() {
     }
   }
   return 'unknown';
+}
+
+function readWorkflowConfigText() {
+  for (const candidate of CONFIG_CANDIDATES) {
+    if (fs.existsSync(candidate)) {
+      return {
+        path: candidate,
+        content: fs.readFileSync(candidate, 'utf8'),
+      };
+    }
+  }
+  throw rpcError(-32010, 'Config empacotada ausente: atlas_workflows_config.md', {
+    expected_paths: CONFIG_CANDIDATES,
+  });
+}
+
+function parseWorkflowConfig() {
+  const source = readWorkflowConfigText();
+  const families = {};
+  const familyRegex = /^```yaml\n(claude|cursor|codex):\n([\s\S]*?)^```/gm;
+  let match;
+
+  while ((match = familyRegex.exec(source.content)) !== null) {
+    const family = match[1];
+    const body = match[2];
+    families[family] = {};
+    for (const line of body.split(/\r?\n/)) {
+      const roleMatch = /^\s{2}([a-z_]+):\s*([a-z-]+)/.exec(line);
+      if (roleMatch) families[family][roleMatch[1]] = roleMatch[2];
+    }
+  }
+
+  const modes = [];
+  if (/^### Full Mode$/m.test(source.content)) modes.push('full');
+  if (/^### Direct Mode$/m.test(source.content)) modes.push('direct');
+  if (/^### Interview-Only Mode$/m.test(source.content)) modes.push('interview-only', 'interview_only');
+
+  return { ...source, families, modes };
 }
 
 function runRoot() {
@@ -139,7 +189,14 @@ function ping() {
     name: SERVER_NAME,
     version: readVersion(),
     transport: 'stdio',
-    capabilities: ['atlas_ping', 'atlas_run_state', 'atlas_verify_artifact', 'atlas_scan_prd'],
+    capabilities: [
+      'atlas_ping',
+      'atlas_run_state',
+      'atlas_verify_artifact',
+      'atlas_scan_prd',
+      'atlas_preflight',
+      'atlas_lock_family',
+    ],
     state_dir: RUN_DIR,
   };
 }
@@ -217,6 +274,32 @@ function patchGateResult(runId, gate, result) {
     phase: previous?.phase ?? 'gates',
     status: result.status === 'passed' ? 'gate_passed' : 'gate_blocked',
     summary: `${gate}: ${result.status}`,
+    data,
+  });
+}
+
+function patchRoutingResult(runId, result) {
+  let previous = null;
+  try {
+    previous = readState(runId);
+  } catch (error) {
+    if (error.code !== -32004) throw error;
+  }
+
+  const data = {
+    ...(previous?.data ?? {}),
+    routing: result.routing ?? previous?.data?.routing ?? null,
+    gates: {
+      ...(previous?.data?.gates ?? {}),
+      G10: redact(result),
+    },
+  };
+
+  return upsertState({
+    run_id: runId,
+    phase: previous?.phase ?? 'preflight',
+    status: result.status === 'passed' ? 'preflight_passed' : 'preflight_blocked',
+    summary: `G10: ${result.status}`,
     data,
   });
 }
@@ -399,6 +482,192 @@ function scanPrd(args = {}) {
   return result;
 }
 
+function validateFamilyConfig(config, family) {
+  const skills = config.families[family];
+  if (!skills) {
+    return {
+      ok: false,
+      message: `Família inválida: ${family}`,
+      supported_families: Object.keys(config.families),
+    };
+  }
+
+  const missing = REQUIRED_SKILL_ROLES.filter((role) => !skills[role]);
+  if (missing.length > 0) {
+    return {
+      ok: false,
+      message: `Skill ausente na família ${family}: ${missing[0]}`,
+      missing_role: missing[0],
+      expected_roles: REQUIRED_SKILL_ROLES,
+    };
+  }
+
+  return { ok: true, skills };
+}
+
+function preflight(args = {}) {
+  const runId = validateRunId(args.run_id);
+  const family = requiredString(args, 'family');
+  const mode = requiredString(args, 'mode');
+  const config = parseWorkflowConfig();
+  const timestamp = nowIso();
+  let previous = null;
+
+  try {
+    previous = readState(runId);
+  } catch (error) {
+    if (error.code !== -32004) throw error;
+  }
+
+  const currentRouting = previous?.data?.routing;
+  let result;
+
+  if (!config.modes.includes(mode)) {
+    result = {
+      gate: 'G10',
+      status: 'blocked',
+      timestamp,
+      family,
+      mode,
+      error: `Modo inválido: ${mode}`,
+      supported_modes: config.modes,
+      next_action: 'corrigir_rota',
+    };
+  } else {
+    const familyCheck = validateFamilyConfig(config, family);
+    if (!familyCheck.ok) {
+      result = {
+        gate: 'G10',
+        status: 'blocked',
+        timestamp,
+        family,
+        mode,
+        error: familyCheck.message,
+        supported_families: familyCheck.supported_families,
+        missing_role: familyCheck.missing_role,
+        expected_roles: familyCheck.expected_roles,
+        next_action: 'corrigir_rota',
+      };
+    } else if (currentRouting && currentRouting.family !== family) {
+      result = {
+        gate: 'G10',
+        status: 'blocked',
+        timestamp,
+        family,
+        mode,
+        locked_family: currentRouting.family,
+        error: `Troca de família bloqueada: ${currentRouting.family} -> ${family}`,
+        next_action: 'encerrar_run_ou_usar_familia_travada',
+      };
+    } else if (currentRouting && currentRouting.mode !== mode) {
+      result = {
+        gate: 'G10',
+        status: 'blocked',
+        timestamp,
+        family,
+        mode,
+        locked_mode: currentRouting.mode,
+        error: `Troca de modo bloqueada: ${currentRouting.mode} -> ${mode}`,
+        next_action: 'encerrar_run_ou_usar_modo_travado',
+      };
+    } else {
+      result = {
+        gate: 'G10',
+        status: 'passed',
+        timestamp,
+        family,
+        mode,
+        routing: {
+          family,
+          mode,
+          skills: familyCheck.skills,
+          locked_at: currentRouting?.locked_at ?? timestamp,
+          config_path: config.path,
+          supported_families: Object.keys(config.families),
+          supported_modes: config.modes,
+        },
+        next_action: 'avançar',
+      };
+    }
+  }
+
+  patchRoutingResult(runId, result);
+  return result;
+}
+
+function lockFamily(args = {}) {
+  const runId = validateRunId(args.run_id);
+  const family = requiredString(args, 'family');
+  const role = optionalString(args, 'role');
+  const expectedSkill = optionalString(args, 'expected_skill');
+  const timestamp = nowIso();
+  const state = readState(runId);
+  const routing = state.data?.routing;
+
+  if (!routing) {
+    const result = {
+      gate: 'G10',
+      status: 'blocked',
+      timestamp,
+      family,
+      error: 'Família ainda não travada: execute atlas_preflight antes de avançar',
+      next_action: 'executar_preflight',
+    };
+    patchRoutingResult(runId, result);
+    return result;
+  }
+
+  let result;
+  if (routing.family !== family) {
+    result = {
+      gate: 'G10',
+      status: 'blocked',
+      timestamp,
+      family,
+      locked_family: routing.family,
+      error: `Troca de família bloqueada: ${routing.family} -> ${family}`,
+      next_action: 'usar_familia_travada',
+    };
+  } else if (role && !routing.skills?.[role]) {
+    result = {
+      gate: 'G10',
+      status: 'blocked',
+      timestamp,
+      family,
+      role,
+      error: `Skill ausente para papel ${role} na família ${family}`,
+      next_action: 'corrigir_config',
+    };
+  } else if (expectedSkill && role && routing.skills?.[role] !== expectedSkill) {
+    result = {
+      gate: 'G10',
+      status: 'blocked',
+      timestamp,
+      family,
+      role,
+      expected_skill: routing.skills[role],
+      received_skill: expectedSkill,
+      error: `Skill esperada divergente para ${role}: ${routing.skills[role]} != ${expectedSkill}`,
+      next_action: 'usar_skill_oficial',
+    };
+  } else {
+    result = {
+      gate: 'G10',
+      status: 'passed',
+      timestamp,
+      family,
+      mode: routing.mode,
+      role: role ?? null,
+      expected_skill: role ? routing.skills[role] : null,
+      routing,
+      next_action: 'avançar',
+    };
+  }
+
+  patchRoutingResult(runId, result);
+  return result;
+}
+
 function toolResult(value) {
   return {
     content: [
@@ -465,6 +734,35 @@ function toolsList() {
           },
         },
       },
+      {
+        name: 'atlas_preflight',
+        description: 'Gate G10: valida família, modo e skills oficiais pela config empacotada, travando a rota da run.',
+        inputSchema: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['run_id', 'family', 'mode'],
+          properties: {
+            run_id: { type: 'string', minLength: 1 },
+            family: { type: 'string', enum: ['claude', 'cursor', 'codex'] },
+            mode: { type: 'string', enum: ['full', 'direct', 'interview-only', 'interview_only'] },
+          },
+        },
+      },
+      {
+        name: 'atlas_lock_family',
+        description: 'Gate G10: confirma que fase posterior respeita família travada e skill oficial.',
+        inputSchema: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['run_id', 'family'],
+          properties: {
+            run_id: { type: 'string', minLength: 1 },
+            family: { type: 'string', enum: ['claude', 'cursor', 'codex'] },
+            role: { type: 'string' },
+            expected_skill: { type: 'string' },
+          },
+        },
+      },
     ],
   };
 }
@@ -491,6 +789,8 @@ function handleRequest(message) {
         name === 'atlas_run_state' ? runState(args) :
         name === 'atlas_verify_artifact' ? verifyArtifact(args) :
         name === 'atlas_scan_prd' ? scanPrd(args) :
+        name === 'atlas_preflight' ? preflight(args) :
+        name === 'atlas_lock_family' ? lockFamily(args) :
         (() => { throw rpcError(-32601, `Tool desconhecida: ${name}`); })();
       logCall({ tool: name, run: args.run_id ?? null, status: 'ok' });
       return { id, result: toolResult(value) };
