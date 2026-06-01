@@ -22,6 +22,16 @@ Se algum input estiver ausente, pare e informe a pendência estruturalmente.
 
 ---
 
+## Resolução Canônica de Templates
+
+* Fonte única: `packages/templates/` empacotado no plugin Atlas Workflow.
+* Antes da validação, resolver `PLAN_TEMPLATE.md` e `BOUNDARY_PRD_PLAN.md` a partir da raiz do plugin/bundle.
+* Template local do repo consumidor nunca sobrepõe o template empacotado.
+* Se `packages/templates/PLAN_TEMPLATE.md` ou `packages/templates/BOUNDARY_PRD_PLAN.md` não existir, abortar com erro claro: `Template canônico ausente: <nome-do-template>`.
+* Não usar fallback silencioso para cópias antigas, vault local ou templates globais.
+
+---
+
 ## Mapeamento de Seções (PLAN_TEMPLATE compacto)
 
 | Alvo de Validação | Seção do PLAN |
