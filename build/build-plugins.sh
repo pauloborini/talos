@@ -28,6 +28,7 @@ REQUIRED_PATHS=(
   "$ROOT/packages/skills-codex"
   "$ROOT/packages/templates"
   "$ROOT/packages/orchestrator"
+  "$ROOT/packages/mcp-server"
   "$ROOT/plugin-manifests/claude/plugin.json"
   "$ROOT/plugin-manifests/codex/plugin.json"
 )
@@ -58,6 +59,12 @@ build_host() {
   cp -R "$ROOT/packages/skills-codex" "$stage_host/"
   cp -R "$ROOT/packages/templates" "$stage_host/"
   cp -R "$ROOT/packages/orchestrator" "$stage_host/"
+
+  # Paths canônicos v0.2 usados pelas skills/MCP.
+  mkdir -p "$stage_host/packages"
+  cp -R "$ROOT/packages/templates" "$stage_host/packages/"
+  cp -R "$ROOT/packages/mcp-server" "$stage_host/packages/"
+  cp "$ROOT/VERSION" "$stage_host/VERSION"
 
   # Manifest do host, com VERSION injetada
   local manifest_src="$ROOT/plugin-manifests/$host/plugin.json"

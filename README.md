@@ -23,6 +23,7 @@ Monorepo do plugin Atlas Workflow Orchestrator v0.2: skills, templates, MCP serv
 
 - **Backlog mestre v0.2:** [`.app-vault/docs/BACKLOG_MESTRE.md`](.app-vault/docs/BACKLOG_MESTRE.md) (15 sprints, 14 decisões fechadas)
 - **Templates canônicos (PRD, PLAN, BOUNDARY, BACKLOG, PERGUNTAS):** [`packages/templates/`](packages/templates/)
+- **MCP server mínimo:** [`packages/mcp-server/`](packages/mcp-server/) (`atlas_ping`, `atlas_run_state`, stdio)
 - **Plugin v0.1.10 (arquivado):** [`archive/v0.1.10/atlas-workflow-orchestrator/`](archive/v0.1.10/atlas-workflow-orchestrator/) — reinstalar via `claude plugin marketplace add <path>` para rollback
 
 ## Templates canônicos

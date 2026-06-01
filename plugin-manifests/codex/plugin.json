@@ -15,6 +15,15 @@
     "codex"
   ],
   "skills": "./skills/",
+  "mcpServers": {
+    "atlas-workflow": {
+      "command": "node",
+      "args": [
+        "packages/mcp-server/server.js"
+      ],
+      "transport": "stdio"
+    }
+  },
   "interface": {
     "displayName": "Atlas Workflow Orchestrator",
     "shortDescription": "Workflow completo por sub-agents.",

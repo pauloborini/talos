@@ -1,0 +1,12 @@
+{
+  "name": "@atlas-workflow/mcp-server",
+  "version": "0.2.0-dev",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "atlas-workflow-mcp": "./server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -13,5 +13,14 @@
     "planning",
     "execution",
     "automation"
-  ]
+  ],
+  "mcpServers": {
+    "atlas-workflow": {
+      "command": "node",
+      "args": [
+        "packages/mcp-server/server.js"
+      ],
+      "transport": "stdio"
+    }
+  }
 }
