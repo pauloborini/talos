@@ -8,6 +8,27 @@ const SERVER_NAME = 'atlas-workflow-orchestrator';
 const RUN_DIR = '.atlas-run';
 const SENSITIVE_KEY = /(authorization|credential|password|secret|token|api[_-]?key)/i;
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
+const PRD_PATTERNS = {
+  section_3_objective: ['TBD', 'a confirmar', 'talvez', 'não definido'],
+  section_4_scope: ['pode ser', 'depende de', 'ainda não', 'incompleto'],
+  section_5_decisions: ['vago'],
+  section_8_experience: ['a definir', 'gap', 'depende de'],
+  section_9_contracts: ['ainda não definido', 'mock apenas', 'a confirmar'],
+};
+const SECTION_LABELS = {
+  section_3_objective: '§3 Objetivo',
+  section_4_scope: '§4 Escopo funcional',
+  section_5_decisions: '§5 Decisões de produto',
+  section_8_experience: '§8 Fluxos e cenários UX',
+  section_9_contracts: '§9 Contrato funcional',
+};
+const SECTION_HEADING = {
+  section_3_objective: /^##\s+3\.\s+/,
+  section_4_scope: /^##\s+4\.\s+/,
+  section_5_decisions: /^##\s+5\.\s+/,
+  section_8_experience: /^##\s+8\.\s+/,
+  section_9_contracts: /^##\s+9\.\s+/,
+};
 
 function readVersion() {
   const candidates = [
@@ -67,6 +88,19 @@ function optionalData(args) {
   return args.data;
 }
 
+function requiredString(args, key) {
+  const value = optionalString(args, key);
+  if (!value || value.trim() === '') {
+    throw rpcError(-32602, `${key} obrigatório`);
+  }
+  return value;
+}
+
+function resolveConsumerPath(inputPath) {
+  const value = requiredString({ value: inputPath }, 'value');
+  return path.resolve(process.cwd(), value);
+}
+
 function statePath(runId) {
   return path.join(ensureRunDir(), `${validateRunId(runId)}.json`);
 }
@@ -105,7 +139,7 @@ function ping() {
     name: SERVER_NAME,
     version: readVersion(),
     transport: 'stdio',
-    capabilities: ['atlas_ping', 'atlas_run_state'],
+    capabilities: ['atlas_ping', 'atlas_run_state', 'atlas_verify_artifact', 'atlas_scan_prd'],
     state_dir: RUN_DIR,
   };
 }
@@ -162,11 +196,207 @@ function upsertState(args) {
   return next;
 }
 
+function patchGateResult(runId, gate, result) {
+  let previous = null;
+  try {
+    previous = readState(runId);
+  } catch (error) {
+    if (error.code !== -32004) throw error;
+  }
+
+  const data = {
+    ...(previous?.data ?? {}),
+    gates: {
+      ...(previous?.data?.gates ?? {}),
+      [gate]: redact(result),
+    },
+  };
+
+  return upsertState({
+    run_id: runId,
+    phase: previous?.phase ?? 'gates',
+    status: result.status === 'passed' ? 'gate_passed' : 'gate_blocked',
+    summary: `${gate}: ${result.status}`,
+    data,
+  });
+}
+
 function runState(args = {}) {
   const action = args.action ?? 'get';
   if (action === 'get') return readState(validateRunId(args.run_id));
   if (action === 'upsert') return upsertState(args);
   throw rpcError(-32602, `Ação inválida para atlas_run_state: ${action}`);
+}
+
+function verifyArtifact(args = {}) {
+  const runId = validateRunId(args.run_id);
+  const artifactPath = requiredString(args, 'artifact_path');
+  const absolutePath = resolveConsumerPath(artifactPath);
+  const timestamp = nowIso();
+  let result;
+
+  try {
+    const stat = fs.statSync(absolutePath);
+    if (!stat.isFile()) {
+      result = {
+        gate: 'G1',
+        status: 'blocked',
+        artifact_path: artifactPath,
+        timestamp,
+        error: `Artefato não é arquivo legível: ${artifactPath}`,
+        next_action: 'corrigir_artefato',
+      };
+    } else {
+      fs.accessSync(absolutePath, fs.constants.R_OK);
+      result = {
+        gate: 'G1',
+        status: 'passed',
+        artifact_path: artifactPath,
+        bytes: stat.size,
+        timestamp,
+        next_action: 'avançar',
+      };
+    }
+  } catch (error) {
+    result = {
+      gate: 'G1',
+      status: 'blocked',
+      artifact_path: artifactPath,
+      timestamp,
+      error: `Artefato ausente ou ilegível: ${artifactPath}`,
+      cause: error.message,
+      next_action: 'corrigir_artefato',
+    };
+  }
+
+  patchGateResult(runId, 'G1', result);
+  return result;
+}
+
+function splitPrdSections(content) {
+  const sections = {};
+  let current = null;
+  const lines = content.split(/\r?\n/);
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const matched = Object.entries(SECTION_HEADING).find(([, regex]) => regex.test(line));
+    if (matched) current = matched[0];
+    if (current) {
+      sections[current] ??= [];
+      sections[current].push({ line: index + 1, text: line });
+    }
+  }
+
+  return sections;
+}
+
+function lineIsExcluded(line) {
+  return line.toLowerCase().includes('depende de plano');
+}
+
+function scanSectionPatterns(sections) {
+  const matches = [];
+
+  for (const [sectionKey, patterns] of Object.entries(PRD_PATTERNS)) {
+    const lines = sections[sectionKey] ?? [];
+    const sectionText = lines.map((line) => line.text).join('\n').trim();
+
+    if (sectionKey === 'section_5_decisions') {
+      const hasDecisionRows = /\|\s*D\d+\s*\|/.test(sectionText);
+      if (!hasDecisionRows) {
+        matches.push({
+          section: SECTION_LABELS[sectionKey],
+          pattern: '(empty or minimal content)',
+          line: lines[0]?.line ?? null,
+          excerpt: 'Seção sem decisão D* fechada.',
+          reason: 'Decisões de produto vazias ou mínimas bloqueiam planejamento.',
+        });
+      }
+    }
+
+    for (const { line, text } of lines) {
+      if (lineIsExcluded(text)) continue;
+      const lower = text.toLowerCase();
+      for (const pattern of patterns) {
+        if (lower.includes(pattern.toLowerCase())) {
+          matches.push({
+            section: SECTION_LABELS[sectionKey],
+            pattern,
+            line,
+            excerpt: text.trim().slice(0, 240),
+            reason: 'Padrão de ambiguidade bloqueante detectado.',
+          });
+        }
+      }
+    }
+  }
+
+  return matches;
+}
+
+function scanPrd(args = {}) {
+  const runId = validateRunId(args.run_id);
+  const prdPath = requiredString(args, 'prd_path');
+  const absolutePath = resolveConsumerPath(prdPath);
+  const timestamp = nowIso();
+  let result;
+
+  try {
+    const content = fs.readFileSync(absolutePath, 'utf8');
+    if (content.trim() === '') {
+      result = {
+        gate: 'G5',
+        status: 'blocked',
+        prd_path: prdPath,
+        timestamp,
+        blocking_count: 1,
+        blocking_matches: [{
+          section: 'documento',
+          pattern: '(empty file)',
+          line: null,
+          excerpt: '',
+          reason: 'PRD vazio não pode avançar como documento pronto.',
+        }],
+        next_action: 'entrevista',
+      };
+    } else {
+      const blockingMatches = scanSectionPatterns(splitPrdSections(content));
+      result = {
+        gate: 'G5',
+        status: blockingMatches.length === 0 ? 'passed' : 'blocked',
+        prd_path: prdPath,
+        timestamp,
+        blocking_count: blockingMatches.length,
+        blocking_matches: blockingMatches,
+        next_action: blockingMatches.length === 0 ? 'avançar' : 'entrevista',
+        message: blockingMatches.length === 0
+          ? 'Ambiguity scan: 0 padrões bloqueantes — entrevista pulada'
+          : 'Ambiguity scan: padrões bloqueantes encontrados — entrevista obrigatória',
+      };
+    }
+  } catch (error) {
+    result = {
+      gate: 'G5',
+      status: 'blocked',
+      prd_path: prdPath,
+      timestamp,
+      blocking_count: 1,
+      blocking_matches: [{
+        section: 'documento',
+        pattern: '(read error)',
+        line: null,
+        excerpt: '',
+        reason: `PRD ilegível: ${prdPath}`,
+      }],
+      error: `PRD ausente ou ilegível: ${prdPath}`,
+      cause: error.message,
+      next_action: 'entrevista',
+    };
+  }
+
+  patchGateResult(runId, 'G5', result);
+  return result;
 }
 
 function toolResult(value) {
@@ -209,6 +439,32 @@ function toolsList() {
           },
         },
       },
+      {
+        name: 'atlas_verify_artifact',
+        description: 'Gate G1: verifica se artefato obrigatório existe em disco e é legível.',
+        inputSchema: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['run_id', 'artifact_path'],
+          properties: {
+            run_id: { type: 'string', minLength: 1 },
+            artifact_path: { type: 'string', minLength: 1 },
+          },
+        },
+      },
+      {
+        name: 'atlas_scan_prd',
+        description: 'Gate G5: escaneia PRD por padrões determinísticos de ambiguidade bloqueante.',
+        inputSchema: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['run_id', 'prd_path'],
+          properties: {
+            run_id: { type: 'string', minLength: 1 },
+            prd_path: { type: 'string', minLength: 1 },
+          },
+        },
+      },
     ],
   };
 }
@@ -233,6 +489,8 @@ function handleRequest(message) {
       const value =
         name === 'atlas_ping' ? ping() :
         name === 'atlas_run_state' ? runState(args) :
+        name === 'atlas_verify_artifact' ? verifyArtifact(args) :
+        name === 'atlas_scan_prd' ? scanPrd(args) :
         (() => { throw rpcError(-32601, `Tool desconhecida: ${name}`); })();
       logCall({ tool: name, run: args.run_id ?? null, status: 'ok' });
       return { id, result: toolResult(value) };
