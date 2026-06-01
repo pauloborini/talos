@@ -33,6 +33,13 @@ Se algum input estiver ausente, pare e informe a pendência estruturalmente.
 * Se `packages/templates/PLAN_TEMPLATE.md` ou `packages/templates/BOUNDARY_PRD_PLAN.md` não existir, abortar com erro claro: `Template canônico ausente: <nome-do-template>`.
 * Não usar fallback silencioso para cópias antigas, vault local ou templates globais.
 
+## Conformidade de Template via MCP
+
+* Para PRD ou PLAN validado como artefato documental da slice, consumir o resultado `atlas_verify_template_conformance`.
+* Resultado `passed` com `pending_count: 0` é pré-condição para aceitar conformidade documental.
+* Resultado ausente, `blocked` ou com pendências vira finding bloqueante contra o contrato da slice; citar categoria, pendência e `next_action`.
+* Não recriar regra paralela em texto quando o MCP já retornou pendências rastreáveis no estado da run.
+
 ---
 
 ## Regras de Operação

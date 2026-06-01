@@ -29,6 +29,32 @@ const SECTION_HEADING = {
   section_8_experience: /^##\s+8\.\s+/,
   section_9_contracts: /^##\s+9\.\s+/,
 };
+const REQUIRED_PRD_SECTIONS = [
+  ['1', 'Resumo'],
+  ['2', 'Problema'],
+  ['3', 'Objetivo'],
+  ['4', 'Escopo funcional'],
+  ['5', 'Decisões de produto'],
+  ['6', 'Regras e invariantes'],
+  ['7', 'Antes e depois'],
+  ['8', 'Fluxos e cenários UX'],
+  ['9', 'Contrato funcional'],
+  ['10', 'Critérios de aceite'],
+  ['11', 'Riscos'],
+  ['12', 'Dependências'],
+  ['13', 'Referências'],
+  ['14', 'Histórico'],
+];
+const REQUIRED_PLAN_SECTIONS = [
+  ['1', 'Tradução executiva'],
+  ['2', 'Invariantes de execução'],
+  ['3', 'Pitfalls'],
+  ['4', 'Estado na abertura da sprint'],
+  ['5', 'Tarefas de execução'],
+  ['6', 'Contratos técnicos'],
+  ['7', 'Slices'],
+  ['8', 'Validação e checklist'],
+];
 const REQUIRED_SKILL_ROLES = [
   'prd_generator',
   'prd_interview',
@@ -194,6 +220,7 @@ function ping() {
       'atlas_run_state',
       'atlas_verify_artifact',
       'atlas_scan_prd',
+      'atlas_verify_template_conformance',
       'atlas_preflight',
       'atlas_lock_family',
       'atlas_lock_dispatch',
@@ -276,6 +303,32 @@ function patchGateResult(runId, gate, result) {
     phase: previous?.phase ?? 'gates',
     status: result.status === 'passed' ? 'gate_passed' : 'gate_blocked',
     summary: `${gate}: ${result.status}`,
+    data,
+  });
+}
+
+function patchTemplateConformanceResult(runId, result) {
+  let previous = null;
+  try {
+    previous = readState(runId);
+  } catch (error) {
+    if (error.code !== -32004) throw error;
+  }
+
+  const data = {
+    ...(previous?.data ?? {}),
+    template_conformance: redact(result),
+    gates: {
+      ...(previous?.data?.gates ?? {}),
+      template_conformance: redact(result),
+    },
+  };
+
+  return upsertState({
+    run_id: runId,
+    phase: previous?.phase ?? 'template_conformance',
+    status: result.status === 'passed' ? 'template_conformance_passed' : 'template_conformance_blocked',
+    summary: `template_conformance: ${result.status}`,
     data,
   });
 }
@@ -517,6 +570,191 @@ function scanPrd(args = {}) {
   }
 
   patchGateResult(runId, 'G5', result);
+  return result;
+}
+
+function collectHeadings(content) {
+  const headings = new Map();
+  for (const [index, line] of content.split(/\r?\n/).entries()) {
+    const match = /^##\s+(\d+)\.\s+(.+?)\s*$/.exec(line);
+    if (match) headings.set(match[1], { title: match[2], line: index + 1 });
+  }
+  return headings;
+}
+
+function hasRequiredStatus(content, requiredStatus) {
+  const regex = new RegExp(`\\|\\s*\\*\\*Status\\*\\*\\s*\\|\\s*${requiredStatus.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\|`, 'i');
+  return regex.test(content);
+}
+
+function conformancePending(category, item, line, message, nextAction = 'corrigir_artefato') {
+  return { category, item, line, message, next_action: nextAction };
+}
+
+function verifyRequiredSections(headings, requiredSections) {
+  return requiredSections
+    .filter(([number]) => !headings.has(number))
+    .map(([number, title]) => conformancePending(
+      'seção_obrigatória',
+      `§${number} ${title}`,
+      null,
+      `Seção obrigatória ausente: §${number} ${title}`,
+    ));
+}
+
+function verifyPrdConformance(content, requiredStatus) {
+  const pendencies = verifyRequiredSections(collectHeadings(content), REQUIRED_PRD_SECTIONS);
+
+  if (requiredStatus && !hasRequiredStatus(content, requiredStatus)) {
+    pendencies.push(conformancePending(
+      'status',
+      requiredStatus,
+      null,
+      `Status documental requerido ausente: ${requiredStatus}`,
+      'ajustar_status_documental',
+    ));
+  }
+
+  if (!/\|\s*D\d+\s*\|/.test(content)) {
+    pendencies.push(conformancePending(
+      'decisões',
+      'D*',
+      null,
+      'PRD sem decisões D* fechadas.',
+      'registrar_decisoes_fechadas',
+    ));
+  }
+
+  for (const group of ['Produto', 'UX', 'Dados', 'Regressão de produto']) {
+    if (!new RegExp(`\\*\\*${group}\\*\\*`, 'i').test(content)) {
+      pendencies.push(conformancePending(
+        'critérios_de_aceite',
+        group,
+        null,
+        `Grupo de critérios ausente: ${group}`,
+        'completar_criterios_de_aceite',
+      ));
+    }
+  }
+
+  const checkboxCount = (content.match(/^- \[[ xX]\]\s+\S/gm) ?? []).length;
+  if (checkboxCount === 0) {
+    pendencies.push(conformancePending(
+      'critérios_de_aceite',
+      'checkboxes',
+      null,
+      'Critérios de aceite observáveis não encontrados.',
+      'completar_criterios_de_aceite',
+    ));
+  }
+
+  return pendencies;
+}
+
+function verifyPlanConformance(content) {
+  const pendencies = verifyRequiredSections(collectHeadings(content), REQUIRED_PLAN_SECTIONS);
+
+  if (!/\|\s*\*\*PRD\*\*\s*\|/.test(content)) {
+    pendencies.push(conformancePending(
+      'referência_prd',
+      'PRD',
+      null,
+      'Plano sem link/campo PRD no cabeçalho.',
+      'vincular_prd',
+    ));
+  }
+
+  if (!/####\s+T\d+\./.test(content)) {
+    pendencies.push(conformancePending(
+      'tarefas',
+      'T01..Tn',
+      null,
+      'Plano sem tarefas numeradas T01..Tn.',
+      'criar_tarefas_numeradas',
+    ));
+  }
+
+  if (!/BOUNDARY_PRD_PLAN\.md/.test(content)) {
+    pendencies.push(conformancePending(
+      'boundary',
+      'BOUNDARY_PRD_PLAN.md',
+      null,
+      'Plano sem referência à fronteira PRD/PLAN.',
+      'vincular_boundary',
+    ));
+  }
+
+  return pendencies;
+}
+
+function verifyTemplateConformance(args = {}) {
+  const runId = validateRunId(args.run_id);
+  const artifactPath = requiredString(args, 'artifact_path');
+  const artifactType = requiredString(args, 'artifact_type');
+  if (!['prd', 'plan'].includes(artifactType)) {
+    throw rpcError(-32602, 'artifact_type inválido: use prd ou plan');
+  }
+
+  const requiredStatus = optionalString(args, 'required_status');
+  const absolutePath = resolveConsumerPath(artifactPath);
+  const timestamp = nowIso();
+  let result;
+
+  try {
+    const content = fs.readFileSync(absolutePath, 'utf8');
+    if (content.trim() === '') {
+      result = {
+        gate: 'template_conformance',
+        status: 'blocked',
+        artifact_type: artifactType,
+        artifact_path: artifactPath,
+        timestamp,
+        pending_count: 1,
+        pendencies: [conformancePending(
+          'documento',
+          'arquivo_vazio',
+          null,
+          'Artefato vazio não pode passar em conformidade.',
+        )],
+        next_action: 'corrigir_artefato',
+      };
+    } else {
+      const pendencies = artifactType === 'prd'
+        ? verifyPrdConformance(content, requiredStatus)
+        : verifyPlanConformance(content);
+      result = {
+        gate: 'template_conformance',
+        status: pendencies.length === 0 ? 'passed' : 'blocked',
+        artifact_type: artifactType,
+        artifact_path: artifactPath,
+        required_status: requiredStatus ?? null,
+        timestamp,
+        pending_count: pendencies.length,
+        pendencies,
+        next_action: pendencies.length === 0 ? 'avançar' : pendencies[0].next_action,
+      };
+    }
+  } catch (error) {
+    result = {
+      gate: 'template_conformance',
+      status: 'blocked',
+      artifact_type: artifactType,
+      artifact_path: artifactPath,
+      timestamp,
+      pending_count: 1,
+      pendencies: [conformancePending(
+        'leitura',
+        artifactPath,
+        null,
+        `Artefato ausente ou ilegível: ${artifactPath}`,
+      )],
+      error: `Artefato ausente ou ilegível: ${artifactPath}`,
+      cause: error.message,
+      next_action: 'corrigir_artefato',
+    };
+  }
+
+  patchTemplateConformanceResult(runId, result);
   return result;
 }
 
@@ -1073,6 +1311,21 @@ function toolsList() {
         },
       },
       {
+        name: 'atlas_verify_template_conformance',
+        description: 'Gate de conformidade: valida PRD ou plano contra o template canônico aplicável e registra pendências acionáveis.',
+        inputSchema: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['run_id', 'artifact_path', 'artifact_type'],
+          properties: {
+            run_id: { type: 'string', minLength: 1 },
+            artifact_path: { type: 'string', minLength: 1 },
+            artifact_type: { type: 'string', enum: ['prd', 'plan'] },
+            required_status: { type: 'string' },
+          },
+        },
+      },
+      {
         name: 'atlas_preflight',
         description: 'Gate G10: valida família, modo e skills oficiais pela config empacotada, travando a rota da run.',
         inputSchema: {
@@ -1156,6 +1409,7 @@ function handleRequest(message) {
         name === 'atlas_run_state' ? runState(args) :
         name === 'atlas_verify_artifact' ? verifyArtifact(args) :
         name === 'atlas_scan_prd' ? scanPrd(args) :
+        name === 'atlas_verify_template_conformance' ? verifyTemplateConformance(args) :
         name === 'atlas_preflight' ? preflight(args) :
         name === 'atlas_lock_family' ? lockFamily(args) :
         name === 'atlas_lock_dispatch' ? lockDispatch(args) :
