@@ -63,13 +63,23 @@ Sequência completa: PRD generation → validação → entrevista (condicional)
 ```yaml
 full:
   sequence:
-    - prd_generator          # artefato: PRD_*.md          (gate G1)
-    - validate_prd           # scan determinístico         (gate G5)
-    - prd_interview (if ambiguidades OR --interview flag)   # artefato: PRD_*.md atualizado (gate G1)
-    - plan_handoff           # artefato: PLAN_*.md          (gate G1+G2)
-    - validate_plan
-    - plan_execute (com task-validator frio via sub-agent)  # artefato: diff + relatório validador (gate G3+G4)
-    - slice_review (if --review flag)
+    - atlas_ping             # MCP vivo e capacidades exigidas
+    - atlas_preflight        # G10: família/modo/skills oficiais
+    - prd_generator          # artefato: PRD_*.md
+    - atlas_verify_artifact  # G1: PRD em disco
+    - atlas_scan_prd         # G5: scan determinístico
+    - atlas_verify_template_conformance # TC: PRD conforme template
+    - prd_interview (if MCP blocked OR --interview flag) # reexecuta G1/G5/TC
+    - atlas_lock_dispatch(start: plan_handoff)
+    - plan_handoff           # artefato: PLAN_*.md
+    - atlas_verify_artifact  # G1: PLAN em disco
+    - atlas_verify_template_conformance # TC: PLAN conforme template
+    - atlas_lock_dispatch(complete: plan_handoff)
+    - atlas_assert_after_plan # G11
+    - atlas_lock_dispatch(start: plan_execute)
+    - plan_execute (com task-validator frio via sub-agent)
+    - atlas_lock_dispatch(complete: plan_execute, validator_status: passed)
+    - slice_review (if --review flag, via atlas_lock_dispatch)
   required_artifacts: [PRD_*.md, PLAN_*.md, code_diff, validator_report]
   hard_gates: [G1, G2, G3, G4, G5, G6, G7, G8, G9, G10, G11]
   subagent_order: [prd_generator, plan_handoff, plan_execute → task-validator, slice_review (if --review)]
@@ -88,11 +98,17 @@ Sequência enxuta: PRD → validação → entrevista (condicional) → executor
 ```yaml
 direct:
   sequence:
-    - prd_generator (ou usa existente)   # artefato: PRD_*.md (gate G1)
-    - validate_prd                       # scan determinístico (gate G5)
-    - prd_interview (if ambiguidades OR --interview flag)
-    - plan_execute (sem handoff, task-validator frio via sub-agent)  # artefato: diff + relatório (gate G3+G4)
-    - slice_review (if --review flag)
+    - atlas_ping
+    - atlas_preflight
+    - prd_generator (ou usa existente)
+    - atlas_verify_artifact
+    - atlas_scan_prd
+    - atlas_verify_template_conformance
+    - prd_interview (if MCP blocked OR --interview flag)
+    - atlas_lock_dispatch(start: plan_execute)
+    - plan_execute (sem handoff, task-validator frio via sub-agent)
+    - atlas_lock_dispatch(complete: plan_execute, validator_status: passed)
+    - slice_review (if --review flag, via atlas_lock_dispatch)
   required_artifacts: [PRD_*.md, code_diff, validator_report]
   hard_gates: [G1, G3, G4, G5, G6, G7, G8, G9, G10]   # G2 não se aplica: direct não produz PLAN_*.md por design
   subagent_order: [prd_generator, plan_execute → task-validator, slice_review (if --review)]
@@ -185,6 +201,9 @@ hard_gates:
   G5_deterministic_scan:
     rule: "ver validation.skip_rule — pular entrevista só com 0 padrões logados"
     applies: prd_validation
+  TC_template_conformance:
+    rule: "PRD e PLAN só avançam com atlas_verify_template_conformance status passed e pending_count 0; pendência bloqueia com next_action"
+    applies: [prd_validation, plan_validation]
   G6_verified_status:
     rule: "✅ só após confirmar artefato em disco; artefato exigido ausente => status 'incomplete', nunca 'completed'"
     applies: output
@@ -222,6 +241,17 @@ dispatch_policy:
   orchestrator_tools_after_phase0: [dispatch_subagent, read_artifact, emit_output]
   orchestrator_forbidden: [edit_file, write_code, mutating_bash, parallel_impl]
   full_after_plan_next_action: dispatch_plan_execute_blocking
+  mcp_required: true
+  no_silent_fallback: true
+
+mcp_gate_sources:
+  preflight: [atlas_ping, atlas_preflight, atlas_lock_family]
+  prd_artifact: [atlas_verify_artifact]
+  prd_scan: [atlas_scan_prd]
+  template_conformance: [atlas_verify_template_conformance]
+  dispatch: [atlas_lock_dispatch]
+  after_plan: [atlas_assert_after_plan]
+  output_ledger: "cada status relevante cita tool MCP, gate/status e next_action quando bloqueado"
 ```
 
 ---
@@ -364,11 +394,15 @@ Todos os modos retornam:
 🚀 Output: <summary 1-2 linhas>
 
 Status:
-  ✅/❌ PRD valid
-  ✅/❌ Ambiguidades (resolvidas/pendentes)
-  ✅/❌ Plano generated (se aplicável)
+  ✅/❌ Preflight: <status> [MCP: atlas_preflight / G10]
+  ✅/❌ PRD artifact: <status> [MCP: atlas_verify_artifact / G1]
+  ✅/❌ Ambiguity scan: <blocking_count> padrões [MCP: atlas_scan_prd / G5]
+  ✅/❌ Template conformance: <status> [MCP: atlas_verify_template_conformance / TC]
+  ✅/❌ Plan artifact: <status|not applicable> [MCP: atlas_verify_artifact + atlas_verify_template_conformance]
+  ✅/❌ Dispatch execute: <status> [MCP: atlas_lock_dispatch / G7+G8]
+  ✅/❌ After plan: <status|not applicable> [MCP: atlas_assert_after_plan / G11]
   ✅/❌ Executor output ready (obrigatório em full/direct; sem executor => incomplete)
-  ⏭️  Slice review: (executed/not executed)
+  ⏭️  Slice review: <executed|not applicable> [MCP: atlas_lock_dispatch ou mode/flag]
 
 Próximo passo:
   - [ ] Validar output
@@ -376,7 +410,7 @@ Próximo passo:
   - [ ] Avançar para próxima sprint
 ```
 
-Regra de status: em `full`, `completed` exige `PLAN_*.md` verificado **e** retorno de `plan_execute`. `PLAN_*.md` sem executor = `incomplete` por G11.
+Regra de status: em `full`, `completed` exige resultado MCP `passed` para PRD, plano, conformidade, dispatch e retorno de `plan_execute`. `PLAN_*.md` sem executor = `incomplete` por G11. Resultado MCP ausente, indisponível ou bloqueante = `aborted`, com tool/gate/status/`next_action` no ledger.
 
 ---
 
