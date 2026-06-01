@@ -1,3 +1,3 @@
-Script de build (`build-plugins.sh`) que gera os `.plugin` em `dist/` a partir de `packages/` + `plugin-manifests/`.
+`build-plugins.sh` lê `VERSION`, monta bundle único (skills + orquestrador + templates) e gera `dist/atlas-workflow-{claude,codex}.plugin`.
 Preenchida por S02.
 Ver `.app-vault/docs/BACKLOG_MESTRE.md` §7.

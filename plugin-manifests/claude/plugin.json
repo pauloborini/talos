@@ -1,0 +1,17 @@
+{
+  "name": "atlas-workflow-orchestrator",
+  "version": "__VERSION__",
+  "description": "Orquestra pipelines de desenvolvimento de features no Atlas (PRD, validação, entrevista, plano, execução, review). Bundle único: 21 skills (claude/cursor/codex) + orquestrador + 5 templates canônicos. Pipeline orientado a artefato com gates G1–G11.",
+  "author": {
+    "name": "Paulo Borini"
+  },
+  "keywords": [
+    "atlas",
+    "workflow",
+    "orchestration",
+    "prd",
+    "planning",
+    "execution",
+    "automation"
+  ]
+}
