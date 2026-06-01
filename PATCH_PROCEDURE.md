@@ -1,10 +1,10 @@
 # Procedimento de Patch
 
-Use este procedimento em todo patch que altera o plugin, seus manifests, documentacao operacional ou artefato empacotado.
+Use este procedimento em todo patch que altera o plugin, seus manifests, documentacao operacional ou artefato empacotado da linha v0.2.
 
 ## Objetivo
 
-Garantir que versionamento, changelog, fonte Claude, copia Codex, pacote `.plugin` e validacoes fiquem sempre sincronizados e rastreaveis.
+Garantir que versionamento, changelog, manifests por host, pacotes `.plugin`, checksums e validacoes fiquem sempre sincronizados e rastreaveis.
 
 ## Classificacao do patch
 
@@ -23,25 +23,22 @@ Se o patch for `docs` ou `tooling`, changelog raiz e obrigatorio; bump do plugin
 
 Atualizar todos:
 
-- `README.md`: tabela do plugin.
-- `atlas-workflow-orchestrator/.claude-plugin/plugin.json`: campo `version`.
-- `plugins/atlas-workflow-orchestrator/.codex-plugin/plugin.json`: campo `version`.
-- `atlas-workflow-orchestrator/README.md`: `Plugin version`, `Last updated` se aplicavel, e bloco `Novidades vX.Y.Z`.
-- `plugins/atlas-workflow-orchestrator/README.md`: mesmo conteudo do README fonte.
-- `atlas-workflow-orchestrator/skills/atlas-workflow-orchestrator/SKILL.md`: banner inicial se mencionar versao/contrato atual, e `Changelog`.
-- `plugins/atlas-workflow-orchestrator/skills/atlas-workflow-orchestrator/SKILL.md`: mesmo conteudo da skill fonte.
-- `atlas-workflow-orchestrator/commands/workflow.md`: atualizar versao citada se o resumo dos gates/contrato mudou.
-- `plugins/atlas-workflow-orchestrator/commands/workflow.md`: mesmo conteudo do comando fonte.
-- `CHANGELOG.md`: entrada do patch, com tipo, impacto e arquivos afetados.
+- `VERSION`: semver publico unico.
+- `README.md`: versao atual, artefatos, instalacao e resultado esperado.
+- `plugin-manifests/claude/plugin.json`: manter `__VERSION__` injetavel pelo build.
+- `plugin-manifests/codex/plugin.json`: manter `__VERSION__` injetavel pelo build.
+- `packages/orchestrator/README.md`: atualizar se o contrato do orquestrador mudar.
+- `packages/orchestrator/skills/atlas-workflow-orchestrator/SKILL.md`: atualizar banner/changelog se o runtime mudar.
+- `packages/orchestrator/commands/workflow.md`: atualizar se o resumo dos gates/contrato mudar.
+- `CHANGELOG.md`: entrada do patch, com tipo, impacto, arquivos afetados e validacoes.
+- `dist/atlas-workflow-claude.plugin`, `dist/atlas-workflow-codex.plugin` e `dist/SHA256SUMS`: regenerar via `build/build-plugins.sh`.
 
 Atualizar se tocados:
 
-- `atlas-workflow-orchestrator/atlas_workflows_config.md`.
-- `plugins/atlas-workflow-orchestrator/atlas_workflows_config.md`.
-- `atlas-workflow-orchestrator/defaults/**` e `plugins/atlas-workflow-orchestrator/defaults/**`.
-- `atlas-workflow-orchestrator/references/**` e `plugins/atlas-workflow-orchestrator/references/**`.
-- `.claude-plugin/marketplace.json`.
-- `.agents/plugins/marketplace.json`.
+- `packages/orchestrator/atlas_workflows_config.md`.
+- `packages/orchestrator/defaults/**`.
+- `packages/orchestrator/references/**`.
+- `.github/workflows/release.yml`.
 - `raycast/README.md`.
 - `raycast/atlas-workflow-snippets.json`.
 
@@ -58,64 +55,63 @@ Todo patch precisa registrar:
 - arquivos/artefatos atualizados;
 - validacoes executadas.
 
-Para patches `runtime`, registrar o mesmo resumo tambem no changelog da `SKILL.md`.
+Para patches `runtime`, registrar o mesmo resumo tambem no changelog da `packages/orchestrator/skills/atlas-workflow-orchestrator/SKILL.md`.
 
 Para patches `packaging`, registrar tambem no README do plugin.
 
 ## Regra de sincronizacao
 
-Sempre que editar arquivos sob `atlas-workflow-orchestrator/`, sincronizar o equivalente sob `plugins/atlas-workflow-orchestrator/`.
+`packages/` e a raiz do repo sao a fonte unica da v0.2. `archive/v0.1.10/` e rollback historico e nao deve ser sincronizado em patches v0.2.
 
-Pares que devem bater:
+Os manifests sao intencionalmente diferentes por host e recebem a versao por injecao no build:
 
-- `atlas-workflow-orchestrator/README.md`
-- `plugins/atlas-workflow-orchestrator/README.md`
-- `atlas-workflow-orchestrator/atlas_workflows_config.md`
-- `plugins/atlas-workflow-orchestrator/atlas_workflows_config.md`
-- `atlas-workflow-orchestrator/commands/workflow.md`
-- `plugins/atlas-workflow-orchestrator/commands/workflow.md`
-- `atlas-workflow-orchestrator/skills/atlas-workflow-orchestrator/SKILL.md`
-- `plugins/atlas-workflow-orchestrator/skills/atlas-workflow-orchestrator/SKILL.md`
-
-Os manifests sao intencionalmente diferentes por host:
-
-- `atlas-workflow-orchestrator/.claude-plugin/plugin.json`
-- `plugins/atlas-workflow-orchestrator/.codex-plugin/plugin.json`
+- `plugin-manifests/claude/plugin.json`
+- `plugin-manifests/codex/plugin.json`
 
 ## Regra de pacote
 
-Se qualquer arquivo em `atlas-workflow-orchestrator/` mudar, regenerar:
+Se qualquer arquivo em `packages/`, `plugin-manifests/`, `build/`, `hooks/`, docs de instalacao/release ou contrato empacotado mudar, regenerar:
 
 ```bash
-zip -r atlas-workflow-orchestrator.plugin atlas-workflow-orchestrator
+rtk build/build-plugins.sh
 ```
 
 Depois validar:
 
 ```bash
-rtk unzip -t atlas-workflow-orchestrator.plugin
-rtk unzip -p atlas-workflow-orchestrator.plugin atlas-workflow-orchestrator/.claude-plugin/plugin.json
+(cd dist && rtk shasum -a 256 -c SHA256SUMS)
+rtk unzip -t dist/atlas-workflow-claude.plugin
+rtk unzip -t dist/atlas-workflow-codex.plugin
+rtk unzip -p dist/atlas-workflow-claude.plugin .claude-plugin/plugin.json
+rtk unzip -p dist/atlas-workflow-codex.plugin .codex-plugin/plugin.json
 ```
+
+Release operacional:
+
+1. Fechar PR/commit com build e checksums atualizados.
+2. Criar tag anotada `vX.Y.Z` apenas quando release externa estiver autorizada.
+3. Push da tag aciona `.github/workflows/release.yml`.
+4. Conferir que os assets publicados sao `atlas-workflow-claude.plugin`, `atlas-workflow-codex.plugin` e `SHA256SUMS`.
+5. Conferir checksum dos assets baixados contra `SHA256SUMS`.
 
 ## Checklist de validacao
 
 Rodar no minimo:
 
 ```bash
-rtk jq . atlas-workflow-orchestrator/.claude-plugin/plugin.json
-rtk jq . plugins/atlas-workflow-orchestrator/.codex-plugin/plugin.json
-rtk unzip -t atlas-workflow-orchestrator.plugin
-rtk diff -qr atlas-workflow-orchestrator/README.md plugins/atlas-workflow-orchestrator/README.md
-rtk diff -qr atlas-workflow-orchestrator/atlas_workflows_config.md plugins/atlas-workflow-orchestrator/atlas_workflows_config.md
-rtk diff -qr atlas-workflow-orchestrator/commands/workflow.md plugins/atlas-workflow-orchestrator/commands/workflow.md
-rtk diff -qr atlas-workflow-orchestrator/skills/atlas-workflow-orchestrator/SKILL.md plugins/atlas-workflow-orchestrator/skills/atlas-workflow-orchestrator/SKILL.md
+rtk build/build-plugins.sh
+(cd dist && rtk shasum -a 256 -c SHA256SUMS)
+rtk unzip -t dist/atlas-workflow-claude.plugin
+rtk unzip -t dist/atlas-workflow-codex.plugin
+rtk unzip -p dist/atlas-workflow-claude.plugin .claude-plugin/plugin.json
+rtk unzip -p dist/atlas-workflow-codex.plugin .codex-plugin/plugin.json
 ```
 
 Rodar buscas direcionadas conforme o patch. Exemplos:
 
 ```bash
-rtk rg -n "vX.Y.Z|Plugin version|version" .
-rtk rg -n "antigravity|futuro|fallback|cross-family" atlas-workflow-orchestrator plugins/atlas-workflow-orchestrator README.md
+rtk rg -n "vX.Y.Z|version|0\\.2\\." .
+rtk rg -n "standalone|marketplace|Cursor|checksum|SHA256SUMS" README.md PATCH_PROCEDURE.md CHANGELOG.md
 ```
 
 ## Template de entrada no changelog
@@ -144,10 +140,10 @@ Validacao:
 
 Pare e corrija antes de finalizar se:
 
-- versao divergir entre manifests;
-- README fonte divergir da copia Codex sem motivo;
-- skill fonte divergir da copia Codex sem motivo;
-- comando fonte divergir da copia Codex sem motivo;
-- config fonte divergir da copia Codex sem motivo;
+- `VERSION` divergir da tag de release;
+- versao injetada divergir entre manifests gerados;
+- checksums ausentes ou invalidos;
+- artefato Claude/Cursor ou Codex ausente;
 - changelog nao tiver entrada do patch;
-- pacote `.plugin` estiver desatualizado depois de mudanca em `atlas-workflow-orchestrator/`.
+- pacote `.plugin` estiver desatualizado depois de mudanca no bundle;
+- release externa for necessaria sem autorizacao explicita para tag/push/publicacao.

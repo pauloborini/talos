@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Atlas Workflow — build dos pacotes .plugin (Claude + Codex).
-# Lê VERSION, monta bundle único (21 skills + orquestrador + templates), gera 2 zips.
+# Atlas Workflow — build dos pacotes .plugin (Claude/Cursor + Codex).
+# Lê VERSION, monta bundle único (21 skills + orquestrador + templates), gera zips + checksums.
 # Idempotente; sem Node/npm. Aborta com exit != 0 em qualquer entrada faltante.
 
 set -euo pipefail
@@ -112,6 +112,12 @@ for h in "${HOSTS[@]}"; do
   build_host "$h"
 done
 
+(
+  cd "$DIST"
+  rm -f SHA256SUMS
+  shasum -a 256 atlas-workflow-*.plugin | LC_ALL=C sort > SHA256SUMS
+)
+
 rm -rf "$STAGE"
 
-echo "ok — dist/atlas-workflow-claude.plugin dist/atlas-workflow-codex.plugin"
+echo "ok — dist/atlas-workflow-claude.plugin dist/atlas-workflow-codex.plugin dist/SHA256SUMS"

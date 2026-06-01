@@ -1,0 +1,60 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate tag matches VERSION
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(tr -d '[:space:]' < VERSION)"
+          tag="${GITHUB_REF_NAME#v}"
+          test "$version" = "$tag"
+
+      - name: Build plugins
+        shell: bash
+        run: build/build-plugins.sh
+
+      - name: Extract release notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(tr -d '[:space:]' < VERSION)"
+          awk -v version="v${version}" '
+            $0 ~ "^## " version " - " { capture=1 }
+            capture && /^## / && $0 !~ "^## " version " - " { exit }
+            capture { print }
+          ' CHANGELOG.md > dist/RELEASE_NOTES.md
+          test -s dist/RELEASE_NOTES.md
+
+      - name: Verify artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f dist/atlas-workflow-claude.plugin
+          test -f dist/atlas-workflow-codex.plugin
+          test -f dist/SHA256SUMS
+          (cd dist && shasum -a 256 -c SHA256SUMS)
+          unzip -t dist/atlas-workflow-claude.plugin
+          unzip -t dist/atlas-workflow-codex.plugin
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: dist/RELEASE_NOTES.md
+          files: |
+            dist/atlas-workflow-claude.plugin
+            dist/atlas-workflow-codex.plugin
+            dist/SHA256SUMS
