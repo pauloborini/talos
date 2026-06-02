@@ -112,6 +112,21 @@ const HOST_ADAPTERS = {
     // Nativo compatível: subagente (.opencode/agents) + MCP local (opencode.json).
     capabilities_flags: { subagent_available: true, mcp_available: true, todo_available: false },
   },
+  pi: {
+    label: 'pi cli',
+    subagent_dispatch: {
+      mechanism: 'pi-subagents (@<name>)',
+      example: 'invocar o subagente atlas-task-validator (via pi-subagents) passando <state_path>',
+      registration: 'manifesto do package (pi-subagents); frontmatter name + description',
+    },
+    todo_tool: null,
+    hooks: { supported: false, mechanism: null },
+    // pi exige 2 deps externas obrigatórias (DEC-005): pi-mcp-adapter (MCP) e
+    // pi-subagents (subagente). O perfil declara a expectativa; a disponibilidade
+    // real é reportada em host_capabilities no preflight — ausente => hard-fail.
+    capabilities_flags: { subagent_available: true, mcp_available: true, todo_available: false },
+    required_deps: ['pi-mcp-adapter', 'pi-subagents'],
+  },
   generic: {
     label: 'Host genérico',
     subagent_dispatch: {
@@ -182,6 +197,7 @@ function capabilities(args = {}) {
     todo_tool: adapter.todo_tool,
     hooks: adapter.hooks,
     capabilities_flags: adapter.capabilities_flags,
+    required_deps: adapter.required_deps ?? [],
     prerequisites: PREREQUISITES,
     plan_paths: {
       write: '.atlas/plans/',

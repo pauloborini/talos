@@ -165,11 +165,48 @@ build_opencode() {
   cp -R "$stage" "$ROOT/hosts/opencode"
 }
 
+# Build do host pi (pi cli). Estrutura: agents/ (pi-subagents), skills/, atlas/
+# (runtime), mcp.json (pi-mcp-adapter, formato MCP padrão com ATLAS_HOST=pi).
+# Requer as 2 deps obrigatórias no host (DEC-005); doc de integração cobre.
+build_pi() {
+  local stage="$STAGE/pi"
+  local out="$DIST/atlas-workflow-pi.plugin"
+  echo "montando pi"
+  mkdir -p "$stage/agents" "$stage/skills" "$stage/atlas/packages"
+
+  cp -R "$ROOT/packages/mcp-server" "$stage/atlas/packages/"
+  rm -f "$stage/atlas/packages/mcp-server"/*.test.js
+  cp -R "$ROOT/packages/templates" "$stage/atlas/packages/"
+  cp -R "$ROOT/packages/orchestrator" "$stage/atlas/"
+  cp "$ROOT/VERSION" "$stage/atlas/VERSION"
+
+  cp -R "$ROOT/packages/skills/." "$stage/skills/"
+  rm -rf "$stage/skills/atlas-workflow-orchestrator"
+  cp -R "$ROOT/packages/orchestrator/skills/atlas-workflow-orchestrator" \
+    "$stage/skills/atlas-workflow-orchestrator"
+
+  # Subagente no formato pi-subagents (gerado do canônico)
+  node "$ROOT/build/gen-host-agent.mjs" pi "$stage/agents/atlas-task-validator.md"
+
+  # Config MCP pi (pi-mcp-adapter; formato MCP padrão; ATLAS_HOST=pi)
+  cp "$ROOT/plugin-manifests/pi/mcp.json" "$stage/mcp.json"
+
+  echo "zipando pi"
+  rm -f "$out"
+  ( cd "$stage" && find . -type f | LC_ALL=C sort | zip -X -q "$out" -@ )
+
+  echo "sincronizando catálogo pi em hosts/pi"
+  rm -rf "$ROOT/hosts/pi"
+  mkdir -p "$ROOT/hosts"
+  cp -R "$stage" "$ROOT/hosts/pi"
+}
+
 for h in "${HOSTS[@]}"; do
   build_host "$h"
 done
 
 build_opencode
+build_pi
 
 (
   cd "$DIST"
@@ -179,4 +216,4 @@ build_opencode
 
 rm -rf "$STAGE"
 
-echo "ok — dist/atlas-workflow-{claude,codex,opencode}.plugin dist/SHA256SUMS + hosts/opencode/"
+echo "ok — dist/atlas-workflow-{claude,codex,opencode,pi}.plugin dist/SHA256SUMS + hosts/{opencode,pi}/"

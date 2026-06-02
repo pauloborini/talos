@@ -76,6 +76,34 @@ test('HOST_NAMES inclui opencode', () => {
   assert.ok(HOST_NAMES.includes('opencode'));
 });
 
+test('detectHost: pi via ATLAS_HOST injetado pela config do pi-mcp-adapter', () => {
+  const r = detectHost({}, { ATLAS_HOST: 'pi' });
+  assert.equal(r.host, 'pi');
+});
+
+test('capabilities: perfil pi expõe required_deps obrigatórias (DEC-005)', () => {
+  const cap = capabilities({ host: 'pi' });
+  assert.equal(cap.host, 'pi');
+  assert.deepEqual(cap.required_deps, ['pi-mcp-adapter', 'pi-subagents']);
+  assert.equal(cap.capabilities_flags.todo_available, false);
+});
+
+test('capabilities: hosts sem deps externas têm required_deps vazio', () => {
+  for (const h of ['claude', 'codex', 'opencode', 'generic']) {
+    assert.deepEqual(capabilities({ host: h }).required_deps, []);
+  }
+});
+
+test('checkPrerequisites: pi sem pi-subagents é hard-fail com next_action pi', () => {
+  const r = checkPrerequisites({ host: 'pi', host_capabilities: { subagent_available: false } });
+  assert.equal(r.status, 'blocked');
+  assert.match(r.next_action, /pi-mcp-adapter/);
+});
+
+test('HOST_NAMES inclui pi', () => {
+  assert.ok(HOST_NAMES.includes('pi'));
+});
+
 test('capabilities: flags por host', () => {
   for (const h of ['claude', 'codex']) {
     const f = capabilities({ host: h }).capabilities_flags;
