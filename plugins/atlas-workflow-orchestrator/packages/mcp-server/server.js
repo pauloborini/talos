@@ -56,7 +56,7 @@ const REQUIRED_PLAN_SECTIONS = [
   ['8', 'Validação e checklist'],
 ];
 const WORKFLOW_CONFIG = {
-  path: 'builtin:atlas-workflow-v0.3.0',
+  path: 'builtin:atlas-workflow',
   skills: {
     prd_generator: 'atlas-sprint-prd-generator',
     prd_interview: 'atlas-prd-interview',
@@ -126,6 +126,9 @@ const HOST_ADAPTERS = {
     // real é reportada em host_capabilities no preflight — ausente => hard-fail.
     capabilities_flags: { subagent_available: true, mcp_available: true, todo_available: false },
     required_deps: ['pi-mcp-adapter', 'pi-subagents'],
+    // must_report: essenciais dependem de deps externas não-sondáveis pelo servidor.
+    // Fail-closed — só passam se o caller reportar disponibilidade real (não otimismo do perfil).
+    prereq_policy: 'must_report',
   },
   generic: {
     label: 'Host genérico',
@@ -139,6 +142,9 @@ const HOST_ADAPTERS = {
     // generic EXIGE subagente+MCP do host (DEC-004); host MCP-only sem subagente
     // fica fora de escopo e é rejeitado no preflight, não degradado.
     capabilities_flags: { subagent_available: true, mcp_available: true, todo_available: false },
+    // must_report: host desconhecido — o servidor não pode presumir subagente+MCP.
+    // Fail-closed — exige report afirmativo de disponibilidade.
+    prereq_policy: 'must_report',
   },
 };
 
@@ -148,11 +154,13 @@ const PREREQUISITES = {
   essential: ['subagent_available', 'mcp_available'],
   non_essential: ['todo_available'],
 };
+const PREREQUISITE_FLAGS = [...PREREQUISITES.essential, ...PREREQUISITES.non_essential];
 
 // Versão do contrato atlas_capabilities. Política: incremento aditivo (campos novos
 // opcionais) mantém compat — consumidores DEVEM ignorar campos desconhecidos.
 // Remoção/renomeação de campo ou mudança de semântica exige bump e nota de migração.
-// v1 → v2: adiciona capabilities_flags, hooks, prerequisites, known_hosts (aditivo).
+// v1 → v2: adiciona capabilities_flags, hooks, prerequisites, known_hosts,
+//   required_deps, prereq_policy (aditivo).
 const CAPABILITIES_SCHEMA_VERSION = 2;
 
 // Nomes de host derivados do registry — única fonte de verdade para enums de schema.
@@ -199,6 +207,9 @@ function capabilities(args = {}) {
     capabilities_flags: adapter.capabilities_flags,
     required_deps: adapter.required_deps ?? [],
     prerequisites: PREREQUISITES,
+    // 'must_report' avisa o orquestrador que DEVE apurar e reportar host_capabilities
+    // (subagente/MCP reais) no preflight — sem isso, o gate PREREQ falha-fechado.
+    prereq_policy: adapter.prereq_policy ?? 'self_evident',
     plan_paths: {
       write: '.atlas/plans/',
       read_order: ['.atlas/plans/', '.cursor/plans/', '.codex/plans/'],
@@ -211,34 +222,54 @@ function capabilities(args = {}) {
 }
 
 // Hard-fail de pré-requisitos de determinismo (DEC-004). Mescla as flags do perfil
-// do host com a disponibilidade real reportada pelo caller (`host_capabilities` —
-// ex.: pi sem pi-mcp-adapter/pi-subagents reporta subagent_available:false). Flag
-// essencial efetiva = false → blocked, qualquer tamanho de tarefa, sem degradação.
-// Capability não-essencial (todo) nunca bloqueia.
+// do host com a disponibilidade real reportada pelo caller (`host_capabilities`).
+//
+// Política por host (`prereq_policy`):
+//   - 'self_evident' (claude/codex/opencode, default): runtime nativo. Flag essencial
+//     vem do report quando presente, senão do perfil (otimista justificado: MCP-vivo
+//     prova-se no boot; subagente é nativo do plugin instalado).
+//   - 'must_report' (pi/generic): essencial depende de dep externa (pi) ou de host
+//     desconhecido (generic) — NÃO sondável pelo servidor. Fail-closed: a flag só
+//     conta como true se reportada explicitamente true; ausente/não-bool ⇒ false ⇒
+//     blocked. Converte a garantia de prosa do orquestrador em contrato.
+//
+// O merge é delimitado a PREREQUISITE_FLAGS (chave desconhecida no override é ignorada;
+// o additionalProperties:false do schema é enforçado na camada do client MCP, este
+// loop é a defesa server-side). Capability não-essencial (todo) nunca bloqueia.
 function checkPrerequisites(args = {}) {
   const { host } = detectHost(args);
-  const flags = { ...HOST_ADAPTERS[host].capabilities_flags };
+  const adapter = HOST_ADAPTERS[host];
+  const mustReport = adapter.prereq_policy === 'must_report';
   const reported = args.host_capabilities && typeof args.host_capabilities === 'object'
     ? args.host_capabilities
     : {};
-  for (const key of Object.keys(reported)) {
-    if (typeof reported[key] === 'boolean') flags[key] = reported[key];
+  const flags = {};
+  for (const key of PREREQUISITE_FLAGS) {
+    const reportedVal = typeof reported[key] === 'boolean' ? reported[key] : undefined;
+    if (mustReport && PREREQUISITES.essential.includes(key)) {
+      flags[key] = reportedVal === true;
+    } else {
+      flags[key] = reportedVal !== undefined ? reportedVal : adapter.capabilities_flags[key];
+    }
   }
   const missing = PREREQUISITES.essential.filter((key) => flags[key] !== true);
   if (missing.length === 0) {
     return { status: 'passed', host, effective_flags: flags, missing: [] };
   }
+  const unreported = mustReport && PREREQUISITES.essential.every(
+    (key) => typeof reported[key] !== 'boolean',
+  );
   return {
     status: 'blocked',
     host,
     effective_flags: flags,
     missing,
     error: `Pré-requisito de determinismo ausente no host '${host}': ${missing.join(', ')}`,
-    cause: 'host_sem_prerequisito_essencial',
+    cause: unreported ? 'host_nao_reportou_disponibilidade' : 'host_sem_prerequisito_essencial',
     impact: 'sem_isolamento_de_contexto_o_validator_perde_determinismo_em_tarefa_grande',
     next_action: host === 'pi'
-      ? 'instalar_pi-mcp-adapter_e_pi-subagents_e_reexecutar'
-      : 'usar_host_com_subagente_e_mcp_nativos_ou_instalar_as_dependencias',
+      ? 'instalar_pi-mcp-adapter_e_pi-subagents_e_reportar_host_capabilities'
+      : 'usar_host_com_subagente_e_mcp_nativos_ou_reportar_host_capabilities',
   };
 }
 
@@ -1545,9 +1576,11 @@ function toolsList() {
           properties: {
             run_id: { type: 'string', minLength: 1 },
             project_root: { type: 'string', minLength: 1 },
-            mode: { type: 'string', enum: ['full', 'direct', 'interview-only', 'interview_only'] },
+            mode: { type: 'string', enum: WORKFLOW_CONFIG.modes },
             expected_version: { type: 'string' },
             host: { type: 'string', enum: HOST_NAMES },
+            // additionalProperties:false é enforçado pelo client MCP; o servidor ainda
+            // delimita defensivamente o override a PREREQUISITE_FLAGS em checkPrerequisites.
             host_capabilities: {
               type: 'object',
               description: 'Disponibilidade real reportada pelo host (override das flags do perfil). Ex.: pi sem deps → {"subagent_available":false}.',

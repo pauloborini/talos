@@ -22,10 +22,11 @@ Duas metas inegociáveis, sempre juntas:
 
 ## Estado atual (2026-06)
 
-- Versão: `0.3.0`. Família única `atlas-*` (colapso de claude/cursor/codex). Breaking vs v0.2.0.
-- Hosts funcionando via GitHub público: **Claude Code** e **Codex** (instalação confirmada).
-- Camada de adapter: `atlas_capabilities` (MCP) detecta `claude`/`codex`/`generic`.
-- Expansão multi-host em andamento (opencode, pi cli) — backlog em `.app-vault/docs/BACKLOG_MESTRE_MULTIHOST.md`, branch `feature/multihost-expansion`.
+- Versão: `0.4.0`. Família única `atlas-*` (colapso de claude/cursor/codex). Breaking vs v0.2.0.
+- Cinco hosts: **Claude Code**, **Cursor**, **Codex App**, **opencode** e **pi cli**. Claude/Cursor/Codex via marketplace-from-source; opencode/pi via catálogo from-source (`hosts/`) com `build/install-host.sh` (1 comando). pi exige deps externas `pi-mcp-adapter` + `pi-subagents` (DEC-005).
+- Camada de adapter: `atlas_capabilities` (MCP, schema v2) detecta `claude`/`codex`/`opencode`/`pi`/`generic` (data-driven em `HOST_ADAPTERS`).
+- Determinismo: gate PREREQ no `atlas_preflight` é hard-fail (DEC-004). Hosts `must_report` (pi/generic) falham-fechado se o orquestrador não reportar `host_capabilities`; nativos (claude/codex/opencode) são `self_evident`.
+- Backlog da expansão: `.app-vault/docs/BACKLOG_MESTRE_MULTIHOST.md` (branch `feature/multihost-expansion`).
 
 ## Regras operacionais
 

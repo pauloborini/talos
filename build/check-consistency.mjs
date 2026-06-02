@@ -147,6 +147,19 @@ if (fs.existsSync(skillsDir)) {
   }
 }
 
+// Anti-regressão de prosa (S10/DEC-004 hardening): o fail-closed de PREREQ para hosts
+// must_report (pi/generic) depende do orquestrador apurar e reportar host_capabilities
+// no preflight. Se esse passo sumir do SKILL, a garantia de determinismo se perde
+// silenciosamente. O SKILL DEVE citar host_capabilities E atlas_preflight.
+const orchestratorSkill = read('packages/orchestrator/skills/atlas-workflow-orchestrator/SKILL.md');
+if (orchestratorSkill != null) {
+  for (const token of ['host_capabilities', 'atlas_preflight']) {
+    if (!orchestratorSkill.includes(token)) {
+      errors.push(`PREREQ prosa-regressão: SKILL do orquestrador não cita '${token}' (passo de report sustenta o fail-closed)`);
+    }
+  }
+}
+
 if (errors.length) {
   console.error('check-consistency: FALHOU');
   for (const e of errors) console.error(`  - ${e}`);

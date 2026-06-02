@@ -8,11 +8,14 @@ Resumo: expande o Atlas para arquitetura multi-host por adapter data-driven, adi
 
 Hosts suportados: `claude`, `cursor` (carona no manifest claude), `codex`, `opencode`, `pi`, `generic`.
 
-`atlas_capabilities` schema_version: **2** (aditivo — `capabilities_flags`, `hooks`, `prerequisites`, `required_deps`; consumidores devem ignorar campos desconhecidos).
+`atlas_capabilities` schema_version: **2** (aditivo — `capabilities_flags`, `hooks`, `prerequisites`, `required_deps`, `prereq_policy`; consumidores devem ignorar campos desconhecidos).
 
 Mudancas:
 - contrato `HostAdapter` data-driven em `HOST_ADAPTERS` (`capabilities_flags`, `hooks`, `prerequisites`) — adicionar host = adicionar entrada, sem ramo `if host==` (DEC-007);
 - gate `PREREQ` no `atlas_preflight`: pré-requisito essencial (subagente/MCP) ausente → hard-fail, qualquer tamanho, sem degradação/inline (DEC-004); `todo` não-essencial segue sem mirror;
+- **determinism hardening (fail-closed):** hosts `must_report` (pi/generic) só passam o PREREQ com `host_capabilities` afirmativo — sem report, falha-fechado (a garantia vira contrato, não otimismo do perfil). Nativos (claude/codex/opencode) são `self_evident`. `atlas_capabilities` expõe `prereq_policy`; override de `host_capabilities` delimitado às flags conhecidas no servidor; guard de prosa garante que o SKILL do orquestrador preserve o passo de report;
+- conformance com asserts reais: veredito do validator validado por `JSON.parse` (não só regex); célula de preflight PASS exige `status:passed`+`gate:G10`;
+- helper `build/install-host.sh <opencode|pi> <target>` (1 comando, idempotente) para install/update dos hosts sem marketplace CLI;
 - detecção de host data-driven (`HOST_DETECTORS`); enum dos schemas derivado de `HOST_ADAPTERS` (sem hardcode);
 - adapter **opencode**: perfil + `.opencode/` (agents/skills) + `opencode.json` (MCP local, `ATLAS_HOST=opencode`) + bundle + catálogo from-source `hosts/opencode/`;
 - adapter **pi**: perfil + 2 deps obrigatórias (`pi-mcp-adapter` + `pi-subagents`, DEC-005) + `mcp.json` + bundle + catálogo `hosts/pi/`;

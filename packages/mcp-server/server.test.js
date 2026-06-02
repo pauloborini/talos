@@ -124,7 +124,7 @@ test('checkPrerequisites: host qualificado passa', () => {
 });
 
 test('checkPrerequisites: subagente ausente é hard-fail', () => {
-  const r = checkPrerequisites({ host: 'generic', host_capabilities: { subagent_available: false } });
+  const r = checkPrerequisites({ host: 'generic', host_capabilities: { subagent_available: false, mcp_available: true } });
   assert.equal(r.status, 'blocked');
   assert.deepEqual(r.missing, ['subagent_available']);
 });
@@ -146,19 +146,57 @@ test('checkPrerequisites: override não-booleano é ignorado', () => {
 });
 
 test('generic: EXIGE subagente+MCP — host MCP-only (sem subagente) é hard-fail (DEC-004)', () => {
-  const r = checkPrerequisites({ host: 'generic', host_capabilities: { subagent_available: false } });
+  const r = checkPrerequisites({ host: 'generic', host_capabilities: { subagent_available: false, mcp_available: true } });
   assert.equal(r.status, 'blocked');
   assert.deepEqual(r.missing, ['subagent_available']);
 });
 
 test('generic: host sem MCP é hard-fail', () => {
-  const r = checkPrerequisites({ host: 'generic', host_capabilities: { mcp_available: false } });
+  const r = checkPrerequisites({ host: 'generic', host_capabilities: { subagent_available: true, mcp_available: false } });
   assert.equal(r.status, 'blocked');
+  assert.deepEqual(r.missing, ['mcp_available']);
 });
 
-test('generic: host com subagente+MCP passa (todo ausente não bloqueia)', () => {
-  const r = checkPrerequisites({ host: 'generic' });
+test('generic: host com subagente+MCP reportados passa (todo ausente não bloqueia)', () => {
+  const r = checkPrerequisites({ host: 'generic', host_capabilities: { subagent_available: true, mcp_available: true } });
   assert.equal(r.status, 'passed');
+});
+
+// Fail-closed (must_report): generic/pi sem report afirmativo são bloqueados — a
+// garantia de determinismo vira contrato, não otimismo do perfil.
+test('generic: sem host_capabilities é hard-fail (fail-closed)', () => {
+  const r = checkPrerequisites({ host: 'generic' });
+  assert.equal(r.status, 'blocked');
+  assert.deepEqual(r.missing, ['subagent_available', 'mcp_available']);
+  assert.equal(r.cause, 'host_nao_reportou_disponibilidade');
+});
+
+test('pi: sem host_capabilities é hard-fail (fail-closed)', () => {
+  const r = checkPrerequisites({ host: 'pi' });
+  assert.equal(r.status, 'blocked');
+  assert.deepEqual(r.missing, ['subagent_available', 'mcp_available']);
+  assert.equal(r.cause, 'host_nao_reportou_disponibilidade');
+  assert.match(r.next_action, /pi-mcp-adapter/);
+});
+
+test('pi: qualificado com report afirmativo passa', () => {
+  const r = checkPrerequisites({ host: 'pi', host_capabilities: { subagent_available: true, mcp_available: true } });
+  assert.equal(r.status, 'passed');
+  assert.deepEqual(r.missing, []);
+});
+
+test('override: chave desconhecida não vaza para effective_flags', () => {
+  const r = checkPrerequisites({ host: 'claude', host_capabilities: { foo: true } });
+  assert.equal(r.status, 'passed');
+  assert.equal(r.effective_flags.foo, undefined);
+});
+
+test('capabilities: prereq_policy must_report em pi/generic, self_evident nos nativos', () => {
+  assert.equal(capabilities({ host: 'pi' }).prereq_policy, 'must_report');
+  assert.equal(capabilities({ host: 'generic' }).prereq_policy, 'must_report');
+  for (const h of ['claude', 'codex', 'opencode']) {
+    assert.equal(capabilities({ host: h }).prereq_policy, 'self_evident');
+  }
 });
 
 test('PREREQUISITES: subagente e mcp são essenciais; todo não', () => {

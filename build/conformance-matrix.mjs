@@ -49,9 +49,14 @@ function verdictParseable(agentRel) {
   const blocks = [...text.matchAll(/```json\s*([\s\S]*?)```/g)].map((m) => m[1]);
   const block = blocks.find((b) => b.includes('"verdict"'));
   if (!block) return false;
-  // Bloco é template com placeholders <...>; valida que tem a chave verdict e
-  // estrutura de objeto (não exige JSON.parse por causa dos placeholders).
-  return /"verdict"\s*:/.test(block) && block.trim().startsWith('{');
+  // Bloco canônico é JSON válido (valores são strings/0, sem placeholders <...>).
+  // Parse real: prova que o contrato de veredito é JSON parseável de verdade.
+  try {
+    const parsed = JSON.parse(block);
+    return parsed && typeof parsed === 'object' && 'verdict' in parsed;
+  } catch {
+    return false;
+  }
 }
 
 const errors = [];
@@ -63,7 +68,7 @@ for (const { host, agent } of HOSTS) {
     { jsonrpc: '2.0', id: 1, method: 'initialize', params: {} },
     { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'atlas_ping', arguments: {} } },
     { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'atlas_capabilities', arguments: {} } },
-    { jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'atlas_preflight', arguments: { run_id: `conf-${host}-ok`, mode: 'direct', project_root: TMP } } },
+    { jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'atlas_preflight', arguments: { run_id: `conf-${host}-ok`, mode: 'direct', project_root: TMP, host_capabilities: { subagent_available: true, mcp_available: true } } } },
     { jsonrpc: '2.0', id: 5, method: 'tools/call', params: { name: 'atlas_preflight', arguments: { run_id: `conf-${host}-blk`, mode: 'direct', project_root: TMP, host_capabilities: { subagent_available: false } } } },
   ];
   const server = spawn('node', [SERVER], { env, cwd: TMP, stdio: ['pipe', 'pipe', 'ignore'] });
@@ -78,8 +83,8 @@ for (const { host, agent } of HOSTS) {
   (r[2] && r[2].status === 'alive') ? ok() : fail('ping != alive');
   // capabilities host + schema
   (r[3] && r[3].host === host && r[3].schema_version === 2) ? ok() : fail(`capabilities host '${r[3]?.host}' sv '${r[3]?.schema_version}'`);
-  // preflight PASS (não PREREQ; chega a um gate de modo/rota)
-  (r[4] && r[4].gate !== 'PREREQ') ? ok() : fail(`preflight PASS virou PREREQ (${JSON.stringify(r[4])})`);
+  // preflight PASS: prereq ok + rota travada no G10 (assert forte, não só !=PREREQ)
+  (r[4] && r[4].status === 'passed' && r[4].gate === 'G10') ? ok() : fail(`preflight PASS != G10/passed (${JSON.stringify(r[4])})`);
   // preflight PREREQ hard-fail simulado
   (r[5] && r[5].gate === 'PREREQ' && r[5].status === 'blocked') ? ok() : fail(`preflight hard-fail não disparou (${r[5]?.gate}/${r[5]?.status})`);
   // veredito parseável

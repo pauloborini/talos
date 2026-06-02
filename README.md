@@ -57,14 +57,20 @@ Clone local: troque a URL por `"/caminho/para/atlas-workflow"`.
 
 ### opencode
 
-Modelo de install é por config (não há marketplace CLI). A partir de um clone do repo, copie o catálogo from-source [`hosts/opencode/`](hosts/opencode/) para a raiz do seu projeto:
+Modelo de install é por config (não há marketplace CLI). A partir de um clone do repo, use o helper (1 comando, idempotente — rode de novo para **atualizar**):
+
+```bash
+/caminho/para/atlas-workflow/build/install-host.sh opencode .   # instala/atualiza na raiz do projeto
+```
+
+Ou manualmente, copiando o catálogo from-source [`hosts/opencode/`](hosts/opencode/):
 
 ```bash
 cp -R /caminho/para/atlas-workflow/hosts/opencode/.opencode ./.opencode
 cp /caminho/para/atlas-workflow/hosts/opencode/opencode.json ./opencode.json   # ou mescle no seu opencode.json
 ```
 
-O `opencode.json` registra o MCP `atlas-workflow` (`type:"local"`, `ATLAS_HOST=opencode`) e o subagente fica em `.opencode/agents/atlas-task-validator.md`. Reinicie o opencode; confirme com `atlas_ping`.
+O `opencode.json` registra o MCP `atlas-workflow` (`type:"local"`, `ATLAS_HOST=opencode`) e o subagente fica em `.opencode/agents/atlas-task-validator.md`. O comando do MCP é **relativo** (`.opencode/atlas/packages/mcp-server/server.js`), então o opencode deve iniciar com o **cwd na raiz** onde `.opencode/` foi copiado. Reinicie o opencode; confirme com `atlas_ping`.
 
 ### pi cli
 
@@ -77,13 +83,17 @@ npm i -g @mariozechner/pi-coding-agent
 #   pi-subagents     → subagentes isolados
 ```
 
-Depois copie o catálogo from-source [`hosts/pi/`](hosts/pi/) para o seu projeto e importe `mcp.json` no `pi-mcp-adapter`:
+Depois instale o catálogo from-source [`hosts/pi/`](hosts/pi/) com o helper (1 comando; idempotente para **atualizar**) e importe `mcp.json` no `pi-mcp-adapter`:
 
 ```bash
+/caminho/para/atlas-workflow/build/install-host.sh pi .   # instala/atualiza na raiz do projeto
+# ou manual:
 cp -R /caminho/para/atlas-workflow/hosts/pi/{agents,skills,atlas,mcp.json} ./
 ```
 
-`mcp.json` registra o server `atlas-workflow` (`ATLAS_HOST=pi`); o subagente `atlas-task-validator` vem por `pi-subagents`. Confirme com `atlas_ping`.
+`mcp.json` registra o server `atlas-workflow` (`ATLAS_HOST=pi`); o subagente `atlas-task-validator` vem por `pi-subagents`. O `args` do server é **relativo** (`atlas/packages/mcp-server/server.js`), então o `pi-mcp-adapter` deve lançar `node` com o **cwd na raiz** onde `atlas/` foi copiado. Confirme com `atlas_ping`.
+
+> **Determinismo (DEC-004):** pi e generic são hosts `must_report` — o orquestrador apura a disponibilidade real de subagente+MCP e a reporta em `host_capabilities` no preflight. Sem report afirmativo, o gate PREREQ falha-fechado (nunca degrada). `atlas_capabilities` expõe `prereq_policy` para o orquestrador saber disso.
 
 ### Desinstalar (testar de novo)
 
