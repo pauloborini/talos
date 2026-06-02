@@ -1,7 +1,0 @@
-interface:
-  display_name: "Codex Task Validator"
-  short_description: "Cold internal slice validator for codex-plan-execute"
-  default_prompt: "Use $codex-task-validator to validate the executed plan slice against the plan contract and return structured findings with a deterministic verdict."
-
-policy:
-  allow_implicit_invocation: true

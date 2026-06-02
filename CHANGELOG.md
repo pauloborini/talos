@@ -1,5 +1,46 @@
 # Changelog
 
+## v0.3.0 - 2026-06-01
+
+Tipo: runtime
+
+Resumo: refatora o Atlas Workflow Orchestrator para família única `atlas-*`, validator subagent e paths canônicos `.atlas/`.
+
+Mudancas:
+- colapsa a cadeia para 7 skills `atlas-*`;
+- remove o lock MCP de família e o parâmetro de família de `atlas_preflight`/`atlas_lock_dispatch`;
+- registra `atlas-task-validator` como subagent e define boundary `.atlas/state/<run_id>/<slice>.json`;
+- troca o veredito do validator para JSON estruturado;
+- promove `.atlas/plans/` e `.atlas/state/` como paths canônicos;
+- restringe `atlas-slice-review` à flag explícita `--review`;
+- atualiza README, manifests e docs operacionais para v0.3.
+
+Impacto:
+- breaking change para clientes v0.2 que ainda enviam parâmetro de família;
+- planos novos devem ser gravados em `.atlas/plans/`;
+- estado de run passa por `atlas_run_state` e fica em `.atlas/state/<run_id>/run.json`;
+- validator passa a decidir por JSON parseável, não por prosa;
+- subagente `atlas-task-validator` é registrado por host distinto: Claude via `agents/atlas-task-validator.md` (raiz), Codex via `agents/openai.yaml` por skill. Sem fonte única cross-host — manter `agents/atlas-task-validator.md` ↔ `packages/skills/atlas-task-validator/SKILL.md` sincronizados ao alterar o contrato do validator.
+
+Arquivos/artefatos:
+- `agents/atlas-task-validator.md` (novo — registro de subagente Claude);
+- `VERSION`;
+- `README.md`;
+- `CHANGELOG.md`;
+- `packages/mcp-server/server.js`;
+- `packages/skills/atlas-*/`;
+- `packages/templates/STATE_FILE_SCHEMA.md`;
+- `packages/orchestrator/`;
+- `hooks/claude/atlas-workflow-hook.js`;
+- `plugin-manifests/*/plugin.json`.
+
+Validacao:
+- `node -e "import('./packages/mcp-server/server.js')"`;
+- smoke MCP `tools/list`;
+- smoke MCP `atlas_run_state`;
+- greps finais de refs legadas, `§14`, variante orchestrated e lock MCP de família;
+- `git diff --check`.
+
 ## v0.2.0 - 2026-06-01
 
 Tipo: release
@@ -7,7 +48,7 @@ Tipo: release
 Resumo: publica a linha v0.2 do Atlas Workflow Orchestrator como plugin operacional reproduzivel.
 
 Mudancas:
-- consolida 21 skills, templates canonicos, orquestrador e MCP server em dois artefatos `.plugin`;
+- consolida as skills da linha v0.2, templates canonicos, orquestrador e MCP server em dois artefatos `.plugin`;
 - define `atlas-workflow-claude.plugin` como artefato para Claude Code e Cursor;
 - define `atlas-workflow-codex.plugin` como artefato para Codex;
 - adiciona checksums `SHA256SUMS` gerados pelo build;

@@ -2,7 +2,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-const RUN_DIR = '.atlas-run';
+const RUN_DIR = path.join('.atlas', 'state');
 const BLOCK = 2;
 const MUTATING_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
 const PLAN_ARTIFACT_RE = /(^|[/\\])PLAN_[^/\\]+\.md$/;
@@ -36,10 +36,10 @@ function readLatestState(cwd) {
   let files;
   try {
     files = fs.readdirSync(dir)
-      .filter((name) => name.endsWith('.json'))
-      .map((name) => path.join(dir, name));
+      .map((name) => path.join(dir, name, 'run.json'))
+      .filter((file) => fs.existsSync(file));
   } catch {
-    block('Nao foi possivel ler .atlas-run. Estado nao comprovado; hook nao aprova implicitamente.');
+    block('Nao foi possivel ler .atlas/state. Estado nao comprovado; hook nao aprova implicitamente.');
   }
 
   if (files.length === 0) return { active: false };
@@ -50,7 +50,7 @@ function readLatestState(cwd) {
       const stat = fs.statSync(file);
       if (!latest || stat.mtimeMs > latest.mtimeMs) latest = { file, mtimeMs: stat.mtimeMs };
     } catch {
-      block('Nao foi possivel inspecionar estado .atlas-run. Estado nao comprovado; hook nao aprova implicitamente.', { file });
+      block('Nao foi possivel inspecionar estado .atlas/state. Estado nao comprovado; hook nao aprova implicitamente.', { file });
     }
   }
 
@@ -59,7 +59,7 @@ function readLatestState(cwd) {
     if (!state?.data?.routing) return { active: false };
     return { active: true, file: latest.file, state };
   } catch {
-    block('Estado .atlas-run corrompido ou ilegivel. Proxima acao: recuperar o estado MCP antes de continuar.', { file: latest.file });
+    block('Estado .atlas/state corrompido ou ilegivel. Proxima acao: recuperar o estado MCP antes de continuar.', { file: latest.file });
   }
 }
 

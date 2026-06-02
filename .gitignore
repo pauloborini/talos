@@ -13,3 +13,4 @@ node_modules/
 
 # Estado de runs do orquestrador
 .atlas-run/
+.atlas/state/

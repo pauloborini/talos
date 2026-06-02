@@ -1,7 +1,0 @@
-interface:
-  display_name: "Codex Sprint PRD Generator"
-  short_description: "Gera PRDs de Sprint com prefixo codex-*"
-  default_prompt: "Use $codex-sprint-prd-generator para criar o PRD da sprint S01 com metadados de execução codex-* a partir do backlog mestre e do PRD template reais."
-
-policy:
-  allow_implicit_invocation: true
