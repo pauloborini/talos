@@ -145,6 +145,22 @@ test('checkPrerequisites: override não-booleano é ignorado', () => {
   assert.equal(r.status, 'passed');
 });
 
+test('generic: EXIGE subagente+MCP — host MCP-only (sem subagente) é hard-fail (DEC-004)', () => {
+  const r = checkPrerequisites({ host: 'generic', host_capabilities: { subagent_available: false } });
+  assert.equal(r.status, 'blocked');
+  assert.deepEqual(r.missing, ['subagent_available']);
+});
+
+test('generic: host sem MCP é hard-fail', () => {
+  const r = checkPrerequisites({ host: 'generic', host_capabilities: { mcp_available: false } });
+  assert.equal(r.status, 'blocked');
+});
+
+test('generic: host com subagente+MCP passa (todo ausente não bloqueia)', () => {
+  const r = checkPrerequisites({ host: 'generic' });
+  assert.equal(r.status, 'passed');
+});
+
 test('PREREQUISITES: subagente e mcp são essenciais; todo não', () => {
   assert.ok(PREREQUISITES.essential.includes('subagent_available'));
   assert.ok(PREREQUISITES.essential.includes('mcp_available'));
