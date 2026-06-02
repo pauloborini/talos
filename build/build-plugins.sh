@@ -126,9 +126,50 @@ JSON
   ( cd "$stage_host" && find . -type f | LC_ALL=C sort | zip -X -q "$out" -@ )
 }
 
+# Build do host opencode (estrutura nativa .opencode/ + opencode.json), distinta
+# do bundle plugin.json de claude/codex. Subagente gerado do canônico; MCP local
+# com ATLAS_HOST=opencode injetado (detecção determinística). Catálogo from-source
+# commitado em hosts/opencode/ (install via GitHub público — DEC-008).
+build_opencode() {
+  local stage="$STAGE/opencode"
+  local out="$DIST/atlas-workflow-opencode.plugin"
+  echo "montando opencode"
+  mkdir -p "$stage/.opencode/agents" "$stage/.opencode/skills" "$stage/.opencode/atlas/packages"
+
+  # Runtime bundlado sob .opencode/atlas/ (server lê ../../VERSION = .opencode/atlas/VERSION)
+  cp -R "$ROOT/packages/mcp-server" "$stage/.opencode/atlas/packages/"
+  rm -f "$stage/.opencode/atlas/packages/mcp-server"/*.test.js
+  cp -R "$ROOT/packages/templates" "$stage/.opencode/atlas/packages/"
+  cp -R "$ROOT/packages/orchestrator" "$stage/.opencode/atlas/"
+  cp "$ROOT/VERSION" "$stage/.opencode/atlas/VERSION"
+
+  # Skills (SKILL.md) sob .opencode/skills/
+  cp -R "$ROOT/packages/skills/." "$stage/.opencode/skills/"
+  rm -rf "$stage/.opencode/skills/atlas-workflow-orchestrator"
+  cp -R "$ROOT/packages/orchestrator/skills/atlas-workflow-orchestrator" \
+    "$stage/.opencode/skills/atlas-workflow-orchestrator"
+
+  # Subagente no formato opencode (gerado do agente canônico — fonte única do corpo)
+  node "$ROOT/build/gen-host-agent.mjs" opencode "$stage/.opencode/agents/atlas-task-validator.md"
+
+  # Config MCP opencode (mcp local, ATLAS_HOST=opencode)
+  cp "$ROOT/plugin-manifests/opencode/opencode.json" "$stage/opencode.json"
+
+  echo "zipando opencode"
+  rm -f "$out"
+  ( cd "$stage" && find . -type f | LC_ALL=C sort | zip -X -q "$out" -@ )
+
+  echo "sincronizando catálogo opencode em hosts/opencode"
+  rm -rf "$ROOT/hosts/opencode"
+  mkdir -p "$ROOT/hosts"
+  cp -R "$stage" "$ROOT/hosts/opencode"
+}
+
 for h in "${HOSTS[@]}"; do
   build_host "$h"
 done
+
+build_opencode
 
 (
   cd "$DIST"
@@ -138,4 +179,4 @@ done
 
 rm -rf "$STAGE"
 
-echo "ok — dist/atlas-workflow-claude.plugin dist/atlas-workflow-codex.plugin dist/SHA256SUMS"
+echo "ok — dist/atlas-workflow-{claude,codex,opencode}.plugin dist/SHA256SUMS + hosts/opencode/"

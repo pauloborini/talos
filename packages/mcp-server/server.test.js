@@ -52,6 +52,30 @@ test('capabilities: schema_version atual e campos do contrato v2', () => {
   assert.deepEqual(cap.known_hosts, HOST_NAMES);
 });
 
+test('detectHost: opencode via ATLAS_HOST injetado pelo packaging', () => {
+  const r = detectHost({}, { ATLAS_HOST: 'opencode' });
+  assert.equal(r.host, 'opencode');
+  assert.equal(r.detected_via, 'env:ATLAS_HOST');
+});
+
+test('capabilities: perfil opencode (subagente @, mcp local, sem todo)', () => {
+  const cap = capabilities({ host: 'opencode' });
+  assert.equal(cap.host, 'opencode');
+  assert.equal(cap.capabilities_flags.subagent_available, true);
+  assert.equal(cap.capabilities_flags.mcp_available, true);
+  assert.equal(cap.capabilities_flags.todo_available, false);
+  assert.equal(cap.todo_tool, null);
+  assert.match(cap.subagent_dispatch.registration, /\.opencode\/agents/);
+});
+
+test('checkPrerequisites: opencode qualificado passa', () => {
+  assert.equal(checkPrerequisites({ host: 'opencode' }).status, 'passed');
+});
+
+test('HOST_NAMES inclui opencode', () => {
+  assert.ok(HOST_NAMES.includes('opencode'));
+});
+
 test('capabilities: flags por host', () => {
   for (const h of ['claude', 'codex']) {
     const f = capabilities({ host: h }).capabilities_flags;

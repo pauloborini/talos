@@ -99,6 +99,19 @@ const HOST_ADAPTERS = {
     hooks: { supported: false, mechanism: null },
     capabilities_flags: { subagent_available: true, mcp_available: true, todo_available: true },
   },
+  opencode: {
+    label: 'opencode',
+    subagent_dispatch: {
+      mechanism: '@<name> (ou auto por description)',
+      example: 'invocar @atlas-task-validator passando <state_path>',
+      registration: '.opencode/agents/<name>.md (frontmatter description + mode: subagent)',
+    },
+    // opencode não expõe todo nativo confirmado; segue sem mirror (não-essencial).
+    todo_tool: null,
+    hooks: { supported: true, mechanism: '.opencode/plugins/' },
+    // Nativo compatível: subagente (.opencode/agents) + MCP local (opencode.json).
+    capabilities_flags: { subagent_available: true, mcp_available: true, todo_available: false },
+  },
   generic: {
     label: 'Host genérico',
     subagent_dispatch: {
@@ -139,8 +152,11 @@ const HOST_NAMES = Object.keys(HOST_ADAPTERS);
 const HOST_DETECTORS = [
   { via: 'env:CLAUDE_PLUGIN_ROOT', detect: (env) => (env.CLAUDE_PLUGIN_ROOT ? 'claude' : null) },
   { via: 'env:CODEX', detect: (env) => (env.CODEX_HOME || env.CODEX_PLUGIN_ROOT ? 'codex' : null) },
-  // opencode/pi não expõem env distintivo garantido no subprocesso MCP (S01):
-  // dependem de ATLAS_HOST explícito; detectores ficam aqui quando S06/S07 confirmarem sinal.
+  // opencode/pi não expõem env distintivo garantido no subprocesso MCP (S01).
+  // Detecção determinística: o packaging injeta ATLAS_HOST no env do MCP —
+  //   opencode: opencode.json → mcp.<name>.environment.ATLAS_HOST = "opencode"
+  //   pi: mcp.json (pi-mcp-adapter) → env.ATLAS_HOST = "pi"
+  // Tratado pela branch ATLAS_HOST acima; sem file-detection frágil.
 ];
 
 function detectHost(args = {}, env = process.env) {

@@ -15,6 +15,7 @@ const SERVER = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../pa
 const CASES = [
   { name: 'claude (= cursor via CLAUDE_PLUGIN_ROOT)', env: { CLAUDE_PLUGIN_ROOT: '/tmp/x' }, host: 'claude', via: 'env:CLAUDE_PLUGIN_ROOT' },
   { name: 'codex (CODEX_HOME)', env: { CODEX_HOME: '/tmp/y' }, host: 'codex', via: 'env:CODEX' },
+  { name: 'opencode (ATLAS_HOST via opencode.json)', env: { ATLAS_HOST: 'opencode' }, host: 'opencode', via: 'env:ATLAS_HOST' },
   { name: 'generic (sem env)', env: {}, host: 'generic', via: 'default' },
   { name: 'override ATLAS_HOST', env: { ATLAS_HOST: 'codex', CLAUDE_PLUGIN_ROOT: '/tmp/x' }, host: 'codex', via: 'env:ATLAS_HOST' },
 ];
