@@ -30,14 +30,13 @@ Resolve plan paths in this order:
 
 New or rewritten plan artifacts must use `.atlas/plans/`.
 
+## Host adapter
+
+This skill is host-agnostic. To resolve any host-specific verb (subagent dispatch, native todo tool, plan paths), call the MCP tool `atlas_capabilities` first and use the returned descriptor. Canonical reference: `packages/orchestrator/references/host-adapters.md`. Do not hardcode a host name in reasoning — read it from the descriptor.
+
 ## Native todo mirror
 
-When entering `implementing` for the first time in a slice, mirror the plan tasks into the native todo surface:
-
-- Claude Code: `TodoWrite`
-- Cursor: `todo_write`
-- Codex App: `tasks`
-- Other hosts: closest native task/todo surface
+When entering `implementing` for the first time in a slice, mirror the plan tasks into the native todo surface named by `atlas_capabilities.todo_tool` (e.g. `TodoWrite` on Claude Code, `tasks` on Codex App). If `todo_tool` is `null`, proceed without a mirror — do not invent a tool.
 
 The plan is the SSoT. Map `ready` to `pending`, `implementing`/`gating` to `in_progress`, and `task_done` to `completed`. If todo state diverges, sync from the plan to todo, never from todo back to the plan. Do not create parallel todos that are not derived from plan task IDs.
 
@@ -106,13 +105,13 @@ Create `.atlas/state/<run_id>/<slice>.json` following `packages/templates/STATE_
 }
 ```
 
-Then spawn the validator as an isolated subagent. Use the host-native dispatch — the validator is registered as a real subagent on every host, so always invoke it deterministically, never inline its logic:
+Then spawn the validator as an isolated subagent. The validator is registered as a real subagent on every host, so always invoke it deterministically, never inline its logic. Read `subagent_dispatch.mechanism`/`.example` from `atlas_capabilities` and use the host-native verb:
 
-- **Claude Code:** `Agent(subagent_type: "atlas-task-validator", prompt: ".atlas/state/<run_id>/<slice>.json")` — registered via `agents/atlas-task-validator.md` at plugin root.
-- **Codex App:** invoke `$atlas-task-validator` with the `state_path` as the only argument — registered via `agents/openai.yaml` (`allow_implicit_invocation`).
-- **Generic / other hosts:** dispatch the `atlas-task-validator` subagent passing only `state_path`.
+- **Claude Code:** `Agent(subagent_type: "atlas-task-validator", prompt: ".atlas/state/<run_id>/<slice>.json")`
+- **Codex App:** invoke `$atlas-task-validator` with the `state_path` as the only argument
+- **Generic / other hosts:** dispatch the `atlas-task-validator` subagent passing only `state_path`
 
-In every case the only input is `state_path`. Do not paste the contract, diff, or task list inline. The validator reads everything it needs from the state file and the plan it points to.
+(These examples are illustrative; `atlas_capabilities` is the runtime source of truth — see `references/host-adapters.md`.) In every case the only input is `state_path`. Do not paste the contract, diff, or task list inline. The validator reads everything it needs from the state file and the plan it points to.
 
 ### 9. Consume validator output with a bounded loop
 Parse validator output with `JSON.parse(output)`. Decide only from `verdict`:

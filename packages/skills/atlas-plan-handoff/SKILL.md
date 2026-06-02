@@ -23,9 +23,11 @@ Use `atlas_run_state` como fonte primária de estado da run. Não leia/escreva e
 
 ## Plan path resolution
 
+Os paths são fornecidos pelo adapter de host: consultar `atlas_capabilities` e ler `plan_paths` (`write` + `read_order`). Referência canônica: `packages/orchestrator/references/host-adapters.md`. Valores atuais (iguais em todo host):
+
 Escrita de novos planos: somente `.atlas/plans/`.
 
-Leitura/migração por 1 release:
+Leitura/migração por 1 release (ordem de `plan_paths.read_order`):
 
 1. `.atlas/plans/`
 2. `.cursor/plans/` com warning de depreciação

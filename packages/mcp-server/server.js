@@ -67,6 +67,69 @@ const WORKFLOW_CONFIG = {
   },
   modes: ['full', 'direct', 'interview-only', 'interview_only'],
 };
+// Camada de adapter: conhecimento host-específico centralizado em código.
+// Skills consultam atlas_capabilities e usam o descritor retornado em vez de
+// hardcodar nome de host. Adicionar host novo = adicionar entrada aqui.
+const HOST_ADAPTERS = {
+  claude: {
+    label: 'Claude Code',
+    subagent_dispatch: {
+      mechanism: 'Agent(subagent_type)',
+      example: 'Agent(subagent_type: "atlas-task-validator", prompt: "<state_path>")',
+      registration: 'agents/<name>.md na raiz do plugin',
+    },
+    todo_tool: 'TodoWrite',
+  },
+  codex: {
+    label: 'Codex App',
+    subagent_dispatch: {
+      mechanism: '$<skill-name>',
+      example: 'invocar $atlas-task-validator com <state_path> como único argumento',
+      registration: 'agents/openai.yaml por skill (allow_implicit_invocation)',
+    },
+    todo_tool: 'tasks',
+  },
+  generic: {
+    label: 'Host genérico',
+    subagent_dispatch: {
+      mechanism: 'subagente nativo do host',
+      example: 'despachar o subagente atlas-task-validator passando apenas <state_path>',
+      registration: 'mecanismo nativo equivalente do host',
+    },
+    todo_tool: null,
+  },
+};
+
+function detectHost(args = {}) {
+  if (args.host && HOST_ADAPTERS[args.host]) return { host: args.host, detected_via: 'arg' };
+  const override = process.env.ATLAS_HOST;
+  if (override && HOST_ADAPTERS[override]) return { host: override, detected_via: 'env:ATLAS_HOST' };
+  if (process.env.CLAUDE_PLUGIN_ROOT) return { host: 'claude', detected_via: 'env:CLAUDE_PLUGIN_ROOT' };
+  if (process.env.CODEX_HOME || process.env.CODEX_PLUGIN_ROOT) return { host: 'codex', detected_via: 'env:CODEX' };
+  return { host: 'generic', detected_via: 'default' };
+}
+
+function capabilities(args = {}) {
+  const { host, detected_via } = detectHost(args);
+  const adapter = HOST_ADAPTERS[host];
+  return {
+    host,
+    host_label: adapter.label,
+    detected_via,
+    schema_version: 1,
+    subagent_dispatch: adapter.subagent_dispatch,
+    todo_tool: adapter.todo_tool,
+    plan_paths: {
+      write: '.atlas/plans/',
+      read_order: ['.atlas/plans/', '.cursor/plans/', '.codex/plans/'],
+      deprecated_read: ['.cursor/plans/', '.codex/plans/'],
+    },
+    state_backend: 'atlas_run_state',
+    state_dir: RUN_DIR,
+    known_hosts: Object.keys(HOST_ADAPTERS),
+  };
+}
+
 const LEGACY_ROUTE_KEY = ['fam', 'ily'].join('');
 const VERSION_CANDIDATES = [
   path.resolve(SERVER_DIR, '../../VERSION'),
@@ -224,6 +287,7 @@ function ping() {
     transport: 'stdio',
     capabilities: [
       'atlas_ping',
+      'atlas_capabilities',
       'atlas_run_state',
       'atlas_verify_artifact',
       'atlas_scan_prd',
@@ -1272,6 +1336,17 @@ function toolsList() {
         },
       },
       {
+        name: 'atlas_capabilities',
+        description: 'Adapter de host: detecta o host (Claude/Codex/genérico) e retorna descritores canônicos de disparo de subagente, todo nativo e paths de plano. Skills consultam isto em vez de hardcodar nome de host.',
+        inputSchema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            host: { type: 'string', enum: ['claude', 'codex', 'generic'] },
+          },
+        },
+      },
+      {
         name: 'atlas_run_state',
         description: 'Cria, atualiza ou consulta estado de run em .atlas/state/ no cwd do projeto consumidor.',
         inputSchema: {
@@ -1401,6 +1476,7 @@ function handleRequest(message) {
     try {
       const value =
         name === 'atlas_ping' ? ping() :
+        name === 'atlas_capabilities' ? capabilities(args) :
         name === 'atlas_run_state' ? runState(args) :
         name === 'atlas_verify_artifact' ? verifyArtifact(args) :
         name === 'atlas_scan_prd' ? scanPrd(args) :

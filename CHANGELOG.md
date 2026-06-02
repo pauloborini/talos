@@ -20,10 +20,18 @@ Impacto:
 - planos novos devem ser gravados em `.atlas/plans/`;
 - estado de run passa por `atlas_run_state` e fica em `.atlas/state/<run_id>/run.json`;
 - validator passa a decidir por JSON parseável, não por prosa;
-- subagente `atlas-task-validator` é registrado por host distinto: Claude via `agents/atlas-task-validator.md` (raiz), Codex via `agents/openai.yaml` por skill. Sem fonte única cross-host — manter `agents/atlas-task-validator.md` ↔ `packages/skills/atlas-task-validator/SKILL.md` sincronizados ao alterar o contrato do validator.
+- subagente `atlas-task-validator` é registrado por host distinto: Claude via `agents/atlas-task-validator.md` (raiz), Codex via `agents/openai.yaml` por skill.
+
+Camada de adapter de host (maturidade cross-host):
+- nova tool MCP `atlas_capabilities`: detecta o host (Claude/Codex/genérico via env) e retorna descritores canônicos de disparo de subagente, todo nativo e paths de plano. Skills consultam isto em vez de hardcodar nome de host;
+- novo doc canônico `packages/orchestrator/references/host-adapters.md` (matriz de adapters + como adicionar host novo);
+- guard de build `build/check-consistency.mjs`: falha o build em drift do contrato do validator (bloco JSON de veredito) entre `agents/atlas-task-validator.md` e `SKILL.md`, e em regressão de `subagent_type: true` (A1) ou `display_name: "Codex"` (A2). Resolve a dívida de sincronização cross-host de forma enforced em vez de manual.
 
 Arquivos/artefatos:
 - `agents/atlas-task-validator.md` (novo — registro de subagente Claude);
+- `packages/mcp-server/server.js` (nova tool `atlas_capabilities` + `HOST_ADAPTERS`);
+- `packages/orchestrator/references/host-adapters.md` (novo — matriz de adapters);
+- `build/check-consistency.mjs` (novo — guard de drift do validator + A1/A2);
 - `VERSION`;
 - `README.md`;
 - `CHANGELOG.md`;

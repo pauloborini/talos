@@ -40,6 +40,13 @@ done
 
 echo "lendo VERSION ($VERSION)"
 
+# Guards de consistência (M3 drift do validator + regressões A1/A2)
+if command -v node >/dev/null 2>&1; then
+  node "$ROOT/build/check-consistency.mjs" || exit $?
+else
+  echo "aviso: node ausente — pulando check-consistency" >&2
+fi
+
 mkdir -p "$DIST"
 rm -rf "$STAGE"
 mkdir -p "$STAGE"
