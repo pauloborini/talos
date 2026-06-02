@@ -131,12 +131,26 @@ const CAPABILITIES_SCHEMA_VERSION = 2;
 // Adicionar host em HOST_ADAPTERS propaga automaticamente (sem enum hardcoded).
 const HOST_NAMES = Object.keys(HOST_ADAPTERS);
 
-function detectHost(args = {}) {
+// Registry de detecção de host, data-driven e ordenado por precedência (DEC-003).
+// Adicionar host = adicionar um detector aqui (env próprio/arquivo); sem ramo solto.
+// `arg host` e `ATLAS_HOST` (override explícito) têm prioridade sobre sinais de env.
+// Cada detector retorna o nome do host se casar, ou null. Só hosts presentes em
+// HOST_ADAPTERS são aceitos (perfil desconhecido cai em generic).
+const HOST_DETECTORS = [
+  { via: 'env:CLAUDE_PLUGIN_ROOT', detect: (env) => (env.CLAUDE_PLUGIN_ROOT ? 'claude' : null) },
+  { via: 'env:CODEX', detect: (env) => (env.CODEX_HOME || env.CODEX_PLUGIN_ROOT ? 'codex' : null) },
+  // opencode/pi não expõem env distintivo garantido no subprocesso MCP (S01):
+  // dependem de ATLAS_HOST explícito; detectores ficam aqui quando S06/S07 confirmarem sinal.
+];
+
+function detectHost(args = {}, env = process.env) {
   if (args.host && HOST_ADAPTERS[args.host]) return { host: args.host, detected_via: 'arg' };
-  const override = process.env.ATLAS_HOST;
+  const override = env.ATLAS_HOST;
   if (override && HOST_ADAPTERS[override]) return { host: override, detected_via: 'env:ATLAS_HOST' };
-  if (process.env.CLAUDE_PLUGIN_ROOT) return { host: 'claude', detected_via: 'env:CLAUDE_PLUGIN_ROOT' };
-  if (process.env.CODEX_HOME || process.env.CODEX_PLUGIN_ROOT) return { host: 'codex', detected_via: 'env:CODEX' };
+  for (const detector of HOST_DETECTORS) {
+    const host = detector.detect(env);
+    if (host && HOST_ADAPTERS[host]) return { host, detected_via: detector.via };
+  }
   return { host: 'generic', detected_via: 'default' };
 }
 
@@ -1423,7 +1437,7 @@ function toolsList() {
           type: 'object',
           additionalProperties: false,
           properties: {
-            host: { type: 'string', enum: ['claude', 'codex', 'generic'] },
+            host: { type: 'string', enum: HOST_NAMES },
           },
         },
       },
@@ -1630,27 +1644,44 @@ function parseMessages(buffer) {
   return { messages, rest };
 }
 
-let pending = '';
-process.stdin.setEncoding('utf8');
-process.stdin.on('data', (chunk) => {
-  try {
-    const parsed = parseMessages(pending + chunk);
-    pending = parsed.rest;
-    for (const message of parsed.messages) {
-      try {
-        send(handleRequest(message));
-      } catch (error) {
-        send({
-          id: message.id,
-          error: {
-            code: error.code ?? -32000,
-            message: error.message,
-            data: error.data,
-          },
-        });
+function startStdioLoop() {
+  let pending = '';
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', (chunk) => {
+    try {
+      const parsed = parseMessages(pending + chunk);
+      pending = parsed.rest;
+      for (const message of parsed.messages) {
+        try {
+          send(handleRequest(message));
+        } catch (error) {
+          send({
+            id: message.id,
+            error: {
+              code: error.code ?? -32000,
+              message: error.message,
+              data: error.data,
+            },
+          });
+        }
       }
+    } catch (error) {
+      send({ id: null, error: { code: -32700, message: `JSON inválido: ${error.message}` } });
     }
-  } catch (error) {
-    send({ id: null, error: { code: -32700, message: `JSON inválido: ${error.message}` } });
-  }
-});
+  });
+}
+
+// Só inicia o loop stdio quando executado como entrypoint (node server.js).
+// Importado por testes (node --test), o módulo expõe funções puras sem bootar I/O.
+const isEntrypoint = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (isEntrypoint) startStdioLoop();
+
+export {
+  HOST_ADAPTERS,
+  HOST_NAMES,
+  PREREQUISITES,
+  CAPABILITIES_SCHEMA_VERSION,
+  detectHost,
+  capabilities,
+  checkPrerequisites,
+};

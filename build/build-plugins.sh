@@ -75,6 +75,8 @@ build_host() {
   cp -R "$ROOT/packages/skills" "$stage_host/packages/"
   cp -R "$ROOT/packages/templates" "$stage_host/packages/"
   cp -R "$ROOT/packages/mcp-server" "$stage_host/packages/"
+  # Testes não vão no bundle do host (rodam só em CI/dev).
+  rm -f "$stage_host/packages/mcp-server"/*.test.js
   cp "$ROOT/VERSION" "$stage_host/VERSION"
 
   if [[ "$host" == "codex" ]]; then

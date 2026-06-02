@@ -6,6 +6,9 @@
   "bin": {
     "atlas-workflow-mcp": "./server.js"
   },
+  "scripts": {
+    "test": "node --test server.test.js"
+  },
   "engines": {
     "node": ">=20"
   }

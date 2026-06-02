@@ -1,0 +1,101 @@
+// Testes de unidade do núcleo portável do MCP (S04 / F2-A6).
+// Cobre: detecção de host (registry data-driven + precedência), contrato
+// atlas_capabilities (schema_version, flags, known_hosts) e hard-fail de
+// pré-requisitos (DEC-004). Rodar: node --test packages/mcp-server/
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  HOST_NAMES,
+  PREREQUISITES,
+  CAPABILITIES_SCHEMA_VERSION,
+  detectHost,
+  capabilities,
+  checkPrerequisites,
+} from './server.js';
+
+test('detectHost: arg host explícito tem prioridade máxima', () => {
+  const r = detectHost({ host: 'codex' }, { CLAUDE_PLUGIN_ROOT: '/x' });
+  assert.equal(r.host, 'codex');
+  assert.equal(r.detected_via, 'arg');
+});
+
+test('detectHost: ATLAS_HOST sobrepõe sinais de env nativos', () => {
+  const r = detectHost({}, { ATLAS_HOST: 'codex', CLAUDE_PLUGIN_ROOT: '/x' });
+  assert.equal(r.host, 'codex');
+  assert.equal(r.detected_via, 'env:ATLAS_HOST');
+});
+
+test('detectHost: env nativo Claude/Codex via registry', () => {
+  assert.equal(detectHost({}, { CLAUDE_PLUGIN_ROOT: '/x' }).host, 'claude');
+  assert.equal(detectHost({}, { CODEX_HOME: '/y' }).host, 'codex');
+  assert.equal(detectHost({}, { CODEX_PLUGIN_ROOT: '/y' }).host, 'codex');
+});
+
+test('detectHost: sem sinal cai em generic', () => {
+  const r = detectHost({}, {});
+  assert.equal(r.host, 'generic');
+  assert.equal(r.detected_via, 'default');
+});
+
+test('detectHost: host inválido em arg/env é ignorado (cai em generic)', () => {
+  assert.equal(detectHost({ host: 'inexistente' }, {}).host, 'generic');
+  assert.equal(detectHost({}, { ATLAS_HOST: 'inexistente' }).host, 'generic');
+});
+
+test('capabilities: schema_version atual e campos do contrato v2', () => {
+  const cap = capabilities({ host: 'claude' });
+  assert.equal(cap.schema_version, CAPABILITIES_SCHEMA_VERSION);
+  assert.equal(cap.schema_version, 2);
+  assert.ok(cap.capabilities_flags);
+  assert.ok(cap.hooks);
+  assert.deepEqual(cap.prerequisites, PREREQUISITES);
+  assert.deepEqual(cap.known_hosts, HOST_NAMES);
+});
+
+test('capabilities: flags por host', () => {
+  for (const h of ['claude', 'codex']) {
+    const f = capabilities({ host: h }).capabilities_flags;
+    assert.equal(f.subagent_available, true);
+    assert.equal(f.mcp_available, true);
+    assert.equal(f.todo_available, true);
+  }
+  const g = capabilities({ host: 'generic' }).capabilities_flags;
+  assert.equal(g.subagent_available, true);
+  assert.equal(g.mcp_available, true);
+  assert.equal(g.todo_available, false);
+});
+
+test('checkPrerequisites: host qualificado passa', () => {
+  const r = checkPrerequisites({ host: 'claude' });
+  assert.equal(r.status, 'passed');
+  assert.deepEqual(r.missing, []);
+});
+
+test('checkPrerequisites: subagente ausente é hard-fail', () => {
+  const r = checkPrerequisites({ host: 'generic', host_capabilities: { subagent_available: false } });
+  assert.equal(r.status, 'blocked');
+  assert.deepEqual(r.missing, ['subagent_available']);
+});
+
+test('checkPrerequisites: MCP ausente é hard-fail', () => {
+  const r = checkPrerequisites({ host: 'claude', host_capabilities: { mcp_available: false } });
+  assert.equal(r.status, 'blocked');
+  assert.deepEqual(r.missing, ['mcp_available']);
+});
+
+test('checkPrerequisites: todo ausente NÃO bloqueia (não-essencial)', () => {
+  const r = checkPrerequisites({ host: 'claude', host_capabilities: { todo_available: false } });
+  assert.equal(r.status, 'passed');
+});
+
+test('checkPrerequisites: override não-booleano é ignorado', () => {
+  const r = checkPrerequisites({ host: 'claude', host_capabilities: { subagent_available: 'nope' } });
+  assert.equal(r.status, 'passed');
+});
+
+test('PREREQUISITES: subagente e mcp são essenciais; todo não', () => {
+  assert.ok(PREREQUISITES.essential.includes('subagent_available'));
+  assert.ok(PREREQUISITES.essential.includes('mcp_available'));
+  assert.ok(PREREQUISITES.non_essential.includes('todo_available'));
+  assert.ok(!PREREQUISITES.essential.includes('todo_available'));
+});
