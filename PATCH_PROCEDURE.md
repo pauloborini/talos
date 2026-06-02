@@ -68,12 +68,17 @@ Os manifests sao intencionalmente diferentes por host e recebem a versao por inj
 - `plugin-manifests/claude/plugin.json`
 - `plugin-manifests/codex/plugin.json`
 
-O manifest de marketplace-from-source (instalacao via GitHub publico) tem versao **concreta**, lida crua pelo Claude sem build:
+O manifest de marketplace-from-source (instalacao via GitHub publico) tem versao **concreta**, lida crua pelos hosts sem build:
 
-- `.claude-plugin/marketplace.json` (catalogo)
-- `.claude-plugin/plugin.json` (`version` deve casar com `VERSION`; o guard `build/check-consistency.mjs` falha em drift)
+- `.claude-plugin/marketplace.json` (catalogo Claude Code / Cursor)
+- `.claude-plugin/plugin.json` (`version` deve casar com `VERSION`)
+- `.agents/plugins/marketplace.json` (catalogo Codex)
+- `plugins/atlas-workflow-orchestrator/` (bundle Codex gerado pelo build; commitar junto com bump de versao)
+- `plugins/atlas-workflow-orchestrator/.codex-plugin/plugin.json` (`version` deve casar com `VERSION`)
 
-Ao bumpar `VERSION`, atualizar tambem `version` em `.claude-plugin/plugin.json`.
+O guard `build/check-consistency.mjs` falha em drift de versao nos manifests from-source.
+
+Ao bumpar `VERSION`, atualizar `version` em `.claude-plugin/plugin.json` e regenerar `plugins/atlas-workflow-orchestrator/` via `build/build-plugins.sh`.
 
 ## Regra de pacote
 
@@ -82,6 +87,8 @@ Se qualquer arquivo em `packages/`, `plugin-manifests/`, `build/`, `hooks/`, doc
 ```bash
 rtk build/build-plugins.sh
 ```
+
+Incluir no commit o diretorio `plugins/atlas-workflow-orchestrator/` (marketplace Codex from-source no GitHub).
 
 Depois validar:
 

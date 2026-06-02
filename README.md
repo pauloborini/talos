@@ -1,8 +1,18 @@
 # Atlas Workflow
 
-Monorepo do plugin Atlas Workflow Orchestrator v0.3: skills, templates, MCP server e manifests dos hosts (Claude Code/Cursor + Codex) num único pacote versionado.
+Monorepo do plugin **Atlas Workflow Orchestrator** v0.3: skills `atlas-*`, templates, MCP server e manifests para **Claude Code**, **Cursor** e **Codex App** num único pacote versionado.
 
 **Versão atual:** veja [`VERSION`](VERSION) (`0.3.0`).
+
+## Hosts suportados
+
+| Host | Instalação recomendada | Artefato de release |
+|------|------------------------|---------------------|
+| **Claude Code** | Marketplace GitHub (`.claude-plugin/`) | `atlas-workflow-claude.plugin` |
+| **Cursor** | Mesmo marketplace/artefato do Claude Code | `atlas-workflow-claude.plugin` |
+| **Codex App** | Artefato `.plugin` ou marketplace GitHub | `atlas-workflow-codex.plugin` |
+
+Cliente (Claude Code, Cursor, Codex) é **host de execução**, não família de skills. O pipeline é o mesmo (`atlas-*` + MCP); o que muda por host é só o adapter nativo (subagente, todo, paths) — ver [`host-adapters.md`](packages/orchestrator/references/host-adapters.md) e a tool MCP `atlas_capabilities`.
 
 ## Release v0.3.0
 
@@ -22,58 +32,101 @@ shasum -a 256 -c SHA256SUMS
 
 Release GitHub: criar tag `v0.3.0` somente quando a publicacao externa estiver autorizada. O workflow `.github/workflows/release.yml` valida `VERSION`, roda `build/build-plugins.sh`, confere checksums e publica os dois `.plugin` com `SHA256SUMS`.
 
-## Instalação rápida — Claude Code via GitHub público (recomendado)
+## Instalação rápida
 
-O repositório é um marketplace Claude Code (`.claude-plugin/marketplace.json` na raiz). Instala direto do GitHub, sem baixar `.plugin` nem validar checksum:
+Pré-requisito comum: **Node.js** no host (o MCP `atlas-workflow` executa `packages/mcp-server/server.js`). Após instalar, confirmar com `atlas_ping`.
+
+### Claude Code e Cursor (marketplace GitHub)
+
+O repositório publica um marketplace na raiz (`.claude-plugin/marketplace.json`). Instala direto do GitHub, sem baixar `.plugin` nem validar checksum:
 
 ```bash
 claude plugin marketplace add pauloborini/atlas-workflow
 claude plugin install atlas-workflow-orchestrator@atlas-workflow
 ```
 
-Atualizar depois de um novo release (bump de `VERSION`):
+Atualizar depois de um bump de `VERSION`:
 
 ```bash
 claude plugin marketplace update atlas-workflow
 claude plugin update atlas-workflow-orchestrator@atlas-workflow
 ```
 
-Pré-requisito: Node.js no host (o MCP `atlas-workflow` roda `packages/mcp-server/server.js`). Confirmar com `atlas_ping`.
+**Cursor** usa o mesmo marketplace e o mesmo plugin; não há pacote Cursor separado.
 
-> Codex: a instalação via marketplace GitHub do Codex segue fluxo próprio do host; por ora use o artefato `atlas-workflow-codex.plugin` (abaixo). Marketplace-from-source do Codex entra na fase multi-host.
+### Codex App (marketplace GitHub)
 
-## Instalacao por host (via artefato `.plugin`)
+O Codex consome o catálogo em `.agents/plugins/marketplace.json` (o CLI também aceita o legado `.claude-plugin/marketplace.json` para Claude/Cursor):
 
-Pre-requisitos comuns:
+```bash
+codex plugin marketplace add pauloborini/atlas-workflow
+codex plugin add atlas-workflow-orchestrator@atlas-workflow
+```
 
-- Node.js disponivel no host que executa MCP.
-- Artefato `.plugin` e `SHA256SUMS` da mesma release.
-- Checksum validado antes da instalacao.
+Atualizar o snapshot do marketplace:
 
-Claude Code:
+```bash
+codex plugin marketplace upgrade atlas-workflow
+```
 
-1. Baixar `atlas-workflow-claude.plugin`.
+Desenvolvimento local (clone do repo):
+
+```bash
+codex plugin marketplace add "/caminho/para/atlas-workflow"
+codex plugin add atlas-workflow-orchestrator@atlas-workflow
+```
+
+Se o marketplace já estava registrado antes de um pull com o catálogo Codex, atualize o snapshot e instale de novo:
+
+```bash
+codex plugin marketplace upgrade atlas-workflow
+codex plugin add atlas-workflow-orchestrator@atlas-workflow
+```
+
+O catálogo Codex aponta para `plugins/atlas-workflow-orchestrator/` (bundle gerado pelo build e versionado no repo). Se `codex plugin list --marketplace atlas-workflow` vier vazio, confira se está numa revisão que inclui `.agents/plugins/` e `plugins/atlas-workflow-orchestrator/`.
+
+### Codex — diferenças no host
+
+| Concern | Claude Code | Codex App |
+|---------|-------------|-----------|
+| Disparo do validator | `Agent(subagent_type: "atlas-task-validator", …)` | `$atlas-task-validator` (implicit via `agents/openai.yaml`) |
+| Todo nativo | `TodoWrite` | `tasks` |
+| MCP | `atlas-workflow` no manifest do plugin | `.mcp.json` empacotado (`cwd: "."`) |
+
+Detalhes: [`host-adapters.md`](packages/orchestrator/references/host-adapters.md).
+
+## Instalação por artefato `.plugin` (release GitHub)
+
+Use quando preferir artefato fixo com checksum (releases em tags `v*`) em vez de marketplace-from-source.
+
+Pré-requisitos:
+
+- Node.js no host.
+- `atlas-workflow-{claude,codex}.plugin` e `SHA256SUMS` da mesma release.
+- Checksum validado antes da instalação (`shasum -a 256 -c SHA256SUMS`).
+
+**Claude Code**
+
+1. Baixar `atlas-workflow-claude.plugin` da release.
 2. Validar checksum.
 3. Instalar pelo fluxo de plugin do Claude Code.
-4. Confirmar que o MCP `atlas-workflow` responde com `atlas_ping`.
+4. Confirmar `atlas_ping` no MCP `atlas-workflow`.
 
-Cursor:
+**Cursor**
 
 1. Usar o mesmo `atlas-workflow-claude.plugin`.
 2. Validar checksum.
-3. Instalar pelo fluxo de plugin compativel/herdado do Claude Code.
-4. Confirmar que as skills resolvidas sao as do bundle v0.3.
+3. Instalar pelo fluxo de plugin compatível com Claude Code.
+4. Confirmar skills `atlas-*` do bundle v0.3.
 
-Codex:
+**Codex App**
 
-1. Baixar `atlas-workflow-codex.plugin`.
+1. Baixar `atlas-workflow-codex.plugin` da release.
 2. Validar checksum.
-3. Instalar pelo fluxo de plugin do Codex.
-4. Confirmar que `.mcp.json` aponta para `packages/mcp-server/server.js` e que `atlas_ping` responde.
+3. Instalar pelo fluxo de plugin do Codex (`codex /plugins` ou CLI equivalente).
+4. Confirmar que o bundle expõe `.mcp.json` com `packages/mcp-server/server.js` e que `atlas_ping` responde.
 
-Resultado esperado: `/workflow <mode> <input-type>` carrega o orquestrador v0.3, usa MCP como fonte de gates e despacha sub-agents `atlas-*`.
-
-Atlas é família única. Cliente (Claude Code, Cursor, Codex App) é executor das skills, não família. Não há mais roteamento por família.
+**Resultado esperado (qualquer host):** `/workflow <mode> <input-type>` carrega o orquestrador v0.3, usa MCP como fonte de gates e despacha sub-agents `atlas-*` conforme o adapter do host.
 
 ## Como funciona
 
@@ -119,7 +172,8 @@ Paths canônicos:
 
 - **Backlog mestre v0.2:** [`.app-vault/docs/BACKLOG_MESTRE.md`](.app-vault/docs/BACKLOG_MESTRE.md) (15 sprints, 14 decisões fechadas)
 - **Templates canônicos (PRD, PLAN, BOUNDARY, BACKLOG, PERGUNTAS):** [`packages/templates/`](packages/templates/)
-- **MCP server mínimo:** [`packages/mcp-server/`](packages/mcp-server/) (`atlas_ping`, `atlas_run_state`, stdio)
+- **MCP server mínimo:** [`packages/mcp-server/`](packages/mcp-server/) (`atlas_ping`, `atlas_run_state`, `atlas_capabilities`, stdio)
+- **Adapters de host (Claude / Codex / genérico):** [`packages/orchestrator/references/host-adapters.md`](packages/orchestrator/references/host-adapters.md)
 - **Plugin v0.1.10 (arquivado):** [`archive/v0.1.10/atlas-workflow-orchestrator/`](archive/v0.1.10/atlas-workflow-orchestrator/) — reinstalar via `claude plugin marketplace add <path>` para rollback
 
 ## Templates canônicos

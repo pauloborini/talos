@@ -4,7 +4,7 @@
     "name": "Paulo Borini"
   },
   "metadata": {
-    "description": "Marketplace do Atlas Workflow Orchestrator: plugin único de orquestração de pipeline determinístico (PRD → plano → execução → validação) para Claude Code."
+    "description": "Marketplace do Atlas Workflow Orchestrator: plugin único de orquestração de pipeline determinístico (PRD → plano → execução → validação) para Claude Code, Cursor e Codex."
   },
   "plugins": [
     {

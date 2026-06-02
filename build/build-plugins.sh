@@ -64,6 +64,9 @@ build_host() {
   cp -R "$ROOT/packages/orchestrator" "$stage_host/"
   cp -R "$ROOT/hooks" "$stage_host/"
   cp -R "$ROOT/packages/skills" "$stage_host/skills"
+  rm -rf "$stage_host/skills/atlas-workflow-orchestrator"
+  cp -R "$ROOT/packages/orchestrator/skills/atlas-workflow-orchestrator" \
+    "$stage_host/skills/atlas-workflow-orchestrator"
   # Subagentes do plugin (descobertos via agents/ na raiz do bundle)
   cp -R "$ROOT/agents" "$stage_host/agents"
 
@@ -106,6 +109,13 @@ JSON
   if ! python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$stage_host/$manifest_dir/plugin.json" >/dev/null 2>&1; then
     echo "manifest gerado para $host não é JSON válido" >&2
     exit 3
+  fi
+
+  if [[ "$host" == "codex" ]]; then
+    local marketplace_plugin="$ROOT/plugins/atlas-workflow-orchestrator"
+    echo "sincronizando marketplace Codex em plugins/atlas-workflow-orchestrator"
+    rm -rf "$marketplace_plugin"
+    cp -R "$stage_host" "$marketplace_plugin"
   fi
 
   echo "zipando $host"

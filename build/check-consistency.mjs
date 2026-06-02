@@ -66,16 +66,33 @@ if (fs.existsSync(skillsDir)) {
   }
 }
 
-// Versão do manifest de marketplace-from-source deve casar com VERSION
-// (instalação via GitHub público lê .claude-plugin/plugin.json cru, sem build).
+// Catálogo Codex from-source deve existir no repo (GitHub público).
+for (const rel of [
+  '.agents/plugins/marketplace.json',
+  'plugins/atlas-workflow-orchestrator/.codex-plugin/plugin.json',
+  'plugins/atlas-workflow-orchestrator/.mcp.json',
+]) {
+  if (!fs.existsSync(path.join(ROOT, rel))) {
+    errors.push(`ausente: ${rel} (rode build/build-plugins.sh e commite plugins/atlas-workflow-orchestrator/)`);
+  }
+}
+
+// Versão dos manifests marketplace-from-source deve casar com VERSION
+// (instalação via GitHub público lê manifests crus na raiz, sem build).
 const versionFile = read('VERSION');
-const rootManifest = read('.claude-plugin/plugin.json');
-if (versionFile != null && rootManifest != null) {
+if (versionFile != null) {
   const want = versionFile.trim();
-  let got = null;
-  try { got = JSON.parse(rootManifest).version; } catch { errors.push('.claude-plugin/plugin.json: JSON inválido'); }
-  if (got != null && got !== want) {
-    errors.push(`Drift de versão: .claude-plugin/plugin.json (${got}) != VERSION (${want})`);
+  for (const rel of [
+    '.claude-plugin/plugin.json',
+    'plugins/atlas-workflow-orchestrator/.codex-plugin/plugin.json',
+  ]) {
+    const raw = read(rel);
+    if (raw == null) continue;
+    let got = null;
+    try { got = JSON.parse(raw).version; } catch { errors.push(`${rel}: JSON inválido`); continue; }
+    if (got != null && got !== want) {
+      errors.push(`Drift de versão: ${rel} (${got}) != VERSION (${want})`);
+    }
   }
 }
 
