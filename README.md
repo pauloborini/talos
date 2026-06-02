@@ -1,20 +1,22 @@
 # Atlas Workflow
 
-Plugin **Atlas Workflow Orchestrator** v0.3 — pipeline determinístico (PRD → plano → execução → validação) com skills `atlas-*`, templates e MCP. Um pacote, três hosts: **Claude Code**, **Cursor** e **Codex App**.
+Plugin **Atlas Workflow Orchestrator** v0.4 — pipeline determinístico (PRD → plano → execução → validação) com skills `atlas-*`, templates e MCP. Um pacote, cinco hosts: **Claude Code**, **Cursor**, **Codex App**, **opencode** e **pi cli**.
 
-**Versão:** [`VERSION`](VERSION) (`0.3.0`) · **Repo:** https://github.com/pauloborini/atlas-workflow
+**Versão:** [`VERSION`](VERSION) (`0.4.0`) · **Repo:** https://github.com/pauloborini/atlas-workflow
 
 ## Hosts
 
-| Host | Instalação (recomendada) | Artefato release |
-|------|--------------------------|------------------|
-| Claude Code | Marketplace GitHub | `atlas-workflow-claude.plugin` |
-| Cursor | **Igual ao Claude Code** (ver nota abaixo) | `atlas-workflow-claude.plugin` |
-| Codex App | Marketplace GitHub | `atlas-workflow-codex.plugin` |
+| Host | Instalação (recomendada) | Artefato release | Deps obrigatórias |
+|------|--------------------------|------------------|-------------------|
+| Claude Code | Marketplace GitHub | `atlas-workflow-claude.plugin` | — |
+| Cursor | **Igual ao Claude Code** (ver nota abaixo) | `atlas-workflow-claude.plugin` | — |
+| Codex App | Marketplace GitHub | `atlas-workflow-codex.plugin` | — |
+| opencode | Catálogo from-source `hosts/opencode/` | `atlas-workflow-opencode.plugin` | — |
+| pi cli | Catálogo from-source `hosts/pi/` | `atlas-workflow-pi.plugin` | **`pi-mcp-adapter` + `pi-subagents`** |
 
-**Cursor:** não há pacote nem marketplace próprios — o plugin instalado via `claude plugin` no escopo do usuário já vale para o Cursor (mesmo manifest `.claude-plugin/`). Limitação de packaging, não do pipeline. Em validação contínua; `/workflow` e MCP funcionam nos testes internos.
+**Cursor:** não há pacote nem marketplace próprios — o plugin instalado via `claude plugin` no escopo do usuário já vale para o Cursor (mesmo manifest `.claude-plugin/`). Limitação de packaging, não do pipeline.
 
-**Conceito:** Claude Code, Cursor e Codex são *hosts* (onde as skills rodam), não famílias de skills. O pipeline é o mesmo; diferenças nativas (subagente, todo, MCP) estão em [`host-adapters.md`](packages/orchestrator/references/host-adapters.md) e na tool `atlas_capabilities`.
+**Conceito:** todos são *hosts* (onde as skills rodam), não famílias de skills. O pipeline é o mesmo; diferenças nativas (subagente, todo, MCP) vivem em [`host-adapters.md`](packages/orchestrator/references/host-adapters.md) e na tool `atlas_capabilities` (contrato `schema_version: 2`). Host sem subagente+MCP é **rejeitado no preflight** (gate `PREREQ`, hard-fail) — determinismo > alcance.
 
 **Pré-requisito:** Node.js no host. Após instalar, confirme o MCP com `atlas_ping`.
 
@@ -53,6 +55,36 @@ codex plugin marketplace upgrade atlas-workflow
 
 Clone local: troque a URL por `"/caminho/para/atlas-workflow"`.
 
+### opencode
+
+Modelo de install é por config (não há marketplace CLI). A partir de um clone do repo, copie o catálogo from-source [`hosts/opencode/`](hosts/opencode/) para a raiz do seu projeto:
+
+```bash
+cp -R /caminho/para/atlas-workflow/hosts/opencode/.opencode ./.opencode
+cp /caminho/para/atlas-workflow/hosts/opencode/opencode.json ./opencode.json   # ou mescle no seu opencode.json
+```
+
+O `opencode.json` registra o MCP `atlas-workflow` (`type:"local"`, `ATLAS_HOST=opencode`) e o subagente fica em `.opencode/agents/atlas-task-validator.md`. Reinicie o opencode; confirme com `atlas_ping`.
+
+### pi cli
+
+**Pré-requisito obrigatório (DEC-005):** instale as duas extensões antes — sem qualquer uma o pipeline não é determinístico e o preflight aborta:
+
+```bash
+npm i -g @mariozechner/pi-coding-agent
+# extensões obrigatórias:
+#   pi-mcp-adapter   → https://github.com/nicobailon/pi-mcp-adapter (MCP)
+#   pi-subagents     → subagentes isolados
+```
+
+Depois copie o catálogo from-source [`hosts/pi/`](hosts/pi/) para o seu projeto e importe `mcp.json` no `pi-mcp-adapter`:
+
+```bash
+cp -R /caminho/para/atlas-workflow/hosts/pi/{agents,skills,atlas,mcp.json} ./
+```
+
+`mcp.json` registra o server `atlas-workflow` (`ATLAS_HOST=pi`); o subagente `atlas-task-validator` vem por `pi-subagents`. Confirme com `atlas_ping`.
+
 ### Desinstalar (testar de novo)
 
 ```bash
@@ -65,13 +97,13 @@ codex plugin marketplace remove atlas-workflow
 
 ## Artefato `.plugin` (opcional)
 
-Alternativa à instalação via GitHub: baixar `atlas-workflow-claude.plugin` ou `atlas-workflow-codex.plugin` na [release](https://github.com/pauloborini/atlas-workflow/releases) (tags `v*`), validar com `shasum -a 256 -c SHA256SUMS` e instalar pelo fluxo de plugin do host. Cursor usa o artefato Claude.
+Alternativa à instalação via GitHub: baixar o `.plugin` do host (`claude`, `codex`, `opencode` ou `pi`) na [release](https://github.com/pauloborini/atlas-workflow/releases) (tags `v*`), validar com `shasum -a 256 -c SHA256SUMS` e instalar pelo fluxo do host. Cursor usa o artefato Claude.
 
 ## Como usar
 
 Comando (Claude Code / Cursor): `/workflow <mode> <input-type> [input] [flags]`
 
-No Codex, invoque a skill do orquestrador com o mesmo padrão de argumentos (ex.: `workflow full backlog-item S05`).
+No Codex, opencode e pi, invoque a skill do orquestrador com o mesmo padrão de argumentos (ex.: `workflow full backlog-item S05`). O verbo de dispatch do subagente é resolvido por `atlas_capabilities` (host-agnóstico).
 
 ### Modos
 
@@ -146,9 +178,10 @@ Só alinhar decisões antes de planejar:
 |---------|----------|
 | [`packages/`](packages/) | Skills, templates, MCP |
 | [`agents/`](agents/) | Subagente `atlas-task-validator` (Claude) |
-| [`plugins/atlas-workflow-orchestrator/`](plugins/atlas-workflow-orchestrator/) | Bundle Codex (marketplace from-source) |
-| [`plugin-manifests/`](plugin-manifests/) | Manifests por host |
-| [`build/`](build/) | Gera `.plugin` em `dist/` |
+| [`plugins/atlas-workflow-orchestrator/`](plugins/atlas-workflow-orchestrator/) | Catálogo Codex from-source (marketplace) |
+| [`hosts/opencode/`](hosts/opencode/) · [`hosts/pi/`](hosts/pi/) | Catálogos from-source opencode/pi |
+| [`plugin-manifests/`](plugin-manifests/) | Manifests/configs por host (claude, codex, opencode, pi) |
+| [`build/`](build/) | Gera `.plugin` em `dist/`, sincroniza catálogos, testes/smoke/conformance |
 | [`CHANGELOG.md`](CHANGELOG.md) · [`PATCH_PROCEDURE.md`](PATCH_PROCEDURE.md) | Release e manutenção |
 
 Templates canônicos em [`packages/templates/`](packages/templates/) — fonte única no bundle; sem fallback silencioso se faltar arquivo.
