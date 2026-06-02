@@ -70,6 +70,12 @@ const WORKFLOW_CONFIG = {
 // Camada de adapter: conhecimento host-específico centralizado em código.
 // Skills consultam atlas_capabilities e usam o descritor retornado em vez de
 // hardcodar nome de host. Adicionar host novo = adicionar entrada aqui.
+// Contrato HostAdapter (DEC-007): entrada runtime data-driven. Campos:
+//   subagent_dispatch, todo_tool, hooks, capabilities_flags. plan_paths/state são
+//   portáveis (iguais a todos os hosts) e vivem em capabilities(). Adicionar host =
+//   adicionar entrada aqui; nenhum ramo `if host==` em outro lugar.
+// capabilities_flags: pré-requisitos essenciais (subagent_available, mcp_available)
+//   são hard-fail no preflight (DEC-004); todo_available é não-essencial.
 const HOST_ADAPTERS = {
   claude: {
     label: 'Claude Code',
@@ -79,6 +85,8 @@ const HOST_ADAPTERS = {
       registration: 'agents/<name>.md na raiz do plugin',
     },
     todo_tool: 'TodoWrite',
+    hooks: { supported: true, mechanism: 'hooks/claude/settings.snippet.json' },
+    capabilities_flags: { subagent_available: true, mcp_available: true, todo_available: true },
   },
   codex: {
     label: 'Codex App',
@@ -88,6 +96,8 @@ const HOST_ADAPTERS = {
       registration: 'agents/openai.yaml por skill (allow_implicit_invocation)',
     },
     todo_tool: 'tasks',
+    hooks: { supported: false, mechanism: null },
+    capabilities_flags: { subagent_available: true, mcp_available: true, todo_available: true },
   },
   generic: {
     label: 'Host genérico',
@@ -97,8 +107,25 @@ const HOST_ADAPTERS = {
       registration: 'mecanismo nativo equivalente do host',
     },
     todo_tool: null,
+    hooks: { supported: false, mechanism: null },
+    // generic EXIGE subagente+MCP do host (DEC-004); host MCP-only sem subagente
+    // fica fora de escopo e é rejeitado no preflight, não degradado.
+    capabilities_flags: { subagent_available: true, mcp_available: true, todo_available: false },
   },
 };
+
+// Pré-requisitos de determinismo (DEC-004): essenciais → hard-fail no preflight;
+// não-essenciais → seguem sem o recurso, registrando. Contrato consumido por S09.
+const PREREQUISITES = {
+  essential: ['subagent_available', 'mcp_available'],
+  non_essential: ['todo_available'],
+};
+
+// Versão do contrato atlas_capabilities. Política: incremento aditivo (campos novos
+// opcionais) mantém compat — consumidores DEVEM ignorar campos desconhecidos.
+// Remoção/renomeação de campo ou mudança de semântica exige bump e nota de migração.
+// v1 → v2: adiciona capabilities_flags, hooks, prerequisites, known_hosts (aditivo).
+const CAPABILITIES_SCHEMA_VERSION = 2;
 
 function detectHost(args = {}) {
   if (args.host && HOST_ADAPTERS[args.host]) return { host: args.host, detected_via: 'arg' };
@@ -116,9 +143,12 @@ function capabilities(args = {}) {
     host,
     host_label: adapter.label,
     detected_via,
-    schema_version: 1,
+    schema_version: CAPABILITIES_SCHEMA_VERSION,
     subagent_dispatch: adapter.subagent_dispatch,
     todo_tool: adapter.todo_tool,
+    hooks: adapter.hooks,
+    capabilities_flags: adapter.capabilities_flags,
+    prerequisites: PREREQUISITES,
     plan_paths: {
       write: '.atlas/plans/',
       read_order: ['.atlas/plans/', '.cursor/plans/', '.codex/plans/'],
