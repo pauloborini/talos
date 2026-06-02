@@ -1,0 +1,4 @@
+interface:
+  display_name: "Atlas Slice Review"
+  short_description: "Slice-focused post-plan review gate (atlas-slice-review)"
+  default_prompt: "Use $atlas-slice-review to review the executed plan slice for hidden regressions, logic gaps, missing scenarios, security risks, and test omissions."

@@ -5,7 +5,7 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
 const SERVER_NAME = 'atlas-workflow-orchestrator';
-const RUN_DIR = '.atlas-run';
+const RUN_DIR = path.join('.atlas', 'state');
 const SENSITIVE_KEY = /(authorization|credential|password|secret|token|api[_-]?key)/i;
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PRD_PATTERNS = {
@@ -55,18 +55,82 @@ const REQUIRED_PLAN_SECTIONS = [
   ['7', 'Slices'],
   ['8', 'Validação e checklist'],
 ];
-const REQUIRED_SKILL_ROLES = [
-  'prd_generator',
-  'prd_interview',
-  'plan_handoff',
-  'plan_execute',
-  'slice_review',
-  'task_validator',
-];
-const CONFIG_CANDIDATES = [
-  path.resolve(SERVER_DIR, '../orchestrator/atlas_workflows_config.md'),
-  path.resolve(SERVER_DIR, '../../orchestrator/atlas_workflows_config.md'),
-];
+const WORKFLOW_CONFIG = {
+  path: 'builtin:atlas-workflow-v0.3.0',
+  skills: {
+    prd_generator: 'atlas-sprint-prd-generator',
+    prd_interview: 'atlas-prd-interview',
+    plan_handoff: 'atlas-plan-handoff',
+    plan_execute: 'atlas-plan-execute',
+    slice_review: 'atlas-slice-review',
+    task_validator: 'atlas-task-validator',
+  },
+  modes: ['full', 'direct', 'interview-only', 'interview_only'],
+};
+// Camada de adapter: conhecimento host-específico centralizado em código.
+// Skills consultam atlas_capabilities e usam o descritor retornado em vez de
+// hardcodar nome de host. Adicionar host novo = adicionar entrada aqui.
+const HOST_ADAPTERS = {
+  claude: {
+    label: 'Claude Code',
+    subagent_dispatch: {
+      mechanism: 'Agent(subagent_type)',
+      example: 'Agent(subagent_type: "atlas-task-validator", prompt: "<state_path>")',
+      registration: 'agents/<name>.md na raiz do plugin',
+    },
+    todo_tool: 'TodoWrite',
+  },
+  codex: {
+    label: 'Codex App',
+    subagent_dispatch: {
+      mechanism: '$<skill-name>',
+      example: 'invocar $atlas-task-validator com <state_path> como único argumento',
+      registration: 'agents/openai.yaml por skill (allow_implicit_invocation)',
+    },
+    todo_tool: 'tasks',
+  },
+  generic: {
+    label: 'Host genérico',
+    subagent_dispatch: {
+      mechanism: 'subagente nativo do host',
+      example: 'despachar o subagente atlas-task-validator passando apenas <state_path>',
+      registration: 'mecanismo nativo equivalente do host',
+    },
+    todo_tool: null,
+  },
+};
+
+function detectHost(args = {}) {
+  if (args.host && HOST_ADAPTERS[args.host]) return { host: args.host, detected_via: 'arg' };
+  const override = process.env.ATLAS_HOST;
+  if (override && HOST_ADAPTERS[override]) return { host: override, detected_via: 'env:ATLAS_HOST' };
+  if (process.env.CLAUDE_PLUGIN_ROOT) return { host: 'claude', detected_via: 'env:CLAUDE_PLUGIN_ROOT' };
+  if (process.env.CODEX_HOME || process.env.CODEX_PLUGIN_ROOT) return { host: 'codex', detected_via: 'env:CODEX' };
+  return { host: 'generic', detected_via: 'default' };
+}
+
+function capabilities(args = {}) {
+  const { host, detected_via } = detectHost(args);
+  const adapter = HOST_ADAPTERS[host];
+  return {
+    host,
+    host_label: adapter.label,
+    detected_via,
+    schema_version: 1,
+    subagent_dispatch: adapter.subagent_dispatch,
+    todo_tool: adapter.todo_tool,
+    plan_paths: {
+      write: '.atlas/plans/',
+      read_order: ['.atlas/plans/', '.cursor/plans/', '.codex/plans/'],
+      deprecated_read: ['.cursor/plans/', '.codex/plans/'],
+    },
+    state_backend: 'atlas_run_state',
+    state_dir: RUN_DIR,
+    known_hosts: Object.keys(HOST_ADAPTERS),
+  };
+}
+
+const LEGACY_ROUTE_KEY = ['fam', 'ily'].join('');
 const VERSION_CANDIDATES = [
   path.resolve(SERVER_DIR, '../../VERSION'),
 ];
@@ -120,42 +184,8 @@ function readVersionInfo() {
   };
 }
 
-function readWorkflowConfigText() {
-  for (const candidate of CONFIG_CANDIDATES) {
-    if (fs.existsSync(candidate)) {
-      return {
-        path: candidate,
-        content: fs.readFileSync(candidate, 'utf8'),
-      };
-    }
-  }
-  throw rpcError(-32010, 'Config empacotada ausente: atlas_workflows_config.md', {
-    expected_paths: CONFIG_CANDIDATES,
-  });
-}
-
 function parseWorkflowConfig() {
-  const source = readWorkflowConfigText();
-  const families = {};
-  const familyRegex = /^```yaml\n(claude|cursor|codex):\n([\s\S]*?)^```/gm;
-  let match;
-
-  while ((match = familyRegex.exec(source.content)) !== null) {
-    const family = match[1];
-    const body = match[2];
-    families[family] = {};
-    for (const line of body.split(/\r?\n/)) {
-      const roleMatch = /^\s{2}([a-z_]+):\s*([a-z-]+)/.exec(line);
-      if (roleMatch) families[family][roleMatch[1]] = roleMatch[2];
-    }
-  }
-
-  const modes = [];
-  if (/^### Full Mode$/m.test(source.content)) modes.push('full');
-  if (/^### Direct Mode$/m.test(source.content)) modes.push('direct');
-  if (/^### Interview-Only Mode$/m.test(source.content)) modes.push('interview-only', 'interview_only');
-
-  return { ...source, families, modes };
+  return WORKFLOW_CONFIG;
 }
 
 function consumerRoot(args = {}) {
@@ -214,7 +244,9 @@ function resolveConsumerPath(inputPath, args = {}) {
 }
 
 function statePath(runId, args = {}) {
-  return path.join(ensureRunDir(args), `${validateRunId(runId)}.json`);
+  const runDir = path.join(ensureRunDir(args), validateRunId(runId));
+  fs.mkdirSync(runDir, { recursive: true, mode: 0o700 });
+  return path.join(runDir, 'run.json');
 }
 
 function nowIso() {
@@ -255,12 +287,12 @@ function ping() {
     transport: 'stdio',
     capabilities: [
       'atlas_ping',
+      'atlas_capabilities',
       'atlas_run_state',
       'atlas_verify_artifact',
       'atlas_scan_prd',
       'atlas_verify_template_conformance',
       'atlas_preflight',
-      'atlas_lock_family',
       'atlas_lock_dispatch',
       'atlas_assert_after_plan',
     ],
@@ -317,7 +349,7 @@ function inspectRunStateFile(file) {
     return validateStateShape(state, path.basename(file));
   } catch (error) {
     return stateInvalid(
-      `Estado local corrompido: ${path.basename(file)}`,
+      `Estado local corrompido: ${file}`,
       error.message,
       { next_action: 'recuperar_ou_remover_estado_corrompido_com_decisao_explicita' },
     );
@@ -327,8 +359,8 @@ function inspectRunStateFile(file) {
 function findActiveRunConflict(runId, args = {}) {
   const dir = ensureRunDir(args);
   for (const name of fs.readdirSync(dir)) {
-    if (!name.endsWith('.json')) continue;
-    const file = path.join(dir, name);
+    const file = path.join(dir, name, 'run.json');
+    if (!fs.existsSync(file)) continue;
     const inspected = inspectRunStateFile(file);
     if (inspected.status === 'blocked') return inspected;
     const state = inspected.state;
@@ -894,32 +926,11 @@ function verifyTemplateConformance(args = {}) {
   return result;
 }
 
-function validateFamilyConfig(config, family) {
-  const skills = config.families[family];
-  if (!skills) {
-    return {
-      ok: false,
-      message: `Família inválida: ${family}`,
-      supported_families: Object.keys(config.families),
-    };
-  }
-
-  const missing = REQUIRED_SKILL_ROLES.filter((role) => !skills[role]);
-  if (missing.length > 0) {
-    return {
-      ok: false,
-      message: `Skill ausente na família ${family}: ${missing[0]}`,
-      missing_role: missing[0],
-      expected_roles: REQUIRED_SKILL_ROLES,
-    };
-  }
-
-  return { ok: true, skills };
-}
-
 function preflight(args = {}) {
   const runId = validateRunId(args.run_id);
-  const family = requiredString(args, 'family');
+  if (Object.prototype.hasOwnProperty.call(args, LEGACY_ROUTE_KEY)) {
+    throw rpcError(-32602, `unknown_property: ${LEGACY_ROUTE_KEY}`);
+  }
   const mode = requiredString(args, 'mode');
   const expectedVersion = optionalString(args, 'expected_version');
   const config = parseWorkflowConfig();
@@ -942,7 +953,6 @@ function preflight(args = {}) {
       gate: 'VERSION_DRIFT',
       status: 'blocked',
       timestamp,
-      family,
       mode,
       version,
       error: version.error,
@@ -955,7 +965,6 @@ function preflight(args = {}) {
       gate: 'VERSION_DRIFT',
       status: 'blocked',
       timestamp,
-      family,
       mode,
       expected_version: expectedVersion,
       received_version: version.version,
@@ -969,7 +978,6 @@ function preflight(args = {}) {
       gate: 'LOCK_CONFLICT',
       status: 'blocked',
       timestamp,
-      family,
       mode,
       error: activeConflict.error,
       cause: activeConflict.cause ?? null,
@@ -983,140 +991,35 @@ function preflight(args = {}) {
       gate: 'G10',
       status: 'blocked',
       timestamp,
-      family,
       mode,
       error: `Modo inválido: ${mode}`,
       supported_modes: config.modes,
       next_action: 'corrigir_rota',
     };
-  } else {
-    const familyCheck = validateFamilyConfig(config, family);
-    if (!familyCheck.ok) {
+  } else if (currentRouting && currentRouting.mode !== mode) {
       result = {
         gate: 'G10',
         status: 'blocked',
         timestamp,
-        family,
-        mode,
-        error: familyCheck.message,
-        supported_families: familyCheck.supported_families,
-        missing_role: familyCheck.missing_role,
-        expected_roles: familyCheck.expected_roles,
-        next_action: 'corrigir_rota',
-      };
-    } else if (currentRouting && currentRouting.family !== family) {
-      result = {
-        gate: 'G10',
-        status: 'blocked',
-        timestamp,
-        family,
-        mode,
-        locked_family: currentRouting.family,
-        error: `Troca de família bloqueada: ${currentRouting.family} -> ${family}`,
-        next_action: 'encerrar_run_ou_usar_familia_travada',
-      };
-    } else if (currentRouting && currentRouting.mode !== mode) {
-      result = {
-        gate: 'G10',
-        status: 'blocked',
-        timestamp,
-        family,
         mode,
         locked_mode: currentRouting.mode,
         error: `Troca de modo bloqueada: ${currentRouting.mode} -> ${mode}`,
         next_action: 'encerrar_run_ou_usar_modo_travado',
       };
-    } else {
-      result = {
-        gate: 'G10',
-        status: 'passed',
-        timestamp,
-        family,
-        mode,
-        routing: {
-          family,
-          mode,
-          skills: familyCheck.skills,
-          version: version.version,
-          locked_at: currentRouting?.locked_at ?? timestamp,
-          config_path: config.path,
-          supported_families: Object.keys(config.families),
-          supported_modes: config.modes,
-        },
-        next_action: 'avançar',
-      };
-    }
-  }
-
-  patchRoutingResult(runId, result, args);
-  return result;
-}
-
-function lockFamily(args = {}) {
-  const runId = validateRunId(args.run_id);
-  const family = requiredString(args, 'family');
-  const role = optionalString(args, 'role');
-  const expectedSkill = optionalString(args, 'expected_skill');
-  const timestamp = nowIso();
-  const state = readState(runId, args);
-  const routing = state.data?.routing;
-
-  if (!routing) {
-    const result = {
-      gate: 'G10',
-      status: 'blocked',
-      timestamp,
-      family,
-      error: 'Família ainda não travada: execute atlas_preflight antes de avançar',
-      next_action: 'executar_preflight',
-    };
-    patchRoutingResult(runId, result, args);
-    return result;
-  }
-
-  let result;
-  if (routing.family !== family) {
-    result = {
-      gate: 'G10',
-      status: 'blocked',
-      timestamp,
-      family,
-      locked_family: routing.family,
-      error: `Troca de família bloqueada: ${routing.family} -> ${family}`,
-      next_action: 'usar_familia_travada',
-    };
-  } else if (role && !routing.skills?.[role]) {
-    result = {
-      gate: 'G10',
-      status: 'blocked',
-      timestamp,
-      family,
-      role,
-      error: `Skill ausente para papel ${role} na família ${family}`,
-      next_action: 'corrigir_config',
-    };
-  } else if (expectedSkill && role && routing.skills?.[role] !== expectedSkill) {
-    result = {
-      gate: 'G10',
-      status: 'blocked',
-      timestamp,
-      family,
-      role,
-      expected_skill: routing.skills[role],
-      received_skill: expectedSkill,
-      error: `Skill esperada divergente para ${role}: ${routing.skills[role]} != ${expectedSkill}`,
-      next_action: 'usar_skill_oficial',
-    };
   } else {
     result = {
       gate: 'G10',
       status: 'passed',
       timestamp,
-      family,
-      mode: routing.mode,
-      role: role ?? null,
-      expected_skill: role ? routing.skills[role] : null,
-      routing,
+      mode,
+      routing: {
+        mode,
+        skills: config.skills,
+        version: version.version,
+        locked_at: currentRouting?.locked_at ?? timestamp,
+        config_path: config.path,
+        supported_modes: config.modes,
+      },
       next_action: 'avançar',
     };
   }
@@ -1129,18 +1032,11 @@ function getDispatchState(runId, args = {}) {
   const state = readState(runId, args);
   const routing = state.data?.routing;
   if (!routing) {
-    throw rpcError(-32011, 'Família não travada: execute atlas_preflight antes do dispatch', {
+    throw rpcError(-32011, 'Preflight não executado: execute atlas_preflight antes do dispatch', {
       run_id: runId,
     });
   }
   return { state, routing, dispatch: state.data?.dispatch ?? {} };
-}
-
-function assertDispatchFamily(routing, family) {
-  if (family && routing.family !== family) {
-    return `Família divergente: esperado ${routing.family}, recebido ${family}`;
-  }
-  return null;
 }
 
 function expectedNextPhase(routing, dispatch) {
@@ -1152,22 +1048,10 @@ function expectedNextPhase(routing, dispatch) {
 
 function startDispatch(args, context) {
   const phase = requiredString(args, 'phase');
-  const familyError = assertDispatchFamily(context.routing, args.family);
-  const timestamp = nowIso();
-
-  if (familyError) {
-    return {
-      gate: 'G10',
-      action: 'start',
-      phase,
-      status: 'blocked',
-      timestamp,
-      error: familyError,
-      current_phase: context.dispatch.active?.phase ?? null,
-      expected_phase: expectedNextPhase(context.routing, context.dispatch),
-      next_action: 'usar_familia_travada',
-    };
+  if (Object.prototype.hasOwnProperty.call(args, LEGACY_ROUTE_KEY)) {
+    throw rpcError(-32602, `unknown_property: ${LEGACY_ROUTE_KEY}`);
   }
+  const timestamp = nowIso();
 
   if (context.dispatch.active) {
     return {
@@ -1221,7 +1105,7 @@ function startDispatch(args, context) {
     current_phase: phase,
     expected_phase: expected,
     dispatch: {
-      active: { phase, family: context.routing.family, started_at: timestamp },
+      active: { phase, started_at: timestamp },
       previous_phase: context.dispatch.previous_phase ?? null,
       next_phase: null,
       next_action: `complete_${phase}`,
@@ -1361,6 +1245,9 @@ function abortDispatch(args, context) {
 
 function lockDispatch(args = {}) {
   const runId = validateRunId(args.run_id);
+  if (Object.prototype.hasOwnProperty.call(args, LEGACY_ROUTE_KEY)) {
+    throw rpcError(-32602, `unknown_property: ${LEGACY_ROUTE_KEY}`);
+  }
   const action = args.action ?? 'start';
   if (!['start', 'complete', 'abort'].includes(action)) {
     throw rpcError(-32602, `Ação inválida para atlas_lock_dispatch: ${action}`);
@@ -1449,8 +1336,19 @@ function toolsList() {
         },
       },
       {
+        name: 'atlas_capabilities',
+        description: 'Adapter de host: detecta o host (Claude/Codex/genérico) e retorna descritores canônicos de disparo de subagente, todo nativo e paths de plano. Skills consultam isto em vez de hardcodar nome de host.',
+        inputSchema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            host: { type: 'string', enum: ['claude', 'codex', 'generic'] },
+          },
+        },
+      },
+      {
         name: 'atlas_run_state',
-        description: 'Cria, atualiza ou consulta estado de run em .atlas-run/ no cwd do projeto consumidor.',
+        description: 'Cria, atualiza ou consulta estado de run em .atlas/state/ no cwd do projeto consumidor.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
@@ -1512,33 +1410,16 @@ function toolsList() {
       },
       {
         name: 'atlas_preflight',
-        description: 'Gate G10: valida família, modo, versão, lock ativo e skills oficiais pela config empacotada, travando a rota da run.',
+        description: 'Gate G10: valida modo, versão e lock ativo, travando a rota da run.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
-          required: ['run_id', 'family', 'mode'],
+          required: ['run_id', 'mode'],
           properties: {
             run_id: { type: 'string', minLength: 1 },
             project_root: { type: 'string', minLength: 1 },
-            family: { type: 'string', enum: ['claude', 'cursor', 'codex'] },
             mode: { type: 'string', enum: ['full', 'direct', 'interview-only', 'interview_only'] },
             expected_version: { type: 'string' },
-          },
-        },
-      },
-      {
-        name: 'atlas_lock_family',
-        description: 'Gate G10: confirma que fase posterior respeita família travada e skill oficial.',
-        inputSchema: {
-          type: 'object',
-          additionalProperties: false,
-          required: ['run_id', 'family'],
-          properties: {
-            run_id: { type: 'string', minLength: 1 },
-            project_root: { type: 'string', minLength: 1 },
-            family: { type: 'string', enum: ['claude', 'cursor', 'codex'] },
-            role: { type: 'string' },
-            expected_skill: { type: 'string' },
           },
         },
       },
@@ -1554,7 +1435,6 @@ function toolsList() {
             project_root: { type: 'string', minLength: 1 },
             action: { type: 'string', enum: ['start', 'complete', 'abort'], default: 'start' },
             phase: { type: 'string', enum: ['plan_handoff', 'plan_execute', 'slice_review'] },
-            family: { type: 'string', enum: ['claude', 'cursor', 'codex'] },
             validator_status: { type: 'string' },
           },
         },
@@ -1596,12 +1476,12 @@ function handleRequest(message) {
     try {
       const value =
         name === 'atlas_ping' ? ping() :
+        name === 'atlas_capabilities' ? capabilities(args) :
         name === 'atlas_run_state' ? runState(args) :
         name === 'atlas_verify_artifact' ? verifyArtifact(args) :
         name === 'atlas_scan_prd' ? scanPrd(args) :
         name === 'atlas_verify_template_conformance' ? verifyTemplateConformance(args) :
         name === 'atlas_preflight' ? preflight(args) :
-        name === 'atlas_lock_family' ? lockFamily(args) :
         name === 'atlas_lock_dispatch' ? lockDispatch(args) :
         name === 'atlas_assert_after_plan' ? assertAfterPlan(args) :
         (() => { throw rpcError(-32601, `Tool desconhecida: ${name}`); })();

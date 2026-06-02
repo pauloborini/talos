@@ -14,4 +14,4 @@ Fonte primária continua sendo o MCP (`packages/mcp-server`). Estes hooks apenas
 - `PreToolUse`: bloqueia ação mutante enquanto a sessão está em fase de coordenação ou dispatch não executor.
 - `Stop`: bloqueia encerramento com fase ativa, G11 pendente ou gate MCP bloqueado.
 
-Mensagens de bloqueio mostram regra violada, impacto e próxima ação permitida. Se `.atlas-run` estiver ausente, o hook fica inativo. Se `.atlas-run` existir mas estiver ilegível/corrompido, o estado não é tratado como aprovado.
+Mensagens de bloqueio mostram regra violada, impacto e próxima ação permitida. Se `.atlas/state` estiver ausente, o hook fica inativo. Se `.atlas/state` existir mas estiver ilegível/corrompido, o estado não é tratado como aprovado.

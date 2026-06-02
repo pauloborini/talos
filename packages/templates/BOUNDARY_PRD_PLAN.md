@@ -84,6 +84,6 @@ Cada `#### TNN.` deve ter, quando aplicável:
 
 1. PRD aprovado (produto).
 2. PLAN derivado do PRD + código (uma passagem de leitura no repo).
-3. Execução: `cursor-plan-execute-orchestrated` lê PLAN + PRD §8–10; `project-rules` via AGENTS.
+3. Execução: `atlas-plan-execute` lê PLAN + PRD §8–10; `project-rules` via AGENTS.
 
-Geradores (`cursor-sprint-prd-generator`, plan-handoff) devem seguir estes templates, não o formato legado de 15 seções com §10 arquitetura no PRD.
+Geradores (`atlas-sprint-prd-generator`, `atlas-plan-handoff`) devem seguir estes templates, não o formato legado de 15 seções com §10 arquitetura no PRD.

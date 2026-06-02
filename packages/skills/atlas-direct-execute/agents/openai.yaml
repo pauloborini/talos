@@ -1,0 +1,7 @@
+interface:
+  display_name: "Atlas Direct Execute"
+  short_description: "Direct PRD execution with cold validation"
+  default_prompt: "Use $atlas-direct-execute to implement this PRD or scoped task directly with a compact obligation ledger, focused gates, and validator closure."
+
+policy:
+  allow_implicit_invocation: true

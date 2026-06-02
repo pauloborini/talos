@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Atlas Workflow — build dos pacotes .plugin (Claude/Cursor + Codex).
-# Lê VERSION, monta bundle único (21 skills + orquestrador + templates), gera zips + checksums.
+# Lê VERSION, monta bundle único (7 skills atlas-* + 1 subagente + orquestrador + templates), gera zips + checksums.
 # Idempotente; sem Node/npm. Aborta com exit != 0 em qualquer entrada faltante.
 
 set -euo pipefail
@@ -23,9 +23,8 @@ if [[ -z "$VERSION" ]]; then
 fi
 
 REQUIRED_PATHS=(
-  "$ROOT/packages/skills-claude"
-  "$ROOT/packages/skills-cursor"
-  "$ROOT/packages/skills-codex"
+  "$ROOT/packages/skills"
+  "$ROOT/agents"
   "$ROOT/packages/templates"
   "$ROOT/packages/orchestrator"
   "$ROOT/packages/mcp-server"
@@ -41,6 +40,13 @@ done
 
 echo "lendo VERSION ($VERSION)"
 
+# Guards de consistência (M3 drift do validator + regressões A1/A2)
+if command -v node >/dev/null 2>&1; then
+  node "$ROOT/build/check-consistency.mjs" || exit $?
+else
+  echo "aviso: node ausente — pulando check-consistency" >&2
+fi
+
 mkdir -p "$DIST"
 rm -rf "$STAGE"
 mkdir -p "$STAGE"
@@ -54,21 +60,21 @@ build_host() {
   mkdir -p "$stage_host"
 
   # Bundle compartilhado (idêntico entre hosts)
-  cp -R "$ROOT/packages/skills-claude" "$stage_host/"
-  cp -R "$ROOT/packages/skills-cursor" "$stage_host/"
-  cp -R "$ROOT/packages/skills-codex" "$stage_host/"
   cp -R "$ROOT/packages/templates" "$stage_host/"
   cp -R "$ROOT/packages/orchestrator" "$stage_host/"
   cp -R "$ROOT/hooks" "$stage_host/"
+  cp -R "$ROOT/packages/skills" "$stage_host/skills"
+  # Subagentes do plugin (descobertos via agents/ na raiz do bundle)
+  cp -R "$ROOT/agents" "$stage_host/agents"
 
-  # Paths canônicos v0.2 usados pelas skills/MCP.
+  # Paths canônicos v0.3 usados pelas skills/MCP.
   mkdir -p "$stage_host/packages"
+  cp -R "$ROOT/packages/skills" "$stage_host/packages/"
   cp -R "$ROOT/packages/templates" "$stage_host/packages/"
   cp -R "$ROOT/packages/mcp-server" "$stage_host/packages/"
   cp "$ROOT/VERSION" "$stage_host/VERSION"
 
   if [[ "$host" == "codex" ]]; then
-    cp -R "$ROOT/packages/skills-codex" "$stage_host/skills"
     cat > "$stage_host/.mcp.json" <<'JSON'
 {
   "mcpServers": {

@@ -5,7 +5,7 @@ Orquestra pipelines completos de desenvolvimento de features no projeto Atlas, a
 ## Quick Start
 
 ```bash
-/workflow <tool> full backlog-item "S05"
+/workflow full backlog-item "S05"
 ```
 
 Pipeline completo executado automaticamente:
@@ -19,14 +19,8 @@ Pipeline completo executado automaticamente:
 ## Sintaxe
 
 ```
-/workflow <tool> <mode> <input-type> [flags]
+/workflow <mode> <input-type> [flags]
 ```
-
-### Tools
-
-- `claude` — Claude (MVP)
-- `cursor` — Cursor
-- `codex` — Codex
 
 ### Modes
 
@@ -52,7 +46,7 @@ Pipeline completo executado automaticamente:
 ### Full pipeline com sprint S05
 
 ```
-/workflow <tool> full backlog-item "S05"
+/workflow full backlog-item "S05"
 ```
 
 Output:
@@ -74,19 +68,19 @@ Status:
 ### Direct pipeline com PRD existente + review
 
 ```
-/workflow <tool> direct prd "/path/to/PRD_S05.md" --review
+/workflow direct prd "/path/to/PRD_S05.md" --review
 ```
 
 ### Entrevista de brainstorm
 
 ```
-/workflow <tool> interview-only brainstorm "Que tal dark mode?"
+/workflow interview-only brainstorm "Que tal dark mode?"
 ```
 
 ### Force entrevista mesmo sem ambiguidades
 
 ```
-/workflow <tool> full idea "melhorar performance" --interview
+/workflow full idea "melhorar performance" --interview
 ```
 
 ## Como funciona
@@ -96,22 +90,22 @@ Status:
 ```
 1. Parse input (resolve sprint/indicação)
    ↓
-2. Generate PRD (skill `prd_generator` resolvida por `<tool>`)
+2. Generate PRD (`atlas-sprint-prd-generator`)
    ↓
 3. Validate PRD (busca TBD, "a confirmar", gaps)
    ↓
 4. Interview (automático se ambiguidades OU --interview)
    └─ Atualiza PRD com decisões coletadas
    ↓
-5. Plan (skill `plan_handoff` resolvida por `<tool>`)
+5. Plan (`atlas-plan-handoff`)
    ↓
 6. Validate Plan (tem gaps?)
    └─ Pergunta: volta? continua TBD? adia?
    ↓
-7. Execute obrigatório em `full` (skill `plan_execute` resolvida por `<tool>`, com `task_validator` sub-agent)
+7. Execute obrigatório em `full` (`atlas-plan-execute`, com `atlas-task-validator` sub-agent)
    ↓
 8. Review (se --review)
-   └─ skill `slice_review` resolvida por `<tool>`
+   └─ `atlas-slice-review`
    ↓
 9. Output (resumo + próximos passos)
 ```
@@ -138,6 +132,16 @@ Status:
 2. Output (PRD esboço + decisões)
 ```
 
+## Sequências canônicas
+
+Atlas é família única. Cliente (Claude Code, Cursor, Codex App) é apenas o host que executa as skills; não existe roteamento por família.
+
+| Mode | Sequência |
+|------|-----------|
+| `full` | `atlas-sprint-prd-generator` → `atlas-prd-interview` quando necessário → `atlas-plan-handoff` → `atlas-plan-execute` → `atlas-task-validator` → `atlas-slice-review` somente com `--review` |
+| `direct` | PRD/spec existente → `atlas-direct-execute` → `atlas-task-validator` → `atlas-slice-review` somente com `--review` |
+| `interview-only` | `atlas-prd-interview` |
+
 ## Validação automática
 
 Plugin detecta ambiguidades em:
@@ -147,7 +151,7 @@ Plugin detecta ambiguidades em:
 - **Experiência (§8):** gaps, "a definir"
 - **Contratos (§9):** "ainda não definido", "mock"
 
-Se encontra ambiguidades → dispara a skill `prd_interview` resolvida por `<tool>` automaticamente.
+Se encontra ambiguidades → dispara `atlas-prd-interview` automaticamente.
 
 ## Lógica de decisão
 
@@ -177,7 +181,7 @@ Você escolhe A/B/C → pipeline continua conforme.
 ### Ao rodar workflow
 
 ```
-/workflow <tool> full backlog-item "S05"
+/workflow full backlog-item "S05"
 ```
 
 Plugin automatiza tudo. Você valida output.
@@ -185,27 +189,22 @@ Plugin automatiza tudo. Você valida output.
 ### Depois de workflow
 
 1. Validação de output do executor
-2. (Opcional) Rodada de slice-review quando suportada pelo modo/família
+2. (Opcional) Rodada de slice-review quando `--review` foi solicitado
 3. Avança para S06
 
 ## Skills envolvidas
 
 | Skill | Função |
 |-------|--------|
-| `prd_generator` resolvida por `<tool>` | Gera PRD a partir de sprint/indicação |
-| `prd_interview` resolvida por `<tool>` | Entrevista de PRD (resolve ambiguidades) |
-| `plan_handoff` resolvida por `<tool>` | Cria plano executável |
-| `plan_execute` resolvida por `<tool>` | Executa plano (com task-validator sub-agent) |
-| `slice_review` resolvida por `<tool>` | Review fria de implementação |
+| `atlas-sprint-prd-generator` | Gera PRD a partir de sprint/indicação |
+| `atlas-prd-interview` | Entrevista de PRD (resolve ambiguidades) |
+| `atlas-plan-handoff` | Cria plano executável |
+| `atlas-plan-execute` | Executa plano (com `atlas-task-validator` sub-agent) |
+| `atlas-slice-review` | Review fria de implementação quando `--review` está presente |
 
 ## Configuração
 
-Plugin usa `atlas_workflows_config.md` para:
-- Mapeamento tool → skills
-- Validadores de ambiguidade
-- Sequências por modo
-
-Config/defaults são empacotados no plugin. Se a config empacotada estiver ausente, o pacote está inválido e o pré-flight deve abortar.
+Plugin usa configuração embutida no MCP para modos, skills `atlas-*` e validadores de ambiguidade. Defaults auxiliares continuam empacotados em `packages/orchestrator/defaults/` e referências em `packages/orchestrator/references/`.
 
 ## Error handling
 
@@ -214,86 +213,19 @@ Config/defaults são empacotados no plugin. Se a config empacotada estiver ausen
 - **PRD inválido:** reporta sections faltando
 - **Ambiguidades não resolvidas:** pergunta próximos passos
 
-## Próximas versões
-
-- **v0.2** Cursor support
-- **v0.3** Codex hardening
-- **v1.0** Full feature parity + smart tool detection
-
 ## Dúvidas?
 
-Veja `atlas_workflows_config.md` para detalhes técnicos e mapeamentos completos.
+Veja este README, `packages/mcp-server/README.md` e os SKILL.md `atlas-*` para o contrato operacional atual.
 
 ---
 
-**Plugin version:** 0.1.10
+**Plugin version:** 0.3.0
 **Author:** Paulo Borini
-**Last updated:** 2026-05-31
+**Last updated:** 2026-06-01
 
-### Novidades v0.1.10 — defaults autocontidos + skill real no sub-agent
+### Novidades v0.3.0 — família única + validator subagent
 
-- **Config/defaults no pacote:** `atlas_workflows_config.md`, `defaults/paths.md` e `references/subagent_dispatch.md` viajam com o plugin; não exigem config na raiz do repositório usuário.
-- **Despacho de sub-agent:** cada sub-agent deve carregar o `SKILL.md` real do id resolvido antes de agir.
-- **Executor:** continua sendo o `plan_execute` exato da família `<tool>`; variantes de executor não fazem parte do workflow.
-- **Scan G5:** falso positivo `depende de plano` tratado por exclusão estreita configurada e logada.
-
-### Novidades v0.1.9 — famílias completas
-
-Remove a exceção cross-family: `cursor.prd_generator` agora usa `cursor-sprint-prd-generator`. As famílias `claude`, `cursor` e `codex` são completas; skill ausente aborta sem fallback.
-
-### Novidades v0.1.8 — família sem ambiguidade
-
-Conserta ambiguidades antes de melhorias maiores:
-
-- Mantém o workflow limitado às famílias `claude`, `cursor` e `codex`.
-- Atualiza o status de Cursor/Codex no comando e documentação.
-- Clarifica que `task_validator` é verificado no pré-flight, mas despachado por `plan_execute` como sub-agent filho.
-- `PERGUNTAS_EM_ABERTO.md` só bloqueia/avisa; não despacha open-questions automaticamente.
-
-### Novidades v0.1.7 — full não para no handoff
-
-Conserta falha do GF11.5 (Codex gerou handoff e parou antes de despachar execução):
-
-- **Gate G11 — `full` deve executar pós-plano:** depois de `PLAN_*.md` validado, próxima ação obrigatória é despachar `plan_execute` como sub-agent blocking.
-- **Proibido completed só com plano:** se `PLAN_*.md` existe mas `plan_execute` não rodou, status final é `incomplete`, com violação G11.
-- **Conflito de modo:** `full/direct` + "sem patch", "sem editar código", "só plano" ou equivalente aborta no pré-flight. Não existe plan-only implícito dentro de `full`.
-
-### Novidades v0.1.6 — sincronização Codex + ids exatos
-
-Conserta inconsistências de versão/config e remove hardcode operacional `claude-*` do fluxo genérico:
-
-- Manifests e README alinhados em `0.1.6`.
-- Codex usa ids exatos `codex-*` no config (`codex-sprint-prd-generator`, `codex-prd-interview`, `codex-plan-handoff`, `codex-plan-execute`, `codex-slice-review`, `codex-task-validator`).
-- O fluxo fala em skills resolvidas por `<tool>`, mantendo G10 consistente.
-
-### Novidades v0.1.5 — roteamento por `<tool>`, não por host
-
-Conserta falha do GF09 (comando `claude` roteou pra `cursor-*` e misturou famílias PRD-claude / resto-cursor):
-
-- **Gate G10 — `<tool>` autoritativo:** a família de skills é definida **só** pelo argumento `<tool>` (`claude`→`claude-*`, `cursor`→`cursor-*`, `codex`→`codex-*`). O **host não escolhe família** — o Cursor enxerga e despacha as três; ele é só onde roda.
-- **Família única por run:** proibido misturar (PRD em claude, plano em cursor). Skill ausente → aborta. Nunca troca a família inteira.
-- **Id exato:** proibido substituir por variante de executor.
-
-### Novidades v0.1.4 — orquestrador de mãos atadas
-
-Conserta falha do GF08 (orquestrador implementou inline em paralelo ao sub-agent de execução; contexto 87%; slice-review feito inline):
-
-- **Gate G9 — orquestrador é coordenador:** após a Fase 0, **proibido** editar arquivo, escrever Dart, rodar comando mutante (flutter/test/git write) ou implementar "em paralelo". Únicas ações: despachar sub-agent, ler artefato, reportar.
-- **Dispatch blocking:** despacha **um** sub-agent por vez (foreground), **espera o retorno**, só então segue. `run_in_background` proibido para fases do pipeline. Sem dois sub-agents simultâneos.
-- **`slice-review` é sub-agent de verdade (G7):** despachado, nunca revisão inline narrada pelo orquestrador.
-
-### Novidades v0.1.3 — sub-agent forçado + ordem de validação
-
-Conserta falhas observadas no GF07 (plano sem template, validator+slice em paralelo, fallback inline no Cursor):
-
-- **Gate G7 — sub-agent obrigatório:** `plan_handoff` e `plan_execute` despachados como sub-agent (Agent tool), **nunca** no fio do orquestrador. `PLAN_*.md` **deve** conformar ao template da skill (§2 invariantes, §10 contratos, §11 riscos, §14 checklist, tasks T01..Tn) — plano sem template = G7 violado.
-- **Gate G8 — ordem fixa de validação:** `task-validator` roda **antes/dentro** do relatório do executor; `slice-review` roda **por último**, só após o executor retornar 100%. **Nunca em paralelo** — são funções distintas em série.
-- **Fase 0 sem brecha:** matou o fallback "implementação direta / contratos equivalentes inline". Host sem sub-agent despachável → **aborta**, ponto.
-
-### Novidades v0.1.2 — pipeline orientado a artefato
-
-Conserta a degradação onde `full` virava "só coda" (sem plano, sem validador frio, auto-aprovando):
-
-- **Fase 0 pré-flight:** verifica se as skills exigidas existem como invocáveis no host. Se faltar → para e reporta; **nunca emula a skill inline**.
-- **Gates duros G1–G11:** cada fase só conclui com artefato em disco (G1); em `full`, zero código antes de `PLAN_*.md` validado (G2); skills invocadas de verdade, não absorvidas no §10 do PRD (G3); validador frio como sub-agent separado (G4); scan de ambiguidade determinístico e logado (G5); status verificado contra disco (G6); sub-agent obrigatório (G7); validator antes de review (G8); orquestrador de mãos atadas (G9); roteamento por `<tool>` com id exato (G10); `full` executa pós-plano (G11).
-- **`direct` ≠ `full` de verdade:** `direct` não produz `PLAN_*.md` por design; `full` exige o plano antes de qualquer código.
+- Skills finais: `atlas-sprint-prd-generator`, `atlas-prd-interview`, `atlas-plan-handoff`, `atlas-plan-execute`, `atlas-direct-execute`, `atlas-task-validator`, `atlas-slice-review`.
+- `atlas-task-validator` passa a ser subagent determinístico com boundary por `.atlas/state/<run_id>/<slice>.json`.
+- `atlas_preflight` não recebe parâmetro de família; `atlas_lock_dispatch` controla apenas fases.
+- `atlas-slice-review` só dispara com `--review`.
