@@ -43,12 +43,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test -f dist/atlas-workflow-claude.plugin
-          test -f dist/atlas-workflow-codex.plugin
+          for host in claude codex opencode pi; do
+            test -f "dist/atlas-workflow-${host}.plugin"
+            unzip -t "dist/atlas-workflow-${host}.plugin" >/dev/null
+          done
           test -f dist/SHA256SUMS
           (cd dist && shasum -a 256 -c SHA256SUMS)
-          unzip -t dist/atlas-workflow-claude.plugin
-          unzip -t dist/atlas-workflow-codex.plugin
 
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
@@ -57,4 +57,6 @@ jobs:
           files: |
             dist/atlas-workflow-claude.plugin
             dist/atlas-workflow-codex.plugin
+            dist/atlas-workflow-opencode.plugin
+            dist/atlas-workflow-pi.plugin
             dist/SHA256SUMS

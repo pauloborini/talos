@@ -1,0 +1,53 @@
+name: CI
+
+# CI multi-host (S13/F6-A2): guard + testes + smoke + conformance por host.
+# Falha bloqueia merge/release. Roda em push e PR.
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  multihost:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Build (gera bundles + catálogos + roda check-consistency no fim)
+        shell: bash
+        run: build/build-plugins.sh
+
+      - name: Catálogos from-source sincronizados (sem diff não commitado)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! git diff --quiet -- plugins/ hosts/; then
+            echo "Catálogos from-source desatualizados — rode build/build-plugins.sh e commite plugins/ e hosts/." >&2
+            git --no-pager diff --stat -- plugins/ hosts/
+            exit 1
+          fi
+
+      - name: Testes unitários do núcleo MCP
+        shell: bash
+        run: node --test packages/mcp-server/server.test.js
+
+      - name: Smoke por host
+        shell: bash
+        run: node build/smoke-hosts.mjs
+
+      - name: Matriz de conformance multi-host
+        shell: bash
+        run: node build/conformance-matrix.mjs
+
+      - name: Checksums conferem
+        shell: bash
+        run: (cd dist && shasum -a 256 -c SHA256SUMS)

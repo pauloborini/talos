@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.4.0 - 2026-06-02
+
+Tipo: multi-host (aditivo; sem breaking para Claude/Cursor/Codex)
+
+Resumo: expande o Atlas para arquitetura multi-host por adapter data-driven, adicionando **opencode** e **pi cli** além de Claude Code, Cursor e Codex, com determinismo garantido por hard-fail no preflight.
+
+Hosts suportados: `claude`, `cursor` (carona no manifest claude), `codex`, `opencode`, `pi`, `generic`.
+
+`atlas_capabilities` schema_version: **2** (aditivo — `capabilities_flags`, `hooks`, `prerequisites`, `required_deps`; consumidores devem ignorar campos desconhecidos).
+
+Mudancas:
+- contrato `HostAdapter` data-driven em `HOST_ADAPTERS` (`capabilities_flags`, `hooks`, `prerequisites`) — adicionar host = adicionar entrada, sem ramo `if host==` (DEC-007);
+- gate `PREREQ` no `atlas_preflight`: pré-requisito essencial (subagente/MCP) ausente → hard-fail, qualquer tamanho, sem degradação/inline (DEC-004); `todo` não-essencial segue sem mirror;
+- detecção de host data-driven (`HOST_DETECTORS`); enum dos schemas derivado de `HOST_ADAPTERS` (sem hardcode);
+- adapter **opencode**: perfil + `.opencode/` (agents/skills) + `opencode.json` (MCP local, `ATLAS_HOST=opencode`) + bundle + catálogo from-source `hosts/opencode/`;
+- adapter **pi**: perfil + 2 deps obrigatórias (`pi-mcp-adapter` + `pi-subagents`, DEC-005) + `mcp.json` + bundle + catálogo `hosts/pi/`;
+- guards estendidos: existência+versão dos catálogos, veredito do validator cross-host, skills sem hardcode de host;
+- testes do núcleo (`node --test`), smoke por host e matriz de conformance (5 hosts × 5 cenários);
+- CI multi-host (`.github/workflows/ci.yml`); release publica os 4 bundles.
+
+Distribuição: install primário marketplace-from-source preservado para Claude/Cursor/Codex (sem regressão); opencode/pi instaláveis via catálogo from-source commitado (DEC-008).
+
 ## v0.3.0 - 2026-06-01
 
 Tipo: runtime
