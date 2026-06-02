@@ -40,12 +40,8 @@ done
 
 echo "lendo VERSION ($VERSION)"
 
-# Guards de consistência (M3 drift do validator + regressões A1/A2)
-if command -v node >/dev/null 2>&1; then
-  node "$ROOT/build/check-consistency.mjs" || exit $?
-else
-  echo "aviso: node ausente — pulando check-consistency" >&2
-fi
+# Guard de consistência roda no FIM (depois de sincronizar catálogos from-source),
+# para que rebuild de catálogo stale não trave no próprio guard que ele corrige.
 
 mkdir -p "$DIST"
 rm -rf "$STAGE"
@@ -215,5 +211,13 @@ build_pi
 )
 
 rm -rf "$STAGE"
+
+# Guard final: catálogos from-source frescos, contrato validator cross-host,
+# versão sincronizada, skills sem hardcode (M3/A1/A2 + S10).
+if command -v node >/dev/null 2>&1; then
+  node "$ROOT/build/check-consistency.mjs" || exit $?
+else
+  echo "aviso: node ausente — pulando check-consistency" >&2
+fi
 
 echo "ok — dist/atlas-workflow-{claude,codex,opencode,pi}.plugin dist/SHA256SUMS + hosts/{opencode,pi}/"

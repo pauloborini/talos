@@ -77,7 +77,35 @@ for (const rel of [
   }
 }
 
-// Versão dos manifests marketplace-from-source deve casar com VERSION
+// Catálogos from-source dos hosts opencode/pi devem existir (install via GitHub
+// público — DEC-008). Stale/ausente => host não instala pelo caminho primário.
+for (const rel of [
+  'hosts/opencode/opencode.json',
+  'hosts/opencode/.opencode/agents/atlas-task-validator.md',
+  'hosts/opencode/.opencode/atlas/packages/mcp-server/server.js',
+  'hosts/pi/mcp.json',
+  'hosts/pi/agents/atlas-task-validator.md',
+  'hosts/pi/atlas/packages/mcp-server/server.js',
+]) {
+  if (!fs.existsSync(path.join(ROOT, rel))) {
+    errors.push(`ausente: ${rel} (rode build/build-plugins.sh e commite hosts/)`);
+  }
+}
+
+// Contrato do validator por host (S10): o bloco JSON de veredito dos agentes
+// gerados (opencode/pi) deve ser idêntico ao canônico — catálogo stale = drift.
+for (const rel of [
+  'hosts/opencode/.opencode/agents/atlas-task-validator.md',
+  'hosts/pi/agents/atlas-task-validator.md',
+]) {
+  const hostAgent = read(rel);
+  const hostVerdict = verdictBlock(hostAgent, rel);
+  if (aVerdict && hostVerdict && aVerdict !== hostVerdict) {
+    errors.push(`M3 drift: veredito de ${rel} difere do canônico agents/atlas-task-validator.md (rode build/build-plugins.sh)`);
+  }
+}
+
+// Versão dos manifests/catálogos from-source deve casar com VERSION
 // (instalação via GitHub público lê manifests crus na raiz, sem build).
 const versionFile = read('VERSION');
 if (versionFile != null) {
@@ -94,6 +122,29 @@ if (versionFile != null) {
       errors.push(`Drift de versão: ${rel} (${got}) != VERSION (${want})`);
     }
   }
+  // Catálogos opencode/pi carregam VERSION crua (não plugin.json).
+  for (const rel of ['hosts/opencode/.opencode/atlas/VERSION', 'hosts/pi/atlas/VERSION']) {
+    const raw = read(rel);
+    if (raw != null && raw.trim() !== want) {
+      errors.push(`Drift de versão: ${rel} (${raw.trim()}) != VERSION (${want})`);
+    }
+  }
+}
+
+// Skills host-agnósticas (S10/F4-A4): se uma skill nomear um verbo nativo de host
+// (TodoWrite, tasks, Agent(subagent_type, $<skill>), DEVE ancorar em atlas_capabilities
+// — senão é hardcode de host. O orquestrador é exceção (coordena e cita hosts).
+const HOST_VERBS = [/TodoWrite/, /Agent\(subagent_type/, /\$atlas-task-validator/];
+if (fs.existsSync(skillsDir)) {
+  for (const d of fs.readdirSync(skillsDir)) {
+    const sp = path.join(skillsDir, d, 'SKILL.md');
+    if (!fs.existsSync(sp)) continue;
+    const text = fs.readFileSync(sp, 'utf8');
+    const namesHostVerb = HOST_VERBS.some((re) => re.test(text));
+    if (namesHostVerb && !/atlas_capabilities/.test(text)) {
+      errors.push(`F4-A4 hardcode de host: ${path.relative(ROOT, sp)} nomeia verbo nativo sem ancorar em atlas_capabilities`);
+    }
+  }
 }
 
 if (errors.length) {
@@ -101,4 +152,4 @@ if (errors.length) {
   for (const e of errors) console.error(`  - ${e}`);
   process.exit(3);
 }
-console.log('check-consistency: ok (contrato do validator sincronizado; sem regressão A1/A2)');
+console.log('check-consistency: ok (validator sincronizado cross-host; catálogos opencode/pi presentes+versão; skills sem hardcode; sem regressão A1/A2)');

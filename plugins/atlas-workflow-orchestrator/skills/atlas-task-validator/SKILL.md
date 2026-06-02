@@ -3,7 +3,7 @@ name: atlas-task-validator
 description: Skill `atlas-task-validator`. Validador frio de slice executada por `atlas-plan-execute` ou `atlas-direct-execute`. Invocado como subagente obrigatório antes do relatório final. Recebe boundary da slice, contrato/plano, tasks executadas e compara código real vs contrato, retornando findings P1/P2/P3 estruturados com evidência e veredito determinístico. Não corrige código. Não propõe diff.
 ---
 
-> Registro de subagente: este validador é exposto como `subagent_type` real pelo arquivo de agente do plugin em [`agents/atlas-task-validator.md`](../../../agents/atlas-task-validator.md) (raiz do plugin). O executor invoca via `Agent(subagent_type: "atlas-task-validator", prompt: "<state_path>")`. Este `SKILL.md` documenta o contrato; o corpo do agente é o system prompt efetivo.
+> Registro de subagente: este validador é exposto como `subagent_type` real pelo arquivo de agente do plugin em [`agents/atlas-task-validator.md`](../../../agents/atlas-task-validator.md) (raiz do plugin). O executor invoca pelo verbo de `atlas_capabilities.subagent_dispatch` do host corrente — no Claude `Agent(subagent_type: "atlas-task-validator", prompt: "<state_path>")`, no Codex `$atlas-task-validator`, no opencode `@atlas-task-validator`. Este `SKILL.md` documenta o contrato; o corpo do agente é o system prompt efetivo.
 >
 > **Manutenção (cross-host):** no host Claude o system prompt efetivo é `agents/atlas-task-validator.md`; no host Codex é este `SKILL.md` (implicit invocation via `agents/openai.yaml`). Não há fonte única entre hosts — ao mudar o contrato do validator (Invocation Contract, Operating Rules, Output contract, Severity Model), replicar a alteração nos dois arquivos.
 
