@@ -22,7 +22,27 @@ shasum -a 256 -c SHA256SUMS
 
 Release GitHub: criar tag `v0.3.0` somente quando a publicacao externa estiver autorizada. O workflow `.github/workflows/release.yml` valida `VERSION`, roda `build/build-plugins.sh`, confere checksums e publica os dois `.plugin` com `SHA256SUMS`.
 
-## Instalacao por host
+## Instalação rápida — Claude Code via GitHub público (recomendado)
+
+O repositório é um marketplace Claude Code (`.claude-plugin/marketplace.json` na raiz). Instala direto do GitHub, sem baixar `.plugin` nem validar checksum:
+
+```bash
+claude plugin marketplace add pauloborini/atlas-workflow
+claude plugin install atlas-workflow-orchestrator@atlas-workflow
+```
+
+Atualizar depois de um novo release (bump de `VERSION`):
+
+```bash
+claude plugin marketplace update atlas-workflow
+claude plugin update atlas-workflow-orchestrator@atlas-workflow
+```
+
+Pré-requisito: Node.js no host (o MCP `atlas-workflow` roda `packages/mcp-server/server.js`). Confirmar com `atlas_ping`.
+
+> Codex: a instalação via marketplace GitHub do Codex segue fluxo próprio do host; por ora use o artefato `atlas-workflow-codex.plugin` (abaixo). Marketplace-from-source do Codex entra na fase multi-host.
+
+## Instalacao por host (via artefato `.plugin`)
 
 Pre-requisitos comuns:
 

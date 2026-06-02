@@ -66,6 +66,19 @@ if (fs.existsSync(skillsDir)) {
   }
 }
 
+// Versão do manifest de marketplace-from-source deve casar com VERSION
+// (instalação via GitHub público lê .claude-plugin/plugin.json cru, sem build).
+const versionFile = read('VERSION');
+const rootManifest = read('.claude-plugin/plugin.json');
+if (versionFile != null && rootManifest != null) {
+  const want = versionFile.trim();
+  let got = null;
+  try { got = JSON.parse(rootManifest).version; } catch { errors.push('.claude-plugin/plugin.json: JSON inválido'); }
+  if (got != null && got !== want) {
+    errors.push(`Drift de versão: .claude-plugin/plugin.json (${got}) != VERSION (${want})`);
+  }
+}
+
 if (errors.length) {
   console.error('check-consistency: FALHOU');
   for (const e of errors) console.error(`  - ${e}`);

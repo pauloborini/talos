@@ -1,0 +1,16 @@
+{
+  "name": "atlas-workflow",
+  "owner": {
+    "name": "Paulo Borini"
+  },
+  "metadata": {
+    "description": "Marketplace do Atlas Workflow Orchestrator: plugin único de orquestração de pipeline determinístico (PRD → plano → execução → validação) para Claude Code."
+  },
+  "plugins": [
+    {
+      "name": "atlas-workflow-orchestrator",
+      "source": "./",
+      "description": "Atlas Workflow Orchestrator — pipeline determinístico orientado a artefato (PRD → plano → execução → validação fria) com família única atlas-* e MCP local."
+    }
+  ]
+}

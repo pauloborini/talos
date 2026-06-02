@@ -68,6 +68,13 @@ Os manifests sao intencionalmente diferentes por host e recebem a versao por inj
 - `plugin-manifests/claude/plugin.json`
 - `plugin-manifests/codex/plugin.json`
 
+O manifest de marketplace-from-source (instalacao via GitHub publico) tem versao **concreta**, lida crua pelo Claude sem build:
+
+- `.claude-plugin/marketplace.json` (catalogo)
+- `.claude-plugin/plugin.json` (`version` deve casar com `VERSION`; o guard `build/check-consistency.mjs` falha em drift)
+
+Ao bumpar `VERSION`, atualizar tambem `version` em `.claude-plugin/plugin.json`.
+
 ## Regra de pacote
 
 Se qualquer arquivo em `packages/`, `plugin-manifests/`, `build/`, `hooks/`, docs de instalacao/release ou contrato empacotado mudar, regenerar:
