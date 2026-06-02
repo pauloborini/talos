@@ -127,6 +127,10 @@ const PREREQUISITES = {
 // v1 → v2: adiciona capabilities_flags, hooks, prerequisites, known_hosts (aditivo).
 const CAPABILITIES_SCHEMA_VERSION = 2;
 
+// Nomes de host derivados do registry — única fonte de verdade para enums de schema.
+// Adicionar host em HOST_ADAPTERS propaga automaticamente (sem enum hardcoded).
+const HOST_NAMES = Object.keys(HOST_ADAPTERS);
+
 function detectHost(args = {}) {
   if (args.host && HOST_ADAPTERS[args.host]) return { host: args.host, detected_via: 'arg' };
   const override = process.env.ATLAS_HOST;
@@ -157,6 +161,38 @@ function capabilities(args = {}) {
     state_backend: 'atlas_run_state',
     state_dir: RUN_DIR,
     known_hosts: Object.keys(HOST_ADAPTERS),
+  };
+}
+
+// Hard-fail de pré-requisitos de determinismo (DEC-004). Mescla as flags do perfil
+// do host com a disponibilidade real reportada pelo caller (`host_capabilities` —
+// ex.: pi sem pi-mcp-adapter/pi-subagents reporta subagent_available:false). Flag
+// essencial efetiva = false → blocked, qualquer tamanho de tarefa, sem degradação.
+// Capability não-essencial (todo) nunca bloqueia.
+function checkPrerequisites(args = {}) {
+  const { host } = detectHost(args);
+  const flags = { ...HOST_ADAPTERS[host].capabilities_flags };
+  const reported = args.host_capabilities && typeof args.host_capabilities === 'object'
+    ? args.host_capabilities
+    : {};
+  for (const key of Object.keys(reported)) {
+    if (typeof reported[key] === 'boolean') flags[key] = reported[key];
+  }
+  const missing = PREREQUISITES.essential.filter((key) => flags[key] !== true);
+  if (missing.length === 0) {
+    return { status: 'passed', host, effective_flags: flags, missing: [] };
+  }
+  return {
+    status: 'blocked',
+    host,
+    effective_flags: flags,
+    missing,
+    error: `Pré-requisito de determinismo ausente no host '${host}': ${missing.join(', ')}`,
+    cause: 'host_sem_prerequisito_essencial',
+    impact: 'sem_isolamento_de_contexto_o_validator_perde_determinismo_em_tarefa_grande',
+    next_action: host === 'pi'
+      ? 'instalar_pi-mcp-adapter_e_pi-subagents_e_reexecutar'
+      : 'usar_host_com_subagente_e_mcp_nativos_ou_instalar_as_dependencias',
   };
 }
 
@@ -978,7 +1014,22 @@ function preflight(args = {}) {
   const currentRouting = previous?.data?.routing;
   let result;
 
-  if (version.status === 'blocked') {
+  const prereq = checkPrerequisites(args);
+  if (prereq.status === 'blocked') {
+    result = {
+      gate: 'PREREQ',
+      status: 'blocked',
+      timestamp,
+      mode,
+      host: prereq.host,
+      missing_prerequisites: prereq.missing,
+      effective_flags: prereq.effective_flags,
+      error: prereq.error,
+      cause: prereq.cause,
+      impact: prereq.impact,
+      next_action: prereq.next_action,
+    };
+  } else if (version.status === 'blocked') {
     result = {
       gate: 'VERSION_DRIFT',
       status: 'blocked',
@@ -1440,7 +1491,7 @@ function toolsList() {
       },
       {
         name: 'atlas_preflight',
-        description: 'Gate G10: valida modo, versão e lock ativo, travando a rota da run.',
+        description: 'Gate PREREQ+G10: hard-fail de pré-requisitos de determinismo (subagente/MCP do host, DEC-004), depois valida modo, versão e lock ativo, travando a rota da run.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
@@ -1450,6 +1501,17 @@ function toolsList() {
             project_root: { type: 'string', minLength: 1 },
             mode: { type: 'string', enum: ['full', 'direct', 'interview-only', 'interview_only'] },
             expected_version: { type: 'string' },
+            host: { type: 'string', enum: HOST_NAMES },
+            host_capabilities: {
+              type: 'object',
+              description: 'Disponibilidade real reportada pelo host (override das flags do perfil). Ex.: pi sem deps → {"subagent_available":false}.',
+              additionalProperties: false,
+              properties: {
+                subagent_available: { type: 'boolean' },
+                mcp_available: { type: 'boolean' },
+                todo_available: { type: 'boolean' },
+              },
+            },
           },
         },
       },
