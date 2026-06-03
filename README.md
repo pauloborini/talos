@@ -22,6 +22,8 @@ Plugin **Atlas Workflow Orchestrator** v0.4 — pipeline determinístico (PRD �
 
 ## Instalação rápida (1 comando, via npx)
 
+> Referência rápida de todos os comandos (instalar/atualizar/remover por host): **[COMMANDS.md](COMMANDS.md)**.
+
 Um instalador único cobre os quatro hosts — não precisa clonar o repo:
 
 ```bash
