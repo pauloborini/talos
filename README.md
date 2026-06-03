@@ -48,6 +48,8 @@ No modo `--global` o runtime vai para um local estável (`~/.config/opencode/atl
 
 Flags úteis: `--global`/`-g` (opencode/pi), `--dir <d>` (alvo por-projeto), `--yes` (auto-deps pi), `--dry-run` (mostra sem alterar), `-h`.
 
+> **Plataformas:** macOS e Linux são suportados (mesmo caminho POSIX). Windows tem suporte por código (spawn das CLIs via shell; root global do opencode em `%APPDATA%\opencode`, ou `XDG_CONFIG_HOME` se definido; pi em `%USERPROFILE%\.pi\agent`) — smoke real no Windows ainda pendente. No Windows, defina `XDG_CONFIG_HOME` para forçar o caminho do opencode de forma determinística.
+
 > Enquanto o multi-host não estiver na branch default do GitHub, fixe a branch:
 > `npx github:pauloborini/atlas-workflow#feature/multihost-expansion init opencode`.
 

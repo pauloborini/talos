@@ -34,15 +34,19 @@ const HOST_ALIASES = {
 function log(msg) { process.stdout.write(`${msg}\n`); }
 function fail(msg, code = 1) { process.stderr.write(`erro: ${msg}\n`); process.exit(code); }
 
+// No Windows as CLIs instaladas por npm (claude/codex/pi/opencode) são shims .cmd,
+// que o spawn só resolve com shell:true. POSIX dispensa (evita parsing extra).
+const WIN = process.platform === 'win32';
+
 function which(cmd) {
-  const r = spawnSync(process.platform === 'win32' ? 'where' : 'which', [cmd], { encoding: 'utf8' });
+  const r = spawnSync(WIN ? 'where' : 'which', [cmd], { encoding: 'utf8', shell: WIN });
   return r.status === 0;
 }
 
 function run(cmd, args, { dryRun }) {
   log(`  $ ${cmd} ${args.join(' ')}`);
   if (dryRun) return 0;
-  const r = spawnSync(cmd, args, { stdio: 'inherit' });
+  const r = spawnSync(cmd, args, { stdio: 'inherit', shell: WIN });
   return r.status ?? 1;
 }
 
@@ -100,7 +104,14 @@ function mergePiMcpJson(targetDir) {
 //   `opencode agent list` com HOME sandbox).
 function opencodeGlobalRoot() {
   const xdg = process.env.XDG_CONFIG_HOME?.trim();
-  return path.join(xdg || path.join(homedir(), '.config'), 'opencode');
+  if (xdg) return path.join(xdg, 'opencode');          // override determinístico (todo SO)
+  if (WIN) {
+    // Windows: opencode usa %APPDATA%\opencode (não ~/.config). Fallback p/ ~/.config
+    // só se APPDATA ausente. Setar XDG_CONFIG_HOME força o caminho POSIX se preferir.
+    const appData = process.env.APPDATA?.trim();
+    if (appData) return path.join(appData, 'opencode');
+  }
+  return path.join(homedir(), '.config', 'opencode');
 }
 // prefere o arquivo existente (.jsonc tem precedência se já existir); senão .json.
 function opencodeConfigFile(root) {
@@ -190,7 +201,7 @@ function installOpencode(targetDir, opts) {
 
 function piDepsStatus() {
   if (!which('pi')) return { piPresent: false, missing: ['pi-mcp-adapter', 'pi-subagents'] };
-  const r = spawnSync('pi', ['list'], { encoding: 'utf8' });
+  const r = spawnSync('pi', ['list'], { encoding: 'utf8', shell: WIN });
   const out = (r.stdout ?? '') + (r.stderr ?? '');
   const missing = ['pi-mcp-adapter', 'pi-subagents'].filter((d) => !out.includes(d));
   return { piPresent: true, missing };
