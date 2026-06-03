@@ -11,6 +11,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
+import { homedir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
@@ -93,6 +94,70 @@ function mergePiMcpJson(targetDir) {
   return dest;
 }
 
+// --- paths globais (verificados no source das deps / empiricamente nas CLIs) -----
+// opencode: config global em $XDG_CONFIG_HOME/opencode (default ~/.config/opencode);
+//   agentes em <root>/agents/*.md e skills em <root>/skills/* (confirmado por
+//   `opencode agent list` com HOME sandbox).
+function opencodeGlobalRoot() {
+  const xdg = process.env.XDG_CONFIG_HOME?.trim();
+  return path.join(xdg || path.join(homedir(), '.config'), 'opencode');
+}
+// prefere o arquivo existente (.jsonc tem precedência se já existir); senão .json.
+function opencodeConfigFile(root) {
+  for (const name of ['opencode.jsonc', 'opencode.json']) {
+    const p = path.join(root, name);
+    if (fs.existsSync(p)) return p;
+  }
+  return path.join(root, 'opencode.json');
+}
+// pi: getAgentDir() honra PI_CODING_AGENT_DIR (igual ao pi-mcp-adapter/agent-dir.ts).
+function piAgentDir() {
+  const c = process.env.PI_CODING_AGENT_DIR?.trim();
+  if (!c) return path.join(homedir(), '.pi', 'agent');
+  if (c === '~') return homedir();
+  if (c.startsWith('~/')) return path.resolve(homedir(), c.slice(2));
+  return path.resolve(c);
+}
+// pi-subagents (agents.ts): com PI_CODING_AGENT_DIR setado usa <agentDir>/agents;
+// senão ~/.agents se existir, senão <agentDir>/agents. Replicamos a mesma escolha
+// para escrever onde o pi REALMENTE lê.
+function piGlobalAgentsDir() {
+  const agentDir = piAgentDir();
+  if (process.env.PI_CODING_AGENT_DIR?.trim()) return path.join(agentDir, 'agents');
+  const dotAgents = path.join(homedir(), '.agents');
+  return fs.existsSync(dotAgents) ? dotAgents : path.join(agentDir, 'agents');
+}
+
+// Lê a entry de server 'atlas-workflow' do catálogo bundled e reescreve o path do
+// server.js para ABSOLUTO (instalação global não tem cwd de projeto). Mantém shape
+// e env em sincronia com o bundle (mudou lá, muda aqui).
+function absServerEntry(host, atlasRootAbs) {
+  const absServer = path.join(atlasRootAbs, 'packages/mcp-server/server.js');
+  if (host === 'opencode') {
+    const c = JSON.parse(fs.readFileSync(path.join(ROOT, 'hosts/opencode/opencode.json'), 'utf8'));
+    return { schema: c.$schema, entry: { ...c.mcp['atlas-workflow'], command: ['node', absServer] } };
+  }
+  const c = JSON.parse(fs.readFileSync(path.join(ROOT, 'hosts/pi/.mcp.json'), 'utf8'));
+  return { entry: { ...c.mcpServers['atlas-workflow'], args: [absServer] } };
+}
+
+// Merge genérico de uma entry de server num config JSON. Falha-cedo se o arquivo
+// existente for JSON inválido (não sobrescreve). Preserva outros servers e chaves.
+function mergeServerInto(file, containerKey, serverName, entry, { dryRun, schema } = {}) {
+  assertConfigParseable(file);
+  let cfg = {};
+  if (fs.existsSync(file)) {
+    cfg = JSON.parse(fs.readFileSync(file, 'utf8'));
+    log(`  ${path.basename(file)} já existe — mesclando ${containerKey}.${serverName} (config do usuário preservada)`);
+  }
+  if (schema) cfg.$schema ??= schema;
+  cfg[containerKey] = { ...(cfg[containerKey] ?? {}), [serverName]: entry };
+  if (dryRun) return file;
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(cfg, null, 2) + '\n');
+  return file;
+}
+
 function installClaude(opts) {
   if (!which('claude')) fail('CLI `claude` não encontrada no PATH. Instale o Claude Code primeiro.');
   log(`instalando Atlas (claude/cursor) via marketplace from-source @ ${REPO_SLUG}`);
@@ -165,6 +230,66 @@ function installPi(targetDir, opts) {
   log('  file real (.atlas/state/<run_id>/<slice>.json) — não com placeholder.');
 }
 
+// --- install global ----------------------------------------------------------
+
+function installOpencodeGlobal(opts) {
+  const root = opencodeGlobalRoot();
+  const atlasRoot = path.join(root, 'atlas');
+  const cfgFile = opencodeConfigFile(root);
+  log(`instalando Atlas (opencode v${VERSION}) GLOBAL em ${root}`);
+  assertConfigParseable(cfgFile);
+  const { schema, entry } = absServerEntry('opencode', atlasRoot);
+  if (opts.dryRun) {
+    log(`  [dry-run] copiaria runtime → ${atlasRoot}, agente → ${path.join(root, 'agents')}, skills → ${path.join(root, 'skills')}`);
+    log(`  [dry-run] mesclaria mcp.atlas-workflow em ${cfgFile} (command absoluto)`);
+    return;
+  }
+  fs.mkdirSync(root, { recursive: true });
+  fs.cpSync(path.join(ROOT, 'hosts/opencode/.opencode/atlas'), atlasRoot, { recursive: true });
+  fs.mkdirSync(path.join(root, 'agents'), { recursive: true });
+  fs.copyFileSync(path.join(ROOT, 'hosts/opencode/.opencode/agents/atlas-task-validator.md'), path.join(root, 'agents/atlas-task-validator.md'));
+  const skillsSrc = path.join(ROOT, 'hosts/opencode/.opencode/skills');
+  for (const name of fs.readdirSync(skillsSrc)) {
+    if (name.startsWith('atlas-')) fs.cpSync(path.join(skillsSrc, name), path.join(root, 'skills', name), { recursive: true });
+  }
+  mergeServerInto(cfgFile, 'mcp', 'atlas-workflow', entry, { schema });
+  log('ok — opencode GLOBAL instalado (vale em todos os projetos).');
+  log('próximo: abra `opencode` em qualquer pasta  → atlas_ping (host=opencode) + atlas_capabilities.');
+}
+
+function installPiGlobal(opts) {
+  const agentDir = piAgentDir();
+  const atlasRoot = path.join(agentDir, 'atlas');
+  const agentsDir = piGlobalAgentsDir();
+  const mcpFile = path.join(agentDir, 'mcp.json');
+  log(`instalando Atlas (pi v${VERSION}) GLOBAL em ${agentDir}`);
+  assertConfigParseable(mcpFile);
+  const { entry } = absServerEntry('pi', atlasRoot);
+  if (opts.dryRun) {
+    log(`  [dry-run] copiaria runtime → ${atlasRoot}, agente → ${path.join(agentsDir, 'atlas-task-validator.md')}`);
+    log(`  [dry-run] mesclaria mcpServers.atlas-workflow em ${mcpFile} (args absoluto)`);
+  } else {
+    fs.mkdirSync(agentDir, { recursive: true });
+    fs.cpSync(path.join(ROOT, 'hosts/pi/atlas'), atlasRoot, { recursive: true });
+    fs.mkdirSync(agentsDir, { recursive: true });
+    fs.copyFileSync(path.join(ROOT, 'hosts/pi/.pi/agents/atlas-task-validator.md'), path.join(agentsDir, 'atlas-task-validator.md'));
+    mergeServerInto(mcpFile, 'mcpServers', 'atlas-workflow', entry);
+    log(`ok — pi GLOBAL instalado (runtime + agente em ${agentsDir} + mcp.json).`);
+  }
+  const { piPresent, missing } = piDepsStatus();
+  if (!piPresent) {
+    log('aviso: CLI `pi` não encontrada — instale o pi e as 2 deps obrigatórias (DEC-005):');
+    log('  pi install npm:pi-mcp-adapter && pi install npm:pi-subagents');
+  } else if (missing.length) {
+    log(`deps obrigatórias ausentes: ${missing.join(', ')} (DEC-005)`);
+    if (opts.yes && !opts.dryRun) for (const dep of missing) run('pi', ['install', `npm:${dep}`], opts);
+    else { log('instale com:'); for (const dep of missing) log(`  pi install npm:${dep}`); log('(ou re-rode com --yes)'); }
+  } else {
+    log('deps obrigatórias presentes: pi-mcp-adapter + pi-subagents ✓');
+  }
+  log('próximo: abra `pi` em qualquer pasta  → atlas_ping (host=pi) + atlas_capabilities.');
+}
+
 // --- uninstall ---------------------------------------------------------------
 
 function rmIfExists(p, { dryRun }) {
@@ -235,6 +360,25 @@ function uninstallPi(targetDir, opts) {
   log('  remova manualmente se quiser: pi remove pi-mcp-adapter && pi remove pi-subagents');
 }
 
+function uninstallOpencodeGlobal(opts) {
+  const root = opencodeGlobalRoot();
+  log(`removendo Atlas (opencode) GLOBAL de ${root}`);
+  rmIfExists(path.join(root, 'atlas'), opts);
+  rmIfExists(path.join(root, 'agents/atlas-task-validator.md'), opts);
+  rmAtlasSkills(path.join(root, 'skills'), opts);
+  dropMcpKey(opencodeConfigFile(root), 'mcp', 'atlas-workflow', opts);
+  log('ok — artefatos globais do Atlas removidos (config/skills do usuário preservados).');
+}
+
+function uninstallPiGlobal(opts) {
+  const agentDir = piAgentDir();
+  log(`removendo Atlas (pi) GLOBAL de ${agentDir}`);
+  rmIfExists(path.join(agentDir, 'atlas'), opts);
+  rmIfExists(path.join(piGlobalAgentsDir(), 'atlas-task-validator.md'), opts);
+  dropMcpKey(path.join(agentDir, 'mcp.json'), 'mcpServers', 'atlas-workflow', opts);
+  log('ok — artefatos globais do Atlas removidos. As deps pi-mcp-adapter/pi-subagents ficam (uso geral).');
+}
+
 function usage() {
   log(`atlas-workflow v${VERSION} — instalador multi-host
 
@@ -243,24 +387,27 @@ uso:
   npx github:${REPO_SLUG} uninstall <host> [dir] [flags]
 
 hosts:
-  claudecode | cursor   via \`claude plugin\` (marketplace from-source)
-  codex                 via \`codex plugin\` (marketplace from-source)
-  opencode              .opencode/ + opencode.json no [dir] (default: cwd)
-  pi                    .mcp.json + .pi/agents/ no [dir] (default: cwd) + deps
+  claudecode | cursor   via \`claude plugin\` (marketplace from-source; já global)
+  codex                 via \`codex plugin\` (marketplace from-source; já global)
+  opencode              por-projeto: .opencode/ + opencode.json no [dir]
+                        --global: ~/.config/opencode/ (vale em todos os projetos)
+  pi                    por-projeto: .mcp.json + .pi/agents/ no [dir] + deps
+                        --global: ~/.pi/agent/ (vale em todos os projetos)
 
 flags:
-  --dir <d>    diretório alvo (opencode/pi); default: diretório atual
-  --global,-g  (reservado) instalação global — ainda não implementado
+  --dir <d>    diretório alvo (opencode/pi por-projeto); default: diretório atual
+  --global,-g  instalação global (opencode/pi); claude/codex já são globais
   --yes,-y     auto-instala deps faltantes (pi, no init)
   --dry-run    mostra o que faria, sem alterar nada
   -h,--help    esta ajuda
 
 exemplos:
   npx github:${REPO_SLUG} init claudecode
-  npx github:${REPO_SLUG} init opencode
-  npx github:${REPO_SLUG} init pi --yes
-  npx github:${REPO_SLUG} uninstall opencode
-  npx github:${REPO_SLUG} uninstall pi --dry-run`);
+  npx github:${REPO_SLUG} init opencode               # projeto atual
+  npx github:${REPO_SLUG} init opencode --global      # todos os projetos
+  npx github:${REPO_SLUG} init pi --global --yes
+  npx github:${REPO_SLUG} uninstall opencode --global
+  npx github:${REPO_SLUG} uninstall pi --global --dry-run`);
 }
 
 function main() {
@@ -287,15 +434,23 @@ function main() {
     yes: argv.includes('--yes') || argv.includes('-y'),
     global: argv.includes('--global') || argv.includes('-g'),
   };
-  if (opts.global) log('aviso: --global ainda não implementado; usando instalação por diretório.');
-
   const actions = {
     init: { claude: installClaude, codex: installCodex, opencode: installOpencode, pi: installPi },
     uninstall: { claude: uninstallClaude, codex: uninstallCodex, opencode: uninstallOpencode, pi: uninstallPi },
   };
-  const fn = actions[cmd][host];
-  if (host === 'claude' || host === 'codex') fn(opts);
-  else fn(targetDir, opts);
+  const globalActions = {
+    init: { opencode: installOpencodeGlobal, pi: installPiGlobal },
+    uninstall: { opencode: uninstallOpencodeGlobal, pi: uninstallPiGlobal },
+  };
+
+  if (host === 'claude' || host === 'codex') {
+    if (opts.global) log('nota: claude/codex já são globais por natureza (registro da CLI) — --global ignorado.');
+    actions[cmd][host](opts);
+  } else if (opts.global) {
+    globalActions[cmd][host](opts);
+  } else {
+    actions[cmd][host](targetDir, opts);
+  }
 }
 
 main();

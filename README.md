@@ -31,11 +31,22 @@ npx github:pauloborini/atlas-workflow init opencode      # no diretório do proj
 npx github:pauloborini/atlas-workflow init pi --yes      # --yes auto-instala as 2 deps
 ```
 
-- **claudecode/cursor** e **codex**: o instalador roda o `marketplace add` + `install`/`add` nativos da CLI por você.
+- **claudecode/cursor** e **codex**: o instalador roda o `marketplace add` + `install`/`add` nativos da CLI por você. Já são **globais** (registro da CLI vale em todos os projetos).
 - **opencode**: coloca `.opencode/` + `opencode.json` no diretório atual (use `--dir <d>` para outro alvo).
 - **pi**: coloca `.mcp.json` + `.pi/agents/` e checa/instala as deps `pi-mcp-adapter` + `pi-subagents`.
 
-Flags úteis: `--dir <d>` (alvo opencode/pi), `--yes` (auto-deps pi), `--dry-run` (mostra sem alterar), `-h`.
+### Global vs por-projeto (opencode/pi)
+
+claude/codex são sempre globais. opencode/pi instalam **por-projeto** por padrão (arquivos no diretório). Para valer em **todos os projetos**, use `--global`:
+
+```bash
+npx github:pauloborini/atlas-workflow init opencode --global       # → ~/.config/opencode/
+npx github:pauloborini/atlas-workflow init pi --global --yes       # → ~/.pi/agent/ (honra PI_CODING_AGENT_DIR)
+```
+
+No modo `--global` o runtime vai para um local estável (`~/.config/opencode/atlas` ou `~/.pi/agent/atlas`) e o MCP é registrado com **caminho absoluto** (sem depender do cwd). opencode: agente em `~/.config/opencode/agents/`, skills em `~/.config/opencode/skills/`. pi: agente em `~/.agents/` (se existir) ou `~/.pi/agent/agents/`, MCP em `~/.pi/agent/mcp.json`. A config existente é **mesclada** (preserva outros MCP servers e chaves); se o `opencode.jsonc` tiver comentários, o instalador aborta sem tocar nada (corrija para JSON válido e re-rode).
+
+Flags úteis: `--global`/`-g` (opencode/pi), `--dir <d>` (alvo por-projeto), `--yes` (auto-deps pi), `--dry-run` (mostra sem alterar), `-h`.
 
 > Enquanto o multi-host não estiver na branch default do GitHub, fixe a branch:
 > `npx github:pauloborini/atlas-workflow#feature/multihost-expansion init opencode`.
@@ -126,6 +137,13 @@ npx github:pauloborini/atlas-workflow uninstall claudecode   # ou: cursor
 npx github:pauloborini/atlas-workflow uninstall codex
 npx github:pauloborini/atlas-workflow uninstall opencode      # use --dir <d> se instalou fora do cwd
 npx github:pauloborini/atlas-workflow uninstall pi
+```
+
+Se instalou com `--global`, desinstale com `--global` (remove de `~/.config/opencode/` ou `~/.pi/agent/`):
+
+```bash
+npx github:pauloborini/atlas-workflow uninstall opencode --global
+npx github:pauloborini/atlas-workflow uninstall pi --global
 ```
 
 Manual (equivalente):
