@@ -119,7 +119,8 @@ function installOpencode(targetDir, opts) {
   copyInto('hosts/opencode/.opencode', targetDir);   // subagente + skills + runtime
   mergeOpencodeJson(targetDir);                       // MCP local (type:local, ATLAS_HOST=opencode)
   log('ok — opencode instalado (MCP + subagente + skills).');
-  log(`próximo: cd ${targetDir} && opencode  → confirme com atlas_ping (host=opencode).`);
+  log(`próximo: cd ${targetDir} && opencode  → confirme com as tools atlas_ping`);
+  log('  (deve retornar host=opencode) e atlas_capabilities.');
 }
 
 function piDepsStatus() {
@@ -158,8 +159,10 @@ function installPi(targetDir, opts) {
   } else {
     log('deps obrigatórias presentes: pi-mcp-adapter + pi-subagents ✓');
   }
-  log(`próximo: cd ${targetDir} && pi  → atlas_ping (host=pi); dispare o validator via`);
-  log('  subagent({ agent: "atlas-task-validator", task: "<state_path>", context: "fresh" })');
+  log(`próximo: cd ${targetDir} && pi  → confirme a instalação com as tools atlas_ping`);
+  log('  (deve retornar host=pi) e atlas_capabilities. NÃO dispare o validator à mão:');
+  log('  o atlas-task-validator roda automaticamente dentro do workflow, com um state');
+  log('  file real (.atlas/state/<run_id>/<slice>.json) — não com placeholder.');
 }
 
 // --- uninstall ---------------------------------------------------------------
