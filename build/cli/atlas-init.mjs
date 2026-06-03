@@ -45,6 +45,14 @@ function run(cmd, args, { dryRun }) {
   return r.status ?? 1;
 }
 
+// Falha-cedo: se o config do usuário existe mas é JSON inválido, aborta ANTES de
+// copiar qualquer arquivo (não deixa instalação parcial nem sobrescreve config).
+function assertConfigParseable(file) {
+  if (!fs.existsSync(file)) return;
+  try { JSON.parse(fs.readFileSync(file, 'utf8')); }
+  catch { fail(`${path.basename(file)} existente é JSON inválido: ${file} (corrija antes de instalar; não sobrescrevo config do usuário)`); }
+}
+
 function copyInto(srcRel, destDir) {
   const src = path.join(ROOT, srcRel);
   if (!fs.existsSync(src)) fail(`catálogo ausente no repo: ${srcRel} (rode build/build-plugins.sh e commite)`);
@@ -60,11 +68,27 @@ function mergeOpencodeJson(targetDir) {
   let cfg = {};
   if (fs.existsSync(dest)) {
     try { cfg = JSON.parse(fs.readFileSync(dest, 'utf8')); }
-    catch { fail(`opencode.json existente é JSON inválido: ${dest}`); }
-    log(`  opencode.json já existe — mesclando a chave mcp.atlas-workflow`);
+    catch { fail(`opencode.json existente é JSON inválido: ${dest} (não sobrescrevo config do usuário)`); }
+    log(`  opencode.json já existe — mesclando a chave mcp.atlas-workflow (config do usuário preservada)`);
   }
   cfg.$schema ??= srcCfg.$schema;
   cfg.mcp = { ...(cfg.mcp ?? {}), ...srcCfg.mcp };
+  fs.writeFileSync(dest, JSON.stringify(cfg, null, 2) + '\n');
+  return dest;
+}
+
+// pi: mesclar a chave mcpServers.atlas-workflow no .mcp.json existente em vez de
+// sobrescrever o arquivo. Preserva outros servers MCP e demais chaves do usuário.
+function mergePiMcpJson(targetDir) {
+  const srcCfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'hosts/pi/.mcp.json'), 'utf8'));
+  const dest = path.join(targetDir, '.mcp.json');
+  let cfg = {};
+  if (fs.existsSync(dest)) {
+    try { cfg = JSON.parse(fs.readFileSync(dest, 'utf8')); }
+    catch { fail(`.mcp.json existente é JSON inválido: ${dest} (não sobrescrevo config do usuário)`); }
+    log(`  .mcp.json já existe — mesclando mcpServers.atlas-workflow (config do usuário preservada)`);
+  }
+  cfg.mcpServers = { ...(cfg.mcpServers ?? {}), ...srcCfg.mcpServers };
   fs.writeFileSync(dest, JSON.stringify(cfg, null, 2) + '\n');
   return dest;
 }
@@ -89,6 +113,7 @@ function installCodex(opts) {
 
 function installOpencode(targetDir, opts) {
   log(`instalando Atlas (opencode v${VERSION}) em ${targetDir}`);
+  assertConfigParseable(path.join(targetDir, 'opencode.json'));
   if (opts.dryRun) { log('  [dry-run] copiaria .opencode/ + mesclaria opencode.json'); return; }
   fs.mkdirSync(targetDir, { recursive: true });
   copyInto('hosts/opencode/.opencode', targetDir);   // subagente + skills + runtime
@@ -107,13 +132,14 @@ function piDepsStatus() {
 
 function installPi(targetDir, opts) {
   log(`instalando Atlas (pi v${VERSION}) em ${targetDir}`);
+  assertConfigParseable(path.join(targetDir, '.mcp.json'));
   if (opts.dryRun) { log('  [dry-run] copiaria atlas/ skills/ .pi/agents/ + .mcp.json'); }
   else {
     fs.mkdirSync(targetDir, { recursive: true });
     copyInto('hosts/pi/atlas', targetDir);
     copyInto('hosts/pi/skills', targetDir);
     copyInto('hosts/pi/.pi', targetDir);                 // .pi/agents/<name>.md (descoberta pi-subagents)
-    fs.copyFileSync(path.join(ROOT, 'hosts/pi/.mcp.json'), path.join(targetDir, '.mcp.json')); // pi-mcp-adapter
+    mergePiMcpJson(targetDir);                            // mescla mcpServers.atlas-workflow (pi-mcp-adapter)
     log('ok — arquivos do pi instalados (.mcp.json + .pi/agents/ + atlas/ + skills/).');
   }
   const { piPresent, missing } = piDepsStatus();
