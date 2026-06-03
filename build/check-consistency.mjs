@@ -113,6 +113,7 @@ if (versionFile != null) {
   for (const rel of [
     '.claude-plugin/plugin.json',
     'plugins/atlas-workflow-orchestrator/.codex-plugin/plugin.json',
+    'package.json',
   ]) {
     const raw = read(rel);
     if (raw == null) continue;

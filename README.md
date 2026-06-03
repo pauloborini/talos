@@ -20,7 +20,29 @@ Plugin **Atlas Workflow Orchestrator** v0.4 — pipeline determinístico (PRD �
 
 **Pré-requisito:** Node.js no host. Após instalar, confirme o MCP com `atlas_ping`.
 
-## Instalação (marketplace GitHub)
+## Instalação rápida (1 comando, via npx)
+
+Um instalador único cobre os quatro hosts — não precisa clonar o repo:
+
+```bash
+npx github:pauloborini/atlas-workflow init claudecode   # ou: cursor
+npx github:pauloborini/atlas-workflow init codex
+npx github:pauloborini/atlas-workflow init opencode      # no diretório do projeto
+npx github:pauloborini/atlas-workflow init pi --yes      # --yes auto-instala as 2 deps
+```
+
+- **claudecode/cursor** e **codex**: o instalador roda o `marketplace add` + `install`/`add` nativos da CLI por você.
+- **opencode**: coloca `.opencode/` + `opencode.json` no diretório atual (use `--dir <d>` para outro alvo).
+- **pi**: coloca `.mcp.json` + `.pi/agents/` e checa/instala as deps `pi-mcp-adapter` + `pi-subagents`.
+
+Flags úteis: `--dir <d>` (alvo opencode/pi), `--yes` (auto-deps pi), `--dry-run` (mostra sem alterar), `-h`.
+
+> Enquanto o multi-host não estiver na branch default do GitHub, fixe a branch:
+> `npx github:pauloborini/atlas-workflow#feature/multihost-expansion init opencode`.
+
+Os fluxos manuais por host seguem abaixo (equivalentes ao que o instalador faz).
+
+## Instalação manual (marketplace GitHub)
 
 ### Claude Code e Cursor
 
