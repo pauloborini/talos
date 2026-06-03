@@ -117,7 +117,18 @@ O **`.mcp.json`** (no root, descoberto pelo `pi-mcp-adapter`) registra o server 
 
 > **Determinismo (DEC-004):** pi e generic são hosts `must_report` — o orquestrador apura a disponibilidade real de subagente+MCP e a reporta em `host_capabilities` no preflight. Sem report afirmativo, o gate PREREQ falha-fechado (nunca degrada). `atlas_capabilities` expõe `prereq_policy` para o orquestrador saber disso.
 
-### Desinstalar (testar de novo)
+### Desinstalar
+
+Rápido (1 comando, via npx — remove só os artefatos do Atlas, preserva config/skills do usuário):
+
+```bash
+npx github:pauloborini/atlas-workflow uninstall claudecode   # ou: cursor
+npx github:pauloborini/atlas-workflow uninstall codex
+npx github:pauloborini/atlas-workflow uninstall opencode      # use --dir <d> se instalou fora do cwd
+npx github:pauloborini/atlas-workflow uninstall pi
+```
+
+Manual (equivalente):
 
 ```bash
 claude plugin uninstall atlas-workflow-orchestrator@atlas-workflow
@@ -126,6 +137,8 @@ claude plugin marketplace remove atlas-workflow
 codex plugin remove atlas-workflow-orchestrator@atlas-workflow
 codex plugin marketplace remove atlas-workflow
 ```
+
+opencode/pi: o `uninstall` remove `.opencode/atlas` + `agents/atlas-task-validator.md` + skills `atlas-*` + a chave MCP `atlas-workflow` (pi: `atlas/`, `.pi/agents/`, skills `atlas-*`, `.mcp.json`). As deps `pi-mcp-adapter`/`pi-subagents` ficam (uso geral).
 
 ## Artefato `.plugin` (opcional)
 

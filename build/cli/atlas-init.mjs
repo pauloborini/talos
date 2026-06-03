@@ -136,30 +136,102 @@ function installPi(targetDir, opts) {
   log('  subagent({ agent: "atlas-task-validator", task: "<state_path>", context: "fresh" })');
 }
 
+// --- uninstall ---------------------------------------------------------------
+
+function rmIfExists(p, { dryRun }) {
+  if (!fs.existsSync(p)) return false;
+  log(`  rm ${path.relative(process.cwd(), p) || p}`);
+  if (!dryRun) fs.rmSync(p, { recursive: true, force: true });
+  return true;
+}
+
+// Remove apenas subdirs com prefixo atlas- (não toca skills do usuário).
+function rmAtlasSkills(skillsDir, opts) {
+  if (!fs.existsSync(skillsDir)) return;
+  for (const name of fs.readdirSync(skillsDir)) {
+    if (name.startsWith('atlas-')) rmIfExists(path.join(skillsDir, name), opts);
+  }
+}
+
+// Remove uma chave de server MCP de um config JSON; reescreve. Remove o arquivo só
+// se ficou totalmente vazio (era exclusivo do Atlas). Preserva outros servers.
+function dropMcpKey(file, containerKey, serverName, opts) {
+  if (!fs.existsSync(file)) return;
+  let cfg;
+  try { cfg = JSON.parse(fs.readFileSync(file, 'utf8')); }
+  catch { log(`  aviso: ${path.basename(file)} é JSON inválido — não mexi`); return; }
+  const container = cfg[containerKey];
+  if (!container || !(serverName in container)) return;
+  log(`  ${path.basename(file)}: removendo ${containerKey}.${serverName}`);
+  if (opts.dryRun) return;
+  delete container[serverName];
+  const onlyOurs = Object.keys(container).length === 0
+    && Object.keys(cfg).every((k) => k === containerKey || k === '$schema');
+  if (onlyOurs) { fs.rmSync(file, { force: true }); log(`  ${path.basename(file)} ficou vazio — removido`); }
+  else fs.writeFileSync(file, JSON.stringify(cfg, null, 2) + '\n');
+}
+
+function uninstallClaude(opts) {
+  if (!which('claude')) fail('CLI `claude` não encontrada no PATH.');
+  log('removendo Atlas (claude/cursor)');
+  run('claude', ['plugin', 'uninstall', PLUGIN_ID], opts);
+  run('claude', ['plugin', 'marketplace', 'remove', 'atlas-workflow'], opts);
+  log('ok — removido do Claude Code/Cursor.');
+}
+
+function uninstallCodex(opts) {
+  if (!which('codex')) fail('CLI `codex` não encontrada no PATH.');
+  log('removendo Atlas (codex)');
+  run('codex', ['plugin', 'remove', PLUGIN_ID], opts);
+  run('codex', ['plugin', 'marketplace', 'remove', 'atlas-workflow'], opts);
+  log('ok — removido do Codex.');
+}
+
+function uninstallOpencode(targetDir, opts) {
+  log(`removendo Atlas (opencode) de ${targetDir}`);
+  rmIfExists(path.join(targetDir, '.opencode/atlas'), opts);
+  rmIfExists(path.join(targetDir, '.opencode/agents/atlas-task-validator.md'), opts);
+  rmAtlasSkills(path.join(targetDir, '.opencode/skills'), opts);
+  dropMcpKey(path.join(targetDir, 'opencode.json'), 'mcp', 'atlas-workflow', opts);
+  log('ok — artefatos do Atlas removidos (config/skills do usuário preservados).');
+}
+
+function uninstallPi(targetDir, opts) {
+  log(`removendo Atlas (pi) de ${targetDir}`);
+  rmIfExists(path.join(targetDir, 'atlas'), opts);
+  rmIfExists(path.join(targetDir, '.pi/agents/atlas-task-validator.md'), opts);
+  rmAtlasSkills(path.join(targetDir, 'skills'), opts);
+  dropMcpKey(path.join(targetDir, '.mcp.json'), 'mcpServers', 'atlas-workflow', opts);
+  log('ok — artefatos do Atlas removidos. As deps pi-mcp-adapter/pi-subagents ficam (uso geral);');
+  log('  remova manualmente se quiser: pi remove pi-mcp-adapter && pi remove pi-subagents');
+}
+
 function usage() {
   log(`atlas-workflow v${VERSION} — instalador multi-host
 
 uso:
   npx github:${REPO_SLUG} init <host> [dir] [flags]
+  npx github:${REPO_SLUG} uninstall <host> [dir] [flags]
 
 hosts:
-  claudecode | cursor   instala via \`claude plugin\` (marketplace from-source)
-  codex                 instala via \`codex plugin\` (marketplace from-source)
-  opencode              coloca .opencode/ + opencode.json no [dir] (default: cwd)
-  pi                    coloca .mcp.json + .pi/agents/ no [dir] (default: cwd) + checa deps
+  claudecode | cursor   via \`claude plugin\` (marketplace from-source)
+  codex                 via \`codex plugin\` (marketplace from-source)
+  opencode              .opencode/ + opencode.json no [dir] (default: cwd)
+  pi                    .mcp.json + .pi/agents/ no [dir] (default: cwd) + deps
 
 flags:
   --dir <d>    diretório alvo (opencode/pi); default: diretório atual
   --global,-g  (reservado) instalação global — ainda não implementado
-  --yes,-y     auto-instala deps faltantes (pi)
+  --yes,-y     auto-instala deps faltantes (pi, no init)
   --dry-run    mostra o que faria, sem alterar nada
   -h,--help    esta ajuda
 
 exemplos:
   npx github:${REPO_SLUG} init claudecode
-  npx github:${REPO_SLUG} init codex
   npx github:${REPO_SLUG} init opencode
-  npx github:${REPO_SLUG} init pi --yes`);
+  npx github:${REPO_SLUG} init pi --yes
+  npx github:${REPO_SLUG} uninstall opencode
+  npx github:${REPO_SLUG} uninstall pi --dry-run`);
 }
 
 function main() {
@@ -167,7 +239,9 @@ function main() {
   if (argv.length === 0 || argv.includes('-h') || argv.includes('--help')) { usage(); process.exit(0); }
 
   const cmd = argv[0];
-  if (cmd !== 'init') fail(`comando desconhecido: ${cmd} (use \`init <host>\`)`, 2);
+  if (cmd !== 'init' && cmd !== 'uninstall') {
+    fail(`comando desconhecido: ${cmd} (use \`init <host>\` ou \`uninstall <host>\`)`, 2);
+  }
 
   const positional = argv.slice(1).filter((a) => !a.startsWith('-'));
   const rawHost = positional[0];
@@ -186,10 +260,13 @@ function main() {
   };
   if (opts.global) log('aviso: --global ainda não implementado; usando instalação por diretório.');
 
-  if (host === 'claude') installClaude(opts);
-  else if (host === 'codex') installCodex(opts);
-  else if (host === 'opencode') installOpencode(targetDir, opts);
-  else if (host === 'pi') installPi(targetDir, opts);
+  const actions = {
+    init: { claude: installClaude, codex: installCodex, opencode: installOpencode, pi: installPi },
+    uninstall: { claude: uninstallClaude, codex: uninstallCodex, opencode: uninstallOpencode, pi: uninstallPi },
+  };
+  const fn = actions[cmd][host];
+  if (host === 'claude' || host === 'codex') fn(opts);
+  else fn(targetDir, opts);
 }
 
 main();
