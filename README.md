@@ -83,15 +83,15 @@ npm i -g @mariozechner/pi-coding-agent
 #   pi-subagents     → subagentes isolados
 ```
 
-Depois instale o catálogo from-source [`hosts/pi/`](hosts/pi/) com o helper (1 comando; idempotente para **atualizar**) e importe `mcp.json` no `pi-mcp-adapter`:
+Depois instale o catálogo from-source [`hosts/pi/`](hosts/pi/) com o helper (1 comando; idempotente para **atualizar**):
 
 ```bash
 /caminho/para/atlas-workflow/build/install-host.sh pi .   # instala/atualiza na raiz do projeto
-# ou manual:
-cp -R /caminho/para/atlas-workflow/hosts/pi/{agents,skills,atlas,mcp.json} ./
+# ou manual (inclui dotfiles .mcp.json e .pi/):
+cp -R /caminho/para/atlas-workflow/hosts/pi/. ./
 ```
 
-`mcp.json` registra o server `atlas-workflow` (`ATLAS_HOST=pi`); o subagente `atlas-task-validator` vem por `pi-subagents`. O `args` do server é **relativo** (`atlas/packages/mcp-server/server.js`), então o `pi-mcp-adapter` deve lançar `node` com o **cwd na raiz** onde `atlas/` foi copiado. Confirme com `atlas_ping`.
+O **`.mcp.json`** (no root, descoberto pelo `pi-mcp-adapter`) registra o server `atlas-workflow` (`env.ATLAS_HOST=pi`); o subagente `atlas-task-validator` fica em **`.pi/agents/`** (descoberto pelo `pi-subagents`). O `args` do server é **relativo** (`atlas/packages/mcp-server/server.js`) — o `pi-mcp-adapter` deve lançar `node` com **cwd na raiz**. As tools chegam **proxiadas e prefixadas** (`atlas_workflow_atlas_ping`, etc.); dispare o validator pela tool `subagent({ agent: "atlas-task-validator", task: "<state_path>" })`. Confirme com `atlas_ping`.
 
 > **Determinismo (DEC-004):** pi e generic são hosts `must_report` — o orquestrador apura a disponibilidade real de subagente+MCP e a reporta em `host_capabilities` no preflight. Sem report afirmativo, o gate PREREQ falha-fechado (nunca degrada). `atlas_capabilities` expõe `prereq_policy` para o orquestrador saber disso.
 

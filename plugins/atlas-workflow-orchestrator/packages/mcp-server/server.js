@@ -115,9 +115,11 @@ const HOST_ADAPTERS = {
   pi: {
     label: 'pi cli',
     subagent_dispatch: {
-      mechanism: 'pi-subagents (@<name>)',
-      example: 'invocar o subagente atlas-task-validator (via pi-subagents) passando <state_path>',
-      registration: 'manifesto do package (pi-subagents); frontmatter name + description',
+      // pi-subagents dispara pela tool `subagent({agent, task})` — NÃO por @name nem via MCP.
+      // As tools MCP do Atlas chegam proxiadas/prefixadas pelo pi-mcp-adapter (atlas_workflow_<tool>).
+      mechanism: 'subagent({ agent, task }) — tool do pi-subagents',
+      example: 'subagent({ agent: "atlas-task-validator", task: "<state_path>", context: "fresh" })',
+      registration: '.pi/agents/<name>.md (pi-subagents; frontmatter name + description + tools)',
     },
     todo_tool: null,
     hooks: { supported: false, mechanism: null },

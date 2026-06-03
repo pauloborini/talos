@@ -26,13 +26,16 @@ jobs:
         shell: bash
         run: build/build-plugins.sh
 
-      - name: Catálogos from-source sincronizados (sem diff não commitado)
+      - name: Catálogos from-source sincronizados (sem diff nem untracked)
         shell: bash
         run: |
           set -euo pipefail
-          if ! git diff --quiet -- plugins/ hosts/; then
-            echo "Catálogos from-source desatualizados — rode build/build-plugins.sh e commite plugins/ e hosts/." >&2
-            git --no-pager diff --stat -- plugins/ hosts/
+          # --porcelain pega modificado E untracked (dotfiles novos como hosts/pi/.mcp.json
+          # e hosts/pi/.pi/ não apareceriam em `git diff`, só aqui).
+          dirty="$(git status --porcelain -- plugins/ hosts/)"
+          if [[ -n "$dirty" ]]; then
+            echo "Catálogos from-source desatualizados/untracked — rode build/build-plugins.sh e commite plugins/ e hosts/." >&2
+            echo "$dirty" >&2
             exit 1
           fi
 

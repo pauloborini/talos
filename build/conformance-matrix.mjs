@@ -2,7 +2,13 @@
 // Matriz de conformance multi-host (S11 / F5). Por host suportado, valida via
 // stdio o ciclo crítico: boot + ping + capabilities + preflight (PASS) +
 // preflight PREREQ hard-fail (simulado) + veredito JSON parseável do agente.
-// Tudo simulado por env (sem host real). Falha (exit != 0) em qualquer célula.
+//
+// ESCOPO HONESTO (não é teatro verde): isto exercita só a LÓGICA DO MCP SERVER via
+// stdio, com ATLAS_HOST setado por env. NÃO exercita a integração real das extensões
+// de host — opencode (.opencode/agents + opencode.json) é coberto por teste manual no
+// opencode real; pi (pi-mcp-adapter proxia/prefixa as tools + pi-subagents dispara via
+// tool `subagent`) só é validado ponta-a-ponta no pi real. Verde aqui = server correto,
+// não = host instalado funcionando. Falha (exit != 0) em qualquer célula.
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -17,7 +23,7 @@ const HOSTS = [
   { host: 'claude', agent: 'agents/atlas-task-validator.md' },
   { host: 'codex', agent: 'packages/skills/atlas-task-validator/SKILL.md' },
   { host: 'opencode', agent: 'hosts/opencode/.opencode/agents/atlas-task-validator.md' },
-  { host: 'pi', agent: 'hosts/pi/agents/atlas-task-validator.md' },
+  { host: 'pi', agent: 'hosts/pi/.pi/agents/atlas-task-validator.md' },
   { host: 'generic', agent: 'agents/atlas-task-validator.md' },
 ];
 

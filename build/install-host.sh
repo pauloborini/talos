@@ -57,9 +57,10 @@ cp -R "$SRC/." "$TARGET/"
 
 if [[ "$HOST" == "pi" ]]; then
   echo "lembrete: pi exige 2 deps externas obrigatórias no host (DEC-005):"
-  echo "  - pi-mcp-adapter  (MCP)"
-  echo "  - pi-subagents    (subagente)"
-  echo "importe '$TARGET/mcp.json' no pi-mcp-adapter; lance o pi com cwd em $TARGET."
+  echo "  - pi-mcp-adapter  (MCP)    → pi install npm:pi-mcp-adapter"
+  echo "  - pi-subagents    (subagente) → pi install npm:pi-subagents"
+  echo "MCP em '$TARGET/.mcp.json' (descoberto pelo pi-mcp-adapter); subagente em '$TARGET/.pi/agents/'."
+  echo "lance o pi com cwd em $TARGET; dispare o validator via tool subagent({agent:\"atlas-task-validator\", task:\"<state_path>\"})."
 else
   echo "registre/mescle '$TARGET/opencode.json'; reinicie o opencode com cwd em $TARGET."
 fi

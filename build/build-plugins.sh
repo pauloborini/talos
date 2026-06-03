@@ -168,7 +168,9 @@ build_pi() {
   local stage="$STAGE/pi"
   local out="$DIST/atlas-workflow-pi.plugin"
   echo "montando pi"
-  mkdir -p "$stage/agents" "$stage/skills" "$stage/atlas/packages"
+  # pi-subagents descobre agentes em .pi/agents/**/*.md; pi-mcp-adapter lê .mcp.json
+  # (paths reais das deps, verificados no pi real — não 'agents/'/'mcp.json' no root).
+  mkdir -p "$stage/.pi/agents" "$stage/skills" "$stage/atlas/packages"
 
   cp -R "$ROOT/packages/mcp-server" "$stage/atlas/packages/"
   rm -f "$stage/atlas/packages/mcp-server"/*.test.js
@@ -181,11 +183,11 @@ build_pi() {
   cp -R "$ROOT/packages/orchestrator/skills/atlas-workflow-orchestrator" \
     "$stage/skills/atlas-workflow-orchestrator"
 
-  # Subagente no formato pi-subagents (gerado do canônico)
-  node "$ROOT/build/gen-host-agent.mjs" pi "$stage/agents/atlas-task-validator.md"
+  # Subagente no formato pi-subagents (gerado do canônico) em .pi/agents/ (path de descoberta)
+  node "$ROOT/build/gen-host-agent.mjs" pi "$stage/.pi/agents/atlas-task-validator.md"
 
-  # Config MCP pi (pi-mcp-adapter; formato MCP padrão; ATLAS_HOST=pi)
-  cp "$ROOT/plugin-manifests/pi/mcp.json" "$stage/mcp.json"
+  # Config MCP pi (pi-mcp-adapter lê .mcp.json no root do projeto; ATLAS_HOST=pi)
+  cp "$ROOT/plugin-manifests/pi/mcp.json" "$stage/.mcp.json"
 
   echo "zipando pi"
   rm -f "$out"

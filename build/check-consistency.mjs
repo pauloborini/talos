@@ -83,8 +83,8 @@ for (const rel of [
   'hosts/opencode/opencode.json',
   'hosts/opencode/.opencode/agents/atlas-task-validator.md',
   'hosts/opencode/.opencode/atlas/packages/mcp-server/server.js',
-  'hosts/pi/mcp.json',
-  'hosts/pi/agents/atlas-task-validator.md',
+  'hosts/pi/.mcp.json',
+  'hosts/pi/.pi/agents/atlas-task-validator.md',
   'hosts/pi/atlas/packages/mcp-server/server.js',
 ]) {
   if (!fs.existsSync(path.join(ROOT, rel))) {
@@ -96,7 +96,7 @@ for (const rel of [
 // gerados (opencode/pi) deve ser idêntico ao canônico — catálogo stale = drift.
 for (const rel of [
   'hosts/opencode/.opencode/agents/atlas-task-validator.md',
-  'hosts/pi/agents/atlas-task-validator.md',
+  'hosts/pi/.pi/agents/atlas-task-validator.md',
 ]) {
   const hostAgent = read(rel);
   const hostVerdict = verdictBlock(hostAgent, rel);

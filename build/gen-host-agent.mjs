@@ -41,11 +41,15 @@ if (host === 'opencode') {
     '---',
   ].join('\n');
 } else if (host === 'pi') {
-  // pi: subagente via extensão pi-subagents — frontmatter name + description.
+  // pi: subagente via extensão pi-subagents — frontmatter name + description + tools.
+  // tools read-only (read/grep/find/ls/bash, sem write/edit): casa com o contrato do
+  // validator (lê código e roda checagens, nunca corrige). Sem write/edit por design.
+  // model omitido de propósito: pi-subagents herda o modelo default do host.
   header = [
     '---',
     `name: ${name}`,
     `description: ${description}`,
+    'tools: read, grep, find, ls, bash',
     '---',
   ].join('\n');
 } else {
