@@ -12,6 +12,8 @@ echo "== smoke por host =="
 node "$ROOT/build/smoke-hosts.mjs" | tail -1
 echo "== conformance multi-host =="
 node "$ROOT/build/conformance-matrix.mjs" | tail -1
+echo "== smoke install/uninstall =="
+node "$ROOT/build/smoke-install.mjs" | tail -1
 echo "== checksums =="
 ( cd "$ROOT/dist" && shasum -a 256 -c SHA256SUMS )
 echo "OK — suíte completa verde"

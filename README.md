@@ -46,7 +46,7 @@ npx github:pauloborini/atlas-workflow init opencode --global       # → ~/.conf
 npx github:pauloborini/atlas-workflow init pi --global --yes       # → ~/.pi/agent/ (honra PI_CODING_AGENT_DIR)
 ```
 
-No modo `--global` o runtime vai para um local estável (`~/.config/opencode/atlas` ou `~/.pi/agent/atlas`) e o MCP é registrado com **caminho absoluto** (sem depender do cwd). opencode: agente em `~/.config/opencode/agents/`, skills em `~/.config/opencode/skills/`. pi: agente em `~/.agents/` (se existir) ou `~/.pi/agent/agents/`, MCP em `~/.pi/agent/mcp.json`. A config existente é **mesclada** (preserva outros MCP servers e chaves); se o `opencode.jsonc` tiver comentários, o instalador aborta sem tocar nada (corrija para JSON válido e re-rode).
+No modo `--global` o runtime vai para um local estável (`~/.config/opencode/atlas` ou `~/.pi/agent/atlas`) e o MCP é registrado com **caminho absoluto** (sem depender do cwd). opencode: agente em `~/.config/opencode/agents/`, skills em `~/.config/opencode/skills/`. pi: agente em `~/.agents/` (se existir) ou `~/.pi/agent/agents/`, MCP em `~/.pi/agent/mcp.json`. A config existente é **mesclada** (preserva outros MCP servers e chaves); se houver `opencode.jsonc` com comentários, ele é preservado e o Atlas é registrado no fallback `opencode.json`.
 
 Flags úteis: `--global`/`-g` (opencode/pi), `--dir <d>` (alvo por-projeto), `--yes` (auto-deps pi), `--dry-run` (mostra sem alterar), `-h`.
 
@@ -111,7 +111,7 @@ O `opencode.json` registra o MCP `atlas-workflow` (`type:"local"`, `ATLAS_HOST=o
 
 ### pi cli
 
-**Pré-requisito obrigatório (DEC-005):** instale as duas extensões antes — sem qualquer uma o pipeline não é determinístico e o preflight aborta:
+**Pré-requisito obrigatório (DEC-005/DEC-010):** instale as duas extensões antes — sem qualquer uma o pipeline não é determinístico e o instalador/preflight aborta. Com `npx ... init pi --yes`, o instalador tenta instalar e revalidar as duas deps:
 
 ```bash
 npm i -g @mariozechner/pi-coding-agent

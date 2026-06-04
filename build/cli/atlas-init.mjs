@@ -50,12 +50,48 @@ function run(cmd, args, { dryRun }) {
   return r.status ?? 1;
 }
 
+function rmPath(p, { dryRun }) {
+  if (!fs.existsSync(p)) return false;
+  log(`  rm ${p}`);
+  if (!dryRun) fs.rmSync(p, { recursive: true, force: true });
+  return true;
+}
+
+function rmAtlasSkillsQuiet(skillsDir, opts) {
+  if (!fs.existsSync(skillsDir)) return;
+  for (const name of fs.readdirSync(skillsDir)) {
+    if (name.startsWith('atlas-')) rmPath(path.join(skillsDir, name), opts);
+  }
+}
+
+function cleanOpencodeControlled(targetDir, opts) {
+  rmPath(path.join(targetDir, '.opencode/atlas'), opts);
+  rmPath(path.join(targetDir, '.opencode/agents/atlas-task-validator.md'), opts);
+  rmAtlasSkillsQuiet(path.join(targetDir, '.opencode/skills'), opts);
+}
+
+function cleanPiControlled(targetDir, opts) {
+  rmPath(path.join(targetDir, 'atlas'), opts);
+  rmPath(path.join(targetDir, '.pi/agents/atlas-task-validator.md'), opts);
+  rmAtlasSkillsQuiet(path.join(targetDir, 'skills'), opts);
+}
+
 // Falha-cedo: se o config do usuário existe mas é JSON inválido, aborta ANTES de
 // copiar qualquer arquivo (não deixa instalação parcial nem sobrescreve config).
 function assertConfigParseable(file) {
   if (!fs.existsSync(file)) return;
   try { JSON.parse(fs.readFileSync(file, 'utf8')); }
   catch { fail(`${path.basename(file)} existente é JSON inválido: ${file} (corrija antes de instalar; não sobrescrevo config do usuário)`); }
+}
+
+function parseJsonFile(file) {
+  return JSON.parse(fs.readFileSync(file, 'utf8'));
+}
+
+function isStrictJson(file) {
+  if (!fs.existsSync(file)) return true;
+  try { parseJsonFile(file); return true; }
+  catch { return false; }
 }
 
 function copyInto(srcRel, destDir) {
@@ -121,6 +157,15 @@ function opencodeConfigFile(root) {
   }
   return path.join(root, 'opencode.json');
 }
+
+function opencodeWritableConfigFile(root) {
+  const jsonc = path.join(root, 'opencode.jsonc');
+  if (fs.existsSync(jsonc) && !isStrictJson(jsonc)) {
+    log(`  opencode.jsonc contém JSONC/comentários — preservando arquivo e mesclando Atlas em ${path.join(root, 'opencode.json')}`);
+    return path.join(root, 'opencode.json');
+  }
+  return opencodeConfigFile(root);
+}
 // pi: getAgentDir() honra PI_CODING_AGENT_DIR (igual ao pi-mcp-adapter/agent-dir.ts).
 function piAgentDir() {
   const c = process.env.PI_CODING_AGENT_DIR?.trim();
@@ -158,7 +203,7 @@ function mergeServerInto(file, containerKey, serverName, entry, { dryRun, schema
   assertConfigParseable(file);
   let cfg = {};
   if (fs.existsSync(file)) {
-    cfg = JSON.parse(fs.readFileSync(file, 'utf8'));
+    cfg = parseJsonFile(file);
     log(`  ${path.basename(file)} já existe — mesclando ${containerKey}.${serverName} (config do usuário preservada)`);
   }
   if (schema) cfg.$schema ??= schema;
@@ -192,6 +237,7 @@ function installOpencode(targetDir, opts) {
   assertConfigParseable(path.join(targetDir, 'opencode.json'));
   if (opts.dryRun) { log('  [dry-run] copiaria .opencode/ + mesclaria opencode.json'); return; }
   fs.mkdirSync(targetDir, { recursive: true });
+  cleanOpencodeControlled(targetDir, opts);
   copyInto('hosts/opencode/.opencode', targetDir);   // subagente + skills + runtime
   mergeOpencodeJson(targetDir);                       // MCP local (type:local, ATLAS_HOST=opencode)
   log('ok — opencode instalado (MCP + subagente + skills).');
@@ -202,38 +248,66 @@ function installOpencode(targetDir, opts) {
 function piDepsStatus() {
   if (!which('pi')) return { piPresent: false, missing: ['pi-mcp-adapter', 'pi-subagents'] };
   const r = spawnSync('pi', ['list'], { encoding: 'utf8', shell: WIN });
+  if (r.status !== 0) return { piPresent: true, missing: ['pi-mcp-adapter', 'pi-subagents'], listFailed: true };
   const out = (r.stdout ?? '') + (r.stderr ?? '');
   const missing = ['pi-mcp-adapter', 'pi-subagents'].filter((d) => !out.includes(d));
   return { piPresent: true, missing };
 }
 
+function printPiDepsHelp() {
+  log('instale com:');
+  log('  pi install npm:pi-mcp-adapter');
+  log('  pi install npm:pi-subagents');
+}
+
+function ensurePiDeps(opts) {
+  let status = piDepsStatus();
+  if (!status.piPresent) {
+    printPiDepsHelp();
+    fail('CLI `pi` não encontrada no PATH. Instale o pi antes de instalar o Atlas para pi.');
+  }
+  if (status.listFailed) {
+    fail('`pi list` falhou; não consigo validar deps obrigatórias do pi.');
+  }
+  if (!status.missing.length) {
+    log('deps obrigatórias presentes: pi-mcp-adapter + pi-subagents ✓');
+    return;
+  }
+
+  log(`deps obrigatórias ausentes: ${status.missing.join(', ')} (DEC-010)`);
+  if (!opts.yes) {
+    printPiDepsHelp();
+    fail('deps obrigatórias ausentes; re-rode com --yes para instalar automaticamente.');
+  }
+  if (opts.dryRun) {
+    for (const dep of status.missing) log(`  [dry-run] pi install npm:${dep}`);
+    return;
+  }
+  for (const dep of status.missing) {
+    const code = run('pi', ['install', `npm:${dep}`], opts);
+    if (code !== 0) fail(`falha ao instalar dep obrigatória do pi: ${dep}`);
+  }
+  status = piDepsStatus();
+  if (status.listFailed) fail('`pi list` falhou após instalar deps obrigatórias.');
+  if (status.missing.length) {
+    fail(`deps obrigatórias ainda ausentes após instalação: ${status.missing.join(', ')}`);
+  }
+  log('deps obrigatórias instaladas e revalidadas: pi-mcp-adapter + pi-subagents ✓');
+}
+
 function installPi(targetDir, opts) {
   log(`instalando Atlas (pi v${VERSION}) em ${targetDir}`);
   assertConfigParseable(path.join(targetDir, '.mcp.json'));
+  ensurePiDeps(opts);
   if (opts.dryRun) { log('  [dry-run] copiaria atlas/ skills/ .pi/agents/ + .mcp.json'); }
   else {
     fs.mkdirSync(targetDir, { recursive: true });
+    cleanPiControlled(targetDir, opts);
     copyInto('hosts/pi/atlas', targetDir);
     copyInto('hosts/pi/skills', targetDir);
     copyInto('hosts/pi/.pi', targetDir);                 // .pi/agents/<name>.md (descoberta pi-subagents)
     mergePiMcpJson(targetDir);                            // mescla mcpServers.atlas-workflow (pi-mcp-adapter)
     log('ok — arquivos do pi instalados (.mcp.json + .pi/agents/ + atlas/ + skills/).');
-  }
-  const { piPresent, missing } = piDepsStatus();
-  if (!piPresent) {
-    log('aviso: CLI `pi` não encontrada — instale o pi e as 2 deps obrigatórias (DEC-005):');
-    log('  pi install npm:pi-mcp-adapter && pi install npm:pi-subagents');
-  } else if (missing.length) {
-    log(`deps obrigatórias ausentes: ${missing.join(', ')} (DEC-005)`);
-    if (opts.yes && !opts.dryRun) {
-      for (const dep of missing) run('pi', ['install', `npm:${dep}`], opts);
-    } else {
-      log('instale com:');
-      for (const dep of missing) log(`  pi install npm:${dep}`);
-      log('(ou re-rode com --yes para instalar automaticamente)');
-    }
-  } else {
-    log('deps obrigatórias presentes: pi-mcp-adapter + pi-subagents ✓');
   }
   log(`próximo: cd ${targetDir} && pi  → confirme a instalação com as tools atlas_ping`);
   log('  (deve retornar host=pi) e atlas_capabilities. NÃO dispare o validator à mão:');
@@ -246,7 +320,7 @@ function installPi(targetDir, opts) {
 function installOpencodeGlobal(opts) {
   const root = opencodeGlobalRoot();
   const atlasRoot = path.join(root, 'atlas');
-  const cfgFile = opencodeConfigFile(root);
+  const cfgFile = opencodeWritableConfigFile(root);
   log(`instalando Atlas (opencode v${VERSION}) GLOBAL em ${root}`);
   assertConfigParseable(cfgFile);
   const { schema, entry } = absServerEntry('opencode', atlasRoot);
@@ -256,6 +330,9 @@ function installOpencodeGlobal(opts) {
     return;
   }
   fs.mkdirSync(root, { recursive: true });
+  rmPath(atlasRoot, opts);
+  rmPath(path.join(root, 'agents/atlas-task-validator.md'), opts);
+  rmAtlasSkillsQuiet(path.join(root, 'skills'), opts);
   fs.cpSync(path.join(ROOT, 'hosts/opencode/.opencode/atlas'), atlasRoot, { recursive: true });
   fs.mkdirSync(path.join(root, 'agents'), { recursive: true });
   fs.copyFileSync(path.join(ROOT, 'hosts/opencode/.opencode/agents/atlas-task-validator.md'), path.join(root, 'agents/atlas-task-validator.md'));
@@ -275,28 +352,20 @@ function installPiGlobal(opts) {
   const mcpFile = path.join(agentDir, 'mcp.json');
   log(`instalando Atlas (pi v${VERSION}) GLOBAL em ${agentDir}`);
   assertConfigParseable(mcpFile);
+  ensurePiDeps(opts);
   const { entry } = absServerEntry('pi', atlasRoot);
   if (opts.dryRun) {
     log(`  [dry-run] copiaria runtime → ${atlasRoot}, agente → ${path.join(agentsDir, 'atlas-task-validator.md')}`);
     log(`  [dry-run] mesclaria mcpServers.atlas-workflow em ${mcpFile} (args absoluto)`);
   } else {
     fs.mkdirSync(agentDir, { recursive: true });
+    rmPath(atlasRoot, opts);
+    rmPath(path.join(agentsDir, 'atlas-task-validator.md'), opts);
     fs.cpSync(path.join(ROOT, 'hosts/pi/atlas'), atlasRoot, { recursive: true });
     fs.mkdirSync(agentsDir, { recursive: true });
     fs.copyFileSync(path.join(ROOT, 'hosts/pi/.pi/agents/atlas-task-validator.md'), path.join(agentsDir, 'atlas-task-validator.md'));
     mergeServerInto(mcpFile, 'mcpServers', 'atlas-workflow', entry);
     log(`ok — pi GLOBAL instalado (runtime + agente em ${agentsDir} + mcp.json).`);
-  }
-  const { piPresent, missing } = piDepsStatus();
-  if (!piPresent) {
-    log('aviso: CLI `pi` não encontrada — instale o pi e as 2 deps obrigatórias (DEC-005):');
-    log('  pi install npm:pi-mcp-adapter && pi install npm:pi-subagents');
-  } else if (missing.length) {
-    log(`deps obrigatórias ausentes: ${missing.join(', ')} (DEC-005)`);
-    if (opts.yes && !opts.dryRun) for (const dep of missing) run('pi', ['install', `npm:${dep}`], opts);
-    else { log('instale com:'); for (const dep of missing) log(`  pi install npm:${dep}`); log('(ou re-rode com --yes)'); }
-  } else {
-    log('deps obrigatórias presentes: pi-mcp-adapter + pi-subagents ✓');
   }
   log('próximo: abra `pi` em qualquer pasta  → atlas_ping (host=pi) + atlas_capabilities.');
 }
@@ -377,7 +446,7 @@ function uninstallOpencodeGlobal(opts) {
   rmIfExists(path.join(root, 'atlas'), opts);
   rmIfExists(path.join(root, 'agents/atlas-task-validator.md'), opts);
   rmAtlasSkills(path.join(root, 'skills'), opts);
-  dropMcpKey(opencodeConfigFile(root), 'mcp', 'atlas-workflow', opts);
+  dropMcpKey(opencodeWritableConfigFile(root), 'mcp', 'atlas-workflow', opts);
   log('ok — artefatos globais do Atlas removidos (config/skills do usuário preservados).');
 }
 
@@ -421,30 +490,45 @@ exemplos:
   npx github:${REPO_SLUG} uninstall pi --global --dry-run`);
 }
 
-function main() {
-  const argv = process.argv.slice(2);
-  if (argv.length === 0 || argv.includes('-h') || argv.includes('--help')) { usage(); process.exit(0); }
+function parseArgs(argv) {
+  if (argv.length === 0) return { help: true };
+  const opts = { dryRun: false, yes: false, global: false };
+  const positional = [];
+  for (let i = 0; i < argv.length; i += 1) {
+    const a = argv[i];
+    if (a === '-h' || a === '--help') return { help: true };
+    if (a === '--dry-run') { opts.dryRun = true; continue; }
+    if (a === '--yes' || a === '-y') { opts.yes = true; continue; }
+    if (a === '--global' || a === '-g') { opts.global = true; continue; }
+    if (a === '--dir') {
+      const value = argv[i + 1];
+      if (!value || value.startsWith('-')) fail('--dir exige um diretório', 2);
+      opts.dir = value;
+      i += 1;
+      continue;
+    }
+    if (a.startsWith('-')) fail(`flag desconhecida: ${a}`, 2);
+    positional.push(a);
+  }
+  return { positional, opts };
+}
 
-  const cmd = argv[0];
+function main() {
+  const parsed = parseArgs(process.argv.slice(2));
+  if (parsed.help) { usage(); process.exit(0); }
+
+  const [cmd, rawHost, rawDir, ...extra] = parsed.positional;
   if (cmd !== 'init' && cmd !== 'uninstall') {
     fail(`comando desconhecido: ${cmd} (use \`init <host>\` ou \`uninstall <host>\`)`, 2);
   }
 
-  const positional = argv.slice(1).filter((a) => !a.startsWith('-'));
-  const rawHost = positional[0];
   if (!rawHost) fail('informe o host: claudecode | cursor | codex | opencode | pi', 2);
+  if (extra.length) fail(`argumentos extras não suportados: ${extra.join(' ')}`, 2);
   const host = HOST_ALIASES[rawHost.toLowerCase()];
   if (!host) fail(`host inválido: ${rawHost} (use claudecode|cursor|codex|opencode|pi)`, 2);
 
-  const dirFlagIdx = argv.findIndex((a) => a === '--dir');
-  const dirFromFlag = dirFlagIdx !== -1 ? argv[dirFlagIdx + 1] : undefined;
-  const targetDir = path.resolve(dirFromFlag || positional[1] || process.cwd());
-
-  const opts = {
-    dryRun: argv.includes('--dry-run'),
-    yes: argv.includes('--yes') || argv.includes('-y'),
-    global: argv.includes('--global') || argv.includes('-g'),
-  };
+  const opts = parsed.opts;
+  const targetDir = path.resolve(opts.dir || rawDir || process.cwd());
   const actions = {
     init: { claude: installClaude, codex: installCodex, opencode: installOpencode, pi: installPi },
     uninstall: { claude: uninstallClaude, codex: uninstallCodex, opencode: uninstallOpencode, pi: uninstallPi },
