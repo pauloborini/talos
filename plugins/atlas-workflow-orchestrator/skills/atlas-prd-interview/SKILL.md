@@ -57,3 +57,24 @@ Ataque principalmente as seguintes seções do novo template de PRD:
 §9 Contratos:    ✅/⚠️/❌
 §10 Aceite:      ✅/⚠️/❌
 ```
+
+---
+
+## Uso standalone vs protocolo interno no workflow (PRD D10/D11)
+
+Esta skill é de **autoria documental** (maturar um PRD). A fronteira de determinismo do Atlas é a **mutação de código** (PRD D10): como esta skill não muta código, **autoria é livre, execução é gateada**.
+
+### (a) Uso standalone permitido
+
+Você pode invocar `atlas-prd-interview` diretamente, fora do pipeline, para amadurecer um PRD. Não há restrição: autoria documental não muta o produto. O artefato resultante (`PRD_*.md`) é livre para existir e ser editado.
+
+### (b) O artefato NÃO é confiável só por existir
+
+Um PRD amadurecido standalone **não vale como gate aprovado** pelo simples fato de existir. Ao entrar em execução (modos `full`/`direct`/`execute`), ele é **re-gateado obrigatoriamente** por `atlas_verify_artifact` + `atlas_verify_template_conformance` (TC). PRD velho, manual ou inválido **trava na entrada da execução**, não na autoria. Esta skill não emite veredito de execução nem declara o PRD "pronto para implementar de forma determinística".
+
+### (c) Standalone vs protocolo interno no workflow
+
+- **Standalone:** o usuário conduz a skill diretamente; o produto é o PRD maturado, sujeito a re-validação posterior.
+- **No workflow:** quem conduz a fase de PRD é o **orquestrador principal** (agente principal), que decide quando entrevistar (scan de ambiguidade / `--interview`) e roda os gates MCP do pipeline. A skill é a mesma; o que muda é quem orquestra e os gates que cercam a fase.
+
+> **Invariante:** autoria é livre, execução é gateada. Um PRD só vira confiável para execução após `atlas_verify_artifact` + TC na entrada (PRD D11).

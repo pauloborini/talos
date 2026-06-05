@@ -2,7 +2,7 @@
 
 Plugin **Atlas Workflow Orchestrator** v0.4 — pipeline determinístico (PRD → plano → execução → validação) com skills `atlas-*`, templates e MCP. Um pacote, cinco hosts: **Claude Code**, **Cursor**, **Codex App**, **opencode** e **pi cli**.
 
-**Versão:** [`VERSION`](VERSION) (`0.4.0`) · **Repo:** https://github.com/pauloborini/atlas-workflow
+**Versão:** [`VERSION`](VERSION) (`0.4.1`) · **Repo:** https://github.com/pauloborini/atlas-workflow
 
 ## Hosts
 
@@ -178,15 +178,19 @@ No Codex, opencode e pi, invoque a skill do orquestrador com o mesmo padrão de 
 |------|-------------|-----------|
 | **`full`** | Sprint/backlog novo ou feature do zero | Gera PRD → valida/entrevista se preciso → **plano** (`.atlas/plans/`) → **executa** o plano → review opcional |
 | **`direct`** | PRD já existe e está maduro | Valida PRD → entrevista só se houver gap → **executa direto** (sem fase de plan handoff) → review opcional |
+| **`execute`** | Já tenho um `PLAN_*.md` pronto | Reverifica o plano (artefato + conformidade) → **executa o plano existente** → review opcional. **Não regera plano.** Alias: `/workflow plan <PLAN.md>` |
 | `interview-only` | Só fechar decisões / brainstorm | Entrevista; não implementa |
 
-**Dica:** `full` = “quero PRD + plano + código”. `direct` = “já tenho PRD aprovado, implementa”.
+**Dica:** `full` = “quero PRD + plano + código”. `direct` = “já tenho PRD aprovado, implementa”. `execute` = “já tenho o plano, só executa”.
+
+> **Roteamento por tipo de input (v0.4.1):** o tipo do arquivo que você passa **prevalece** sobre o modo digitado. Apontar um `PLAN_*.md` em `direct`/`full` (mesmo renomeado) auto-roteia para `execute` com um aviso de uma linha — nunca gera “plano de plano”. Pedir `execute` sobre um backlog/PRD roteia de volta para `full`/`direct`.
 
 ### Input types
 
 - `backlog-item` — ID de sprint ou item (ex.: `S05`)
 - `idea` — indicação curta em texto
 - `prd` — caminho para `PRD_*.md` existente (principal em **`direct`**)
+- `plan` — caminho para `PLAN_*.md` existente (principal em **`execute`**)
 - `brainstorm` — texto livre (só com `interview-only`)
 
 ### Flags
@@ -219,6 +223,18 @@ Ideia solta, ainda sem PRD formal (gera PRD e segue o fluxo completo):
 
 ```
 /workflow full idea "cache de sessão com TTL configurável"
+```
+
+Plano já escrito; executar direto sem regerar (modo `execute`):
+
+```
+/workflow execute plan "./.atlas/plans/PLAN_S05_login.md"
+```
+
+Mesma coisa, forma curta (alias de `execute`):
+
+```
+/workflow plan "./.atlas/plans/PLAN_S05_login.md"
 ```
 
 Só alinhar decisões antes de planejar:

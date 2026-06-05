@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.4.1 - 2026-06-05
+
+Tipo: aditivo (sem breaking; preserva `full`/`direct`/`interview-only` da v0.4.0).
+
+Resumo: adiciona o modo de execução **`execute`** (executa um `PLAN_*.md` pronto sem regerar plano), **roteamento por tipo de input** com guardrail anti "plano-de-plano", **protocolo de banner de fase** de linha única (fonte única no MCP) e firma o **princípio standalone pela mutação de código**.
+
+Destaques:
+
+- **Modo `execute`** (+ alias `/workflow plan <PLAN.md>`): recebe um plano pronto, reverifica artefato + conformidade de template na entrada e despacha `plan_execute` direto. Não replaneja. `atlas_assert_after_plan` não se aplica (o plano é o input).
+- **Roteamento por tipo de input** (`atlas_classify_input`): classifica `backlog|prd|plan|unknown`; o tipo de input prevalece sobre o modo pedido. `PLAN_*.md` em `direct`/`full` (mesmo renomeado) auto-roteia para `execute` com aviso; `execute` sobre backlog/PRD roteia para `full`/`direct`; `unknown` pede esclarecimento. Verdade-forte = conformidade de template de plano.
+- **Banner de fase**: comunicação de progresso só por linha única `▸ atlas: <fase> · <ação>` em pt-BR; banco canônico de 11 templates no MCP; cada gate de tool devolve o campo `banner` pronto e o orquestrador só ecoa.
+- **`guarantee_level`** (enum `full_pipeline` | `reduced_standalone`) declarado no output das pipelines; modos sem execução (interview-only) omitem o campo.
+- **Fronteira documental-no-agente-principal** (G3/G7/G9): autoria de PRD/entrevista/plano livre no fio principal antes do plano validado; mãos atadas fortes depois. Execução de código continua sempre em sub-agent + validador frio — não afrouxa.
+- **Princípio standalone** nas skills documentais/leitura + invariante de re-validação ("autoria é livre, execução é gateada"); `atlas-slice-review` standalone com rótulo de garantia reduzida obrigatório.
+
+Conformance: `build/conformance-matrix.mjs` cobre o modo `execute` nos 5 hosts. Sem regressão (53→54 testes verdes; `plugin validate --strict` ok).
+
 ## v0.4.0 - 2026-06-02
 
 Tipo: multi-host (aditivo; sem breaking para Claude/Cursor/Codex)

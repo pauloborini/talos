@@ -65,8 +65,68 @@ const WORKFLOW_CONFIG = {
     slice_review: 'atlas-slice-review',
     task_validator: 'atlas-task-validator',
   },
-  modes: ['full', 'direct', 'interview-only', 'interview_only'],
+  modes: ['full', 'direct', 'execute', 'interview-only', 'interview_only'],
 };
+
+// Nível de garantia declarado no routing/output (PRD D12). Enum fechado:
+// pipelines completas (full/direct/execute) declaram full_pipeline; uso avulso
+// documental/leitura declara reduced_standalone (fora do escopo desta camada).
+// Data-driven: rota → nível, sem ramo solto. Modos sem execução de código
+// (interview-only) NÃO declaram guarantee_level (não há execução a garantir):
+// guaranteeLevelForMode devolve null e o campo é OMITIDO do output (PRD D2/D12).
+const GUARANTEE_LEVELS = ['full_pipeline', 'reduced_standalone'];
+const MODE_GUARANTEE_LEVEL = {
+  full: 'full_pipeline',
+  direct: 'full_pipeline',
+  execute: 'full_pipeline',
+};
+function guaranteeLevelForMode(mode) {
+  return MODE_GUARANTEE_LEVEL[mode] ?? null;
+}
+
+// Banco canônico de templates de banner de fase (PRD §9 / D7–D9, PLAN §6.2).
+// Fonte única na camada determinística: o orquestrador apenas ECOA a string
+// pronta — nunca monta texto livre. Data-driven como HOST_ADAPTERS: tabela única
+// `event → template`, sem string de banner inline espalhada pelos gates.
+// Símbolo fixo `▸`, idioma pt-BR, exatamente uma linha por evento. Os 11 eventos
+// fechados do PRD §9. Slots no formato {nome} são preenchidos por renderBanner.
+const BANNER_TEMPLATES = {
+  roteia: '▸ atlas: roteamento · input={tipo} → modo={modo}',
+  roteia_troca: '▸ atlas: roteamento · pediu={x} mas input={y} → modo={z}',
+  preflight_ok: '▸ atlas: preflight · ok ({caps})',
+  preflight_fail: '▸ atlas: preflight · BLOCK · {motivo}',
+  prd_lacunas: '▸ atlas: prd · {n} lacunas',
+  prd_ok: '▸ atlas: prd · ok',
+  entrevista: '▸ atlas: entrevista · {n} perguntas',
+  plano: '▸ atlas: plano · validado (TC pass)',
+  exec: '▸ atlas: exec · slice {i}/{n}',
+  validacao: '▸ atlas: validação · {status}',
+  review: '▸ atlas: review · {status}',
+  done: '▸ atlas: done · {resumo}',
+};
+const BANNER_EVENTS = Object.keys(BANNER_TEMPLATES);
+
+// Modo-alvo do roteamento por tipo de input (PRD D3/D6): o tipo de fato manda
+// sobre o modo pedido. plan → execute (executa plano pronto); prd/backlog → full
+// (gera/usa plano). Data-driven: alimenta o slot {modo} do banner `roteia`.
+const ROUTED_MODE_BY_TYPE = {
+  plan: 'execute',
+  prd: 'full',
+  backlog: 'full',
+};
+
+// Preenche os slots {nome} do template do evento com `slots` e devolve a string
+// pt-BR pronta. Evento desconhecido é erro de programação (lança). Slot ausente
+// não é silenciado: deixa o marcador visível para o defeito não passar batido.
+function renderBanner(event, slots = {}) {
+  const template = BANNER_TEMPLATES[event];
+  if (template === undefined) {
+    throw rpcError(-32603, `Evento de banner desconhecido: ${event}`);
+  }
+  return template.replace(/\{(\w+)\}/g, (match, key) => (
+    Object.prototype.hasOwnProperty.call(slots, key) ? String(slots[key]) : match
+  ));
+}
 // Camada de adapter: conhecimento host-específico centralizado em código.
 // Skills consultam atlas_capabilities e usam o descritor retornado em vez de
 // hardcodar nome de host. Adicionar host novo = adicionar entrada aqui.
@@ -733,6 +793,7 @@ function verifyArtifact(args = {}) {
         status: 'blocked',
         artifact_path: artifactPath,
         timestamp,
+        banner: renderBanner('preflight_fail', { motivo: `artefato inválido: ${artifactPath}` }),
         error: `Artefato não é arquivo legível: ${artifactPath}`,
         next_action: 'corrigir_artefato',
       };
@@ -744,6 +805,7 @@ function verifyArtifact(args = {}) {
         artifact_path: artifactPath,
         bytes: stat.size,
         timestamp,
+        banner: renderBanner('plano', {}),
         next_action: 'avançar',
       };
     }
@@ -753,6 +815,7 @@ function verifyArtifact(args = {}) {
       status: 'blocked',
       artifact_path: artifactPath,
       timestamp,
+      banner: renderBanner('preflight_fail', { motivo: `artefato ausente: ${artifactPath}` }),
       error: `Artefato ausente ou ilegível: ${artifactPath}`,
       cause: error.message,
       next_action: 'corrigir_artefato',
@@ -841,6 +904,7 @@ function scanPrd(args = {}) {
         prd_path: prdPath,
         timestamp,
         blocking_count: 1,
+        banner: renderBanner('prd_lacunas', { n: 1 }),
         blocking_matches: [{
           section: 'documento',
           pattern: '(empty file)',
@@ -858,6 +922,9 @@ function scanPrd(args = {}) {
         prd_path: prdPath,
         timestamp,
         blocking_count: blockingMatches.length,
+        banner: blockingMatches.length === 0
+          ? renderBanner('prd_ok', {})
+          : renderBanner('prd_lacunas', { n: blockingMatches.length }),
         blocking_matches: blockingMatches,
         next_action: blockingMatches.length === 0 ? 'avançar' : 'entrevista',
         message: blockingMatches.length === 0
@@ -872,6 +939,7 @@ function scanPrd(args = {}) {
       prd_path: prdPath,
       timestamp,
       blocking_count: 1,
+      banner: renderBanner('prd_lacunas', { n: 1 }),
       blocking_matches: [{
         section: 'documento',
         pattern: '(read error)',
@@ -1026,6 +1094,7 @@ function verifyTemplateConformance(args = {}) {
         artifact_path: artifactPath,
         timestamp,
         pending_count: 1,
+        banner: renderBanner('preflight_fail', { motivo: `TC ${artifactType}: arquivo vazio` }),
         pendencies: [conformancePending(
           'documento',
           'arquivo_vazio',
@@ -1046,6 +1115,9 @@ function verifyTemplateConformance(args = {}) {
         required_status: requiredStatus ?? null,
         timestamp,
         pending_count: pendencies.length,
+        banner: pendencies.length === 0
+          ? renderBanner('plano', {})
+          : renderBanner('preflight_fail', { motivo: `TC ${artifactType}: ${pendencies.length} pendências` }),
         pendencies,
         next_action: pendencies.length === 0 ? 'avançar' : pendencies[0].next_action,
       };
@@ -1058,6 +1130,7 @@ function verifyTemplateConformance(args = {}) {
       artifact_path: artifactPath,
       timestamp,
       pending_count: 1,
+      banner: renderBanner('preflight_fail', { motivo: `TC ${artifactType}: artefato ilegível` }),
       pendencies: [conformancePending(
         'leitura',
         artifactPath,
@@ -1071,6 +1144,97 @@ function verifyTemplateConformance(args = {}) {
   }
 
   patchTemplateConformanceResult(runId, result, args);
+  return result;
+}
+
+// Detecta tipo de input para roteamento (PRD D4/D5). Hierarquia de confiança:
+//   (1) verdade forte: conformidade de template de plano passa → 'plan';
+//   (2) dica: cabeçalho/frontmatter canônico de plano → 'plan';
+//   (3) dica fraca: nome casando PLAN_*.md → 'plan';
+//   PRD/backlog por marcadores de template; senão 'unknown'.
+// Nome de arquivo nunca basta sozinho nem engana (PRD §10): só conta como dica
+// fraca e cede para a verdade forte. Reusa verifyPlanConformance para (1).
+function classifyArtifactContent(content, fileName = '') {
+  const text = content ?? '';
+
+  // (1) Verdade forte: plano conforme o template canônico (zero pendências).
+  if (text.trim() !== '' && verifyPlanConformance(text).length === 0) {
+    return { artifact_type: 'plan', signal: 'template_conformance' };
+  }
+
+  // (2) Dica de cabeçalho/frontmatter canônico de plano.
+  const planHeaderHint = /\|\s*\*\*PRD\*\*\s*\|/.test(text)
+    || /^#\s+PLAN[\s_]/im.test(text)
+    || /\bexecution_mode\b/.test(text);
+  if (planHeaderHint && /####\s+T\d+\./.test(text)) {
+    return { artifact_type: 'plan', signal: 'header_hint' };
+  }
+
+  // PRD: marcadores do template canônico de PRD.
+  const prdHint = /^#\s+PRD[:\s]/im.test(text)
+    || /\|\s*D\d+\s*\|/.test(text)
+    || /Decisões de produto/i.test(text);
+  if (prdHint) {
+    return { artifact_type: 'prd', signal: 'prd_markers' };
+  }
+
+  // Backlog: marcadores do template canônico de backlog/roadmap.
+  const backlogHint = /\bBACKLOG[\s_]/i.test(text)
+    || /\bSprint\s+S\d+/i.test(text)
+    || /\bRoadmap\b/i.test(text);
+  if (backlogHint) {
+    return { artifact_type: 'backlog', signal: 'backlog_markers' };
+  }
+
+  // (3) Dica fraca: nome PLAN_*.md, só se nada mais classificou.
+  if (/(^|\/)PLAN_[^/]*\.md$/i.test(fileName)) {
+    return { artifact_type: 'plan', signal: 'weak_name_hint' };
+  }
+
+  return { artifact_type: 'unknown', signal: 'no_match' };
+}
+
+function classifyInput(args = {}) {
+  const runId = validateRunId(args.run_id);
+  const inputPath = requiredString(args, 'input_path');
+  const absolutePath = resolveConsumerPath(inputPath, args);
+  const timestamp = nowIso();
+  let result;
+
+  try {
+    const content = fs.readFileSync(absolutePath, 'utf8');
+    const { artifact_type, signal } = classifyArtifactContent(content, inputPath);
+    // Modo-alvo por tipo de input (PRD D3/D6): o fato manda. plan → execute;
+    // prd/backlog → full (gera/usa plano). Data-driven; sem ramo solto.
+    const routedMode = ROUTED_MODE_BY_TYPE[artifact_type] ?? null;
+    result = {
+      gate: 'classify_input',
+      status: artifact_type === 'unknown' ? 'unknown' : 'classified',
+      input_path: inputPath,
+      artifact_type,
+      routed_mode: routedMode,
+      detection_signal: signal,
+      timestamp,
+      // Banner canônico do banco (T06/T07): roteamento por tipo de input.
+      banner: artifact_type === 'unknown'
+        ? renderBanner('preflight_fail', { motivo: `input não classificado: ${inputPath}` })
+        : renderBanner('roteia', { tipo: artifact_type, modo: routedMode }),
+      next_action: artifact_type === 'unknown' ? 'pedir_esclarecimento' : 'rotear_por_tipo',
+    };
+  } catch (error) {
+    result = {
+      gate: 'classify_input',
+      status: 'blocked',
+      input_path: inputPath,
+      artifact_type: 'unknown',
+      timestamp,
+      banner: renderBanner('preflight_fail', { motivo: `input ilegível: ${inputPath}` }),
+      error: `Input ausente ou ilegível: ${inputPath}`,
+      cause: error.message,
+      next_action: 'corrigir_input',
+    };
+  }
+
   return result;
 }
 
@@ -1170,13 +1334,17 @@ function preflight(args = {}) {
         next_action: 'encerrar_run_ou_usar_modo_travado',
       };
   } else {
+    const guaranteeLevel = guaranteeLevelForMode(mode);
+    // Campo OMITIDO quando o modo não declara garantia (interview-only → null).
     result = {
       gate: 'G10',
       status: 'passed',
       timestamp,
       mode,
+      ...(guaranteeLevel ? { guarantee_level: guaranteeLevel } : {}),
       routing: {
         mode,
+        ...(guaranteeLevel ? { guarantee_level: guaranteeLevel } : {}),
         skills: config.skills,
         version: version.version,
         locked_at: currentRouting?.locked_at ?? timestamp,
@@ -1185,6 +1353,18 @@ function preflight(args = {}) {
       },
       next_action: 'avançar',
     };
+  }
+
+  // Banner canônico do preflight (T07): passed → preflight_ok com caps efetivas;
+  // qualquer block → preflight_fail com motivo derivado do gate/erro. Derivado do
+  // status final (não espalha string por branch) — fonte única no banco BANNER_TEMPLATES.
+  if (result.status === 'passed') {
+    result.banner = renderBanner('preflight_ok', { caps: 'subagent+mcp' });
+  } else {
+    const motivo = result.error
+      ? String(result.error).slice(0, 80)
+      : `${result.gate} bloqueado`;
+    result.banner = renderBanner('preflight_fail', { motivo });
   }
 
   patchRoutingResult(runId, result, args);
@@ -1206,6 +1386,7 @@ function expectedNextPhase(routing, dispatch) {
   if (dispatch.next_phase) return dispatch.next_phase;
   if (routing.mode === 'full') return 'plan_handoff';
   if (routing.mode === 'direct') return 'plan_execute';
+  if (routing.mode === 'execute') return 'plan_execute';
   return 'prd_interview';
 }
 
@@ -1422,8 +1603,34 @@ function lockDispatch(args = {}) {
     action === 'complete' ? completeDispatch(args, context) :
     abortDispatch(args, context);
 
+  result.banner = dispatchBanner(result);
   patchDispatchResult(runId, result, args);
   return result;
+}
+
+// Banner canônico do lock_dispatch (T07): mapeia (fase, status) ao evento do
+// banco. Fase de execução → `exec`/`validação`; review → `review`; conclusão de
+// plano → `plano`; bloqueio → `preflight_fail` (BLOCK genérico com motivo).
+// Tabela data-driven; nenhuma string de banner montada inline no gate.
+function dispatchBanner(result) {
+  if (result.status === 'blocked') {
+    const motivo = result.error ? String(result.error).slice(0, 80) : `${result.phase} bloqueado`;
+    return renderBanner('preflight_fail', { motivo });
+  }
+  if (result.phase === 'slice_review') {
+    return renderBanner('review', { status: result.action === 'complete' ? 'ok' : 'iniciado' });
+  }
+  if (result.phase === 'plan_execute') {
+    // complete carrega validator_status → evento de validação; start → exec da slice.
+    return result.action === 'complete'
+      ? renderBanner('validacao', { status: result.validator_status ?? 'ok' })
+      : renderBanner('exec', { i: 1, n: 1 });
+  }
+  if (result.phase === 'plan_handoff') {
+    return renderBanner('plano', {});
+  }
+  // demais fases (prd_interview etc.): exec genérico da fase em andamento.
+  return renderBanner('exec', { i: 1, n: 1 });
 }
 
 function assertAfterPlan(args = {}) {
@@ -1433,7 +1640,24 @@ function assertAfterPlan(args = {}) {
   const timestamp = nowIso();
   let result;
 
-  if (routing.mode === 'full' && dispatch.plan_validated && !dispatch.execution_completed) {
+  if (routing.mode === 'execute') {
+    // PRD D13: o gate de bloqueio pós-plano é próprio do full e NÃO se aplica a
+    // execute — o plano já é o input inicial. Aqui não se exige fase de plano;
+    // o equivalente é a re-verificação do plano antes de despachar a execução.
+    result = {
+      gate: 'G11',
+      action: 'assert_after_plan',
+      phase: 'after_plan',
+      status: 'passed',
+      mode: 'execute',
+      applicable: false,
+      timestamp,
+      current_phase: dispatch.previous_phase ?? null,
+      expected_phase: 'plan_execute',
+      note: 'assert_after_plan não se aplica em execute (PRD D13): plano é o input; re-verifique o plano antes do dispatch.',
+      next_action: 'reverificar_plano_e_dispatch_plan_execute',
+    };
+  } else if (routing.mode === 'full' && dispatch.plan_validated && !dispatch.execution_completed) {
     if (attemptedAction === 'dispatch_plan_execute') {
       result = {
         gate: 'G11',
@@ -1470,6 +1694,13 @@ function assertAfterPlan(args = {}) {
       next_action: dispatch.next_action ?? 'avançar',
     };
   }
+
+  // Banner canônico do assert_after_plan (T07): pós-plano coerente com o evento
+  // `plano` (plano validado / re-verificação) quando passa; BLOCK com motivo quando
+  // bloqueia. Fonte única no banco BANNER_TEMPLATES.
+  result.banner = result.status === 'blocked'
+    ? renderBanner('preflight_fail', { motivo: result.error ? String(result.error).slice(0, 80) : 'pós-plano bloqueado' })
+    : renderBanner('plano', {});
 
   patchDispatchResult(runId, result, args);
   return result;
@@ -1572,8 +1803,22 @@ function toolsList() {
         },
       },
       {
+        name: 'atlas_classify_input',
+        description: 'Classifica o input em backlog|prd|plan|unknown (PRD D4/D5). Verdade forte = conformidade de template de plano passa; depois cabeçalho canônico; nome PLAN_*.md é só dica fraca. Devolve artifact_type + banner de roteamento. Alimenta o guardrail anti plano-de-plano.',
+        inputSchema: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['run_id', 'input_path'],
+          properties: {
+            run_id: { type: 'string', minLength: 1 },
+            project_root: { type: 'string', minLength: 1 },
+            input_path: { type: 'string', minLength: 1 },
+          },
+        },
+      },
+      {
         name: 'atlas_preflight',
-        description: 'Gate PREREQ+G10: hard-fail de pré-requisitos de determinismo (subagente/MCP do host, DEC-004), depois valida modo, versão e lock ativo, travando a rota da run.',
+        description: 'Gate PREREQ+G10: hard-fail de pré-requisitos de determinismo (subagente/MCP do host, DEC-004), depois valida modo, versão e lock ativo, travando a rota da run. Output declara guarantee_level (enum full_pipeline|reduced_standalone).',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
@@ -1657,6 +1902,7 @@ function handleRequest(message) {
         name === 'atlas_verify_artifact' ? verifyArtifact(args) :
         name === 'atlas_scan_prd' ? scanPrd(args) :
         name === 'atlas_verify_template_conformance' ? verifyTemplateConformance(args) :
+        name === 'atlas_classify_input' ? classifyInput(args) :
         name === 'atlas_preflight' ? preflight(args) :
         name === 'atlas_lock_dispatch' ? lockDispatch(args) :
         name === 'atlas_assert_after_plan' ? assertAfterPlan(args) :
@@ -1751,7 +1997,22 @@ export {
   HOST_NAMES,
   PREREQUISITES,
   CAPABILITIES_SCHEMA_VERSION,
+  WORKFLOW_CONFIG,
+  GUARANTEE_LEVELS,
   detectHost,
   capabilities,
   checkPrerequisites,
+  expectedNextPhase,
+  guaranteeLevelForMode,
+  classifyArtifactContent,
+  BANNER_TEMPLATES,
+  BANNER_EVENTS,
+  renderBanner,
+  verifyArtifact,
+  scanPrd,
+  verifyTemplateConformance,
+  classifyInput,
+  preflight,
+  lockDispatch,
+  assertAfterPlan,
 };

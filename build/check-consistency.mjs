@@ -114,6 +114,9 @@ if (versionFile != null) {
     '.claude-plugin/plugin.json',
     'plugins/atlas-workflow-orchestrator/.codex-plugin/plugin.json',
     'package.json',
+    // Fonte de versão lida pelo server em runtime (SERVER_DIR/package.json):
+    // drift aqui bloqueia o preflight (VERSION_DRIFT), então tem que casar.
+    'packages/mcp-server/package.json',
   ]) {
     const raw = read(rel);
     if (raw == null) continue;

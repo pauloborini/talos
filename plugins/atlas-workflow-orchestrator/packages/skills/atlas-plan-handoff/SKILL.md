@@ -147,6 +147,27 @@ Tarefas `#### T01.` … `#### TNN.` com schema de `BOUNDARY_PRD_PLAN.md` canôni
 
 ---
 
+## Uso standalone vs protocolo interno no workflow (PRD D10/D11)
+
+Esta skill é de **autoria documental** (redigir um `PLAN_*.md`). A fronteira de determinismo do Atlas é a **mutação de código** (PRD D10): como redigir um plano não muta código, **autoria é livre, execução é gateada**.
+
+### (a) Uso standalone permitido
+
+Você pode invocar `atlas-plan-handoff` diretamente, fora do pipeline, para escrever um plano. Não há restrição: autoria documental não muta o produto. O `PLAN_*.md` resultante é livre para existir e ser editado.
+
+### (b) O artefato NÃO é confiável só por existir
+
+Um plano escrito standalone **não vale como gate aprovado** só porque existe — nem mesmo com nome `PLAN_*.md`. Ao entrar em execução (modos `full`/`direct`/`execute`), o plano é **re-gateado obrigatoriamente** por `atlas_verify_artifact` + `atlas_verify_template_conformance` (TC); no modo `execute`, essa reverificação na entrada é o equivalente ao gate pós-plano (PRD D13). Plano velho, manual, renomeado ou fora de conformidade **trava na entrada da execução**, não na autoria. Esta skill não declara o plano "executável de forma determinística" só por tê-lo escrito.
+
+### (c) Standalone vs protocolo interno no workflow
+
+- **Standalone:** o usuário conduz a skill diretamente; o produto é o `PLAN_*.md`, sujeito a re-validação na entrada de execução.
+- **No workflow:** quem conduz a fase de plano é o **orquestrador principal** (agente principal), que despacha/autora o plano antes de validá-lo e roda os gates MCP. Uma vez que o plano passa `atlas_verify_artifact` + TC, o orquestrador fica de mãos atadas (não edita mais o plano). A skill é a mesma; o que muda é quem orquestra e os gates que cercam a fase.
+
+> **Invariante:** autoria é livre, execução é gateada. Um plano só vira confiável para execução após `atlas_verify_artifact` + TC na entrada (PRD D11).
+
+---
+
 ## Consistência da cadeia
 
 O próximo agente, só lendo o artefato, deve saber:

@@ -29,6 +29,11 @@ const HOSTS = [
 
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-conf-'));
 
+// Fixture p/ o cenário `execute`: arquivo com nome PLAN_*.md → classify_input o
+// classifica como `plan` (dica de nome), roteando para o modo execute (PRD D5/D6).
+const PLAN_FIXTURE = 'PLAN_conf_execute.md';
+fs.writeFileSync(path.join(TMP, PLAN_FIXTURE), '# PLAN conformance execute\n\nPlano de fixture para o cenário execute da matriz.\n');
+
 function call(server, requests) {
   return new Promise((resolve) => {
     let buf = '';
@@ -76,6 +81,16 @@ for (const { host, agent } of HOSTS) {
     { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'atlas_capabilities', arguments: {} } },
     { jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'atlas_preflight', arguments: { run_id: `conf-${host}-ok`, mode: 'direct', project_root: TMP, host_capabilities: { subagent_available: true, mcp_available: true } } } },
     { jsonrpc: '2.0', id: 5, method: 'tools/call', params: { name: 'atlas_preflight', arguments: { run_id: `conf-${host}-blk`, mode: 'direct', project_root: TMP, host_capabilities: { subagent_available: false } } } },
+    // Cenário `execute` (T15): preflight(execute) → classify_input(plano) →
+    // lock_dispatch(start, plan_execute) como PRIMEIRA fase → assert_after_plan no-op.
+    // Run_id próprio para a rota travar em execute (sem colidir com os -ok/-blk de direct).
+    { jsonrpc: '2.0', id: 6, method: 'tools/call', params: { name: 'atlas_preflight', arguments: { run_id: `conf-${host}-exec`, mode: 'execute', project_root: TMP, host_capabilities: { subagent_available: true, mcp_available: true } } } },
+    { jsonrpc: '2.0', id: 7, method: 'tools/call', params: { name: 'atlas_classify_input', arguments: { run_id: `conf-${host}-exec`, project_root: TMP, input_path: PLAN_FIXTURE } } },
+    { jsonrpc: '2.0', id: 8, method: 'tools/call', params: { name: 'atlas_lock_dispatch', arguments: { run_id: `conf-${host}-exec`, project_root: TMP, action: 'start', phase: 'plan_execute' } } },
+    { jsonrpc: '2.0', id: 9, method: 'tools/call', params: { name: 'atlas_assert_after_plan', arguments: { run_id: `conf-${host}-exec`, project_root: TMP, attempted_action: 'dispatch_plan_execute' } } },
+    // Cleanup: aborta a fase ativa para liberar o lock no ledger compartilhado (TMP
+    // é único entre hosts); sem isto o próximo host bate em LOCK_CONFLICT no preflight.
+    { jsonrpc: '2.0', id: 10, method: 'tools/call', params: { name: 'atlas_lock_dispatch', arguments: { run_id: `conf-${host}-exec`, project_root: TMP, action: 'abort', phase: 'plan_execute' } } },
   ];
   const server = spawn('node', [SERVER], { env, cwd: TMP, stdio: ['pipe', 'pipe', 'ignore'] });
   // eslint-disable-next-line no-await-in-loop
@@ -96,7 +111,25 @@ for (const { host, agent } of HOSTS) {
   // veredito parseável
   verdictParseable(agent) ? ok() : fail('veredito JSON não encontrado/estruturado');
 
-  console.log(`  ${cells.join(' ')}  ${host}  [ping|caps|preflight|hardfail|verdict]`);
+  // --- Cenário `execute` (T15) ---
+  // preflight(execute): rota travada no G10/passed + guarantee_level full_pipeline + banner.
+  (r[6] && r[6].gate === 'G10' && r[6].status === 'passed' && r[6].mode === 'execute'
+    && r[6].guarantee_level === 'full_pipeline' && typeof r[6].banner === 'string' && r[6].banner.length > 0)
+    ? ok() : fail(`preflight(execute) != G10/passed/full_pipeline+banner (${JSON.stringify(r[6])})`);
+  // classify_input: plano detectado → artifact_type plan, routed_mode execute, banner não vazio.
+  (r[7] && r[7].artifact_type === 'plan' && r[7].routed_mode === 'execute'
+    && typeof r[7].banner === 'string' && r[7].banner.length > 0)
+    ? ok() : fail(`classify_input(plano) != plan/execute+banner (${JSON.stringify(r[7])})`);
+  // lock_dispatch(start, plan_execute) como PRIMEIRA fase em execute: G7/passed + banner.
+  (r[8] && r[8].gate === 'G7' && r[8].status === 'passed' && r[8].phase === 'plan_execute'
+    && typeof r[8].banner === 'string' && r[8].banner.length > 0)
+    ? ok() : fail(`lock_dispatch(start,plan_execute) != G7/passed+banner (${JSON.stringify(r[8])})`);
+  // assert_after_plan em execute: no-op explícito (applicable:false, passed) + banner.
+  (r[9] && r[9].status === 'passed' && r[9].applicable === false && r[9].mode === 'execute'
+    && typeof r[9].banner === 'string' && r[9].banner.length > 0)
+    ? ok() : fail(`assert_after_plan(execute) != passed/applicable:false+banner (${JSON.stringify(r[9])})`);
+
+  console.log(`  ${cells.join(' ')}  ${host}  [ping|caps|preflight|hardfail|verdict|exec.preflight|exec.classify|exec.dispatch|exec.assert]`);
 }
 
 fs.rmSync(TMP, { recursive: true, force: true });
@@ -106,4 +139,4 @@ if (errors.length) {
   for (const e of errors) console.error(`  - ${e}`);
   process.exit(1);
 }
-console.log('conformance-matrix: ok (5 hosts × 5 cenários verdes — simulado por env)');
+console.log('conformance-matrix: ok (5 hosts × 9 cenários verdes — simulado por env)');

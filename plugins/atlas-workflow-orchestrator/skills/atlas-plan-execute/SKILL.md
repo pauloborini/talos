@@ -44,6 +44,10 @@ The plan is the SSoT. Map `ready` to `pending`, `implementing`/`gating` to `in_p
 
 `atlas-slice-review` is dispatched only when `--review` is present in the user command or executor arguments. Without `--review`, stop at `slice_done` after validator pass/pass_with_observations.
 
+## Entrada via modo `execute` (PRD D1/D13)
+
+Esta skill aceita entrada pelo modo `execute` do orquestrador: um `PLAN_*.md` pronto de pipeline curta, apontado diretamente e já reverificado na entrada (`atlas_verify_artifact` + TC) pelo orquestrador. **A entrada `execute` é o mesmo executor, com as mesmas garantias** — o contrato não muda: o state file (`.atlas/state/<run_id>/<slice>.json`) permanece **obrigatório** e o `atlas-task-validator` (validador frio, só `state_path`) permanece **obrigatório** antes do relatório final. Não há caminho de execução sem state file nem sem validador, em nenhum modo de entrada.
+
 ---
 
 ## Required Workflow

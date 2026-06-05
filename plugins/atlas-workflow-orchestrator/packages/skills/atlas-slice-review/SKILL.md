@@ -13,6 +13,28 @@ Review only the slice that was executed. Do not widen into a generic repo audit 
 
 `--review` is the only automatic dispatch condition. Do not auto-trigger from heuristics, diff size, risk level, or validator observations. If `--review` is absent, report that external review was skipped by contract.
 
+## Uso standalone — rótulo de garantia reduzida obrigatório (PRD D10/D11)
+
+Esta skill é **análise de leitura**: revisa código, **não muta código**. Pela fronteira de determinismo do Atlas (mutação de código, PRD D10), leitura standalone é **permitida**, mas carrega **risco epistêmico** — a análise não passou pela defesa fria do pipeline (`atlas-task-validator`, que é pipeline-only, só `state_path`). Esse risco é mitigado por **rótulo**, não por gate.
+
+**Regra dura:** quando `atlas-slice-review` roda **fora do pipeline** (sem o `atlas-task-validator` ter fechado a slice via state file), a saída **SEMPRE** sai rotulada como garantia reduzida. É **proibido** simular `validator_status: passed` ou qualquer veredito de validação aprovado — a review é leitura, não validação fria.
+
+### Formato exato do rótulo (obrigatório no topo da saída standalone)
+
+```text
+guarantee_level: reduced_standalone
+validator_status: not_run (sem validator-closed)
+scope: standalone
+```
+
+- `guarantee_level: reduced_standalone` — enum fixo (PRD D12); nunca `full_pipeline` em uso standalone.
+- `validator_status: not_run (sem validator-closed)` — declara explicitamente que a defesa fria não rodou. **Proibido** escrever `passed`/`pass`.
+- `scope: standalone` — marca que a review não está ancorada num state file de pipeline.
+
+Quando a review roda **dentro do pipeline** (despachada pelo orquestrador após o validator frio fechar a slice), o nível de garantia da slice vem do pipeline (`full_pipeline`) e este rótulo de redução **não** se aplica — mas a própria review continua sendo leitura e nunca emite veredito de validador.
+
+> **Invariante:** uma análise de leitura standalone nunca se declara fechada por validação; sai rotulada `reduced_standalone` e jamais simula `validator_status: passed` (PRD D10/D11, fecha Q-08).
+
 ## State persistence
 
 Use `atlas_run_state` as the primary source for run state, dispatch status, and validator status. Do not read or write run ledger files directly. If MCP state is unavailable, block the review rather than accepting a local file fallback.
