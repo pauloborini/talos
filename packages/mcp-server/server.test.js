@@ -58,13 +58,13 @@ test('detectHost: opencode via ATLAS_HOST injetado pelo packaging', () => {
   assert.equal(r.detected_via, 'env:ATLAS_HOST');
 });
 
-test('capabilities: perfil opencode (subagente @, mcp local, sem todo)', () => {
+test('capabilities: perfil opencode (subagente @, mcp local, todo nativo todowrite)', () => {
   const cap = capabilities({ host: 'opencode' });
   assert.equal(cap.host, 'opencode');
   assert.equal(cap.capabilities_flags.subagent_available, true);
   assert.equal(cap.capabilities_flags.mcp_available, true);
-  assert.equal(cap.capabilities_flags.todo_available, false);
-  assert.equal(cap.todo_tool, null);
+  assert.equal(cap.capabilities_flags.todo_available, true);
+  assert.equal(cap.todo_tool, 'todowrite');
   assert.match(cap.subagent_dispatch.registration, /\.opencode\/agents/);
 });
 

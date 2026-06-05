@@ -106,11 +106,14 @@ const HOST_ADAPTERS = {
       example: 'invocar @atlas-task-validator passando <state_path>',
       registration: '.opencode/agents/<name>.md (frontmatter description + mode: subagent)',
     },
-    // opencode não expõe todo nativo confirmado; segue sem mirror (não-essencial).
-    todo_tool: null,
+    // opencode expõe `todowrite` nativo ao agente primário (orquestrador). O `todoread`
+    // foi fundido em `todowrite` (mar/2026): a tool retorna a lista atual no output.
+    // Subagentes têm `todowrite` desabilitado por padrão, mas o todo é usado pelo
+    // orquestrador (primário), não pelos validadores — então a flag descreve o nível certo.
+    todo_tool: 'todowrite',
     hooks: { supported: true, mechanism: '.opencode/plugins/' },
-    // Nativo compatível: subagente (.opencode/agents) + MCP local (opencode.json).
-    capabilities_flags: { subagent_available: true, mcp_available: true, todo_available: false },
+    // Nativo compatível: subagente (.opencode/agents) + MCP local (opencode.json) + todo (todowrite).
+    capabilities_flags: { subagent_available: true, mcp_available: true, todo_available: true },
   },
   pi: {
     label: 'pi cli',
