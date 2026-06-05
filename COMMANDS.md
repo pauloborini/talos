@@ -5,7 +5,7 @@ Instalador único via **npx-from-GitHub** (não precisa clonar o repo).
 
 ---
 
-## Atualizar (após merge na `main` ou nova release)
+## Atualizar
 
 ```bash
 # Claude Code / Cursor
