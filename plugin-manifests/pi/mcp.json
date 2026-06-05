@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "atlas-workflow": {
+      "command": "node",
+      "args": ["atlas/packages/mcp-server/server.js"],
+      "env": {
+        "ATLAS_HOST": "pi"
+      }
+    }
+  }
+}

@@ -56,7 +56,7 @@ const REQUIRED_PLAN_SECTIONS = [
   ['8', 'Validação e checklist'],
 ];
 const WORKFLOW_CONFIG = {
-  path: 'builtin:atlas-workflow-v0.3.0',
+  path: 'builtin:atlas-workflow',
   skills: {
     prd_generator: 'atlas-sprint-prd-generator',
     prd_interview: 'atlas-prd-interview',
@@ -70,6 +70,12 @@ const WORKFLOW_CONFIG = {
 // Camada de adapter: conhecimento host-específico centralizado em código.
 // Skills consultam atlas_capabilities e usam o descritor retornado em vez de
 // hardcodar nome de host. Adicionar host novo = adicionar entrada aqui.
+// Contrato HostAdapter (DEC-007): entrada runtime data-driven. Campos:
+//   subagent_dispatch, todo_tool, hooks, capabilities_flags. plan_paths/state são
+//   portáveis (iguais a todos os hosts) e vivem em capabilities(). Adicionar host =
+//   adicionar entrada aqui; nenhum ramo `if host==` em outro lugar.
+// capabilities_flags: pré-requisitos essenciais (subagent_available, mcp_available)
+//   são hard-fail no preflight (DEC-004); todo_available é não-essencial.
 const HOST_ADAPTERS = {
   claude: {
     label: 'Claude Code',
@@ -79,6 +85,8 @@ const HOST_ADAPTERS = {
       registration: 'agents/<name>.md na raiz do plugin',
     },
     todo_tool: 'TodoWrite',
+    hooks: { supported: true, mechanism: 'hooks/claude/settings.snippet.json' },
+    capabilities_flags: { subagent_available: true, mcp_available: true, todo_available: true },
   },
   codex: {
     label: 'Codex App',
@@ -88,6 +96,44 @@ const HOST_ADAPTERS = {
       registration: 'agents/openai.yaml por skill (allow_implicit_invocation)',
     },
     todo_tool: 'tasks',
+    hooks: { supported: false, mechanism: null },
+    capabilities_flags: { subagent_available: true, mcp_available: true, todo_available: true },
+  },
+  opencode: {
+    label: 'opencode',
+    subagent_dispatch: {
+      mechanism: '@<name> (ou auto por description)',
+      example: 'invocar @atlas-task-validator passando <state_path>',
+      registration: '.opencode/agents/<name>.md (frontmatter description + mode: subagent)',
+    },
+    // opencode expõe `todowrite` nativo ao agente primário (orquestrador). O `todoread`
+    // foi fundido em `todowrite` (mar/2026): a tool retorna a lista atual no output.
+    // Subagentes têm `todowrite` desabilitado por padrão, mas o todo é usado pelo
+    // orquestrador (primário), não pelos validadores — então a flag descreve o nível certo.
+    todo_tool: 'todowrite',
+    hooks: { supported: true, mechanism: '.opencode/plugins/' },
+    // Nativo compatível: subagente (.opencode/agents) + MCP local (opencode.json) + todo (todowrite).
+    capabilities_flags: { subagent_available: true, mcp_available: true, todo_available: true },
+  },
+  pi: {
+    label: 'pi cli',
+    subagent_dispatch: {
+      // pi-subagents dispara pela tool `subagent({agent, task})` — NÃO por @name nem via MCP.
+      // As tools MCP do Atlas chegam proxiadas/prefixadas pelo pi-mcp-adapter (atlas_workflow_<tool>).
+      mechanism: 'subagent({ agent, task }) — tool do pi-subagents',
+      example: 'subagent({ agent: "atlas-task-validator", task: "<state_path>", context: "fresh" })',
+      registration: '.pi/agents/<name>.md (pi-subagents; frontmatter name + description + tools)',
+    },
+    todo_tool: null,
+    hooks: { supported: false, mechanism: null },
+    // pi exige 2 deps externas obrigatórias (DEC-005): pi-mcp-adapter (MCP) e
+    // pi-subagents (subagente). O perfil declara a expectativa; a disponibilidade
+    // real é reportada em host_capabilities no preflight — ausente => hard-fail.
+    capabilities_flags: { subagent_available: true, mcp_available: true, todo_available: false },
+    required_deps: ['pi-mcp-adapter', 'pi-subagents'],
+    // must_report: essenciais dependem de deps externas não-sondáveis pelo servidor.
+    // Fail-closed — só passam se o caller reportar disponibilidade real (não otimismo do perfil).
+    prereq_policy: 'must_report',
   },
   generic: {
     label: 'Host genérico',
@@ -97,15 +143,58 @@ const HOST_ADAPTERS = {
       registration: 'mecanismo nativo equivalente do host',
     },
     todo_tool: null,
+    hooks: { supported: false, mechanism: null },
+    // generic EXIGE subagente+MCP do host (DEC-004); host MCP-only sem subagente
+    // fica fora de escopo e é rejeitado no preflight, não degradado.
+    capabilities_flags: { subagent_available: true, mcp_available: true, todo_available: false },
+    // must_report: host desconhecido — o servidor não pode presumir subagente+MCP.
+    // Fail-closed — exige report afirmativo de disponibilidade.
+    prereq_policy: 'must_report',
   },
 };
 
-function detectHost(args = {}) {
+// Pré-requisitos de determinismo (DEC-004): essenciais → hard-fail no preflight;
+// não-essenciais → seguem sem o recurso, registrando. Contrato consumido por S09.
+const PREREQUISITES = {
+  essential: ['subagent_available', 'mcp_available'],
+  non_essential: ['todo_available'],
+};
+const PREREQUISITE_FLAGS = [...PREREQUISITES.essential, ...PREREQUISITES.non_essential];
+
+// Versão do contrato atlas_capabilities. Política: incremento aditivo (campos novos
+// opcionais) mantém compat — consumidores DEVEM ignorar campos desconhecidos.
+// Remoção/renomeação de campo ou mudança de semântica exige bump e nota de migração.
+// v1 → v2: adiciona capabilities_flags, hooks, prerequisites, known_hosts,
+//   required_deps, prereq_policy (aditivo).
+const CAPABILITIES_SCHEMA_VERSION = 2;
+
+// Nomes de host derivados do registry — única fonte de verdade para enums de schema.
+// Adicionar host em HOST_ADAPTERS propaga automaticamente (sem enum hardcoded).
+const HOST_NAMES = Object.keys(HOST_ADAPTERS);
+
+// Registry de detecção de host, data-driven e ordenado por precedência (DEC-003).
+// Adicionar host = adicionar um detector aqui (env próprio/arquivo); sem ramo solto.
+// `arg host` e `ATLAS_HOST` (override explícito) têm prioridade sobre sinais de env.
+// Cada detector retorna o nome do host se casar, ou null. Só hosts presentes em
+// HOST_ADAPTERS são aceitos (perfil desconhecido cai em generic).
+const HOST_DETECTORS = [
+  { via: 'env:CLAUDE_PLUGIN_ROOT', detect: (env) => (env.CLAUDE_PLUGIN_ROOT ? 'claude' : null) },
+  { via: 'env:CODEX', detect: (env) => (env.CODEX_HOME || env.CODEX_PLUGIN_ROOT ? 'codex' : null) },
+  // opencode/pi não expõem env distintivo garantido no subprocesso MCP (S01).
+  // Detecção determinística: o packaging injeta ATLAS_HOST no env do MCP —
+  //   opencode: opencode.json → mcp.<name>.environment.ATLAS_HOST = "opencode"
+  //   pi: mcp.json (pi-mcp-adapter) → env.ATLAS_HOST = "pi"
+  // Tratado pela branch ATLAS_HOST acima; sem file-detection frágil.
+];
+
+function detectHost(args = {}, env = process.env) {
   if (args.host && HOST_ADAPTERS[args.host]) return { host: args.host, detected_via: 'arg' };
-  const override = process.env.ATLAS_HOST;
+  const override = env.ATLAS_HOST;
   if (override && HOST_ADAPTERS[override]) return { host: override, detected_via: 'env:ATLAS_HOST' };
-  if (process.env.CLAUDE_PLUGIN_ROOT) return { host: 'claude', detected_via: 'env:CLAUDE_PLUGIN_ROOT' };
-  if (process.env.CODEX_HOME || process.env.CODEX_PLUGIN_ROOT) return { host: 'codex', detected_via: 'env:CODEX' };
+  for (const detector of HOST_DETECTORS) {
+    const host = detector.detect(env);
+    if (host && HOST_ADAPTERS[host]) return { host, detected_via: detector.via };
+  }
   return { host: 'generic', detected_via: 'default' };
 }
 
@@ -116,9 +205,16 @@ function capabilities(args = {}) {
     host,
     host_label: adapter.label,
     detected_via,
-    schema_version: 1,
+    schema_version: CAPABILITIES_SCHEMA_VERSION,
     subagent_dispatch: adapter.subagent_dispatch,
     todo_tool: adapter.todo_tool,
+    hooks: adapter.hooks,
+    capabilities_flags: adapter.capabilities_flags,
+    required_deps: adapter.required_deps ?? [],
+    prerequisites: PREREQUISITES,
+    // 'must_report' avisa o orquestrador que DEVE apurar e reportar host_capabilities
+    // (subagente/MCP reais) no preflight — sem isso, o gate PREREQ falha-fechado.
+    prereq_policy: adapter.prereq_policy ?? 'self_evident',
     plan_paths: {
       write: '.atlas/plans/',
       read_order: ['.atlas/plans/', '.cursor/plans/', '.codex/plans/'],
@@ -127,6 +223,58 @@ function capabilities(args = {}) {
     state_backend: 'atlas_run_state',
     state_dir: RUN_DIR,
     known_hosts: Object.keys(HOST_ADAPTERS),
+  };
+}
+
+// Hard-fail de pré-requisitos de determinismo (DEC-004). Mescla as flags do perfil
+// do host com a disponibilidade real reportada pelo caller (`host_capabilities`).
+//
+// Política por host (`prereq_policy`):
+//   - 'self_evident' (claude/codex/opencode, default): runtime nativo. Flag essencial
+//     vem do report quando presente, senão do perfil (otimista justificado: MCP-vivo
+//     prova-se no boot; subagente é nativo do plugin instalado).
+//   - 'must_report' (pi/generic): essencial depende de dep externa (pi) ou de host
+//     desconhecido (generic) — NÃO sondável pelo servidor. Fail-closed: a flag só
+//     conta como true se reportada explicitamente true; ausente/não-bool ⇒ false ⇒
+//     blocked. Converte a garantia de prosa do orquestrador em contrato.
+//
+// O merge é delimitado a PREREQUISITE_FLAGS (chave desconhecida no override é ignorada;
+// o additionalProperties:false do schema é enforçado na camada do client MCP, este
+// loop é a defesa server-side). Capability não-essencial (todo) nunca bloqueia.
+function checkPrerequisites(args = {}) {
+  const { host } = detectHost(args);
+  const adapter = HOST_ADAPTERS[host];
+  const mustReport = adapter.prereq_policy === 'must_report';
+  const reported = args.host_capabilities && typeof args.host_capabilities === 'object'
+    ? args.host_capabilities
+    : {};
+  const flags = {};
+  for (const key of PREREQUISITE_FLAGS) {
+    const reportedVal = typeof reported[key] === 'boolean' ? reported[key] : undefined;
+    if (mustReport && PREREQUISITES.essential.includes(key)) {
+      flags[key] = reportedVal === true;
+    } else {
+      flags[key] = reportedVal !== undefined ? reportedVal : adapter.capabilities_flags[key];
+    }
+  }
+  const missing = PREREQUISITES.essential.filter((key) => flags[key] !== true);
+  if (missing.length === 0) {
+    return { status: 'passed', host, effective_flags: flags, missing: [] };
+  }
+  const unreported = mustReport && PREREQUISITES.essential.every(
+    (key) => typeof reported[key] !== 'boolean',
+  );
+  return {
+    status: 'blocked',
+    host,
+    effective_flags: flags,
+    missing,
+    error: `Pré-requisito de determinismo ausente no host '${host}': ${missing.join(', ')}`,
+    cause: unreported ? 'host_nao_reportou_disponibilidade' : 'host_sem_prerequisito_essencial',
+    impact: 'sem_isolamento_de_contexto_o_validator_perde_determinismo_em_tarefa_grande',
+    next_action: host === 'pi'
+      ? 'instalar_pi-mcp-adapter_e_pi-subagents_e_reportar_host_capabilities'
+      : 'usar_host_com_subagente_e_mcp_nativos_ou_reportar_host_capabilities',
   };
 }
 
@@ -948,7 +1096,22 @@ function preflight(args = {}) {
   const currentRouting = previous?.data?.routing;
   let result;
 
-  if (version.status === 'blocked') {
+  const prereq = checkPrerequisites(args);
+  if (prereq.status === 'blocked') {
+    result = {
+      gate: 'PREREQ',
+      status: 'blocked',
+      timestamp,
+      mode,
+      host: prereq.host,
+      missing_prerequisites: prereq.missing,
+      effective_flags: prereq.effective_flags,
+      error: prereq.error,
+      cause: prereq.cause,
+      impact: prereq.impact,
+      next_action: prereq.next_action,
+    };
+  } else if (version.status === 'blocked') {
     result = {
       gate: 'VERSION_DRIFT',
       status: 'blocked',
@@ -1342,7 +1505,7 @@ function toolsList() {
           type: 'object',
           additionalProperties: false,
           properties: {
-            host: { type: 'string', enum: ['claude', 'codex', 'generic'] },
+            host: { type: 'string', enum: HOST_NAMES },
           },
         },
       },
@@ -1410,7 +1573,7 @@ function toolsList() {
       },
       {
         name: 'atlas_preflight',
-        description: 'Gate G10: valida modo, versão e lock ativo, travando a rota da run.',
+        description: 'Gate PREREQ+G10: hard-fail de pré-requisitos de determinismo (subagente/MCP do host, DEC-004), depois valida modo, versão e lock ativo, travando a rota da run.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
@@ -1418,8 +1581,21 @@ function toolsList() {
           properties: {
             run_id: { type: 'string', minLength: 1 },
             project_root: { type: 'string', minLength: 1 },
-            mode: { type: 'string', enum: ['full', 'direct', 'interview-only', 'interview_only'] },
+            mode: { type: 'string', enum: WORKFLOW_CONFIG.modes },
             expected_version: { type: 'string' },
+            host: { type: 'string', enum: HOST_NAMES },
+            // additionalProperties:false é enforçado pelo client MCP; o servidor ainda
+            // delimita defensivamente o override a PREREQUISITE_FLAGS em checkPrerequisites.
+            host_capabilities: {
+              type: 'object',
+              description: 'Disponibilidade real reportada pelo host (override das flags do perfil). Ex.: pi sem deps → {"subagent_available":false}.',
+              additionalProperties: false,
+              properties: {
+                subagent_available: { type: 'boolean' },
+                mcp_available: { type: 'boolean' },
+                todo_available: { type: 'boolean' },
+              },
+            },
           },
         },
       },
@@ -1538,27 +1714,44 @@ function parseMessages(buffer) {
   return { messages, rest };
 }
 
-let pending = '';
-process.stdin.setEncoding('utf8');
-process.stdin.on('data', (chunk) => {
-  try {
-    const parsed = parseMessages(pending + chunk);
-    pending = parsed.rest;
-    for (const message of parsed.messages) {
-      try {
-        send(handleRequest(message));
-      } catch (error) {
-        send({
-          id: message.id,
-          error: {
-            code: error.code ?? -32000,
-            message: error.message,
-            data: error.data,
-          },
-        });
+function startStdioLoop() {
+  let pending = '';
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', (chunk) => {
+    try {
+      const parsed = parseMessages(pending + chunk);
+      pending = parsed.rest;
+      for (const message of parsed.messages) {
+        try {
+          send(handleRequest(message));
+        } catch (error) {
+          send({
+            id: message.id,
+            error: {
+              code: error.code ?? -32000,
+              message: error.message,
+              data: error.data,
+            },
+          });
+        }
       }
+    } catch (error) {
+      send({ id: null, error: { code: -32700, message: `JSON inválido: ${error.message}` } });
     }
-  } catch (error) {
-    send({ id: null, error: { code: -32700, message: `JSON inválido: ${error.message}` } });
-  }
-});
+  });
+}
+
+// Só inicia o loop stdio quando executado como entrypoint (node server.js).
+// Importado por testes (node --test), o módulo expõe funções puras sem bootar I/O.
+const isEntrypoint = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (isEntrypoint) startStdioLoop();
+
+export {
+  HOST_ADAPTERS,
+  HOST_NAMES,
+  PREREQUISITES,
+  CAPABILITIES_SCHEMA_VERSION,
+  detectHost,
+  capabilities,
+  checkPrerequisites,
+};

@@ -1,5 +1,36 @@
 # Changelog
 
+## v0.4.0 - 2026-06-02
+
+Tipo: multi-host (aditivo; sem breaking para Claude/Cursor/Codex)
+
+Resumo: expande o Atlas para arquitetura multi-host por adapter data-driven, adicionando **opencode** e **pi cli** além de Claude Code, Cursor e Codex, com determinismo garantido por hard-fail no preflight.
+
+Hosts suportados: `claude`, `cursor` (carona no manifest claude), `codex`, `opencode`, `pi`, `generic`.
+
+`atlas_capabilities` schema_version: **2** (aditivo — `capabilities_flags`, `hooks`, `prerequisites`, `required_deps`, `prereq_policy`; consumidores devem ignorar campos desconhecidos).
+
+Mudancas:
+- contrato `HostAdapter` data-driven em `HOST_ADAPTERS` (`capabilities_flags`, `hooks`, `prerequisites`) — adicionar host = adicionar entrada, sem ramo `if host==` (DEC-007);
+- gate `PREREQ` no `atlas_preflight`: pré-requisito essencial (subagente/MCP) ausente → hard-fail, qualquer tamanho, sem degradação/inline (DEC-004); `todo` não-essencial segue sem mirror;
+- **determinism hardening (fail-closed):** hosts `must_report` (pi/generic) só passam o PREREQ com `host_capabilities` afirmativo — sem report, falha-fechado (a garantia vira contrato, não otimismo do perfil). Nativos (claude/codex/opencode) são `self_evident`. `atlas_capabilities` expõe `prereq_policy`; override de `host_capabilities` delimitado às flags conhecidas no servidor; guard de prosa garante que o SKILL do orquestrador preserve o passo de report;
+- conformance com asserts reais: veredito do validator validado por `JSON.parse` (não só regex); célula de preflight PASS exige `status:passed`+`gate:G10`;
+- helper `build/install-host.sh <opencode|pi> <target>` (1 comando, idempotente) para install/update dos hosts sem marketplace CLI;
+- **fix de packaging pi (validado no pi real `@earendil-works/pi-coding-agent` + `pi-mcp-adapter`/`pi-subagents`):** MCP em `.mcp.json` no root (não `mcp.json`, que o pi-mcp-adapter não descobre); subagente em `.pi/agents/` (não `agents/`, fora da descoberta do pi-subagents); dispatch real via tool `subagent({ agent, task })` (não `@name` nem MCP) registrado em `HOST_ADAPTERS.pi`; frontmatter do agente pi com `tools: read, grep, find, ls, bash` (read-only, casa com o contrato do validator). opencode validado ponta-a-ponta no opencode real (MCP + subagente + veredito);
+- conformance documenta escopo honesto: exercita só a lógica do MCP server (env `ATLAS_HOST`), não a integração das extensões de host (cobertas por teste manual no host real);
+- CI endurecida: catálogos `plugins/`/`hosts/` checados via `git status --porcelain` (pega arquivo untracked, não só diff de rastreado);
+- **instalador unificado via npx-from-GitHub** (`build/cli/atlas-init.mjs`, bin `atlas-workflow` no `package.json` raiz): `npx github:pauloborini/atlas-workflow init|uninstall <claudecode|cursor|codex|opencode|pi>` — 1 comando por host, sem clonar o repo. claude/codex orquestram o instalador nativo da CLI; opencode/pi colocam (init) ou removem cirurgicamente (uninstall) o catálogo from-source no diretório alvo, preservando config/skills do usuário e outros servers MCP. Flags `--dir`, `--yes` (auto-deps pi), `--dry-run`. Versão do `package.json` raiz entra no guard de drift;
+- **install não-destrutivo (pi):** `init pi` passou a **mesclar** a chave `mcpServers.atlas-workflow` no `.mcp.json` existente em vez de sobrescrever o arquivo (preserva outros MCP servers do usuário) — espelha o merge do opencode. Guard `assertConfigParseable`: se o config do usuário existir mas for JSON inválido, aborta **antes** de copiar qualquer arquivo (sem install parcial, sem tocar a config). Dica pós-install corrigida (não manda mais disparar o validator com `<state_path>` literal, que gerava P1);
+- **instalação `--global` para opencode/pi** (paridade com claude/codex, que já são globais): `init|uninstall <opencode|pi> --global` instala em `~/.config/opencode/` / `~/.pi/agent/` (honra `XDG_CONFIG_HOME` e `PI_CODING_AGENT_DIR`), valendo em todos os projetos. Runtime vai para local estável e o MCP é registrado com **caminho absoluto** (independe de cwd); agente do opencode em `~/.config/opencode/agents/` (descoberta confirmada via `opencode agent list`), do pi em `~/.agents/` se existir senão `~/.pi/agent/agents/` (replicando a escolha do pi-subagents). Config mesclada de forma cirúrgica; uninstall remove só os artefatos do Atlas, preservando dirs compartilhados (`~/.agents`) e demais servers/skills;
+- detecção de host data-driven (`HOST_DETECTORS`); enum dos schemas derivado de `HOST_ADAPTERS` (sem hardcode);
+- adapter **opencode**: perfil + `.opencode/` (agents/skills) + `opencode.json` (MCP local, `ATLAS_HOST=opencode`) + bundle + catálogo from-source `hosts/opencode/`; **`todo_tool: 'todowrite'`, `todo_available: true`** (todo nativo confirmado no opencode real; perfil estava desatualizado com `false`);
+- adapter **pi**: perfil + 2 deps obrigatórias (`pi-mcp-adapter` + `pi-subagents`, DEC-005) + `mcp.json` + bundle + catálogo `hosts/pi/`;
+- guards estendidos: existência+versão dos catálogos, veredito do validator cross-host, skills sem hardcode de host;
+- testes do núcleo (`node --test`), smoke por host e matriz de conformance (5 hosts × 5 cenários);
+- CI multi-host (`.github/workflows/ci.yml`); release publica os 4 bundles.
+
+Distribuição: install primário marketplace-from-source preservado para Claude/Cursor/Codex (sem regressão); opencode/pi instaláveis via catálogo from-source commitado (DEC-008).
+
 ## v0.3.0 - 2026-06-01
 
 Tipo: runtime

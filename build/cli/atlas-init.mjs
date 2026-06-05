@@ -1,0 +1,549 @@
+#!/usr/bin/env node
+// Atlas Workflow — instalador unificado por host.
+//   npx github:pauloborini/atlas-workflow init <host> [dir] [flags]
+//
+// Hosts: claudecode|cursor (via `claude plugin`), codex (via `codex plugin`),
+//        opencode (config + .opencode/), pi (config + .pi/agents/).
+// Sem dependências externas (Node puro). Roda direto do checkout do repo (npx-from-GitHub).
+//
+// claude/codex: orquestra o instalador NATIVO da CLI (marketplace from-source no GitHub).
+// opencode/pi: coloca o catálogo from-source committed (hosts/<host>/) no diretório alvo.
+import fs from 'node:fs';
+import path from 'node:path';
+import process from 'node:process';
+import { homedir } from 'node:os';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+const REPO_SLUG = 'pauloborini/atlas-workflow';
+const PLUGIN_ID = 'atlas-workflow-orchestrator@atlas-workflow';
+
+const VERSION = (() => {
+  try { return fs.readFileSync(path.join(ROOT, 'VERSION'), 'utf8').trim(); }
+  catch { return 'desconhecida'; }
+})();
+
+const HOST_ALIASES = {
+  claude: 'claude', claudecode: 'claude', 'claude-code': 'claude', cursor: 'claude',
+  codex: 'codex',
+  opencode: 'opencode',
+  pi: 'pi',
+};
+
+function log(msg) { process.stdout.write(`${msg}\n`); }
+function fail(msg, code = 1) { process.stderr.write(`erro: ${msg}\n`); process.exit(code); }
+
+// No Windows as CLIs instaladas por npm (claude/codex/pi/opencode) são shims .cmd,
+// que o spawn só resolve com shell:true. POSIX dispensa (evita parsing extra).
+const WIN = process.platform === 'win32';
+
+function which(cmd) {
+  const r = spawnSync(WIN ? 'where' : 'which', [cmd], { encoding: 'utf8', shell: WIN });
+  return r.status === 0;
+}
+
+function run(cmd, args, { dryRun }) {
+  log(`  $ ${cmd} ${args.join(' ')}`);
+  if (dryRun) return 0;
+  const r = spawnSync(cmd, args, { stdio: 'inherit', shell: WIN });
+  return r.status ?? 1;
+}
+
+function rmPath(p, { dryRun }) {
+  if (!fs.existsSync(p)) return false;
+  log(`  rm ${p}`);
+  if (!dryRun) fs.rmSync(p, { recursive: true, force: true });
+  return true;
+}
+
+function rmAtlasSkillsQuiet(skillsDir, opts) {
+  if (!fs.existsSync(skillsDir)) return;
+  for (const name of fs.readdirSync(skillsDir)) {
+    if (name.startsWith('atlas-')) rmPath(path.join(skillsDir, name), opts);
+  }
+}
+
+function cleanOpencodeControlled(targetDir, opts) {
+  rmPath(path.join(targetDir, '.opencode/atlas'), opts);
+  rmPath(path.join(targetDir, '.opencode/agents/atlas-task-validator.md'), opts);
+  rmAtlasSkillsQuiet(path.join(targetDir, '.opencode/skills'), opts);
+}
+
+function cleanPiControlled(targetDir, opts) {
+  rmPath(path.join(targetDir, 'atlas'), opts);
+  rmPath(path.join(targetDir, '.pi/agents/atlas-task-validator.md'), opts);
+  rmAtlasSkillsQuiet(path.join(targetDir, 'skills'), opts);
+}
+
+// Falha-cedo: se o config do usuário existe mas é JSON inválido, aborta ANTES de
+// copiar qualquer arquivo (não deixa instalação parcial nem sobrescreve config).
+function assertConfigParseable(file) {
+  if (!fs.existsSync(file)) return;
+  try { JSON.parse(fs.readFileSync(file, 'utf8')); }
+  catch { fail(`${path.basename(file)} existente é JSON inválido: ${file} (corrija antes de instalar; não sobrescrevo config do usuário)`); }
+}
+
+function parseJsonFile(file) {
+  return JSON.parse(fs.readFileSync(file, 'utf8'));
+}
+
+function isStrictJson(file) {
+  if (!fs.existsSync(file)) return true;
+  try { parseJsonFile(file); return true; }
+  catch { return false; }
+}
+
+function copyInto(srcRel, destDir) {
+  const src = path.join(ROOT, srcRel);
+  if (!fs.existsSync(src)) fail(`catálogo ausente no repo: ${srcRel} (rode build/build-plugins.sh e commite)`);
+  const base = path.basename(srcRel);
+  const dest = path.join(destDir, base);
+  fs.cpSync(src, dest, { recursive: true });
+  return dest;
+}
+
+function mergeOpencodeJson(targetDir) {
+  const srcCfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'hosts/opencode/opencode.json'), 'utf8'));
+  const dest = path.join(targetDir, 'opencode.json');
+  let cfg = {};
+  if (fs.existsSync(dest)) {
+    try { cfg = JSON.parse(fs.readFileSync(dest, 'utf8')); }
+    catch { fail(`opencode.json existente é JSON inválido: ${dest} (não sobrescrevo config do usuário)`); }
+    log(`  opencode.json já existe — mesclando a chave mcp.atlas-workflow (config do usuário preservada)`);
+  }
+  cfg.$schema ??= srcCfg.$schema;
+  cfg.mcp = { ...(cfg.mcp ?? {}), ...srcCfg.mcp };
+  fs.writeFileSync(dest, JSON.stringify(cfg, null, 2) + '\n');
+  return dest;
+}
+
+// pi: mesclar a chave mcpServers.atlas-workflow no .mcp.json existente em vez de
+// sobrescrever o arquivo. Preserva outros servers MCP e demais chaves do usuário.
+function mergePiMcpJson(targetDir) {
+  const srcCfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'hosts/pi/.mcp.json'), 'utf8'));
+  const dest = path.join(targetDir, '.mcp.json');
+  let cfg = {};
+  if (fs.existsSync(dest)) {
+    try { cfg = JSON.parse(fs.readFileSync(dest, 'utf8')); }
+    catch { fail(`.mcp.json existente é JSON inválido: ${dest} (não sobrescrevo config do usuário)`); }
+    log(`  .mcp.json já existe — mesclando mcpServers.atlas-workflow (config do usuário preservada)`);
+  }
+  cfg.mcpServers = { ...(cfg.mcpServers ?? {}), ...srcCfg.mcpServers };
+  fs.writeFileSync(dest, JSON.stringify(cfg, null, 2) + '\n');
+  return dest;
+}
+
+// --- paths globais (verificados no source das deps / empiricamente nas CLIs) -----
+// opencode: config global em $XDG_CONFIG_HOME/opencode (default ~/.config/opencode);
+//   agentes em <root>/agents/*.md e skills em <root>/skills/* (confirmado por
+//   `opencode agent list` com HOME sandbox).
+function opencodeGlobalRoot() {
+  const xdg = process.env.XDG_CONFIG_HOME?.trim();
+  if (xdg) return path.join(xdg, 'opencode');          // override determinístico (todo SO)
+  if (WIN) {
+    // Windows: opencode usa %APPDATA%\opencode (não ~/.config). Fallback p/ ~/.config
+    // só se APPDATA ausente. Setar XDG_CONFIG_HOME força o caminho POSIX se preferir.
+    const appData = process.env.APPDATA?.trim();
+    if (appData) return path.join(appData, 'opencode');
+  }
+  return path.join(homedir(), '.config', 'opencode');
+}
+// prefere o arquivo existente (.jsonc tem precedência se já existir); senão .json.
+function opencodeConfigFile(root) {
+  for (const name of ['opencode.jsonc', 'opencode.json']) {
+    const p = path.join(root, name);
+    if (fs.existsSync(p)) return p;
+  }
+  return path.join(root, 'opencode.json');
+}
+
+function opencodeWritableConfigFile(root) {
+  const jsonc = path.join(root, 'opencode.jsonc');
+  if (fs.existsSync(jsonc) && !isStrictJson(jsonc)) {
+    log(`  opencode.jsonc contém JSONC/comentários — preservando arquivo e mesclando Atlas em ${path.join(root, 'opencode.json')}`);
+    return path.join(root, 'opencode.json');
+  }
+  return opencodeConfigFile(root);
+}
+// pi: getAgentDir() honra PI_CODING_AGENT_DIR (igual ao pi-mcp-adapter/agent-dir.ts).
+function piAgentDir() {
+  const c = process.env.PI_CODING_AGENT_DIR?.trim();
+  if (!c) return path.join(homedir(), '.pi', 'agent');
+  if (c === '~') return homedir();
+  if (c.startsWith('~/')) return path.resolve(homedir(), c.slice(2));
+  return path.resolve(c);
+}
+// pi-subagents (agents.ts): com PI_CODING_AGENT_DIR setado usa <agentDir>/agents;
+// senão ~/.agents se existir, senão <agentDir>/agents. Replicamos a mesma escolha
+// para escrever onde o pi REALMENTE lê.
+function piGlobalAgentsDir() {
+  const agentDir = piAgentDir();
+  if (process.env.PI_CODING_AGENT_DIR?.trim()) return path.join(agentDir, 'agents');
+  const dotAgents = path.join(homedir(), '.agents');
+  return fs.existsSync(dotAgents) ? dotAgents : path.join(agentDir, 'agents');
+}
+
+// Lê a entry de server 'atlas-workflow' do catálogo bundled e reescreve o path do
+// server.js para ABSOLUTO (instalação global não tem cwd de projeto). Mantém shape
+// e env em sincronia com o bundle (mudou lá, muda aqui).
+function absServerEntry(host, atlasRootAbs) {
+  const absServer = path.join(atlasRootAbs, 'packages/mcp-server/server.js');
+  if (host === 'opencode') {
+    const c = JSON.parse(fs.readFileSync(path.join(ROOT, 'hosts/opencode/opencode.json'), 'utf8'));
+    return { schema: c.$schema, entry: { ...c.mcp['atlas-workflow'], command: ['node', absServer] } };
+  }
+  const c = JSON.parse(fs.readFileSync(path.join(ROOT, 'hosts/pi/.mcp.json'), 'utf8'));
+  return { entry: { ...c.mcpServers['atlas-workflow'], args: [absServer] } };
+}
+
+// Merge genérico de uma entry de server num config JSON. Falha-cedo se o arquivo
+// existente for JSON inválido (não sobrescreve). Preserva outros servers e chaves.
+function mergeServerInto(file, containerKey, serverName, entry, { dryRun, schema } = {}) {
+  assertConfigParseable(file);
+  let cfg = {};
+  if (fs.existsSync(file)) {
+    cfg = parseJsonFile(file);
+    log(`  ${path.basename(file)} já existe — mesclando ${containerKey}.${serverName} (config do usuário preservada)`);
+  }
+  if (schema) cfg.$schema ??= schema;
+  cfg[containerKey] = { ...(cfg[containerKey] ?? {}), [serverName]: entry };
+  if (dryRun) return file;
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(cfg, null, 2) + '\n');
+  return file;
+}
+
+function installClaude(opts) {
+  if (!which('claude')) fail('CLI `claude` não encontrada no PATH. Instale o Claude Code primeiro.');
+  log(`instalando Atlas (claude/cursor) via marketplace from-source @ ${REPO_SLUG}`);
+  if (run('claude', ['plugin', 'marketplace', 'add', REPO_SLUG], opts)) fail('falha no `claude plugin marketplace add`');
+  if (run('claude', ['plugin', 'install', PLUGIN_ID], opts)) fail('falha no `claude plugin install`');
+  log('ok — Claude Code/Cursor instalados (skills + subagente + MCP + hooks).');
+}
+
+function installCodex(opts) {
+  if (!which('codex')) fail('CLI `codex` não encontrada no PATH. Instale o Codex primeiro.');
+  log(`instalando Atlas (codex) via marketplace from-source @ ${REPO_SLUG}`);
+  if (run('codex', ['plugin', 'marketplace', 'add', REPO_SLUG], opts)) fail('falha no `codex plugin marketplace add`');
+  if (run('codex', ['plugin', 'add', PLUGIN_ID], opts)) fail('falha no `codex plugin add`');
+  log('ok — Codex instalado (skills + subagente + MCP).');
+}
+
+function installOpencode(targetDir, opts) {
+  log(`instalando Atlas (opencode v${VERSION}) em ${targetDir}`);
+  assertConfigParseable(path.join(targetDir, 'opencode.json'));
+  if (opts.dryRun) { log('  [dry-run] copiaria .opencode/ + mesclaria opencode.json'); return; }
+  fs.mkdirSync(targetDir, { recursive: true });
+  cleanOpencodeControlled(targetDir, opts);
+  copyInto('hosts/opencode/.opencode', targetDir);   // subagente + skills + runtime
+  mergeOpencodeJson(targetDir);                       // MCP local (type:local, ATLAS_HOST=opencode)
+  log('ok — opencode instalado (MCP + subagente + skills).');
+  log(`próximo: cd ${targetDir} && opencode  → confirme com as tools atlas_ping`);
+  log('  (deve retornar host=opencode) e atlas_capabilities.');
+}
+
+function piDepsStatus() {
+  if (!which('pi')) return { piPresent: false, missing: ['pi-mcp-adapter', 'pi-subagents'] };
+  const r = spawnSync('pi', ['list'], { encoding: 'utf8', shell: WIN });
+  if (r.status !== 0) return { piPresent: true, missing: ['pi-mcp-adapter', 'pi-subagents'], listFailed: true };
+  const out = (r.stdout ?? '') + (r.stderr ?? '');
+  const missing = ['pi-mcp-adapter', 'pi-subagents'].filter((d) => !out.includes(d));
+  return { piPresent: true, missing };
+}
+
+function printPiDepsHelp() {
+  log('instale com:');
+  log('  pi install npm:pi-mcp-adapter');
+  log('  pi install npm:pi-subagents');
+}
+
+function ensurePiDeps(opts) {
+  let status = piDepsStatus();
+  if (!status.piPresent) {
+    printPiDepsHelp();
+    fail('CLI `pi` não encontrada no PATH. Instale o pi antes de instalar o Atlas para pi.');
+  }
+  if (status.listFailed) {
+    fail('`pi list` falhou; não consigo validar deps obrigatórias do pi.');
+  }
+  if (!status.missing.length) {
+    log('deps obrigatórias presentes: pi-mcp-adapter + pi-subagents ✓');
+    return;
+  }
+
+  log(`deps obrigatórias ausentes: ${status.missing.join(', ')} (DEC-010)`);
+  if (!opts.yes) {
+    printPiDepsHelp();
+    fail('deps obrigatórias ausentes; re-rode com --yes para instalar automaticamente.');
+  }
+  if (opts.dryRun) {
+    for (const dep of status.missing) log(`  [dry-run] pi install npm:${dep}`);
+    return;
+  }
+  for (const dep of status.missing) {
+    const code = run('pi', ['install', `npm:${dep}`], opts);
+    if (code !== 0) fail(`falha ao instalar dep obrigatória do pi: ${dep}`);
+  }
+  status = piDepsStatus();
+  if (status.listFailed) fail('`pi list` falhou após instalar deps obrigatórias.');
+  if (status.missing.length) {
+    fail(`deps obrigatórias ainda ausentes após instalação: ${status.missing.join(', ')}`);
+  }
+  log('deps obrigatórias instaladas e revalidadas: pi-mcp-adapter + pi-subagents ✓');
+}
+
+function installPi(targetDir, opts) {
+  log(`instalando Atlas (pi v${VERSION}) em ${targetDir}`);
+  assertConfigParseable(path.join(targetDir, '.mcp.json'));
+  ensurePiDeps(opts);
+  if (opts.dryRun) { log('  [dry-run] copiaria atlas/ skills/ .pi/agents/ + .mcp.json'); }
+  else {
+    fs.mkdirSync(targetDir, { recursive: true });
+    cleanPiControlled(targetDir, opts);
+    copyInto('hosts/pi/atlas', targetDir);
+    copyInto('hosts/pi/skills', targetDir);
+    copyInto('hosts/pi/.pi', targetDir);                 // .pi/agents/<name>.md (descoberta pi-subagents)
+    mergePiMcpJson(targetDir);                            // mescla mcpServers.atlas-workflow (pi-mcp-adapter)
+    log('ok — arquivos do pi instalados (.mcp.json + .pi/agents/ + atlas/ + skills/).');
+  }
+  log(`próximo: cd ${targetDir} && pi  → confirme a instalação com as tools atlas_ping`);
+  log('  (deve retornar host=pi) e atlas_capabilities. NÃO dispare o validator à mão:');
+  log('  o atlas-task-validator roda automaticamente dentro do workflow, com um state');
+  log('  file real (.atlas/state/<run_id>/<slice>.json) — não com placeholder.');
+}
+
+// --- install global ----------------------------------------------------------
+
+function installOpencodeGlobal(opts) {
+  const root = opencodeGlobalRoot();
+  const atlasRoot = path.join(root, 'atlas');
+  const cfgFile = opencodeWritableConfigFile(root);
+  log(`instalando Atlas (opencode v${VERSION}) GLOBAL em ${root}`);
+  assertConfigParseable(cfgFile);
+  const { schema, entry } = absServerEntry('opencode', atlasRoot);
+  if (opts.dryRun) {
+    log(`  [dry-run] copiaria runtime → ${atlasRoot}, agente → ${path.join(root, 'agents')}, skills → ${path.join(root, 'skills')}`);
+    log(`  [dry-run] mesclaria mcp.atlas-workflow em ${cfgFile} (command absoluto)`);
+    return;
+  }
+  fs.mkdirSync(root, { recursive: true });
+  rmPath(atlasRoot, opts);
+  rmPath(path.join(root, 'agents/atlas-task-validator.md'), opts);
+  rmAtlasSkillsQuiet(path.join(root, 'skills'), opts);
+  fs.cpSync(path.join(ROOT, 'hosts/opencode/.opencode/atlas'), atlasRoot, { recursive: true });
+  fs.mkdirSync(path.join(root, 'agents'), { recursive: true });
+  fs.copyFileSync(path.join(ROOT, 'hosts/opencode/.opencode/agents/atlas-task-validator.md'), path.join(root, 'agents/atlas-task-validator.md'));
+  const skillsSrc = path.join(ROOT, 'hosts/opencode/.opencode/skills');
+  for (const name of fs.readdirSync(skillsSrc)) {
+    if (name.startsWith('atlas-')) fs.cpSync(path.join(skillsSrc, name), path.join(root, 'skills', name), { recursive: true });
+  }
+  mergeServerInto(cfgFile, 'mcp', 'atlas-workflow', entry, { schema });
+  log('ok — opencode GLOBAL instalado (vale em todos os projetos).');
+  log('próximo: abra `opencode` em qualquer pasta  → atlas_ping (host=opencode) + atlas_capabilities.');
+}
+
+function installPiGlobal(opts) {
+  const agentDir = piAgentDir();
+  const atlasRoot = path.join(agentDir, 'atlas');
+  const agentsDir = piGlobalAgentsDir();
+  const mcpFile = path.join(agentDir, 'mcp.json');
+  log(`instalando Atlas (pi v${VERSION}) GLOBAL em ${agentDir}`);
+  assertConfigParseable(mcpFile);
+  ensurePiDeps(opts);
+  const { entry } = absServerEntry('pi', atlasRoot);
+  if (opts.dryRun) {
+    log(`  [dry-run] copiaria runtime → ${atlasRoot}, agente → ${path.join(agentsDir, 'atlas-task-validator.md')}`);
+    log(`  [dry-run] mesclaria mcpServers.atlas-workflow em ${mcpFile} (args absoluto)`);
+  } else {
+    fs.mkdirSync(agentDir, { recursive: true });
+    rmPath(atlasRoot, opts);
+    rmPath(path.join(agentsDir, 'atlas-task-validator.md'), opts);
+    fs.cpSync(path.join(ROOT, 'hosts/pi/atlas'), atlasRoot, { recursive: true });
+    fs.mkdirSync(agentsDir, { recursive: true });
+    fs.copyFileSync(path.join(ROOT, 'hosts/pi/.pi/agents/atlas-task-validator.md'), path.join(agentsDir, 'atlas-task-validator.md'));
+    mergeServerInto(mcpFile, 'mcpServers', 'atlas-workflow', entry);
+    log(`ok — pi GLOBAL instalado (runtime + agente em ${agentsDir} + mcp.json).`);
+  }
+  log('próximo: abra `pi` em qualquer pasta  → atlas_ping (host=pi) + atlas_capabilities.');
+}
+
+// --- uninstall ---------------------------------------------------------------
+
+function rmIfExists(p, { dryRun }) {
+  if (!fs.existsSync(p)) return false;
+  log(`  rm ${path.relative(process.cwd(), p) || p}`);
+  if (!dryRun) fs.rmSync(p, { recursive: true, force: true });
+  return true;
+}
+
+// Remove apenas subdirs com prefixo atlas- (não toca skills do usuário).
+function rmAtlasSkills(skillsDir, opts) {
+  if (!fs.existsSync(skillsDir)) return;
+  for (const name of fs.readdirSync(skillsDir)) {
+    if (name.startsWith('atlas-')) rmIfExists(path.join(skillsDir, name), opts);
+  }
+}
+
+// Remove uma chave de server MCP de um config JSON; reescreve. Remove o arquivo só
+// se ficou totalmente vazio (era exclusivo do Atlas). Preserva outros servers.
+function dropMcpKey(file, containerKey, serverName, opts) {
+  if (!fs.existsSync(file)) return;
+  let cfg;
+  try { cfg = JSON.parse(fs.readFileSync(file, 'utf8')); }
+  catch { log(`  aviso: ${path.basename(file)} é JSON inválido — não mexi`); return; }
+  const container = cfg[containerKey];
+  if (!container || !(serverName in container)) return;
+  log(`  ${path.basename(file)}: removendo ${containerKey}.${serverName}`);
+  if (opts.dryRun) return;
+  delete container[serverName];
+  const onlyOurs = Object.keys(container).length === 0
+    && Object.keys(cfg).every((k) => k === containerKey || k === '$schema');
+  if (onlyOurs) { fs.rmSync(file, { force: true }); log(`  ${path.basename(file)} ficou vazio — removido`); }
+  else fs.writeFileSync(file, JSON.stringify(cfg, null, 2) + '\n');
+}
+
+function uninstallClaude(opts) {
+  if (!which('claude')) fail('CLI `claude` não encontrada no PATH.');
+  log('removendo Atlas (claude/cursor)');
+  run('claude', ['plugin', 'uninstall', PLUGIN_ID], opts);
+  run('claude', ['plugin', 'marketplace', 'remove', 'atlas-workflow'], opts);
+  log('ok — removido do Claude Code/Cursor.');
+}
+
+function uninstallCodex(opts) {
+  if (!which('codex')) fail('CLI `codex` não encontrada no PATH.');
+  log('removendo Atlas (codex)');
+  run('codex', ['plugin', 'remove', PLUGIN_ID], opts);
+  run('codex', ['plugin', 'marketplace', 'remove', 'atlas-workflow'], opts);
+  log('ok — removido do Codex.');
+}
+
+function uninstallOpencode(targetDir, opts) {
+  log(`removendo Atlas (opencode) de ${targetDir}`);
+  rmIfExists(path.join(targetDir, '.opencode/atlas'), opts);
+  rmIfExists(path.join(targetDir, '.opencode/agents/atlas-task-validator.md'), opts);
+  rmAtlasSkills(path.join(targetDir, '.opencode/skills'), opts);
+  dropMcpKey(path.join(targetDir, 'opencode.json'), 'mcp', 'atlas-workflow', opts);
+  log('ok — artefatos do Atlas removidos (config/skills do usuário preservados).');
+}
+
+function uninstallPi(targetDir, opts) {
+  log(`removendo Atlas (pi) de ${targetDir}`);
+  rmIfExists(path.join(targetDir, 'atlas'), opts);
+  rmIfExists(path.join(targetDir, '.pi/agents/atlas-task-validator.md'), opts);
+  rmAtlasSkills(path.join(targetDir, 'skills'), opts);
+  dropMcpKey(path.join(targetDir, '.mcp.json'), 'mcpServers', 'atlas-workflow', opts);
+  log('ok — artefatos do Atlas removidos. As deps pi-mcp-adapter/pi-subagents ficam (uso geral);');
+  log('  remova manualmente se quiser: pi remove pi-mcp-adapter && pi remove pi-subagents');
+}
+
+function uninstallOpencodeGlobal(opts) {
+  const root = opencodeGlobalRoot();
+  log(`removendo Atlas (opencode) GLOBAL de ${root}`);
+  rmIfExists(path.join(root, 'atlas'), opts);
+  rmIfExists(path.join(root, 'agents/atlas-task-validator.md'), opts);
+  rmAtlasSkills(path.join(root, 'skills'), opts);
+  dropMcpKey(opencodeWritableConfigFile(root), 'mcp', 'atlas-workflow', opts);
+  log('ok — artefatos globais do Atlas removidos (config/skills do usuário preservados).');
+}
+
+function uninstallPiGlobal(opts) {
+  const agentDir = piAgentDir();
+  log(`removendo Atlas (pi) GLOBAL de ${agentDir}`);
+  rmIfExists(path.join(agentDir, 'atlas'), opts);
+  rmIfExists(path.join(piGlobalAgentsDir(), 'atlas-task-validator.md'), opts);
+  dropMcpKey(path.join(agentDir, 'mcp.json'), 'mcpServers', 'atlas-workflow', opts);
+  log('ok — artefatos globais do Atlas removidos. As deps pi-mcp-adapter/pi-subagents ficam (uso geral).');
+}
+
+function usage() {
+  log(`atlas-workflow v${VERSION} — instalador multi-host
+
+uso:
+  npx github:${REPO_SLUG} init <host> [dir] [flags]
+  npx github:${REPO_SLUG} uninstall <host> [dir] [flags]
+
+hosts:
+  claudecode | cursor   via \`claude plugin\` (marketplace from-source; já global)
+  codex                 via \`codex plugin\` (marketplace from-source; já global)
+  opencode              por-projeto: .opencode/ + opencode.json no [dir]
+                        --global: ~/.config/opencode/ (vale em todos os projetos)
+  pi                    por-projeto: .mcp.json + .pi/agents/ no [dir] + deps
+                        --global: ~/.pi/agent/ (vale em todos os projetos)
+
+flags:
+  --dir <d>    diretório alvo (opencode/pi por-projeto); default: diretório atual
+  --global,-g  instalação global (opencode/pi); claude/codex já são globais
+  --yes,-y     auto-instala deps faltantes (pi, no init)
+  --dry-run    mostra o que faria, sem alterar nada
+  -h,--help    esta ajuda
+
+exemplos:
+  npx github:${REPO_SLUG} init claudecode
+  npx github:${REPO_SLUG} init opencode               # projeto atual
+  npx github:${REPO_SLUG} init opencode --global      # todos os projetos
+  npx github:${REPO_SLUG} init pi --global --yes
+  npx github:${REPO_SLUG} uninstall opencode --global
+  npx github:${REPO_SLUG} uninstall pi --global --dry-run`);
+}
+
+function parseArgs(argv) {
+  if (argv.length === 0) return { help: true };
+  const opts = { dryRun: false, yes: false, global: false };
+  const positional = [];
+  for (let i = 0; i < argv.length; i += 1) {
+    const a = argv[i];
+    if (a === '-h' || a === '--help') return { help: true };
+    if (a === '--dry-run') { opts.dryRun = true; continue; }
+    if (a === '--yes' || a === '-y') { opts.yes = true; continue; }
+    if (a === '--global' || a === '-g') { opts.global = true; continue; }
+    if (a === '--dir') {
+      const value = argv[i + 1];
+      if (!value || value.startsWith('-')) fail('--dir exige um diretório', 2);
+      opts.dir = value;
+      i += 1;
+      continue;
+    }
+    if (a.startsWith('-')) fail(`flag desconhecida: ${a}`, 2);
+    positional.push(a);
+  }
+  return { positional, opts };
+}
+
+function main() {
+  const parsed = parseArgs(process.argv.slice(2));
+  if (parsed.help) { usage(); process.exit(0); }
+
+  const [cmd, rawHost, rawDir, ...extra] = parsed.positional;
+  if (cmd !== 'init' && cmd !== 'uninstall') {
+    fail(`comando desconhecido: ${cmd} (use \`init <host>\` ou \`uninstall <host>\`)`, 2);
+  }
+
+  if (!rawHost) fail('informe o host: claudecode | cursor | codex | opencode | pi', 2);
+  if (extra.length) fail(`argumentos extras não suportados: ${extra.join(' ')}`, 2);
+  const host = HOST_ALIASES[rawHost.toLowerCase()];
+  if (!host) fail(`host inválido: ${rawHost} (use claudecode|cursor|codex|opencode|pi)`, 2);
+
+  const opts = parsed.opts;
+  const targetDir = path.resolve(opts.dir || rawDir || process.cwd());
+  const actions = {
+    init: { claude: installClaude, codex: installCodex, opencode: installOpencode, pi: installPi },
+    uninstall: { claude: uninstallClaude, codex: uninstallCodex, opencode: uninstallOpencode, pi: uninstallPi },
+  };
+  const globalActions = {
+    init: { opencode: installOpencodeGlobal, pi: installPiGlobal },
+    uninstall: { opencode: uninstallOpencodeGlobal, pi: uninstallPiGlobal },
+  };
+
+  if (host === 'claude' || host === 'codex') {
+    if (opts.global) log('nota: claude/codex já são globais por natureza (registro da CLI) — --global ignorado.');
+    actions[cmd][host](opts);
+  } else if (opts.global) {
+    globalActions[cmd][host](opts);
+  } else {
+    actions[cmd][host](targetDir, opts);
+  }
+}
+
+main();
