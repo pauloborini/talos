@@ -3,10 +3,25 @@
 Referência de 1 linha para instalar, atualizar e remover o Atlas em cada host.
 Instalador único via **npx-from-GitHub** (não precisa clonar o repo).
 
-> **Pré-merge:** enquanto o multi-host não estiver na branch default, fixe a branch
-> em todos os comandos npx:
-> `npx github:pauloborini/atlas-workflow#feature/multihost-expansion <cmd>`
-> Depois do merge na `main`, use sem `#branch` (como abaixo).
+---
+
+## Atualizar (após merge na `main` ou nova release)
+
+```bash
+# Claude Code / Cursor
+claude plugin marketplace update atlas-workflow
+claude plugin update atlas-workflow-orchestrator@atlas-workflow
+
+# Codex
+codex plugin marketplace update atlas-workflow
+codex plugin update atlas-workflow-orchestrator@atlas-workflow
+
+# opencode / pi — reinstalar pega runtime novo (mesmo comando do init)
+npx github:pauloborini/atlas-workflow init opencode --global
+npx github:pauloborini/atlas-workflow init pi --global --yes
+```
+
+Smoke pós-update: `atlas_ping` → `version: 0.4.0`; `atlas_capabilities` → `schema_version: 2`.
 
 ---
 

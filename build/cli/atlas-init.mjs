@@ -220,7 +220,6 @@ function installClaude(opts) {
   if (run('claude', ['plugin', 'marketplace', 'add', REPO_SLUG], opts)) fail('falha no `claude plugin marketplace add`');
   if (run('claude', ['plugin', 'install', PLUGIN_ID], opts)) fail('falha no `claude plugin install`');
   log('ok — Claude Code/Cursor instalados (skills + subagente + MCP + hooks).');
-  log('nota: o marketplace lê o branch default do GitHub; recursos multi-host valem após merge na main.');
 }
 
 function installCodex(opts) {
@@ -229,7 +228,6 @@ function installCodex(opts) {
   if (run('codex', ['plugin', 'marketplace', 'add', REPO_SLUG], opts)) fail('falha no `codex plugin marketplace add`');
   if (run('codex', ['plugin', 'add', PLUGIN_ID], opts)) fail('falha no `codex plugin add`');
   log('ok — Codex instalado (skills + subagente + MCP).');
-  log('nota: o marketplace lê o branch default do GitHub; recursos multi-host valem após merge na main.');
 }
 
 function installOpencode(targetDir, opts) {

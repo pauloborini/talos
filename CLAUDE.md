@@ -26,7 +26,7 @@ Duas metas inegociáveis, sempre juntas:
 - Cinco hosts: **Claude Code**, **Cursor**, **Codex App**, **opencode** e **pi cli**. Claude/Cursor/Codex via marketplace-from-source; opencode/pi via catálogo from-source (`hosts/`) com `build/install-host.sh` (1 comando). pi exige deps externas `pi-mcp-adapter` + `pi-subagents` (DEC-005).
 - Camada de adapter: `atlas_capabilities` (MCP, schema v2) detecta `claude`/`codex`/`opencode`/`pi`/`generic` (data-driven em `HOST_ADAPTERS`).
 - Determinismo: gate PREREQ no `atlas_preflight` é hard-fail (DEC-004). Hosts `must_report` (pi/generic) falham-fechado se o orquestrador não reportar `host_capabilities`; nativos (claude/codex/opencode) são `self_evident`.
-- Backlog da expansão: `.app-vault/docs/BACKLOG_MESTRE_MULTIHOST.md` (branch `feature/multihost-expansion`).
+- Backlog pós-v0.4.0: `.app-vault/docs/BACKLOG_MESTRE_MULTIHOST.md`; checklist de merge: `.app-vault/docs/PRE_MERGE_CHECKLIST_v0.4.0.md`.
 
 ## Regras operacionais
 
