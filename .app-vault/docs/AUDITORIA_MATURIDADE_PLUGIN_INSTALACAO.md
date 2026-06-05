@@ -1,12 +1,30 @@
 # Auditoria - maturidade do plugin e instalacao multi-host
 
 Data: 2026-06-04
+Atualizado: 2026-06-05
 Repo: `atlas-workflow`
 Versao auditada: `0.4.0`
 
+## 0. Atualizacao 2026-06-05 (delta desde a auditoria base)
+
+Maturidade revisada: **7.5/10 -> 8.0/10** (subida modesta, justificada por smoke real parcial; nao e 10/10 porque T07/T08 seguem abertos).
+
+Evidencia real nova obtida nesta data (Windows, dentro do repo):
+
+- **opencode real (Windows):** `atlas_ping` -> alive, v0.4.0, stdio, 9 capabilities; `atlas_capabilities(host=opencode)` -> host detectado, schema v2, flags corretas. Prova **boot do MCP + leitura de capabilities** no opencode real. (Ainda **nao** provado: descoberta/dispatch de agente e skills.)
+- **pi real (Windows):** `atlas_ping` respondeu via tools **prefixadas** `atlas_workflow_*` -> prova o **`pi-mcp-adapter` vivo e proxiando**; `atlas_capabilities` retornou `host: pi` via `detected_via: env:ATLAS_HOST` -> deteccao deterministica confirmada no pi real. (Ainda **nao** provado: `pi-subagents` / dispatch de subagente.)
+- **Windows (parcial):** os dois smokes acima rodaram em Windows (`state_dir: .atlas\state`) -> primeira evidencia real do **runtime MCP** funcionando no Windows. (Ainda **nao** provado no Windows: caminho do instalador `npx`, claude/codex, install/uninstall.)
+
+Correcao de capability aplicada e verificada no host real:
+
+- **opencode `todo_available`: `false` -> `true`** (`todo_tool: 'todowrite'`). O opencode expoe `todowrite` builtin (doc oficial; `todoread` fundido em `todowrite` em mar/2026). Confirmado por smoke real no opencode (`todo` agora aparece disponivel). Fonte canonica `packages/mcp-server/server.js` + 3 copias de host/plugin sincronizadas + teste + `host-adapters.md` atualizados. Guards verdes (testes 30/30, check-consistency, conformance, smoke-hosts).
+- **pi `todo_available`: mantido `false` (correto por design).** Verificado contra doc oficial do pi: o core e minimalista e **nao tem todo nativo** ("intentionally does not include ... to-dos"); todo so existe via extensao externa (`pi-todotools`). Logo `todo_tool: null` esta certo, nao e stale.
+
+O que ainda **nao** mudou (bloqueios principais seguem): smoke real de **dispatch** (validator no opencode, `subagent` no pi), smoke de **claude/codex** reais, matriz **OS** completa (macOS/Linux full + Windows do instalador), e os achados P1/P2 de instalacao (stale em update, `pi --yes` sem checar retorno, JSONC opencode, snippets Raycast).
+
 ## 1. Veredito executivo
 
-Maturidade geral: **7.5/10**.
+Maturidade geral: **8.0/10** (era 7.5/10 na auditoria base 2026-06-04; ver secao 0).
 
 Estado: **bom para uso controlado/dev**, ainda **nao perfeito para release publico cross-platform**.
 
@@ -50,13 +68,19 @@ Resultados:
 - dry-run opencode/pi local/global: **ok**
 - install/uninstall real em tmp para opencode/pi: **ok**
 
+Validado depois da auditoria base (2026-06-05, ver secao 0):
+
+- opencode real: MCP boot + `atlas_ping` + `atlas_capabilities` (ainda falta agente/skills/dispatch);
+- pi real: `pi-mcp-adapter` vivo (tools prefixadas) + `atlas_ping` + `atlas_capabilities` deteccao por env (ainda falta `pi-subagents`/dispatch);
+- Windows: runtime MCP de opencode e pi (ainda falta instalador `npx`, claude/codex, install/uninstall).
+
 Nao validado nesta auditoria:
 
 - Claude Code real instalando via `claude plugin`;
 - Codex real instalando via `codex plugin`;
-- opencode real lendo `.opencode/agents`, skills e MCP;
-- pi real carregando `pi-mcp-adapter` + `pi-subagents`;
-- Windows real;
+- opencode real lendo `.opencode/agents` e skills, e dispatch do validator;
+- pi real carregando `pi-subagents` e disparando `subagent`;
+- Windows real no caminho do instalador (`npx`, install/uninstall, claude/codex);
 - Linux real;
 - instalacao por `npx github:...` baixando do GitHub remoto;
 - comportamento dos apps desktop quando CLI/plugin atualiza.
@@ -68,8 +92,8 @@ Nao validado nesta auditoria:
 | Claude Code | `npx ... init claudecode`; por baixo roda `claude plugin marketplace add` + `claude plugin install` | 8/10 | smoke real + confirmar Cursor/Desktop + atualizar docs de 1 comando nativo |
 | Cursor | alias de Claude; mesmo plugin `.claude-plugin` | 7/10 | confirmar empiricamente que Cursor ve plugin apos install/reload |
 | Codex | `npx ... init codex`; por baixo roda `codex plugin marketplace add` + `codex plugin add` | 8/10 | smoke real no Codex App/CLI + alinhar snippet Raycast stale |
-| opencode | copia catalogo `hosts/opencode`; local/global; merge MCP | 7/10 | smoke real opencode + JSONC + update sem stale |
-| pi | copia catalogo `hosts/pi`; local/global; deps externas | 6.5/10 | smoke real pi + falha se `pi install` de dep falhar + update sem stale |
+| opencode | copia catalogo `hosts/opencode`; local/global; merge MCP | 7.5/10 | smoke real **parcial OK** (ping+capabilities, Windows); falta dispatch validator/skills + JSONC + update sem stale |
+| pi | copia catalogo `hosts/pi`; local/global; deps externas | 7/10 | smoke real **parcial OK** (`pi-mcp-adapter` vivo, ping+capabilities, Windows); falta `pi-subagents`/dispatch + falha se `pi install` falhar + update sem stale |
 
 ## 4. Estado dos comandos de instalacao
 
@@ -185,7 +209,7 @@ Riscos:
 |---|---|---|---|
 | macOS | suportado | parcialmente validado nesta maquina | baixo/medio |
 | Linux | suportado por paths POSIX | nao validado nesta auditoria | medio |
-| Windows | suporte implementado (`shell:true`, `%APPDATA%`, `%USERPROFILE%`) | nao validado | alto |
+| Windows | suporte implementado (`shell:true`, `%APPDATA%`, `%USERPROFILE%`) | runtime MCP parcialmente validado (opencode+pi: ping+capabilities); instalador `npx`/claude/codex nao validado | medio/alto |
 
 Windows precisa matriz real:
 
@@ -323,15 +347,15 @@ Correcao: docs: "pre-requisito: CLI/app ja instalado e no PATH"; "o plugin pode 
 - Done: `build/test-all.sh` cobre materializacao real, nao so MCP.
 - Validacao: suite verde.
 
-#### T07. Smoke real por host
+#### T07. Smoke real por host (parcial - 2026-06-05)
 
 - Objetivo: provar runtime em CLIs reais.
 - Alvos:
-  - Claude Code: install + `atlas_ping` + validator dispatch;
-  - Cursor: reload/visibilidade;
-  - Codex: install + MCP + skill;
-  - opencode: agent list/tool MCP;
-  - pi: tools prefixadas + `subagent`.
+  - Claude Code: install + `atlas_ping` + validator dispatch; **[pendente]**
+  - Cursor: reload/visibilidade; **[pendente]**
+  - Codex: install + MCP + skill; **[pendente]**
+  - opencode: agent list/tool MCP; **[parcial: `atlas_ping` + `atlas_capabilities` OK no Windows; falta agent list + dispatch validator]**
+  - pi: tools prefixadas + `subagent`. **[parcial: tools prefixadas `atlas_workflow_*` + `atlas_ping` + `atlas_capabilities` OK no Windows (prova `pi-mcp-adapter`); falta `subagent` via `pi-subagents`]**
 - Done: evidence log por host.
 
 #### T08. Smoke OS
