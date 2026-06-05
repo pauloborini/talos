@@ -81,11 +81,14 @@ codex plugin marketplace add pauloborini/atlas-workflow
 codex plugin add atlas-workflow-orchestrator@atlas-workflow
 ```
 
-Atualizar snapshot:
+Atualizar snapshot e plugin:
 
 ```bash
 codex plugin marketplace upgrade atlas-workflow
+codex plugin add atlas-workflow-orchestrator@atlas-workflow
 ```
+
+(O Codex não tem `plugin update` — após o `upgrade` do marketplace, rode `add` de novo para pegar o snapshot novo.)
 
 Clone local: troque a URL por `"/caminho/para/atlas-workflow"`.
 
