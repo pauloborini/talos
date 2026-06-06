@@ -105,6 +105,32 @@ for (const rel of [
   }
 }
 
+// Sub-agents executores/review (P1): plan-execute/direct-execute mutam código e
+// slice-review revisa — todos são DESPACHADOS pelo orquestrador (Agent tool) e por isso
+// precisam de arquivo de agente nativo nos hosts baseados em .md (claude/opencode/pi).
+// Ausência = orquestrador cai pro fio principal (Gate G9 violado). Codex usa openai.yaml
+// por skill (não entra aqui). O corpo é um SHIM fino que DEVE citar o skill_id carregado.
+const DISPATCHED_EXEC_AGENTS = ['atlas-plan-execute', 'atlas-direct-execute', 'atlas-slice-review'];
+const AGENT_DIRS = [
+  ['claude', 'agents'],
+  ['opencode', 'hosts/opencode/.opencode/agents'],
+  ['pi', 'hosts/pi/.pi/agents'],
+];
+for (const skillId of DISPATCHED_EXEC_AGENTS) {
+  for (const [host, dir] of AGENT_DIRS) {
+    const rel = `${dir}/${skillId}.md`;
+    const text = read(rel); // read() registra 'ausente: <rel>' se faltar
+    if (text == null) continue;
+    if (!new RegExp(`\\b${skillId}\\b`).test(text)) {
+      errors.push(`shim drift: ${rel} (${host}) não cita o skill_id '${skillId}' (shim aponta pra skill errada?)`);
+    }
+    // Shim fino: não deve embutir corpo de skill com veredito JSON (isso é do validator).
+    if (/```json[\s\S]*"verdict"/.test(text)) {
+      errors.push(`shim drift: ${rel} (${host}) embute bloco de veredito — executor/review é shim fino, não cópia do SKILL.md`);
+    }
+  }
+}
+
 // Versão dos manifests/catálogos from-source deve casar com VERSION
 // (instalação via GitHub público lê manifests crus na raiz, sem build).
 const versionFile = read('VERSION');

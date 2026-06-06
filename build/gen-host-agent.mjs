@@ -1,8 +1,11 @@
 #!/usr/bin/env node
 // Gera o arquivo de subagente de um host a partir do agente canônico Claude
-// (agents/atlas-task-validator.md), preservando o CORPO (system prompt + contrato
-// de veredito) e trocando só o frontmatter para o formato do host. Fonte única do
-// corpo → sem drift do contrato do validator entre hosts (guard S10 verifica).
+// (agents/<name>.md), preservando o CORPO (system prompt / shim) e trocando só o
+// frontmatter para o formato do host. Fonte única do corpo → sem drift entre hosts
+// (guard check-consistency verifica existência + alvo do shim).
+//
+// O nome do agente é derivado do basename do <out-file> (ex.: atlas-plan-execute.md
+// → agents/atlas-plan-execute.md como canônico).
 //
 // Uso: node build/gen-host-agent.mjs <host> <out-file>
 //   host: opencode | pi
@@ -18,17 +21,36 @@ if (!host || !outFile) {
   process.exit(2);
 }
 
-const canonical = fs.readFileSync(path.join(ROOT, 'agents/atlas-task-validator.md'), 'utf8');
+const agentName = path.basename(outFile, '.md');
+const canonicalPath = path.join(ROOT, `agents/${agentName}.md`);
+if (!fs.existsSync(canonicalPath)) {
+  console.error(`agente canônico ausente: agents/${agentName}.md`);
+  process.exit(3);
+}
+const canonical = fs.readFileSync(canonicalPath, 'utf8');
 const fm = canonical.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
 if (!fm) {
-  console.error('agente canônico sem frontmatter reconhecível');
+  console.error(`agente canônico sem frontmatter reconhecível: ${agentName}`);
   process.exit(3);
 }
 const frontmatter = fm[1];
 const body = fm[2];
 const get = (key) => (frontmatter.match(new RegExp(`^${key}:\\s*(.+)$`, 'm')) || [])[1]?.trim();
-const name = get('name') || 'atlas-task-validator';
+const name = get('name') || agentName;
 const description = get('description') || '';
+
+// Tools do pi por agente (pi-subagents lista tools no frontmatter).
+//  - validator/review: read-only (lê código e roda checagens, nunca corrige/despacha).
+//  - executores (plan/direct): write/edit para mutar código + `subagent` para despachar
+//    o validador frio (Gate G4). model omitido: pi-subagents herda o default do host.
+// opencode NÃO lista tools (herda do host por convenção do repo) — o SKILL.md governa o
+// comportamento (read-only vs executor); o controle fino fica no host real.
+const PI_TOOLS = {
+  'atlas-task-validator': 'read, grep, find, ls, bash',
+  'atlas-slice-review': 'read, grep, find, ls, bash',
+  'atlas-plan-execute': 'read, write, edit, grep, find, ls, bash, subagent',
+  'atlas-direct-execute': 'read, write, edit, grep, find, ls, bash, subagent',
+};
 
 let header;
 if (host === 'opencode') {
@@ -42,14 +64,12 @@ if (host === 'opencode') {
   ].join('\n');
 } else if (host === 'pi') {
   // pi: subagente via extensão pi-subagents — frontmatter name + description + tools.
-  // tools read-only (read/grep/find/ls/bash, sem write/edit): casa com o contrato do
-  // validator (lê código e roda checagens, nunca corrige). Sem write/edit por design.
-  // model omitido de propósito: pi-subagents herda o modelo default do host.
+  const tools = PI_TOOLS[name] || 'read, grep, find, ls, bash';
   header = [
     '---',
     `name: ${name}`,
     `description: ${description}`,
-    'tools: read, grep, find, ls, bash',
+    `tools: ${tools}`,
     '---',
   ].join('\n');
 } else {

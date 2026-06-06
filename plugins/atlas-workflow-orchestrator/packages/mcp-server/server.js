@@ -1028,7 +1028,14 @@ function verifyPrdConformance(content, requiredStatus) {
 }
 
 function verifyPlanConformance(content) {
-  const pendencies = verifyRequiredSections(collectHeadings(content), REQUIRED_PLAN_SECTIONS);
+  // §7 Slices só é obrigatória em `execution_mode: orchestrated-per-slice` (template).
+  // Em `sequencial` a seção é dispensável — não force "§7 Não aplicável" só para passar
+  // o gate (S1). Verdade forte = presença do literal orchestrated-per-slice no cabeçalho.
+  const orchestratedPerSlice = /orchestrated-per-slice/i.test(content);
+  const requiredSections = orchestratedPerSlice
+    ? REQUIRED_PLAN_SECTIONS
+    : REQUIRED_PLAN_SECTIONS.filter(([number]) => number !== '7');
+  const pendencies = verifyRequiredSections(collectHeadings(content), requiredSections);
 
   if (!/\|\s*\*\*PRD\*\*\s*\|/.test(content)) {
     pendencies.push(conformancePending(
@@ -1667,8 +1674,13 @@ function assertAfterPlan(args = {}) {
         action: 'assert_after_plan',
         phase: 'after_plan',
         status: 'blocked',
+        // block_kind diferencia "gate funcionando" de "erro de pipeline": este bloqueio é
+        // o guard de conclusão prematura disparando como projetado (S3). Não é falha do
+        // MCP nem estado corrompido — a ação correta é despachar plan_execute e seguir.
+        block_kind: 'premature_completion_guard',
         timestamp,
         error: `Conclusão prematura bloqueada no full: ${attemptedAction}`,
+        note: 'Gate G11 funcionando: o full não conclui só com handoff. Não é erro de pipeline — despache plan_execute (blocking) e prossiga.',
         current_phase: dispatch.previous_phase ?? null,
         expected_phase: 'plan_execute',
         next_action: 'dispatch_plan_execute_blocking',

@@ -64,15 +64,34 @@ function rmAtlasSkillsQuiet(skillsDir, opts) {
   }
 }
 
+// Remove todos os agentes Atlas despachados (validator + executores + review), não só
+// o validator — senão upgrade deixa órfãos e install global só copia o validator.
+function rmAtlasAgentsQuiet(agentsDir, opts) {
+  if (!fs.existsSync(agentsDir)) return;
+  for (const name of fs.readdirSync(agentsDir)) {
+    if (name.startsWith('atlas-') && name.endsWith('.md')) rmPath(path.join(agentsDir, name), opts);
+  }
+}
+
+// Copia todos os agentes atlas-*.md de srcDir para destDir (install global flatten).
+function copyAtlasAgents(srcDir, destDir) {
+  fs.mkdirSync(destDir, { recursive: true });
+  for (const name of fs.readdirSync(srcDir)) {
+    if (name.startsWith('atlas-') && name.endsWith('.md')) {
+      fs.copyFileSync(path.join(srcDir, name), path.join(destDir, name));
+    }
+  }
+}
+
 function cleanOpencodeControlled(targetDir, opts) {
   rmPath(path.join(targetDir, '.opencode/atlas'), opts);
-  rmPath(path.join(targetDir, '.opencode/agents/atlas-task-validator.md'), opts);
+  rmAtlasAgentsQuiet(path.join(targetDir, '.opencode/agents'), opts);
   rmAtlasSkillsQuiet(path.join(targetDir, '.opencode/skills'), opts);
 }
 
 function cleanPiControlled(targetDir, opts) {
   rmPath(path.join(targetDir, 'atlas'), opts);
-  rmPath(path.join(targetDir, '.pi/agents/atlas-task-validator.md'), opts);
+  rmAtlasAgentsQuiet(path.join(targetDir, '.pi/agents'), opts);
   rmAtlasSkillsQuiet(path.join(targetDir, 'skills'), opts);
 }
 
@@ -329,11 +348,10 @@ function installOpencodeGlobal(opts) {
   }
   fs.mkdirSync(root, { recursive: true });
   rmPath(atlasRoot, opts);
-  rmPath(path.join(root, 'agents/atlas-task-validator.md'), opts);
+  rmAtlasAgentsQuiet(path.join(root, 'agents'), opts);
   rmAtlasSkillsQuiet(path.join(root, 'skills'), opts);
   fs.cpSync(path.join(ROOT, 'hosts/opencode/.opencode/atlas'), atlasRoot, { recursive: true });
-  fs.mkdirSync(path.join(root, 'agents'), { recursive: true });
-  fs.copyFileSync(path.join(ROOT, 'hosts/opencode/.opencode/agents/atlas-task-validator.md'), path.join(root, 'agents/atlas-task-validator.md'));
+  copyAtlasAgents(path.join(ROOT, 'hosts/opencode/.opencode/agents'), path.join(root, 'agents'));
   const skillsSrc = path.join(ROOT, 'hosts/opencode/.opencode/skills');
   for (const name of fs.readdirSync(skillsSrc)) {
     if (name.startsWith('atlas-')) fs.cpSync(path.join(skillsSrc, name), path.join(root, 'skills', name), { recursive: true });
@@ -358,10 +376,9 @@ function installPiGlobal(opts) {
   } else {
     fs.mkdirSync(agentDir, { recursive: true });
     rmPath(atlasRoot, opts);
-    rmPath(path.join(agentsDir, 'atlas-task-validator.md'), opts);
+    rmAtlasAgentsQuiet(agentsDir, opts);
     fs.cpSync(path.join(ROOT, 'hosts/pi/atlas'), atlasRoot, { recursive: true });
-    fs.mkdirSync(agentsDir, { recursive: true });
-    fs.copyFileSync(path.join(ROOT, 'hosts/pi/.pi/agents/atlas-task-validator.md'), path.join(agentsDir, 'atlas-task-validator.md'));
+    copyAtlasAgents(path.join(ROOT, 'hosts/pi/.pi/agents'), agentsDir);
     mergeServerInto(mcpFile, 'mcpServers', 'atlas-workflow', entry);
     log(`ok — pi GLOBAL instalado (runtime + agente em ${agentsDir} + mcp.json).`);
   }

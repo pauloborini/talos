@@ -73,6 +73,9 @@ esac
   assert(exists(path.join(dir, '.opencode/skills/user-skill')), 'opencode local removeu skill do usuário');
   assert(json(path.join(dir, 'opencode.json')).mcp.other, 'opencode local perdeu mcp do usuário');
   assert(json(path.join(dir, 'opencode.json')).mcp['atlas-workflow'], 'opencode local não registrou MCP Atlas');
+  // Sub-agents executores/review devem instalar junto (não só o validator) — senão G9.
+  assert(exists(path.join(dir, '.opencode/agents/atlas-plan-execute.md')), 'opencode local não instalou agente executor atlas-plan-execute');
+  assert(exists(path.join(dir, '.opencode/agents/atlas-slice-review.md')), 'opencode local não instalou agente atlas-slice-review');
   const u = run(['uninstall', 'opencode', '--dir', dir]);
   assert(u.status === 0, `opencode local uninstall falhou: ${u.stderr || u.stdout}`);
   assert(exists(path.join(dir, '.opencode/skills/user-skill')), 'opencode uninstall removeu skill do usuário');
@@ -145,6 +148,8 @@ esac
   assert(r.status === 0, `pi global init falhou: ${r.stderr || r.stdout}`);
   assert(exists(path.join(agentDir, 'atlas/packages/mcp-server/server.js')), 'pi global não copiou runtime');
   assert(exists(path.join(agentDir, 'agents/atlas-task-validator.md')), 'pi global não copiou agente');
+  assert(exists(path.join(agentDir, 'agents/atlas-plan-execute.md')), 'pi global não copiou agente executor atlas-plan-execute');
+  assert(exists(path.join(agentDir, 'agents/atlas-direct-execute.md')), 'pi global não copiou agente executor atlas-direct-execute');
   assert(json(path.join(agentDir, 'mcp.json')).mcpServers['atlas-workflow'], 'pi global não registrou MCP');
   const u = run(['uninstall', 'pi', '--global'], env);
   assert(u.status === 0, `pi global uninstall falhou: ${u.stderr || u.stdout}`);

@@ -55,7 +55,7 @@ Todo PRD criado ou atualizado por esta skill deve incluir, perto do topo e sem s
 
 ## Regras de Conteúdo
 
-* **Status Inicial:** `Draft`.
+* **Status final:** `Aprovado para implementação`. Setar **automaticamente** ao finalizar a geração — é o status que o gate TC do orquestrador exige (`required_status=Aprovado para implementação`) para o PRD avançar no pipeline. Não deixar `Draft` (trava o gate e força correção manual). O sinal de determinismo que sustenta o avanço é o `atlas_scan_prd` (varredura de ambiguidade) + entrevista quando houver padrões bloqueantes — não o campo Status, que é marcador documental.
 * **Data:** ISO `YYYY-MM-DD` (hoje).
 * **Escopo:** Lista fechada de capacidades funcionais.
 * **UX:** Cobrir caminhos de `loading`, `empty`, `error`, `success` e `permission` sob a perspectiva do usuário.

@@ -160,7 +160,7 @@ codex plugin remove atlas-workflow-orchestrator@atlas-workflow
 codex plugin marketplace remove atlas-workflow
 ```
 
-opencode/pi: o `uninstall` remove `.opencode/atlas` + `agents/atlas-task-validator.md` + skills `atlas-*` + a chave MCP `atlas-workflow` (pi: `atlas/`, `.pi/agents/`, skills `atlas-*`, `.mcp.json`). As deps `pi-mcp-adapter`/`pi-subagents` ficam (uso geral).
+opencode/pi: o `uninstall` remove `.opencode/atlas` + os agentes `atlas-*` (validator + executores + review) + skills `atlas-*` + a chave MCP `atlas-workflow` (pi: `atlas/`, `.pi/agents/atlas-*`, skills `atlas-*`, `.mcp.json`). As deps `pi-mcp-adapter`/`pi-subagents` ficam (uso geral).
 
 ## Artefato `.plugin` (opcional)
 
@@ -260,7 +260,7 @@ Só alinhar decisões antes de planejar:
 | Caminho | Conteúdo |
 |---------|----------|
 | [`packages/`](packages/) | Skills, templates, MCP |
-| [`agents/`](agents/) | Subagente `atlas-task-validator` (Claude) |
+| [`agents/`](agents/) | Subagentes despachados (Claude): `atlas-task-validator`, `atlas-plan-execute`, `atlas-direct-execute`, `atlas-slice-review` |
 | [`plugins/atlas-workflow-orchestrator/`](plugins/atlas-workflow-orchestrator/) | Catálogo Codex from-source (marketplace) |
 | [`hosts/opencode/`](hosts/opencode/) · [`hosts/pi/`](hosts/pi/) | Catálogos from-source opencode/pi |
 | [`plugin-manifests/`](plugin-manifests/) | Manifests/configs por host (claude, codex, opencode, pi) |

@@ -40,6 +40,17 @@ done
 
 echo "lendo VERSION ($VERSION)"
 
+# Sub-agents despachados pelo orquestrador (Agent tool) — cada um precisa de arquivo
+# de agente nativo no host. validator (frio) + executores (plan/direct, mutam código) +
+# review (--review). handoff/interview/generator/orchestrator NÃO entram (autoria
+# documental no fio principal). Fonte canônica: agents/<name>.md.
+DISPATCHED_AGENTS=(
+  atlas-task-validator
+  atlas-plan-execute
+  atlas-direct-execute
+  atlas-slice-review
+)
+
 # Guard de consistência roda no FIM (depois de sincronizar catálogos from-source),
 # para que rebuild de catálogo stale não trave no próprio guard que ele corrige.
 
@@ -145,8 +156,10 @@ build_opencode() {
   cp -R "$ROOT/packages/orchestrator/skills/atlas-workflow-orchestrator" \
     "$stage/.opencode/skills/atlas-workflow-orchestrator"
 
-  # Subagente no formato opencode (gerado do agente canônico — fonte única do corpo)
-  node "$ROOT/build/gen-host-agent.mjs" opencode "$stage/.opencode/agents/atlas-task-validator.md"
+  # Subagentes no formato opencode (gerados dos agentes canônicos — fonte única do corpo)
+  for ag in "${DISPATCHED_AGENTS[@]}"; do
+    node "$ROOT/build/gen-host-agent.mjs" opencode "$stage/.opencode/agents/$ag.md"
+  done
 
   # Config MCP opencode (mcp local, ATLAS_HOST=opencode)
   cp "$ROOT/plugin-manifests/opencode/opencode.json" "$stage/opencode.json"
@@ -183,8 +196,10 @@ build_pi() {
   cp -R "$ROOT/packages/orchestrator/skills/atlas-workflow-orchestrator" \
     "$stage/skills/atlas-workflow-orchestrator"
 
-  # Subagente no formato pi-subagents (gerado do canônico) em .pi/agents/ (path de descoberta)
-  node "$ROOT/build/gen-host-agent.mjs" pi "$stage/.pi/agents/atlas-task-validator.md"
+  # Subagentes no formato pi-subagents (gerados do canônico) em .pi/agents/ (path de descoberta)
+  for ag in "${DISPATCHED_AGENTS[@]}"; do
+    node "$ROOT/build/gen-host-agent.mjs" pi "$stage/.pi/agents/$ag.md"
+  done
 
   # Config MCP pi (pi-mcp-adapter lê .mcp.json no root do projeto; ATLAS_HOST=pi)
   cp "$ROOT/plugin-manifests/pi/mcp.json" "$stage/.mcp.json"
