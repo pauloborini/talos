@@ -154,11 +154,15 @@ Agent(subagent_type: "atlas-task-validator", prompt: ".atlas/state/<run_id>/<sli
 
 Do not paste the compact contract, diff, obligation ledger, local checks, or closure analysis packet into the validator prompt. Those belong in the state file and referenced artifacts.
 
+**Validator dispatch is blocking — wait idle.** Finish every local gate (lint, analyze, tests, `git diff --check`, diff-stat) and write the state file **before** dispatching. Once the validator is dispatched, do nothing until its verdict returns: no diff hygiene checks, no extra reads, no opportunistic edits, no parallel work. Running anything while the validator reads the slice can mutate what it is validating and breaks determinism (same failure class as the orchestrator's G9). Dispatch → wait → consume verdict.
+
 The validator must not patch files. Consume its verdict:
 
 - `pass`: close slice
 - `pass_with_observations`: close slice and report observations
 - `fail`: repair P1/P2 findings when they map to PRD obligations, invariants, determinism, dependencies, or fixtures; rerun validator after material repair
+
+**Only `fail` reopens the loop.** `pass` and `pass_with_observations` are terminal: close the slice immediately. Do not "fix" observations and re-validate — observations and `boundary_violations` returned alongside a non-`fail` verdict are reported residuals, not triggers for another validator dispatch. Once the slice is closed, do not edit code, tests, or boundary files just to satisfy an observation; that reopens the slice and forces an avoidable re-validation. Real follow-up from an observation goes to the final report or backlog, not into an extra in-slice change.
 
 Stop validator repair only when the same finding repeats without new signal, repair would violate scope, or a user/product decision is needed. Do not final-report a repaired validator finding as "ready" without either a subsequent `pass` or an explicit residual-risk note.
 
