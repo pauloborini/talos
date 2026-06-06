@@ -105,6 +105,9 @@ const ROUTED_MODE_BY_TYPE = {
   plan: 'execute',
   prd: 'full',
   backlog: 'full',
+  // idea = descrição livre (não é arquivo). Roteia para `direct` (implementa a partir da
+  // descrição/spec, sem artefato de plano separado). Não é "input ilegível".
+  idea: 'direct',
 };
 
 // Preenche os slots {nome} do template do evento com `slots` e devolve a string
@@ -1199,6 +1202,26 @@ function classifyInput(args = {}) {
   const absolutePath = resolveConsumerPath(inputPath, args);
   const timestamp = nowIso();
   let result;
+
+  // Input que não é arquivo existente = descrição livre (idea), não path. Heurística
+  // determinística: parece path só se terminar em extensão de arquivo E não tiver espaço.
+  // Idea NÃO é "input ilegível" — roteia para `direct` sem BLOCK falso-positivo (A6).
+  // Path com cara de arquivo mas ausente/ilegível continua caindo no catch (erro real).
+  const trimmedInput = inputPath.trim();
+  const looksLikePath = /\.[a-z0-9]{1,6}$/i.test(trimmedInput) && !/\s/.test(trimmedInput);
+  if (!looksLikePath && !fs.existsSync(absolutePath)) {
+    return {
+      gate: 'classify_input',
+      status: 'not_a_file',
+      input_path: inputPath,
+      artifact_type: 'idea',
+      routed_mode: ROUTED_MODE_BY_TYPE.idea,
+      detection_signal: 'free_text_idea',
+      timestamp,
+      banner: renderBanner('roteia', { tipo: 'idea', modo: ROUTED_MODE_BY_TYPE.idea }),
+      next_action: 'rotear_idea_para_direct',
+    };
+  }
 
   try {
     const content = fs.readFileSync(absolutePath, 'utf8');
