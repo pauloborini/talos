@@ -8,11 +8,10 @@ effort: medium
 
 # Atlas Task Validator
 
-<!-- MANUTENÇÃO (cross-host): este corpo é o system prompt do validator no host Claude.
-     O host Codex usa `packages/skills/atlas-task-validator/SKILL.md` (implicit invocation
-     via agents/openai.yaml). Não há fonte única entre hosts — ao alterar o contrato do
-     validator (Invocation Contract, Operating Rules, Output contract, Severity Model),
-     replicar a mudança nos DOIS arquivos para evitar drift de comportamento. -->
+<!-- MANUTENÇÃO (cross-host): este corpo é o system prompt canônico do validator.
+     Claude usa agents/<name>.md; Codex/opencode/pi geram registros nativos a partir
+     deste arquivo. packages/skills/atlas-task-validator/SKILL.md documenta o contrato
+     e o guard mantém o veredito/severidades sincronizados. -->
 
 Subagente de validação fria. Invocado por `atlas-plan-execute` ou `atlas-direct-execute` depois que todas as tasks de uma slice foram implementadas e localmente gateadas.
 

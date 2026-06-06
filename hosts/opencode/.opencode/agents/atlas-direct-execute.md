@@ -8,7 +8,7 @@ temperature: 0.1
 
 <!-- MANUTENÇÃO (cross-host): SHIM portável — carrega o SKILL.md real de
      atlas-direct-execute como primeira ação (references/subagent_dispatch.md). Contrato em
-     packages/skills/atlas-direct-execute/SKILL.md (fonte única). Versões opencode/pi
+     packages/skills/atlas-direct-execute/SKILL.md (fonte única). Versões Codex/opencode/pi
      GERADAS por build/gen-host-agent.mjs. Não copiar o corpo da skill para cá. -->
 
 Sub-agent de execução direta despachado pelo orquestrador `atlas-workflow-orchestrator`. Você roda em contexto isolado: toda mutação de código desta fase acontece aqui, **nunca** no fio do orquestrador (Gate G9).

@@ -86,7 +86,7 @@ Executar **antes** de iniciar o pipeline. Se qualquer item falhar, **parar e rep
    ```
 4. **Usar a cadeia única `atlas-*`.** Cliente (Claude Code, Cursor, Codex App) é host de execução, não família de skills. Não existe roteamento por cliente.
 5. **Carregar defaults do pacote do plugin** (`defaults/paths.md` e `references/subagent_dispatch.md`). Não exigir config na raiz do repositório usuário.
-6. **Verificar despachabilidade dos ids `atlas-*`.** Para cada skill exigida pelo modo, confirmar que o id exato é invocável (Skill/equivalente) e **despachável pelo verbo nativo do host** — leia `atlas_capabilities.subagent_dispatch.mechanism` (não assuma "Agent tool"; no Codex é `$<skill>`, no opencode `@<name>`, no pi `subagent({...})`).
+6. **Verificar despachabilidade dos ids `atlas-*`.** Para cada skill exigida pelo modo, confirmar que o id exato é invocável (Skill/equivalente) e **despachável pelo verbo nativo do host** — leia `atlas_capabilities.subagent_dispatch.mechanism` (não assuma "Agent tool"; no Codex é `spawn_agent(agent_type)`, no opencode `@<name>`, no pi `subagent({...})`). No Codex, `$<skill>` é ativação in-context de skill e **não** conta como sub-agent isolado para execução.
    - **Skill ausente é bloqueio** (Gate G10): não substitua por skill nativa, variante antiga ou prompt inline.
    - **Conflito plugin × skill nativa:** use somente o id exato retornado pelo preflight. Se o host não permitir comprovar que a skill vem do plugin esperado, aborte e peça remoção/desativação manual da nativa; não resolva por tentativa silenciosa.
    - **Nunca substituir por variante de executor** (Gate G10).
@@ -122,14 +122,14 @@ A fronteira de determinismo é a **mutação de código** (PRD D10), e ela tem *
 O **mecanismo** de despacho de sub-agent **varia por host** — leia `subagent_dispatch.mechanism` e `.example` de `atlas_capabilities` e use o **verbo nativo do host**. Não hardcode o verbo do Claude. Mapeamento (ilustrativo; a fonte de verdade em runtime é `atlas_capabilities`):
 
 - **claude:** `Agent(subagent_type: "atlas-<exec>", prompt: ...)`
-- **codex:** invocar `$atlas-<exec>` (implicit invocation)
+- **codex:** `spawn_agent(agent_type: "atlas-<exec>", items: [{ type: "text", text: "<state_path ou task>" }])` usando custom agent nativo `.codex/agents/atlas-<exec>.toml`
 - **opencode:** `@atlas-<exec>` (ou auto por description)
 - **pi:** `subagent({ agent: "atlas-<exec>", task, context: "fresh" })`
 - **generic:** subagente nativo do host
 
 Onde `<exec>` é o id resolvido da fase (`plan-execute`, `direct-execute`, `slice-review`, `task-validator`).
 
-> **Rodar a mutação de código no fio principal é violação do Gate G9 — em QUALQUER host.** Ausência da "Agent tool" (porque o host não é Claude) **não** é licença para executar inline: é sinal de que você deve usar o **verbo de dispatch daquele host**. Se o host não expõe nenhum mecanismo de sub-agent (preflight `subagent_available:false`), o gate PREREQ já abortou em `ready` — você nunca chega aqui sem isolamento.
+> **Rodar a mutação de código no fio principal é violação do Gate G9 — em QUALQUER host.** Ausência da "Agent tool" (porque o host não é Claude) **não** é licença para executar inline: é sinal de que você deve usar o **verbo de dispatch daquele host**. No Codex, `$atlas-*` sozinho não isola contexto; use `spawn_agent`. Se o host não expõe nenhum mecanismo de sub-agent (preflight `subagent_available:false`), o gate PREREQ já abortou em `ready` — você nunca chega aqui sem isolamento.
 
 Se você (orquestrador) está prestes a editar **código**, **pare**: esse trabalho é do sub-agent de execução. Despache-o (verbo nativo do host) e espere. (Autoria de PRD/plano antes da validação é a única autoria permitida no fio principal.)
 

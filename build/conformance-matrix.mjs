@@ -21,7 +21,7 @@ const SERVER = path.join(ROOT, 'packages/mcp-server/server.js');
 // Hosts suportados + onde mora o arquivo de agente (p/ checagem de veredito).
 const HOSTS = [
   { host: 'claude', agent: 'agents/atlas-task-validator.md' },
-  { host: 'codex', agent: 'packages/skills/atlas-task-validator/SKILL.md' },
+  { host: 'codex', agent: 'plugins/atlas-workflow-orchestrator/.codex/agents/atlas-task-validator.toml' },
   { host: 'opencode', agent: 'hosts/opencode/.opencode/agents/atlas-task-validator.md' },
   { host: 'pi', agent: 'hosts/pi/.pi/agents/atlas-task-validator.md' },
   { host: 'generic', agent: 'agents/atlas-task-validator.md' },
@@ -56,7 +56,12 @@ function call(server, requests) {
 }
 
 function verdictParseable(agentRel) {
-  const text = fs.readFileSync(path.join(ROOT, agentRel), 'utf8');
+  let text = fs.readFileSync(path.join(ROOT, agentRel), 'utf8');
+  if (agentRel.endsWith('.toml')) {
+    const m = text.match(/^developer_instructions\s*=\s*(".*")$/m);
+    if (!m) return false;
+    try { text = JSON.parse(m[1]); } catch { return false; }
+  }
   const blocks = [...text.matchAll(/```json\s*([\s\S]*?)```/g)].map((m) => m[1]);
   const block = blocks.find((b) => b.includes('"verdict"'));
   if (!block) return false;

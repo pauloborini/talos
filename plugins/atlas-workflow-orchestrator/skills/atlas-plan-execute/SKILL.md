@@ -112,7 +112,7 @@ Create `.atlas/state/<run_id>/<slice>.json` following `packages/templates/STATE_
 Then spawn the validator as an isolated subagent. The validator is registered as a real subagent on every host, so always invoke it deterministically, never inline its logic. Read `subagent_dispatch.mechanism`/`.example` from `atlas_capabilities` and use the host-native verb:
 
 - **Claude Code:** `Agent(subagent_type: "atlas-task-validator", prompt: ".atlas/state/<run_id>/<slice>.json")`
-- **Codex App:** invoke `$atlas-task-validator` with the `state_path` as the only argument
+- **Codex App:** `spawn_agent(agent_type: "atlas-task-validator", items: [{ type: "text", text: ".atlas/state/<run_id>/<slice>.json" }])`
 - **Generic / other hosts:** dispatch the `atlas-task-validator` subagent passing only `state_path`
 
 (These examples are illustrative; `atlas_capabilities` is the runtime source of truth — see `references/host-adapters.md`.) In every case the only input is `state_path`. Do not paste the contract, diff, or task list inline. The validator reads everything it needs from the state file and the plan it points to.

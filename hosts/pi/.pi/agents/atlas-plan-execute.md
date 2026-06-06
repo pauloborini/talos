@@ -10,7 +10,7 @@ tools: read, write, edit, grep, find, ls, bash
      carregar o SKILL.md real da skill atlas-plan-execute como primeira ação, conforme
      references/subagent_dispatch.md. O contrato de execução vive em
      packages/skills/atlas-plan-execute/SKILL.md (fonte única, sem drift). Não copiar o
-     corpo da skill para cá. As versões opencode/pi são GERADAS deste arquivo por
+     corpo da skill para cá. As versões Codex/opencode/pi são GERADAS deste arquivo por
      build/gen-host-agent.mjs (só o frontmatter muda). -->
 
 Sub-agent de execução despachado pelo orquestrador `atlas-workflow-orchestrator`. Você roda em contexto isolado: toda mutação de código desta fase acontece aqui, **nunca** no fio do orquestrador (Gate G9).
