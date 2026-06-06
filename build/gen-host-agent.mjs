@@ -41,15 +41,19 @@ const description = get('description') || '';
 
 // Tools do pi por agente (pi-subagents lista tools no frontmatter).
 //  - validator/review: read-only (lê código e roda checagens, nunca corrige/despacha).
-//  - executores (plan/direct): write/edit para mutar código + `subagent` para despachar
-//    o validador frio (Gate G4). model omitido: pi-subagents herda o default do host.
-// opencode NÃO lista tools (herda do host por convenção do repo) — o SKILL.md governa o
-// comportamento (read-only vs executor); o controle fino fica no host real.
+//  - executores (plan/direct): write/edit para mutar código.
+// NÃO listar `subagent` aqui: no pi essa tool é ambiente (provida pelo pi-subagents) e
+// listá-la explicitamente faz o agente FALHAR no load ("Failed to load extension
+// pi-subagents/..."). Confirmado em smoke real: agentes com `subagent` em tools não
+// carregam; o validator (read-only, sem `subagent`) carrega e despacha normalmente. O
+// executor dispara o validador frio (Gate G4) usando a tool ambiente, sem declará-la.
+// model omitido: pi-subagents herda o default do host. opencode NÃO lista tools (herda
+// do host por convenção do repo) — o SKILL.md governa read-only vs executor.
 const PI_TOOLS = {
   'atlas-task-validator': 'read, grep, find, ls, bash',
   'atlas-slice-review': 'read, grep, find, ls, bash',
-  'atlas-plan-execute': 'read, write, edit, grep, find, ls, bash, subagent',
-  'atlas-direct-execute': 'read, write, edit, grep, find, ls, bash, subagent',
+  'atlas-plan-execute': 'read, write, edit, grep, find, ls, bash',
+  'atlas-direct-execute': 'read, write, edit, grep, find, ls, bash',
 };
 
 let header;

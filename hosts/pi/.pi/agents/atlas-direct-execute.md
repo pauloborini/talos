@@ -1,7 +1,7 @@
 ---
 name: atlas-direct-execute
 description: Executor direto da família Atlas (modo direct). Despachado em contexto isolado pelo orquestrador para implementar um PRD/tarefa escopada sem artefato de plano separado — toda mutação de código acontece aqui, nunca no fio do orquestrador (Gate G9). Primeira ação: carregar a skill completa atlas-direct-execute. Antes do relatório final, despacha o validador frio atlas-task-validator (Gate G4).
-tools: read, write, edit, grep, find, ls, bash, subagent
+tools: read, write, edit, grep, find, ls, bash
 ---
 
 # Atlas Direct Execute (sub-agent)
