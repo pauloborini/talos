@@ -5,6 +5,8 @@
 > Comportamento **alvo** da entrega. Se a feature já estiver no app, use como contrato de aceite e regressão.
 >
 > Implementação: `PLAN_<ID>_<slug>.md` (gerado após PRD aprovado). Política: [BOUNDARY_PRD_PLAN.md](./BOUNDARY_PRD_PLAN.md).
+>
+> **Regra de ouro (anti-repetição):** cada verdade tem **uma casa**; as demais seções **referenciam** por `§`/`D-id` em vez de re-enumerar. Enxugar conteúdo nunca remove a demarcação (separadores, rótulos, subcabeçalhos).
 
 | Campo | Valor |
 |-------|-------|
@@ -13,105 +15,80 @@
 | **Responsável** | <Papel ou nome> |
 | **Data** | <YYYY-MM-DD> |
 | **Dependências de negócio** | <Entregas anteriores necessárias — ex.: “dashboard com lista”> |
-| **Relacionado** | <Regras de negócio, MVP, backlog §X — links> |
+| **Relacionado** | <Regras de negócio, MVP, backlog §X, DEC-*, Q-* — links> |
+
+### Metadados de execução
+
+- Plan prefix: `<atlas>` · Planner: `<atlas-plan-handoff>` · Executor: `<atlas-plan-execute>`
+- Internal validator: `<atlas-task-validator>` · External review: `<atlas-slice-review>` (optional)
 
 ---
 
-## 1. Resumo
-
-<2–4 parágrafos curtos: situação, o que muda para o usuário, resultado observável, o que fica explicitamente fora.>
-
----
-
-## 2. Problema
+## 1. Contexto e objetivo
 
 **Hoje:** <comportamento atual em linguagem de usuário/negócio>
 
-**Se não entregar:** <impacto>
+**Se não entregar:** <impacto de não fazer>
 
----
-
-## 3. Objetivo
-
-**Principal:** <uma frase>
+**Objetivo principal:** <uma frase>
 
 **Resultado observável**
 
-- <bullet observável pelo usuário ou operação>
-- <…>
+- <bullet observável pelo usuário ou operação — referencie D* em vez de re-enumerar entregáveis>
 
 **Sucesso (negócio):** <como saber que valeu — sem métrica técnica de CI>
 
 ---
 
-## 4. Escopo funcional
+## 2. Escopo
 
 ### Em escopo
 
-- <capacidades fechadas, em linguagem de produto>
+- <capacidades fechadas, em linguagem de produto — referencie o conjunto de §3 D* quando aplicável>
 
 ### Fora de escopo
 
-- <o que esta entrega não cobre — evita scope creep>
-
-### Não objetivos
-
-- <o que o time não deve “aproveitar” para fazer nesta sprint>
+- <adjacentes tentadores que NÃO entram nesta entrega — previne scope creep>
+- <anti-goal oportunista ("não aproveitar para fazer X"); invariante que é regra de negócio vai para §5, não aqui>
 
 ---
 
-## 5. Decisões de produto (fechadas)
+## 3. Decisões de produto (fechadas)
+
+> Casa única das decisões. As demais seções referenciam por `D-id`, não recopiam.
 
 | ID | Decisão |
 |----|---------|
-| D1 | <decisão fechada — produto, não implementação> |
+| D1 | <decisão fechada — produto, não implementação. É a SSoT do que esta sprint entrega> |
 | D2 | <…> |
 
-> Motivo/impacto: só quando a decisão não for óbvia; senão omitir colunas extras.
+> Motivo/impacto: só quando a decisão não for óbvia; senão omitir.
 
 ---
 
-## 6. Regras e invariantes (negócio)
+## 4. Fluxos e cenários UX
 
-- <regra que não pode ser violada>
-- <erros em linguagem de produto; sem códigos técnicos ou stack ao usuário>
+> Quando vários cenários compartilham comportamento, declare uma vez e referencie.
 
----
-
-## 7. Antes e depois
-
-| | Antes | Depois |
-|---|--------|--------|
-| <dimensão> | <…> | <…> |
-
-**Não muda:** <comportamentos preservados de outras entregas>
-
----
-
-## 8. Fluxos e cenários UX
-
-### 8.1 <Cenário A — ex.: criar>
+### 4.1 <Cenário A — ex.: criar / carregar>
 
 - **Entrada:** <de onde o usuário vem>
-- **Comportamento:** <passo a passo>
-- **Loading / vazio / erro:** <como se comporta>
+- **Comportamento:** <passo a passo; loading / vazio / erro>
 - **Sucesso:** <o que o usuário vê>
 
-### 8.2 <Cenário B — ex.: editar>
+### 4.2 <Cenário B — ex.: editar / dados insuficientes>
 
 <mesma estrutura>
 
-### 8.3 <Cancelar / voltar / estados gerais>
-
-- <…>
-
-### 8.N <Cenários de borda — ex.: acesso inválido, limite de plano>
+### 4.N <Cenários de borda — ex.: acesso inválido, limite de plano, falha de leitura>
 
 - <…>
 
 ---
 
-## 9. Contrato funcional (dados)
+## 5. Contrato funcional e invariantes
+
+> Casa única de **dados + regras/segurança de negócio**. §4 e §6 referenciam, não repetem.
 
 | Conceito | Regra para o usuário / sistema |
 |----------|--------------------------------|
@@ -119,9 +96,13 @@
 
 > Ex.: “valor em reais na digitação; gravado em centavos inteiros” — não nome de tipo Dart.
 
+**Invariantes (negócio/segurança)**
+
+- <regra que não pode ser violada; erros em linguagem de produto, sem códigos técnicos ou stack ao usuário>
+
 ---
 
-## 10. Critérios de aceite (negócio)
+## 6. Critérios de aceite (negócio)
 
 **Produto**
 
@@ -129,11 +110,11 @@
 
 **UX**
 
-- [ ] <observável — espelhar §8, inclusive erros e loading>
+- [ ] <observável — espelhar §4, inclusive erros e loading>
 
 **Dados**
 
-- [ ] <integridade observável — ex.: exemplos canônicos de valor/data>
+- [ ] <integridade observável — referencie §5/D* em vez de re-derivar fontes>
 
 **Regressão de produto**
 
@@ -141,35 +122,28 @@
 
 ---
 
-## 11. Riscos (produto)
+## 7. Apêndice (opcional)
+
+> Metadados leves. Omitir blocos que não agregam nesta entrega.
+
+**Riscos**
 
 | Risco | Mitigação |
 |-------|-----------|
-| <expectativa errada do usuário> | <copy, escopo, aceite> |
+| <expectativa errada do usuário> | <copy, escopo, aceite — referencie D*/§ quando couber> |
 
----
+**Dependências:** <ID entrega — por que bloqueia ou alimenta> · <decisão externa, se houver>
 
-## 12. Dependências
+**Referências:** <PRD pai, regras de negócio, backlog — sem listar arquivos de código>
 
-- **<ID entrega>** — <por que bloqueia ou alimenta>
-- **<Decisão externa>** — <se houver>
-
----
-
-## 13. Referências
-
-- <PRD pai, regras de negócio, backlog — sem listar arquivos de código>
-
----
-
-## 14. Histórico
-
-- <YYYY-MM-DD> — <evento>
+**Histórico:** <YYYY-MM-DD — evento>
 
 ---
 
 ## Checklist do autor (não publicar no PRD final — opcional)
 
 - [ ] Nenhum package, classe, rota ou migration neste arquivo
-- [ ] Todo critério de §10 tem correspondência em §8
-- [ ] PLAN será derivado com link `PRD §5` sem recopiar D*
+- [ ] Cada verdade tem UMA casa; demais seções referenciam por §/D-id (sem re-enumerar)
+- [ ] Todo critério de §6 tem correspondência em §4 (UX) ou §5 (dados)
+- [ ] "Fora de escopo" nomeia os adjacentes tentadores, não o complemento infinito
+- [ ] Demarcação preservada: `---`, `**Label:**`, `### N.x`, headers de tabela, grupos de aceite

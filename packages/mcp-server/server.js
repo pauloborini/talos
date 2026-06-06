@@ -9,41 +9,33 @@ const RUN_DIR = path.join('.atlas', 'state');
 const SENSITIVE_KEY = /(authorization|credential|password|secret|token|api[_-]?key)/i;
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PRD_PATTERNS = {
-  section_3_objective: ['TBD', 'a confirmar', 'talvez', 'não definido'],
-  section_4_scope: ['pode ser', 'depende de', 'ainda não', 'incompleto'],
-  section_5_decisions: ['vago'],
-  section_8_experience: ['a definir', 'gap', 'depende de'],
-  section_9_contracts: ['ainda não definido', 'mock apenas', 'a confirmar'],
+  section_1_context: ['TBD', 'a confirmar', 'talvez', 'não definido'],
+  section_2_scope: ['pode ser', 'depende de', 'ainda não', 'incompleto'],
+  section_3_decisions: ['vago'],
+  section_4_experience: ['a definir', 'gap', 'depende de'],
+  section_5_contracts: ['ainda não definido', 'mock apenas', 'a confirmar'],
 };
 const SECTION_LABELS = {
-  section_3_objective: '§3 Objetivo',
-  section_4_scope: '§4 Escopo funcional',
-  section_5_decisions: '§5 Decisões de produto',
-  section_8_experience: '§8 Fluxos e cenários UX',
-  section_9_contracts: '§9 Contrato funcional',
+  section_1_context: '§1 Contexto e objetivo',
+  section_2_scope: '§2 Escopo',
+  section_3_decisions: '§3 Decisões de produto',
+  section_4_experience: '§4 Fluxos e cenários UX',
+  section_5_contracts: '§5 Contrato funcional e invariantes',
 };
 const SECTION_HEADING = {
-  section_3_objective: /^##\s+3\.\s+/,
-  section_4_scope: /^##\s+4\.\s+/,
-  section_5_decisions: /^##\s+5\.\s+/,
-  section_8_experience: /^##\s+8\.\s+/,
-  section_9_contracts: /^##\s+9\.\s+/,
+  section_1_context: /^##\s+1\.\s+/,
+  section_2_scope: /^##\s+2\.\s+/,
+  section_3_decisions: /^##\s+3\.\s+/,
+  section_4_experience: /^##\s+4\.\s+/,
+  section_5_contracts: /^##\s+5\.\s+/,
 };
 const REQUIRED_PRD_SECTIONS = [
-  ['1', 'Resumo'],
-  ['2', 'Problema'],
-  ['3', 'Objetivo'],
-  ['4', 'Escopo funcional'],
-  ['5', 'Decisões de produto'],
-  ['6', 'Regras e invariantes'],
-  ['7', 'Antes e depois'],
-  ['8', 'Fluxos e cenários UX'],
-  ['9', 'Contrato funcional'],
-  ['10', 'Critérios de aceite'],
-  ['11', 'Riscos'],
-  ['12', 'Dependências'],
-  ['13', 'Referências'],
-  ['14', 'Histórico'],
+  ['1', 'Contexto e objetivo'],
+  ['2', 'Escopo'],
+  ['3', 'Decisões de produto'],
+  ['4', 'Fluxos e cenários UX'],
+  ['5', 'Contrato funcional e invariantes'],
+  ['6', 'Critérios de aceite'],
 ];
 const REQUIRED_PLAN_SECTIONS = [
   ['1', 'Tradução executiva'],
@@ -855,7 +847,7 @@ function scanSectionPatterns(sections) {
     const lines = sections[sectionKey] ?? [];
     const sectionText = lines.map((line) => line.text).join('\n').trim();
 
-    if (sectionKey === 'section_5_decisions') {
+    if (sectionKey === 'section_3_decisions') {
       const hasDecisionRows = /\|\s*D\d+\s*\|/.test(sectionText);
       if (!hasDecisionRows) {
         matches.push({

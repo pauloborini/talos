@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.5.0 - 2026-06-05
+
+Tipo: **breaking** (contrato de conformância de PRD). Sem dual-format — corte limpo.
+
+Resumo: **enxuga o template de PRD de 14 → 6 seções + apêndice opcional**, atacando a causa real de PRDs inchados (repetição entre seções) com a regra **"fonte única + referência"**. O MCP passa a aceitar **somente o formato canônico novo**; PRDs no formato antigo (14 seções) deixam de conformar (`atlas_verify_template_conformance`). Sem fallback (alinhado a "Determinismo > alcance").
+
+Destaques:
+
+- **Novo modelo de PRD (6 seções + §7 apêndice opcional):** §1 Contexto e objetivo · §2 Escopo · §3 Decisões (D*) · §4 Fluxos e cenários UX · §5 Contrato funcional e invariantes · §6 Critérios de aceite. Colapsa §1+§2+§3 (contexto), funde §6 regras em §5 contrato, remove §7 antes/depois, e move §11–§14 para o apêndice. "Não objetivos" sai de §4 (Em/Fora de escopo bastam).
+- **Regra anti-repetição:** cada verdade tem uma casa; demais seções referenciam por `§`/`D-id`. Medido num PRD real (S26): 261 → ~135 linhas, sem perder nada que os gates consomem.
+- **Demarcação preservada como requisito** (separadores, `**Label:**`, subcabeçalhos `### N.x`, headers de tabela, grupos de aceite) — guia leitura humana e padroniza output da LLM geradora.
+- **MCP renumera os âncoras do scan** (`PRD_PATTERNS`/`SECTION_HEADING`/`SECTION_LABELS`/`REQUIRED_PRD_SECTIONS`): objetivo→§1, escopo→§2, decisões→§3, fluxos→§4, contrato→§5; conformância exige §1–§6 + 4 grupos de aceite + ≥1 checkbox + status.
+- **Cross-refs remapeados** em `atlas-plan-handoff`, `atlas-task-validator`, `atlas-plan-execute` (+`plan-contract.md`), `atlas-prd-interview`, orquestrador (scan), `BOUNDARY_PRD_PLAN.md`, `PLAN_TEMPLATE.md`: `PRD §5→§3`, `§8–10→§4–6`, `§9→§5`, `§13→§7`.
+- **Disciplina do executor + validador** (do mesmo ciclo de trabalho): `pass`/`pass_with_observations` estritamente terminais (só `fail` reabre o loop); dispatch do validador é blocking — gates locais antes, espera ociosa depois.
+
+Migração: **corte limpo, sem período de tolerância.** PRDs antigos precisam ser reescritos no modelo novo (este CHANGELOG + `PRD_TEMPLATE.md` são o guia). Conformance: 54 testes verdes; `check-consistency`, build dos 4 bundles e `plugin validate --strict` verdes.
+
 ## v0.4.1 - 2026-06-05
 
 Tipo: aditivo (sem breaking; preserva `full`/`direct`/`interview-only` da v0.4.0).

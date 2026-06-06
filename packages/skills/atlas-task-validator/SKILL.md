@@ -57,14 +57,14 @@ Do not accept inline contract, copied diff, or pasted task lists as the validati
 | Target Concept | PLAN Section |
 |----------------|--------------|
 | Executive translation, PRD link | Section 1 (Tradução executiva) |
-| Execution invariants (`PRD §5` D* cited) | Section 2 (Invariantes de execução) |
+| Execution invariants (`PRD §3` D* cited) | Section 2 (Invariantes de execução) |
 | Pitfalls | Section 3 |
 | Codebase state at opening | Section 4 (Estado na abertura da sprint) |
 | Tasks, done criteria, local validation | Section 5 (Tarefas de execução) |
 | Technical contracts | Section 6 (Contratos técnicos) |
 | Execution slices | Section 7 (Slices) |
 | Validator checklist | Section 8 (Validação e checklist) |
-| Business acceptance when §8 is thin | **PRD §8–10** (from plan header PRD path) |
+| Business acceptance when §8 is thin | **PRD §4–6** (from plan header PRD path) |
 
 ---
 

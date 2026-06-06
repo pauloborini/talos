@@ -9,14 +9,17 @@ Política documental para sprints e handoff de execução. Referência: exemplos
 | **PRD** | Product Manager | O quê, por quê, para quem, o que não pode quebrar? |
 | **PLAN** | Engenharia / executor | Como entregar no código, em que ordem, com que invariantes técnicos? |
 
-## PRD — o que entra
+## PRD — o que entra (modelo enxuto de 6 seções + apêndice)
 
-- Resumo, problema, objetivo, escopo funcional, decisões **D*** (produto).
-- Regras e invariantes de **negócio** e UX.
-- Fluxos por tela/cenário (loading, vazio, erro).
-- Contrato **funcional** (regras de dados em linguagem de produto).
-- Critérios de aceite de **negócio** (checklist testável pelo PM/QA).
-- Riscos e dependências de **produto/sprint**.
+- **§1 Contexto e objetivo** — hoje, impacto de não fazer, objetivo, resultado observável, sucesso.
+- **§2 Escopo** — em escopo / fora de escopo (sem "Não objetivos"; invariante vira §5).
+- **§3 Decisões de produto (D\*)** — casa única; demais seções referenciam por `D-id`.
+- **§4 Fluxos e cenários UX** — por cenário, com loading/vazio/erro.
+- **§5 Contrato funcional e invariantes** — regras de dados + invariantes de negócio/segurança numa casa só.
+- **§6 Critérios de aceite (negócio)** — checklist testável (Produto/UX/Dados/Regressão).
+- **§7 Apêndice (opcional)** — riscos, dependências, referências, histórico.
+
+> **Regra anti-repetição:** cada verdade tem uma casa; as demais seções referenciam por `§`/`D-id`, não re-enumeram.
 
 ## PRD — o que NÃO entra
 
@@ -26,11 +29,11 @@ Política documental para sprints e handoff de execução. Referência: exemplos
 - § “Impacto de arquitetura” — isso é PLAN.
 - Repetir o conteúdo do PLAN.
 
-**Teto orientativo:** ~180–220 linhas por sprint média.
+**Teto orientativo:** ~120–150 linhas por sprint média (modelo enxuto).
 
 ## PLAN — o que entra
 
-- Link ao PRD + referência `PRD §5` (não recopiar tabela D* inteira).
+- Link ao PRD + referência `PRD §3` (não recopiar tabela D* inteira).
 - Tradução executiva (padrão de referência no monorepo + diffs vs módulo espelho).
 - Invariantes de **execução** derivados do PRD.
 - Pitfalls (anti-padrão → correto).
@@ -54,9 +57,9 @@ Política documental para sprints e handoff de execução. Referência: exemplos
 ## Herança entre documentos
 
 ```text
-PRD §5 (D*)  ──referência──►  PLAN §2 invariantes + §1 diffs
-PRD §8–10    ──referência──►  PLAN §5 (done) + §8 checklist
-PRD §9       ──funcional──►  PLAN §6 contratos técnicos
+PRD §3 (D*)  ──referência──►  PLAN §2 invariantes + §1 diffs
+PRD §4–6     ──referência──►  PLAN §5 (done) + §8 checklist
+PRD §5       ──funcional──►  PLAN §6 contratos técnicos
 ```
 
 ## Schema de task (PLAN §5)
@@ -84,6 +87,6 @@ Cada `#### TNN.` deve ter, quando aplicável:
 
 1. PRD aprovado (produto).
 2. PLAN derivado do PRD + código (uma passagem de leitura no repo).
-3. Execução: `atlas-plan-execute` lê PLAN + PRD §8–10; `project-rules` via AGENTS.
+3. Execução: `atlas-plan-execute` lê PLAN + PRD §4–6; `project-rules` via AGENTS.
 
-Geradores (`atlas-sprint-prd-generator`, `atlas-plan-handoff`) devem seguir estes templates, não o formato legado de 15 seções com §10 arquitetura no PRD.
+Geradores (`atlas-sprint-prd-generator`, `atlas-plan-handoff`) devem seguir estes templates, não o formato legado (14 seções, ou §X de arquitetura no PRD).

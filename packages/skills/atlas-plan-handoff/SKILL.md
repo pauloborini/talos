@@ -47,7 +47,7 @@ atlas-plan-handoff → atlas-plan-execute → atlas-task-validator → atlas-sli
 
 1. **Classificação da tarefa:** feature, ui, contract, navigation, shared, security, diagnostic, refactoring, testing. Leia `project-rules/index/<tipo>.md` e regras em `project-rules/rules/` (ou equivalente do repo ativo).
 2. **Grounding no código:** confirme padrões, contratos e comandos locais (`flutter analyze` / `flutter test` com path do package) antes de inferir.
-3. **Decisões estáveis:** sanar bloqueios com perguntas ao usuário; registrar no plano (não recopiar tabela D* do PRD — referenciar `PRD §5`).
+3. **Decisões estáveis:** sanar bloqueios com perguntas ao usuário; registrar no plano (não recopiar tabela D* do PRD — referenciar `PRD §3`).
 4. **Escrita:** artefato markdown no path canônico `.atlas/plans/`. Teto orientativo ~250–350 linhas (até ~450 com slices).
 
 ---
@@ -76,13 +76,13 @@ Regras:
 ### 1. Tradução executiva
 
 - O que será implementado e o resultado observável técnico.
-- Padrão de referência no monorepo e tabela **referência vs esta entrega** (ligar a `PRD §5` D*, não recopiar a tabela).
-- Link ao PRD: `PRD §4` escopo, `PRD §5` decisões.
+- Padrão de referência no monorepo e tabela **referência vs esta entrega** (ligar a `PRD §3` D*, não recopiar a tabela).
+- Link ao PRD: `PRD §2` escopo, `PRD §3` decisões.
 
 ### 2. Invariantes de execução (derivados do PRD)
 
 - Invariantes técnicos inegociáveis (ex.: sem refetch ao filtrar).
-- Referenciar IDs: `PRD §5 D12` — não colar a tabela D* inteira.
+- Referenciar IDs: `PRD §3 D12` — não colar a tabela D* inteira.
 
 ### 3. Pitfalls
 
@@ -110,11 +110,11 @@ Tarefas `#### T01.` … `#### TNN.` com schema de `BOUNDARY_PRD_PLAN.md` canôni
 - **Quality gates** (opcional em tasks críticas)
 - **Casos mínimos** (somente em tasks de teste)
 
-Última task típica: **Validação final** (`flutter analyze`, `flutter test`, passos manuais alinhados a **PRD §8–10**).
+Última task típica: **Validação final** (`flutter analyze`, `flutter test`, passos manuais alinhados a **PRD §4–6**).
 
 ### 6. Contratos técnicos (só ambiguidade PRD → código)
 
-- Assinaturas, shapes e mapeamentos onde o PRD §9 não fecha implementação.
+- Assinaturas, shapes e mapeamentos onde o PRD §5 não fecha implementação.
 
 ### 7. Slices (somente se `execution_mode: orchestrated-per-slice`)
 
@@ -122,7 +122,7 @@ Tarefas `#### T01.` … `#### TNN.` com schema de `BOUNDARY_PRD_PLAN.md` canôni
 
 ### 8. Validação e checklist (validator)
 
-- Critérios derivados de **PRD §10** + invariantes **§2** deste plano.
+- Critérios derivados de **PRD §6** + invariantes **§2** deste plano.
 - Título recomendado: `## 8. Validação e checklist (validator)`.
 - Comandos globais de analyze/test do package.
 
@@ -133,7 +133,7 @@ Tarefas `#### T01.` … `#### TNN.` com schema de `BOUNDARY_PRD_PLAN.md` canôni
 ### 9. Perguntas em aberto e bloqueios reais
 
 - Só bloqueios que impedem execução segura. O executor **para** se houver itens ativos aqui.
-- **Não** confundir com PRD §13 (Referências).
+- **Não** confundir com PRD §7 Apêndice (Referências).
 
 ---
 
@@ -176,4 +176,4 @@ O próximo agente, só lendo o artefato, deve saber:
 - respeitar `execution_mode`;
 - rodar `atlas-task-validator` antes de fechar a slice;
 - usar `atlas-slice-review` como segunda camada fria, não substituto do validator interno;
-- cruzar aceite de negócio com **PRD §8–10** quando o checklist do §8 for fino.
+- cruzar aceite de negócio com **PRD §4–6** quando o checklist do §8 for fino.

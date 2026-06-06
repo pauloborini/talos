@@ -137,7 +137,7 @@ Regras inegociáveis. Violação = parar, não contornar.
 |---|------|----------|
 | G1 | **Artefato antes de avançar.** Uma fase só conta como concluída se `atlas_verify_artifact` aprovar o arquivo produzido. Leitura local pode complementar, mas não substitui o resultado MCP. | todas |
 | G2 | **Em `full`, proibido escrever qualquer código (Dart) antes de existir `PLAN_*.md` validado em disco.** Se for escrever código sem plano, o modo correto é `direct` — então pare e avise o usuário do mismatch. | `full` |
-| G3 | **Skills invocadas de verdade — autoria documental no fio principal, execução de código em sub-agent.** **Fases documentais ANTES do plano validado** (gerar/maturar PRD, entrevistar, redigir `PLAN_*.md`) podem ser conduzidas pelo orquestrador (agente principal) carregando a skill correspondente; não exigem despacho de sub-agent (autoria não muta código). **Fases de execução de código** invocam a skill via **sub-agent despachado** (Agent tool), que carrega o `SKILL.md` do id resolvido antes de agir — prompt "aja como X" não basta. Sempre proibido absorver o artefato "implicitamente" (ex: plano dentro do §10 do PRD não substitui `PLAN_*.md`): o artefato exigido pelo modo tem que existir em disco e passar G1/TC. | todas |
+| G3 | **Skills invocadas de verdade — autoria documental no fio principal, execução de código em sub-agent.** **Fases documentais ANTES do plano validado** (gerar/maturar PRD, entrevistar, redigir `PLAN_*.md`) podem ser conduzidas pelo orquestrador (agente principal) carregando a skill correspondente; não exigem despacho de sub-agent (autoria não muta código). **Fases de execução de código** invocam a skill via **sub-agent despachado** (Agent tool), que carrega o `SKILL.md` do id resolvido antes de agir — prompt "aja como X" não basta. Sempre proibido absorver o artefato "implicitamente" (ex: plano dentro do §6 do PRD não substitui `PLAN_*.md`): o artefato exigido pelo modo tem que existir em disco e passar G1/TC. | todas |
 | G4 | **Validador frio é sub-agent separado dentro do executor.** O orquestrador verifica no pré-flight que `task_validator` existe, mas quem despacha esse sub-agent é `plan_execute`, para receber findings e aplicar reparo limitado antes do relatório final. O executor não valida o próprio trabalho no mesmo contexto. | execução |
 | G5 | **Scan de ambiguidade determinístico e logado.** A decisão de pular a entrevista só é válida se `atlas_scan_prd` retornar **zero** padrões e esse resultado MCP estiver no ledger. Não existe "pular porque tenho certeza". `--interview` sempre força. | validação PRD |
 | TC | **Conformidade de template via MCP.** PRD e PLAN só avançam como artefatos documentais se `atlas_verify_template_conformance` retornar `passed` e `pending_count: 0`. Pendência bloqueia com `next_action`. | PRD + plano |
@@ -205,11 +205,11 @@ Entrada: um **`PLAN_*.md` pronto**. Artefatos esperados: (plano já existe) → 
 
 O scan é **determinístico**. Marca ambiguidade quando uma seção contém qualquer padrão abaixo (lista canônica embutida no MCP):
 
-- **§3 Objetivo:** `TBD`, `a confirmar`, `talvez`, `não definido`
-- **§4 Escopo:** `pode ser`, `depende de`, `ainda não`, `incompleto`
-- **§5 Decisões:** vazio/conteúdo mínimo, `vago`
-- **§8 Experiência:** `a definir`, `gap`, `depende de`
-- **§9 Dados/contratos:** `ainda não definido`, `mock apenas`, `a confirmar`
+- **§1 Contexto e objetivo:** `TBD`, `a confirmar`, `talvez`, `não definido`
+- **§2 Escopo:** `pode ser`, `depende de`, `ainda não`, `incompleto`
+- **§3 Decisões:** vazio/conteúdo mínimo, `vago`
+- **§4 Fluxos e cenários UX:** `a definir`, `gap`, `depende de`
+- **§5 Contrato funcional e invariantes:** `ainda não definido`, `mock apenas`, `a confirmar`
 
 Antes de contar bloqueantes, aplicar exclusões estreitas do config (`exclude_if_line_contains`, hoje `depende de plano`) para frases de sucesso/resultado que descrevem dependência operacional já planejada. Não usar julgamento livre: a exclusão precisa estar no config e ser logada.
 

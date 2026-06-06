@@ -293,7 +293,7 @@ test('classifyArtifactContent: nome PLAN_*.md é só dica fraca, não verdade (T
 });
 
 test('classifyArtifactContent: PRD por marcadores de template (T03)', () => {
-  const prd = '# PRD: algo\n\n## 5. Decisões de produto\n\n| ID | Decisão |\n|----|---------|\n| D1 | x |';
+  const prd = '# PRD: algo\n\n## 3. Decisões de produto\n\n| ID | Decisão |\n|----|---------|\n| D1 | x |';
   const r = classifyArtifactContent(prd, 'docs/PRD_algo.md');
   assert.equal(r.artifact_type, 'prd');
 });
@@ -367,13 +367,13 @@ const VALID_PRD = [
   '|-------|-------|',
   '| **Status** | Aprovado |',
   '',
-  '## 5. Decisões de produto',
+  '## 3. Decisões de produto',
   '',
   '| ID | Decisão |',
   '|----|---------|',
   '| D1 | fechada |',
   '',
-  '## 10. Critérios de aceite',
+  '## 6. Critérios de aceite',
   '',
   '**Produto**',
   '- [ ] critério observável',
