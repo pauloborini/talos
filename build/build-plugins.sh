@@ -74,7 +74,7 @@ build_host() {
   rm -rf "$stage_host/skills/atlas-workflow-orchestrator"
   cp -R "$ROOT/packages/orchestrator/skills/atlas-workflow-orchestrator" \
     "$stage_host/skills/atlas-workflow-orchestrator"
-  # Subagentes do plugin (descobertos via agents/ na raiz do bundle)
+  # Subagentes do plugin (Claude/Cursor: agents/ na raiz do bundle)
   cp -R "$ROOT/agents" "$stage_host/agents"
 
   # Paths canônicos v0.3 usados pelas skills/MCP.
@@ -87,6 +87,14 @@ build_host() {
   cp "$ROOT/VERSION" "$stage_host/VERSION"
 
   if [[ "$host" == "codex" ]]; then
+    # Codex native subagents: custom agents in .codex/agents. These are generated
+    # from the same canonical shims as Claude/opencode/pi, not from agents/openai.yaml
+    # (that file remains skill UI/implicit-invocation metadata only).
+    mkdir -p "$stage_host/.codex/agents"
+    for ag in "${DISPATCHED_AGENTS[@]}"; do
+      node "$ROOT/build/gen-host-agent.mjs" codex "$stage_host/.codex/agents/$ag.toml"
+    done
+
     cat > "$stage_host/.mcp.json" <<'JSON'
 {
   "mcpServers": {

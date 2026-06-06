@@ -146,7 +146,7 @@ After tasks and local gates pass, write `.atlas/state/<run_id>/<slice>.json` fol
 
 For direct execution, the state file is still the only validator input. Use the user-provided PRD/spec path as `plan_path` when no handoff plan exists, and include direct-contract anchors in `boundary_refs` such as `direct.O1`, `direct.invariant.permissions`, or `direct.risk.partial_failure`.
 
-Then invoke the isolated validator subagent with only the state path, using the dispatch verb returned by `atlas_capabilities.subagent_dispatch` for the current host (never hardcode the host's mechanism). The Claude Code form is shown below as an example; on Codex it is `$atlas-task-validator`, on opencode `@atlas-task-validator`:
+Then invoke the isolated validator subagent with only the state path, using the dispatch verb returned by `atlas_capabilities.subagent_dispatch` for the current host (never hardcode the host's mechanism). The Claude Code form is shown below as an example; on Codex it is `spawn_agent(agent_type: "atlas-task-validator", items: [{ type: "text", text: "<state_path>" }])`, on opencode `@atlas-task-validator`:
 
 ```text
 Agent(subagent_type: "atlas-task-validator", prompt: ".atlas/state/<run_id>/<slice>.json")

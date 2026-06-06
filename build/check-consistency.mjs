@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Guards de consistência pré-build. Falha (exit != 0) em drift ou regressão.
 // 1. M3: contrato do validator (bloco JSON de veredito + Severity Model) deve ser
-//    idêntico entre o agente Claude (agents/) e o SKILL.md (usado pelo Codex).
+//    idêntico entre o agente canônico (agents/) e o SKILL.md.
 // 2. A1: nenhum `subagent_type: true` em SKILL.md (campo inexistente/no-op).
 // 3. A2: nenhum `display_name: "Codex` residual em agents/openai.yaml.
 import fs from 'node:fs';
@@ -15,6 +15,14 @@ function read(rel) {
   const p = path.join(ROOT, rel);
   if (!fs.existsSync(p)) { errors.push(`ausente: ${rel}`); return null; }
   return fs.readFileSync(p, 'utf8');
+}
+
+function agentText(rel) {
+  const text = read(rel);
+  if (text == null || !rel.endsWith('.toml')) return text;
+  const m = text.match(/^developer_instructions\s*=\s*(".*")$/m);
+  if (!m) { errors.push(`${rel}: developer_instructions ausente`); return text; }
+  try { return JSON.parse(m[1]); } catch { errors.push(`${rel}: developer_instructions inválido`); return text; }
 }
 
 // Extrai o bloco ```json que contém "verdict", normalizado (sem espaços).
@@ -95,10 +103,11 @@ for (const rel of [
 // Contrato do validator por host (S10): o bloco JSON de veredito dos agentes
 // gerados (opencode/pi) deve ser idêntico ao canônico — catálogo stale = drift.
 for (const rel of [
+  'plugins/atlas-workflow-orchestrator/.codex/agents/atlas-task-validator.toml',
   'hosts/opencode/.opencode/agents/atlas-task-validator.md',
   'hosts/pi/.pi/agents/atlas-task-validator.md',
 ]) {
-  const hostAgent = read(rel);
+  const hostAgent = agentText(rel);
   const hostVerdict = verdictBlock(hostAgent, rel);
   if (aVerdict && hostVerdict && aVerdict !== hostVerdict) {
     errors.push(`M3 drift: veredito de ${rel} difere do canônico agents/atlas-task-validator.md (rode build/build-plugins.sh)`);
@@ -106,20 +115,21 @@ for (const rel of [
 }
 
 // Sub-agents executores/review (P1): plan-execute/direct-execute mutam código e
-// slice-review revisa — todos são DESPACHADOS pelo orquestrador (Agent tool) e por isso
-// precisam de arquivo de agente nativo nos hosts baseados em .md (claude/opencode/pi).
-// Ausência = orquestrador cai pro fio principal (Gate G9 violado). Codex usa openai.yaml
-// por skill (não entra aqui). O corpo é um SHIM fino que DEVE citar o skill_id carregado.
+// slice-review revisa — todos são DESPACHADOS pelo orquestrador e por isso precisam
+// de registro de agente nativo por host. Ausência = orquestrador cai pro fio principal
+// (Gate G9 violado). O corpo é um SHIM fino que DEVE citar o skill_id carregado.
 const DISPATCHED_EXEC_AGENTS = ['atlas-plan-execute', 'atlas-direct-execute', 'atlas-slice-review'];
 const AGENT_DIRS = [
   ['claude', 'agents'],
+  ['codex', 'plugins/atlas-workflow-orchestrator/.codex/agents'],
   ['opencode', 'hosts/opencode/.opencode/agents'],
   ['pi', 'hosts/pi/.pi/agents'],
 ];
 for (const skillId of DISPATCHED_EXEC_AGENTS) {
   for (const [host, dir] of AGENT_DIRS) {
-    const rel = `${dir}/${skillId}.md`;
-    const text = read(rel); // read() registra 'ausente: <rel>' se faltar
+    const ext = host === 'codex' ? 'toml' : 'md';
+    const rel = `${dir}/${skillId}.${ext}`;
+    const text = agentText(rel); // read() registra 'ausente: <rel>' se faltar
     if (text == null) continue;
     if (!new RegExp(`\\b${skillId}\\b`).test(text)) {
       errors.push(`shim drift: ${rel} (${host}) não cita o skill_id '${skillId}' (shim aponta pra skill errada?)`);
@@ -164,7 +174,7 @@ if (versionFile != null) {
 // Skills host-agnósticas (S10/F4-A4): se uma skill nomear um verbo nativo de host
 // (TodoWrite, tasks, Agent(subagent_type, $<skill>), DEVE ancorar em atlas_capabilities
 // — senão é hardcode de host. O orquestrador é exceção (coordena e cita hosts).
-const HOST_VERBS = [/TodoWrite/, /Agent\(subagent_type/, /\$atlas-task-validator/];
+const HOST_VERBS = [/TodoWrite/, /Agent\(subagent_type/, /\$atlas-task-validator/, /spawn_agent\(agent_type/];
 if (fs.existsSync(skillsDir)) {
   for (const d of fs.readdirSync(skillsDir)) {
     const sp = path.join(skillsDir, d, 'SKILL.md');

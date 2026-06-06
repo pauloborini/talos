@@ -146,12 +146,16 @@ const HOST_ADAPTERS = {
   codex: {
     label: 'Codex App',
     subagent_dispatch: {
-      mechanism: '$<skill-name>',
-      example: 'invocar $atlas-task-validator com <state_path> como único argumento',
-      registration: 'agents/openai.yaml por skill (allow_implicit_invocation)',
+      mechanism: 'spawn_agent(agent_type)',
+      example: 'spawn_agent(agent_type: "atlas-task-validator", items: [{ type: "text", text: "<state_path>" }])',
+      registration: '.codex/agents/<name>.toml (custom agent nativo; developer_instructions carrega o SKILL.md)',
     },
     todo_tool: 'tasks',
     hooks: { supported: false, mechanism: null },
+    // Codex subagents are a native workflow in current Codex releases. The plugin
+    // ships custom agents under .codex/agents; executor agents opt into depth 2 so
+    // they can spawn the cold validator (G4) instead of falling back to inline skill
+    // activation.
     capabilities_flags: { subagent_available: true, mcp_available: true, todo_available: true },
   },
   opencode: {
@@ -287,7 +291,7 @@ function capabilities(args = {}) {
 // Política por host (`prereq_policy`):
 //   - 'self_evident' (claude/codex/opencode, default): runtime nativo. Flag essencial
 //     vem do report quando presente, senão do perfil (otimista justificado: MCP-vivo
-//     prova-se no boot; subagente é nativo do plugin instalado).
+//     prova-se no boot; subagente é nativo do host/plugin instalado).
 //   - 'must_report' (pi/generic): essencial depende de dep externa (pi) ou de host
 //     desconhecido (generic) — NÃO sondável pelo servidor. Fail-closed: a flag só
 //     conta como true se reportada explicitamente true; ausente/não-bool ⇒ false ⇒

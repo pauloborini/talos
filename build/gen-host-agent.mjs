@@ -8,7 +8,7 @@
 // → agents/atlas-plan-execute.md como canônico).
 //
 // Uso: node build/gen-host-agent.mjs <host> <out-file>
-//   host: opencode | pi
+//   host: codex | opencode | pi
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -21,7 +21,7 @@ if (!host || !outFile) {
   process.exit(2);
 }
 
-const agentName = path.basename(outFile, '.md');
+const agentName = path.basename(outFile).replace(/\.(md|toml)$/u, '');
 const canonicalPath = path.join(ROOT, `agents/${agentName}.md`);
 if (!fs.existsSync(canonicalPath)) {
   console.error(`agente canônico ausente: agents/${agentName}.md`);
@@ -66,6 +66,23 @@ if (host === 'opencode') {
     'temperature: 0.1',
     '---',
   ].join('\n');
+} else if (host === 'codex') {
+  // Codex: .codex/agents/<name>.toml custom agents. Keep the canonical shim body
+  // as developer_instructions; Codex loads custom agents as spawned sessions.
+  const lines = [
+    `name = ${JSON.stringify(name)}`,
+    `description = ${JSON.stringify(description)}`,
+    `developer_instructions = ${JSON.stringify(body.trim())}`,
+  ];
+  if (name === 'atlas-plan-execute' || name === 'atlas-direct-execute') {
+    // Root thread depth 0 -> executor depth 1 -> validator depth 2 (G4).
+    lines.push('agents.max_depth = 2');
+  }
+  header = lines.join('\n');
+  fs.mkdirSync(path.dirname(outFile), { recursive: true });
+  fs.writeFileSync(outFile, `${header}\n`, 'utf8');
+  console.log(`gerado: ${path.relative(ROOT, outFile)} (host=${host})`);
+  process.exit(0);
 } else if (host === 'pi') {
   // pi: subagente via extensão pi-subagents — frontmatter name + description + tools.
   const tools = PI_TOOLS[name] || 'read, grep, find, ls, bash';

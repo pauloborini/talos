@@ -86,6 +86,15 @@ test('capabilities: perfil opencode (subagente @, mcp local, todo nativo todowri
   assert.match(cap.subagent_dispatch.registration, /\.opencode\/agents/);
 });
 
+test('capabilities: perfil codex usa subagent nativo, não $skill in-context', () => {
+  const cap = capabilities({ host: 'codex' });
+  assert.equal(cap.host, 'codex');
+  assert.equal(cap.subagent_dispatch.mechanism, 'spawn_agent(agent_type)');
+  assert.match(cap.subagent_dispatch.registration, /\.codex\/agents/);
+  assert.doesNotMatch(cap.subagent_dispatch.example, /\$atlas/);
+  assert.equal(cap.capabilities_flags.subagent_available, true);
+});
+
 test('checkPrerequisites: opencode qualificado passa', () => {
   assert.equal(checkPrerequisites({ host: 'opencode' }).status, 'passed');
 });

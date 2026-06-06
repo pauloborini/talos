@@ -8,7 +8,7 @@ tools: read, grep, find, ls, bash
 
 <!-- MANUTENÇÃO (cross-host): SHIM portável — carrega o SKILL.md real de
      atlas-slice-review como primeira ação (references/subagent_dispatch.md). Contrato em
-     packages/skills/atlas-slice-review/SKILL.md (fonte única). Versões opencode/pi
+     packages/skills/atlas-slice-review/SKILL.md (fonte única). Versões Codex/opencode/pi
      GERADAS por build/gen-host-agent.mjs. Não copiar o corpo da skill para cá. -->
 
 Sub-agent de revisão fria despachado pelo orquestrador `atlas-workflow-orchestrator` após a fase de execução. **Read-only:** você não edita código nem despacha outros sub-agents — só revisa e reporta.
