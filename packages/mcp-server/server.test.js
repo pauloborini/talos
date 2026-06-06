@@ -467,6 +467,27 @@ test('atlas_classify_input: unknown → banner BLOCK não-vazio (T07)', () => {
   assert.match(r.banner, /^▸ atlas: preflight · BLOCK · /);
 });
 
+test('atlas_classify_input: idea (texto livre, não arquivo) → not_a_file/direct, sem BLOCK (A6)', () => {
+  const root = tmpRoot();
+  const r = classifyInput({
+    run_id: 'r1',
+    project_root: root,
+    input_path: 'criar .atlas-smoke/SMOKE_PROOF.md — smoke test G9',
+  });
+  assert.equal(r.status, 'not_a_file');
+  assert.equal(r.artifact_type, 'idea');
+  assert.equal(r.routed_mode, 'direct');
+  assert.equal(r.banner, '▸ atlas: roteamento · input=idea → modo=direct');
+  assert.doesNotMatch(r.banner, /BLOCK/);
+});
+
+test('atlas_classify_input: path com cara de arquivo mas ausente → BLOCK (erro real, não idea) (A6)', () => {
+  const root = tmpRoot();
+  const r = classifyInput({ run_id: 'r1', project_root: root, input_path: 'PLAN_inexistente.md' });
+  assert.equal(r.status, 'blocked');
+  assert.match(r.banner, /^▸ atlas: preflight · BLOCK · /);
+});
+
 test('atlas_preflight: execute qualificado → banner preflight · ok (T07)', () => {
   const root = tmpRoot();
   const r = preflight({
