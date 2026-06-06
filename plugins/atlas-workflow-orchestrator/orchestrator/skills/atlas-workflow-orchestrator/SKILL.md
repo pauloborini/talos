@@ -68,7 +68,7 @@ Executar **antes** de iniciar o pipeline. Se qualquer item falhar, **parar e rep
 
 1. **Parse** dos argumentos `<mode> <input-type> [input] [flags]`. Se inválido ou `--help` → mostrar sintaxe e parar.
 2. **Chamar MCP `atlas_ping`.** Se não responder, versão vier vazia, `version_check.status` vier bloqueado ou capacidades não listarem os gates exigidos pelo modo → abortar com erro de MCP indisponível/drift. Não seguir por prosa.
-2a. **Chamar MCP `atlas_capabilities`.** Ler `host`, `subagent_dispatch`, `capabilities_flags` e `required_deps`. Determinar a **disponibilidade real** dos pré-requisitos essenciais neste host: o subagente do plugin é despachável? o MCP está vivo (ping ok)? Em hosts com `required_deps` (ex.: pi: `pi-mcp-adapter` + `pi-subagents`), confirmar que cada dep está presente; se faltar, o pré-requisito correspondente é `false`.
+2a. **Chamar MCP `atlas_capabilities`.** Ler `host`, `subagent_dispatch`, `validator_dispatch`, `capabilities_flags` e `required_deps`. Determinar a **disponibilidade real** dos pré-requisitos essenciais neste host: o subagente do plugin é despachável? o MCP está vivo (ping ok)? Em hosts com `required_deps` (ex.: pi: `pi-mcp-adapter` + `pi-subagents`), confirmar que cada dep está presente; se faltar, o pré-requisito correspondente é `false`.
 2b. **Chamar MCP `atlas_classify_input`** no input informado (`input_path`), **antes de rotear** (PRD D3/D6). `classify_input` é para **artefato em arquivo** (path em disco). A tool devolve `artifact_type` ∈ {`backlog`, `prd`, `plan`, `idea`, `unknown`} (verdade forte = TC de plano passa) e um `banner` de roteamento já pronto. **O tipo de input é fato e prevalece sobre o modo pedido** (intenção). Aplicar o roteamento:
    - **`plan` em `direct`/`full`** → auto-rotear para **`execute`** (executa o plano pronto; nunca gera plano de plano, mesmo com arquivo renomeado — PRD D6). **Não bloqueia**: ecoar o banner de troca `▸ atlas: roteamento · pediu={x} mas input={y} → modo=execute`.
    - **`execute` sobre `backlog`/`prd`** → auto-rotear para **`full`** (ou `direct` conforme o pedido), pois não há plano a executar. **Não bloqueia**: ecoar o banner de troca correspondente.
@@ -119,10 +119,10 @@ A fronteira de determinismo é a **mutação de código** (PRD D10), e ela tem *
 
 ### Verbo de dispatch é host-agnóstico (não assuma "Agent tool")
 
-O **mecanismo** de despacho de sub-agent **varia por host** — leia `subagent_dispatch.mechanism` e `.example` de `atlas_capabilities` e use o **verbo nativo do host**. Não hardcode o verbo do Claude. Mapeamento (ilustrativo; a fonte de verdade em runtime é `atlas_capabilities`):
+O **mecanismo** de despacho de sub-agent **varia por host** — leia `subagent_dispatch.mechanism`, `.example` e `validator_dispatch` de `atlas_capabilities` e use o **verbo nativo do host**. Não hardcode o verbo do Claude. Mapeamento (ilustrativo; a fonte de verdade em runtime é `atlas_capabilities`):
 
 - **claude:** `Agent(subagent_type: "atlas-<exec>", prompt: ...)`
-- **codex:** `spawn_agent(agent_type: "atlas-<exec>", items: [{ type: "text", text: "<state_path ou task>" }])` usando custom agent nativo `.codex/agents/atlas-<exec>.toml`
+- **codex:** `spawn_agent(agent_type: "atlas-<exec>", items: [{ type: "text", text: "<state_path ou task>" }])` usando custom agent nativo `.codex/agents/atlas-<exec>.toml`. No Codex atual, sub-agents não recebem `spawn_agent`; portanto `validator_dispatch.topology = sibling`: o executor retorna `validator_handoff_required` com `state_path`, e o orquestrador despacha `atlas-task-validator` como sub-agent irmão isolado.
 - **opencode:** `@atlas-<exec>` (ou auto por description)
 - **pi:** `subagent({ agent: "atlas-<exec>", task, context: "fresh" })`
 - **generic:** subagente nativo do host
@@ -153,7 +153,7 @@ Regras inegociáveis. Violação = parar, não contornar.
 | G1 | **Artefato antes de avançar.** Uma fase só conta como concluída se `atlas_verify_artifact` aprovar o arquivo produzido. Leitura local pode complementar, mas não substitui o resultado MCP. | todas |
 | G2 | **Em `full`, proibido escrever qualquer código (Dart) antes de existir `PLAN_*.md` validado em disco.** Se for escrever código sem plano, o modo correto é `direct` — então pare e avise o usuário do mismatch. | `full` |
 | G3 | **Skills invocadas de verdade — autoria documental no fio principal, execução de código em sub-agent.** **Fases documentais ANTES do plano validado** (gerar/maturar PRD, entrevistar, redigir `PLAN_*.md`) podem ser conduzidas pelo orquestrador (agente principal) carregando a skill correspondente; não exigem despacho de sub-agent (autoria não muta código). **Fases de execução de código** invocam a skill via **sub-agent despachado** (verbo nativo do host de `atlas_capabilities` — não necessariamente "Agent tool"), que carrega o `SKILL.md` do id resolvido antes de agir — prompt "aja como X" não basta. Sempre proibido absorver o artefato "implicitamente" (ex: plano dentro do §6 do PRD não substitui `PLAN_*.md`): o artefato exigido pelo modo tem que existir em disco e passar G1/TC. | todas |
-| G4 | **Validador frio é sub-agent separado dentro do executor.** O orquestrador verifica no pré-flight que `task_validator` existe, mas quem despacha esse sub-agent é `plan_execute`, para receber findings e aplicar reparo limitado antes do relatório final. O executor não valida o próprio trabalho no mesmo contexto. | execução |
+| G4 | **Validador frio é sempre sub-agent separado.** Se `validator_dispatch.topology = nested`, o executor despacha `task_validator`. Se `topology = sibling` (Codex atual), o executor escreve `state_path` e para; o orquestrador despacha `task_validator` como sub-agent irmão isolado, consome o veredito e re-despacha o executor apenas para reparo P1/P2 em caso de `fail`. O executor nunca valida o próprio trabalho no mesmo contexto. | execução |
 | G5 | **Scan de ambiguidade determinístico e logado.** A decisão de pular a entrevista só é válida se `atlas_scan_prd` retornar **zero** padrões e esse resultado MCP estiver no ledger. Não existe "pular porque tenho certeza". `--interview` sempre força. | validação PRD |
 | TC | **Conformidade de template via MCP.** PRD e PLAN só avançam como artefatos documentais se `atlas_verify_template_conformance` retornar `passed` e `pending_count: 0`. Pendência bloqueia com `next_action`. | PRD + plano |
 | G6 | **Status verificado, não auto-reportado.** O ✅ de cada item no output só pode ser marcado após confirmar o artefato em disco. Faltou artefato exigido pelo modo → status final `incomplete`, nunca `completed`. | output |
@@ -179,7 +179,7 @@ Artefatos esperados (em ordem): `PRD_*.md` → (`PRD_*.md` atualizado) → `PLAN
 5. **Plan** — `atlas_lock_dispatch(action=start, phase=plan_handoff)`, despachar `plan_handoff` como sub-agent, depois chamar `atlas_verify_artifact` e `atlas_verify_template_conformance(artifact_type=plan)`. Concluir a fase com `atlas_lock_dispatch(action=complete, phase=plan_handoff)`. **Nenhuma linha de código pode ter sido escrita até aqui.**
    - **G11:** se `PLAN_*.md` foi validado, chamar `atlas_assert_after_plan`. Se a próxima ação não for `dispatch_plan_execute_blocking`, abortar.
 6. **Validate plan** — se há gaps → aplica a Lógica de decisão (A/B/C).
-7. **Execute** — `atlas_lock_dispatch(action=start, phase=plan_execute)`, despachar `plan_execute` como sub-agent lendo o `PLAN_*.md`. Dentro desse sub-agent, `plan_execute` dispara `task_validator` filho. Ao retornar, concluir com `atlas_lock_dispatch(action=complete, phase=plan_execute, validator_status=passed)`. Status diferente bloqueia review e output completed.
+7. **Execute** — `atlas_lock_dispatch(action=start, phase=plan_execute)`, despachar `plan_execute` como sub-agent lendo o `PLAN_*.md`. Se `validator_dispatch.topology = nested`, o executor dispara `task_validator` filho. Se `topology = sibling`, o executor retorna `validator_handoff_required` com `state_path`; o orquestrador despacha `task_validator` como sub-agent irmão isolado e re-despacha o executor apenas se o veredito for `fail`. Ao obter `passed`, concluir com `atlas_lock_dispatch(action=complete, phase=plan_execute, validator_status=passed)`. Status diferente bloqueia review e output completed.
 8. **Review (condicional)** — somente após execução concluída e se `--review` → `atlas_lock_dispatch(action=start, phase=slice_review)`, despachar `slice_review`, depois `atlas_lock_dispatch(action=complete, phase=slice_review)`.
 9. **Output** — ledger verificado com fonte MCP por gate/fase (ver "Output") + próximos passos.
 
@@ -201,7 +201,7 @@ Entrada: um **`PLAN_*.md` pronto**. Artefatos esperados: (plano já existe) → 
 
 1. **Parse / classify** — `atlas_ping` → `atlas_capabilities` → **`atlas_classify_input`** no input (PRD D3/D6: o tipo é fato e precisa ser conhecido antes de travar o modo) → **`atlas_preflight(<modo efetivo>)`** (PREREQ hard-fail intacto). A classificação determina o tipo: se for plano, o modo efetivo é `execute` e o preflight trava `execute`; se o input não for plano, auto-rotear (ver Fase 0, passo 2b) e o preflight trava o modo roteado. **`classify_input` sempre precede `preflight`** (o preflight trava o modo efetivo, não o pedido).
 2. **Reverificar o plano na entrada** — `atlas_verify_artifact` no `PLAN_*.md` (G1) + `atlas_verify_template_conformance(artifact_type=plan)` (TC). Plano velho/manual/inválido **trava aqui** com `next_action` em linguagem de produto (PRD D11 — "autoria é livre, execução é gateada"). Sem reverificação válida não há dispatch.
-3. **Executar** — `atlas_lock_dispatch(action=start, phase=plan_execute)`; despachar `plan_execute` como sub-agent blocking lendo o `PLAN_*.md`. Dentro dele, `plan_execute` dispara o `task_validator` (validador frio, G4/G8). Ao retornar, concluir com `atlas_lock_dispatch(action=complete, phase=plan_execute, validator_status=passed)`. `plan_execute` é aceito como **primeira fase** em `execute` (sem fase nova; PRD D13).
+3. **Executar** — `atlas_lock_dispatch(action=start, phase=plan_execute)`; despachar `plan_execute` como sub-agent blocking lendo o `PLAN_*.md`. A validação segue `validator_dispatch`: nested dentro do executor quando suportado, sibling pelo orquestrador no Codex atual. Ao obter validator `passed`, concluir com `atlas_lock_dispatch(action=complete, phase=plan_execute, validator_status=passed)`. `plan_execute` é aceito como **primeira fase** em `execute` (sem fase nova; PRD D13).
 4. **Review (condicional)** — só após execução concluída e se `--review` → `atlas_lock_dispatch(action=start, phase=slice_review)`, despachar `slice_review`, depois `complete`.
 5. **Output** — ledger verificado; `guarantee_level` = `full_pipeline` (PRD D12).
 
@@ -336,7 +336,7 @@ Plugin verifica `PERGUNTAS_EM_ABERTO.md` durante validação de PRD. Se houver Q
 | `atlas-plan-execute` | plan_path (full / **execute**) ou prd_path (direct) | diff de código, evidência |
 | `atlas-slice-review` | diff/output | review_feedback |
 
-**Sub-agent frio (Gate G4):** `atlas-task-validator` é verificado no pré-flight pelo orquestrador, mas despachado por `atlas-plan-execute` como sub-agent filho.
+**Sub-agent frio (Gate G4):** `atlas-task-validator` é verificado no pré-flight pelo orquestrador e sempre roda isolado. Em hosts com `validator_dispatch.topology = nested`, ele é filho do executor; em Codex atual (`topology = sibling`), ele é sub-agent irmão despachado pelo orquestrador a partir do `state_path` retornado pelo executor.
 
 ---
 

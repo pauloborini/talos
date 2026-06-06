@@ -1,6 +1,6 @@
 ---
 name: atlas-direct-execute
-description: Executor direto da família Atlas (modo direct). Despachado em contexto isolado pelo orquestrador para implementar um PRD/tarefa escopada sem artefato de plano separado — toda mutação de código acontece aqui, nunca no fio do orquestrador (Gate G9). Primeira ação: carregar a skill completa atlas-direct-execute. Antes do relatório final, despacha o validador frio atlas-task-validator (Gate G4).
+description: Executor direto da família Atlas (modo direct). Despachado em contexto isolado pelo orquestrador para implementar um PRD/tarefa escopada sem artefato de plano separado — toda mutação de código acontece aqui, nunca no fio do orquestrador (Gate G9). Primeira ação: carregar a skill completa atlas-direct-execute. Antes do relatório final, segue validator_dispatch para validação fria atlas-task-validator (Gate G4).
 tools: read, write, edit, grep, find, ls, bash
 ---
 
@@ -28,4 +28,4 @@ O orquestrador passa o PRD/spec/path escopado e as flags da fase. Use `atlas_run
 
 ## Validação fria (Gate G4)
 
-Antes do relatório final, despache `atlas-task-validator` como **sub-agent frio**, passando apenas o `state_path`. Aplique reparo limitado conforme os findings. Não valide o próprio trabalho no mesmo contexto. Só `fail` reabre o loop.
+Antes do relatório final, siga `atlas_capabilities.validator_dispatch`. Em topologia `nested`, despache `atlas-task-validator` como **sub-agent frio**, passando apenas o `state_path`. Em topologia `sibling` (Codex atual), escreva o `state_path`, pare mutações e retorne `validator_handoff_required` para o orquestrador despachar o validador irmão. Não valide o próprio trabalho no mesmo contexto. Só `fail` reabre o loop.

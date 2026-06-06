@@ -74,10 +74,6 @@ if (host === 'opencode') {
     `description = ${JSON.stringify(description)}`,
     `developer_instructions = ${JSON.stringify(body.trim())}`,
   ];
-  if (name === 'atlas-plan-execute' || name === 'atlas-direct-execute') {
-    // Root thread depth 0 -> executor depth 1 -> validator depth 2 (G4).
-    lines.push('agents.max_depth = 2');
-  }
   header = lines.join('\n');
   fs.mkdirSync(path.dirname(outFile), { recursive: true });
   fs.writeFileSync(outFile, `${header}\n`, 'utf8');

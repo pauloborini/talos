@@ -139,6 +139,12 @@ const HOST_ADAPTERS = {
       example: 'Agent(subagent_type: "atlas-task-validator", prompt: "<state_path>")',
       registration: 'agents/<name>.md na raiz do plugin',
     },
+    validator_dispatch: {
+      topology: 'nested',
+      nested_subagent_available: true,
+      dispatcher: 'executor',
+      repair_loop: 'executor_repair_then_redispatch_validator',
+    },
     todo_tool: 'TodoWrite',
     hooks: { supported: true, mechanism: 'hooks/claude/settings.snippet.json' },
     capabilities_flags: { subagent_available: true, mcp_available: true, todo_available: true },
@@ -150,12 +156,17 @@ const HOST_ADAPTERS = {
       example: 'spawn_agent(agent_type: "atlas-task-validator", items: [{ type: "text", text: "<state_path>" }])',
       registration: '.codex/agents/<name>.toml (custom agent nativo; developer_instructions carrega o SKILL.md)',
     },
+    validator_dispatch: {
+      topology: 'sibling',
+      nested_subagent_available: false,
+      dispatcher: 'orchestrator',
+      repair_loop: 'orchestrator_dispatches_executor_repair_after_validator_fail',
+    },
     todo_tool: 'tasks',
     hooks: { supported: false, mechanism: null },
-    // Codex subagents are a native workflow in current Codex releases. The plugin
-    // ships custom agents under .codex/agents; executor agents opt into depth 2 so
-    // they can spawn the cold validator (G4) instead of falling back to inline skill
-    // activation.
+    // Codex subagents are native, but spawned agents do not receive spawn_agent in
+    // the current host tool surface. Validator runs as an isolated sibling
+    // dispatched by the orchestrator after the executor writes state_path.
     capabilities_flags: { subagent_available: true, mcp_available: true, todo_available: true },
   },
   opencode: {
@@ -164,6 +175,12 @@ const HOST_ADAPTERS = {
       mechanism: '@<name> (ou auto por description)',
       example: 'invocar @atlas-task-validator passando <state_path>',
       registration: '.opencode/agents/<name>.md (frontmatter description + mode: subagent)',
+    },
+    validator_dispatch: {
+      topology: 'nested',
+      nested_subagent_available: true,
+      dispatcher: 'executor',
+      repair_loop: 'executor_repair_then_redispatch_validator',
     },
     // opencode expõe `todowrite` nativo ao agente primário (orquestrador). O `todoread`
     // foi fundido em `todowrite` (mar/2026): a tool retorna a lista atual no output.
@@ -183,6 +200,12 @@ const HOST_ADAPTERS = {
       example: 'subagent({ agent: "atlas-task-validator", task: "<state_path>", context: "fresh" })',
       registration: '.pi/agents/<name>.md (pi-subagents; frontmatter name + description + tools)',
     },
+    validator_dispatch: {
+      topology: 'nested',
+      nested_subagent_available: true,
+      dispatcher: 'executor',
+      repair_loop: 'executor_repair_then_redispatch_validator',
+    },
     todo_tool: null,
     hooks: { supported: false, mechanism: null },
     // pi exige 2 deps externas obrigatórias (DEC-005): pi-mcp-adapter (MCP) e
@@ -200,6 +223,12 @@ const HOST_ADAPTERS = {
       mechanism: 'subagente nativo do host',
       example: 'despachar o subagente atlas-task-validator passando apenas <state_path>',
       registration: 'mecanismo nativo equivalente do host',
+    },
+    validator_dispatch: {
+      topology: 'host_defined',
+      nested_subagent_available: null,
+      dispatcher: 'host_defined',
+      repair_loop: 'host_defined',
     },
     todo_tool: null,
     hooks: { supported: false, mechanism: null },
@@ -225,7 +254,8 @@ const PREREQUISITE_FLAGS = [...PREREQUISITES.essential, ...PREREQUISITES.non_ess
 // Remoção/renomeação de campo ou mudança de semântica exige bump e nota de migração.
 // v1 → v2: adiciona capabilities_flags, hooks, prerequisites, known_hosts,
 //   required_deps, prereq_policy (aditivo).
-const CAPABILITIES_SCHEMA_VERSION = 2;
+// v2 → v3: adiciona validator_dispatch para distinguir nested vs sibling G4.
+const CAPABILITIES_SCHEMA_VERSION = 3;
 
 // Nomes de host derivados do registry — única fonte de verdade para enums de schema.
 // Adicionar host em HOST_ADAPTERS propaga automaticamente (sem enum hardcoded).
@@ -266,6 +296,7 @@ function capabilities(args = {}) {
     detected_via,
     schema_version: CAPABILITIES_SCHEMA_VERSION,
     subagent_dispatch: adapter.subagent_dispatch,
+    validator_dispatch: adapter.validator_dispatch,
     todo_tool: adapter.todo_tool,
     hooks: adapter.hooks,
     capabilities_flags: adapter.capabilities_flags,

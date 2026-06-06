@@ -146,7 +146,12 @@ After tasks and local gates pass, write `.atlas/state/<run_id>/<slice>.json` fol
 
 For direct execution, the state file is still the only validator input. Use the user-provided PRD/spec path as `plan_path` when no handoff plan exists, and include direct-contract anchors in `boundary_refs` such as `direct.O1`, `direct.invariant.permissions`, or `direct.risk.partial_failure`.
 
-Then invoke the isolated validator subagent with only the state path, using the dispatch verb returned by `atlas_capabilities.subagent_dispatch` for the current host (never hardcode the host's mechanism). The Claude Code form is shown below as an example; on Codex it is `spawn_agent(agent_type: "atlas-task-validator", items: [{ type: "text", text: "<state_path>" }])`, on opencode `@atlas-task-validator`:
+Then validate with the isolated validator subagent using only the state path. First read `atlas_capabilities.validator_dispatch`:
+
+- If `validator_dispatch.topology == "nested"`, this executor invokes `atlas-task-validator` with the dispatch verb returned by `atlas_capabilities.subagent_dispatch` for the current host.
+- If `validator_dispatch.topology == "sibling"` (Codex current host), this executor **must not** attempt nested dispatch. It writes the state file, stops mutation, and returns `validator_handoff_required` with the `state_path`; the orchestrator dispatches `atlas-task-validator` as the next isolated sibling phase and re-dispatches this executor only if the validator returns `fail`.
+
+Nested dispatch example:
 
 ```text
 Agent(subagent_type: "atlas-task-validator", prompt: ".atlas/state/<run_id>/<slice>.json")
@@ -154,7 +159,7 @@ Agent(subagent_type: "atlas-task-validator", prompt: ".atlas/state/<run_id>/<sli
 
 Do not paste the compact contract, diff, obligation ledger, local checks, or closure analysis packet into the validator prompt. Those belong in the state file and referenced artifacts.
 
-**Validator dispatch is blocking — wait idle.** Finish every local gate (lint, analyze, tests, `git diff --check`, diff-stat) and write the state file **before** dispatching. Once the validator is dispatched, do nothing until its verdict returns: no diff hygiene checks, no extra reads, no opportunistic edits, no parallel work. Running anything while the validator reads the slice can mutate what it is validating and breaks determinism (same failure class as the orchestrator's G9). Dispatch → wait → consume verdict.
+**Validator dispatch is blocking — wait idle.** Finish every local gate (lint, analyze, tests, `git diff --check`, diff-stat) and write the state file **before** validation. Once the validator is dispatched (nested by executor or sibling by orchestrator), do nothing until its verdict returns: no diff hygiene checks, no extra reads, no opportunistic edits, no parallel work. Running anything while the validator reads the slice can mutate what it is validating and breaks determinism (same failure class as the orchestrator's G9). Dispatch → wait → consume verdict.
 
 The validator must not patch files. Consume its verdict:
 
@@ -163,6 +168,8 @@ The validator must not patch files. Consume its verdict:
 - `fail`: repair P1/P2 findings when they map to PRD obligations, invariants, determinism, dependencies, or fixtures; rerun validator after material repair
 
 **Only `fail` reopens the loop.** `pass` and `pass_with_observations` are terminal: close the slice immediately. Do not "fix" observations and re-validate — observations and `boundary_violations` returned alongside a non-`fail` verdict are reported residuals, not triggers for another validator dispatch. Once the slice is closed, do not edit code, tests, or boundary files just to satisfy an observation; that reopens the slice and forces an avoidable re-validation. Real follow-up from an observation goes to the final report or backlog, not into an extra in-slice change.
+
+In sibling topology, the orchestrator owns the validator loop: validator `fail` produces a repair packet and re-dispatches this executor with the findings; this executor repairs only current-slice P1/P2 items, rewrites state evidence, then returns another `validator_handoff_required`.
 
 Stop validator repair only when the same finding repeats without new signal, repair would violate scope, or a user/product decision is needed. Do not final-report a repaired validator finding as "ready" without either a subsequent `pass` or an explicit residual-risk note.
 
