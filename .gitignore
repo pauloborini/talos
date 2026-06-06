@@ -5,6 +5,9 @@
 # Vault local
 .app-vault/
 
+# Config local do Claude Code
+.claude/settings.local.json
+
 # Build artifacts (gerados por build/build-plugins.sh em S02)
 dist/
 .build-stage/

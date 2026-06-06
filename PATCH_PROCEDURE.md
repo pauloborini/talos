@@ -1,6 +1,6 @@
 # Procedimento de Patch
 
-Use este procedimento em todo patch que altera o plugin, seus manifests, documentacao operacional ou artefato empacotado da linha v0.2.
+Use este procedimento em todo patch que altera o plugin, seus manifests, documentacao operacional ou artefato empacotado da linha atual.
 
 ## Objetivo
 
@@ -31,7 +31,7 @@ Atualizar todos:
 - `packages/orchestrator/skills/atlas-workflow-orchestrator/SKILL.md`: atualizar banner/changelog se o runtime mudar.
 - `packages/orchestrator/commands/workflow.md`: atualizar se o resumo dos gates/contrato mudar.
 - `CHANGELOG.md`: entrada do patch, com tipo, impacto, arquivos afetados e validacoes.
-- `dist/atlas-workflow-claude.plugin`, `dist/atlas-workflow-codex.plugin` e `dist/SHA256SUMS`: regenerar via `build/build-plugins.sh`.
+- `dist/atlas-workflow-{claude,codex,opencode,pi}.plugin` e `dist/SHA256SUMS`: regenerar via `build/build-plugins.sh`.
 
 Atualizar se tocados:
 
@@ -61,7 +61,7 @@ Para patches `packaging`, registrar tambem no README do plugin.
 
 ## Regra de sincronizacao
 
-`packages/` e a raiz do repo sao a fonte unica da v0.2. `archive/v0.1.10/` e rollback historico e nao deve ser sincronizado em patches v0.2.
+`packages/` e a raiz do repo sao a fonte unica da linha atual. `archive/v0.1.10/` e rollback historico e nao deve ser sincronizado em patches atuais.
 
 Os manifests sao intencionalmente diferentes por host e recebem a versao por injecao no build:
 
@@ -89,6 +89,7 @@ rtk build/build-plugins.sh
 ```
 
 Incluir no commit o diretorio `plugins/atlas-workflow-orchestrator/` (marketplace Codex from-source no GitHub).
+Incluir tambem `hosts/opencode/` e `hosts/pi/` quando o build sincronizar catalogos desses hosts.
 
 Depois validar:
 
@@ -96,6 +97,8 @@ Depois validar:
 (cd dist && rtk shasum -a 256 -c SHA256SUMS)
 rtk unzip -t dist/atlas-workflow-claude.plugin
 rtk unzip -t dist/atlas-workflow-codex.plugin
+rtk unzip -t dist/atlas-workflow-opencode.plugin
+rtk unzip -t dist/atlas-workflow-pi.plugin
 rtk unzip -p dist/atlas-workflow-claude.plugin .claude-plugin/plugin.json
 rtk unzip -p dist/atlas-workflow-codex.plugin .codex-plugin/plugin.json
 ```
@@ -105,7 +108,7 @@ Release operacional:
 1. Fechar PR/commit com build e checksums atualizados.
 2. Criar tag anotada `vX.Y.Z` apenas quando release externa estiver autorizada.
 3. Push da tag aciona `.github/workflows/release.yml`.
-4. Conferir que os assets publicados sao `atlas-workflow-claude.plugin`, `atlas-workflow-codex.plugin` e `SHA256SUMS`.
+4. Conferir que os assets publicados sao `atlas-workflow-claude.plugin`, `atlas-workflow-codex.plugin`, `atlas-workflow-opencode.plugin`, `atlas-workflow-pi.plugin` e `SHA256SUMS`.
 5. Conferir checksum dos assets baixados contra `SHA256SUMS`.
 
 ## Checklist de validacao
@@ -117,6 +120,8 @@ rtk build/build-plugins.sh
 (cd dist && rtk shasum -a 256 -c SHA256SUMS)
 rtk unzip -t dist/atlas-workflow-claude.plugin
 rtk unzip -t dist/atlas-workflow-codex.plugin
+rtk unzip -t dist/atlas-workflow-opencode.plugin
+rtk unzip -t dist/atlas-workflow-pi.plugin
 rtk unzip -p dist/atlas-workflow-claude.plugin .claude-plugin/plugin.json
 rtk unzip -p dist/atlas-workflow-codex.plugin .codex-plugin/plugin.json
 ```
@@ -157,7 +162,7 @@ Pare e corrija antes de finalizar se:
 - `VERSION` divergir da tag de release;
 - versao injetada divergir entre manifests gerados;
 - checksums ausentes ou invalidos;
-- artefato Claude/Cursor ou Codex ausente;
+- artefato Claude/Cursor, Codex, opencode ou pi ausente;
 - changelog nao tiver entrada do patch;
 - pacote `.plugin` estiver desatualizado depois de mudanca no bundle;
 - release externa for necessaria sem autorizacao explicita para tag/push/publicacao.

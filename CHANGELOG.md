@@ -15,7 +15,7 @@ Destaques:
 - **Fronteira documental-no-agente-principal** (G3/G7/G9): autoria de PRD/entrevista/plano livre no fio principal antes do plano validado; mãos atadas fortes depois. Execução de código continua sempre em sub-agent + validador frio — não afrouxa.
 - **Princípio standalone** nas skills documentais/leitura + invariante de re-validação ("autoria é livre, execução é gateada"); `atlas-slice-review` standalone com rótulo de garantia reduzida obrigatório.
 
-Conformance: `build/conformance-matrix.mjs` cobre o modo `execute` nos 5 hosts. Sem regressão (53→54 testes verdes; `plugin validate --strict` ok).
+Conformance: `build/conformance-matrix.mjs` cobre o modo `execute` nos 5 hosts. Sem regressão (53→54 testes verdes); `build/check-consistency.mjs`, `smoke-hosts`, `smoke-install`, checksums e `unzip -t` dos 4 bundles verdes.
 
 ## v0.4.0 - 2026-06-02
 
