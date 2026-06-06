@@ -119,7 +119,7 @@
 2. **PREP:** reler âncoras + grep/read nos paths relevantes; ajustar **Lacuna** / **Evidência** se mudou.
 3. **PERGUNTA:** `AskQuestion` (até 4 itens); em cada prompt: pergunta + impacto + opções + **recomendação ancorada na evidência lida agora** (skill `*-open-questions-interview`).
 4. Parar o turno (`⏸️ Aguardando respostas`).
-5. Após respostas: preencher **Decisão registrada**, status `resolvida`, linha no **Histórico**, pedir propagação explícita se necessário (backlog DEC, PRD §5, etc.).
+5. Após respostas: preencher **Decisão registrada**, status `resolvida`, linha no **Histórico**, pedir propagação explícita se necessário (backlog DEC, PRD §3, etc.).
 
 ### O que é proibido neste arquivo
 

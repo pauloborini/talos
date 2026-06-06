@@ -19,12 +19,11 @@ Valide maturidade de PRD por entrevista guiada antes do planejamento ou implemen
 
 ## Escopo da Skill
 
-Ataque principalmente as seguintes seções do novo template de PRD:
-* **§5 Decisões de produto (fechadas)**
-* **§6 Regras e invariantes (negócio)**
-* **§8 Fluxos e cenários UX**
-* **§9 Contrato funcional (dados)**
-* **§10 Critérios de aceite (negócio)**
+Ataque principalmente as seguintes seções do template de PRD:
+* **§3 Decisões de produto (fechadas)**
+* **§4 Fluxos e cenários UX**
+* **§5 Contrato funcional e invariantes** (regras de negócio + contrato de dados)
+* **§6 Critérios de aceite (negócio)**
 
 ---
 
@@ -37,11 +36,10 @@ Ataque principalmente as seguintes seções do novo template de PRD:
    * `❌` **Bloqueador:** Ambiguidade, conflito com o código ou falta de fluxo de UX crítico que impede o planejamento de engenharia.
 
 **Mapeamento por Seções (Novo Template):**
-* **§5 Decisões de produto (fechadas):** `❌` se faltar decisão que altere fluxo principal, mappers, roteamento ou comportamento crítico.
-* **§6 Regras e invariantes (negócio):** `❌` se a regra de negócio for ambígua ou impossível de verificar na codebase.
-* **§8 Fluxos e cenários UX:** `❌` se impactar o fluxo principal e faltarem os caminhos de loading, erro, vazio ou permissões.
-* **§9 Contrato funcional (dados):** `❌` se campos críticos não possuírem regras de formato (ex: decimais).
-* **§10 Critérios de aceite (negócio):** `❌` se o critério for subjetivo, não observável ou não testável.
+* **§3 Decisões de produto (fechadas):** `❌` se faltar decisão que altere fluxo principal, mappers, roteamento ou comportamento crítico.
+* **§4 Fluxos e cenários UX:** `❌` se impactar o fluxo principal e faltarem os caminhos de loading, erro, vazio ou permissões.
+* **§5 Contrato funcional e invariantes:** `❌` se campos críticos não possuírem regras de formato (ex: decimais) ou se a regra de negócio for ambígua/impossível de verificar na codebase.
+* **§6 Critérios de aceite (negócio):** `❌` se o critério for subjetivo, não observável ou não testável.
 
 3. **Perguntas por Rodada (AskUserQuestion):** Formule rodadas de no máximo 4 perguntas concisas via ferramenta nativa `AskUserQuestion`, com exatamente 3 opções e indicando a recomendada. **Pare o turno e aguarde a resposta.**
 4. **Veredito Final:** Só emita o veredito de `Pronto para planejamento` quando zerar todos os `❌`.
@@ -51,11 +49,10 @@ Ataque principalmente as seguintes seções do novo template de PRD:
 ## Índice Provisório (fim de cada rodada)
 
 ```text
-§5 Decisões:     ✅/⚠️/❌
-§6 Invariantes:  ✅/⚠️/❌
-§8 Experiência:  ✅/⚠️/❌
-§9 Contratos:    ✅/⚠️/❌
-§10 Aceite:      ✅/⚠️/❌
+§3 Decisões:      ✅/⚠️/❌
+§4 Experiência:   ✅/⚠️/❌
+§5 Contrato+inv:  ✅/⚠️/❌
+§6 Aceite:        ✅/⚠️/❌
 ```
 
 ---

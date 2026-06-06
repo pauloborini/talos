@@ -2,13 +2,13 @@
 
 | Campo | Valor |
 |-------|-------|
-| **PRD** | [PRD_<ID>_<slug>.md](./<caminho-relativo>) — decisões **PRD §5** (D*) |
+| **PRD** | [PRD_<ID>_<slug>.md](./<caminho-relativo>) — decisões **PRD §3** (D*) |
 | **Package / app** | `<packages/... \| apps/...>` |
 | **Tipo** | `<feature \| ui \| navigation \| …>` |
 | **execution_mode** | `<sequencial (T01→TN) \| orchestrated-per-slice>` |
 | **Data** | <YYYY-MM-DD> |
 
-**Escopo técnico:** PRD §4. **Fora:** <bullets derivados do PRD fora de escopo — não recopiar §4 inteiro>.
+**Escopo técnico:** PRD §2. **Fora:** <bullets derivados do PRD fora de escopo — não recopiar §2 inteiro>.
 
 Política: [BOUNDARY_PRD_PLAN.md](./BOUNDARY_PRD_PLAN.md). Exemplos: [PRD/GARANTIAFACIL/EXEMPLO/](../PRD/GARANTIAFACIL/EXEMPLO/).
 
@@ -32,10 +32,10 @@ Política: [BOUNDARY_PRD_PLAN.md](./BOUNDARY_PRD_PLAN.md). Exemplos: [PRD/GARANT
 
 ## 2. Invariantes de execução (derivados do PRD)
 
-- <invariante técnico derivado de PRD §5–6 — ex.: sem refetch ao filtrar>
+- <invariante técnico derivado de PRD §3/§5 — ex.: sem refetch ao filtrar>
 - <…>
 
-> Não recopiar a tabela de decisões do PRD; referenciar `PRD §5 D12`.
+> Não recopiar a tabela de decisões do PRD; referenciar `PRD §3 D12`.
 
 ---
 
@@ -83,7 +83,7 @@ Política: [BOUNDARY_PRD_PLAN.md](./BOUNDARY_PRD_PLAN.md). Exemplos: [PRD/GARANT
 
 #### TNN. Validação final
 
-- **Objetivo:** analyze + test suite; regressão de entregas dependentes; aceite manual mínimo (PRD §10).
+- **Objetivo:** analyze + test suite; regressão de entregas dependentes; aceite manual mínimo (PRD §6).
 - **Dependências:** T01–T(N-1)
 - **Critério de done:** zero issues; testes verdes
 - **Validação local:**
@@ -92,7 +92,7 @@ Política: [BOUNDARY_PRD_PLAN.md](./BOUNDARY_PRD_PLAN.md). Exemplos: [PRD/GARANT
   cd <package> && flutter test
   ```
 - **Verificação manual (recomendada):**
-  1. <passo alinhado ao PRD §8>
+  1. <passo alinhado ao PRD §4>
   2. <…>
 
 ---
@@ -125,7 +125,7 @@ Ordem: **A → B → …**. Validator: boundary do diff por slice + §2 e §7.
 
 ## 8. Validação e checklist (validator)
 
-Referência **PRD §10** + invariantes **§2** deste plano.
+Referência **PRD §6** + invariantes **§2** deste plano.
 
 ```bash
 cd <package> && flutter analyze

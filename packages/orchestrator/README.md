@@ -145,11 +145,11 @@ Atlas é família única. Cliente (Claude Code, Cursor, Codex App) é apenas o h
 ## Validação automática
 
 Plugin detecta ambiguidades em:
-- **Objetivo (§3):** TBD, "a confirmar", vago
-- **Escopo (§4):** incompleto, "depende de"
-- **Decisões (§5):** vazio ou muito vago
-- **Experiência (§8):** gaps, "a definir"
-- **Contratos (§9):** "ainda não definido", "mock"
+- **Contexto e objetivo (§1):** TBD, "a confirmar", vago
+- **Escopo (§2):** incompleto, "depende de"
+- **Decisões (§3):** vazio ou muito vago
+- **Fluxos e cenários UX (§4):** gaps, "a definir"
+- **Contrato funcional e invariantes (§5):** "ainda não definido", "mock"
 
 Se encontra ambiguidades → dispara `atlas-prd-interview` automaticamente.
 
