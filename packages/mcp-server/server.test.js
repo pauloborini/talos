@@ -280,7 +280,7 @@ const CONFORMANT_PLAN = [
   '',
 ].join('\n');
 
-test('classifyArtifactContent: plano renomeado (sem prefixo PLAN_) classifica como plan via verdade forte (T03, PRD §10)', () => {
+test('classifyArtifactContent: plano renomeado (sem prefixo PLAN_) classifica como plan via verdade forte (T03, PRD §5)', () => {
   const r = classifyArtifactContent(CONFORMANT_PLAN, 'docs/algo_renomeado.md');
   assert.equal(r.artifact_type, 'plan');
   assert.equal(r.signal, 'template_conformance');
@@ -312,10 +312,10 @@ test('classifyArtifactContent: input sem marcadores → unknown (T03)', () => {
 
 const BANNER_RE = /^▸ atlas: /;
 
-test('BANNER_TEMPLATES: banco tem exatamente os 11 eventos do PRD §9 (T06)', () => {
+test('BANNER_TEMPLATES: banco tem exatamente os 11 eventos do PRD §4 (T06)', () => {
   // 12 entradas: os 11 eventos do banco + a variante preflight ok/fail conta como
   // dois templates (preflight_ok/preflight_fail) e prd como dois (prd_ok/prd_lacunas).
-  // O PRD §9 enumera 11 EVENTOS lógicos; o banco materializa cada variante de status.
+  // O PRD §4 enumera 11 EVENTOS lógicos; o banco materializa cada variante de status.
   const eventos = [
     'roteia', 'roteia_troca', 'preflight_ok', 'preflight_fail',
     'prd_lacunas', 'prd_ok', 'entrevista', 'plano', 'exec',

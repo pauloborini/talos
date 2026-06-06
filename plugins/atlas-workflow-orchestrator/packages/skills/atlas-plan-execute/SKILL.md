@@ -55,7 +55,7 @@ Esta skill aceita entrada pelo modo `execute` do orquestrador: um `PLAN_*.md` pr
 ### 1. Load the plan as an execution contract
 Read the `atlas-plan-handoff` artifact. Extract at minimum:
 * **Execution metadata**: Prefix, mode, and validator options.
-* **Executive translation and PRD links** (from Section 1 — include path to PRD; cite `PRD §5` D* IDs, do not paste the full D* table).
+* **Executive translation and PRD links** (from Section 1 — include path to PRD; cite `PRD §3` D* IDs, do not paste the full D* table).
 * **Execution invariants** (from Section 2).
 * **Current state at sprint opening** (from Section 4 — not Section 2).
 * **Pitfalls** (from Section 3).
@@ -66,9 +66,9 @@ Read the `atlas-plan-handoff` artifact. Extract at minimum:
 
 Treat headings as semantic. If the plan uses equivalent wording but carries the same contract, continue. If the plan is missing the substance, stop and report. 
 The old Gate of Readiness (§15) and Handoff Prompt (§16) are **no longer required** in the compact template.
-If optional Section 9 (open questions / real blockers — **not** PRD §13 References) has active blocking items, stop execution and request clarification.
+If optional Section 9 (open questions / real blockers — **not** PRD §7 Apêndice/Referências) has active blocking items, stop execution and request clarification.
 
-When Section 8 checklist is thin, read **PRD §8–10** from the PRD path in the plan header for business acceptance.
+When Section 8 checklist is thin, read **PRD §4–6** from the PRD path in the plan header for business acceptance.
 
 ### 2. Create a task-scoped execution contract
 Before editing code, write a short task contract for the current task only (objective, files, invariants, local checks, and repair budget).

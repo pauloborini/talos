@@ -76,12 +76,12 @@ function guaranteeLevelForMode(mode) {
   return MODE_GUARANTEE_LEVEL[mode] ?? null;
 }
 
-// Banco canônico de templates de banner de fase (PRD §9 / D7–D9, PLAN §6.2).
+// Banco canônico de templates de banner de fase (PRD §4 Fluxos / D*, PLAN §6.2).
 // Fonte única na camada determinística: o orquestrador apenas ECOA a string
 // pronta — nunca monta texto livre. Data-driven como HOST_ADAPTERS: tabela única
 // `event → template`, sem string de banner inline espalhada pelos gates.
 // Símbolo fixo `▸`, idioma pt-BR, exatamente uma linha por evento. Os 11 eventos
-// fechados do PRD §9. Slots no formato {nome} são preenchidos por renderBanner.
+// fechados do PRD §4. Slots no formato {nome} são preenchidos por renderBanner.
 const BANNER_TEMPLATES = {
   roteia: '▸ atlas: roteamento · input={tipo} → modo={modo}',
   roteia_troca: '▸ atlas: roteamento · pediu={x} mas input={y} → modo={z}',
@@ -1144,7 +1144,7 @@ function verifyTemplateConformance(args = {}) {
 //   (2) dica: cabeçalho/frontmatter canônico de plano → 'plan';
 //   (3) dica fraca: nome casando PLAN_*.md → 'plan';
 //   PRD/backlog por marcadores de template; senão 'unknown'.
-// Nome de arquivo nunca basta sozinho nem engana (PRD §10): só conta como dica
+// Nome de arquivo nunca basta sozinho nem engana (PRD §5 Contrato): só conta como dica
 // fraca e cede para a verdade forte. Reusa verifyPlanConformance para (1).
 function classifyArtifactContent(content, fileName = '') {
   const text = content ?? '';
