@@ -117,6 +117,8 @@ Then spawn the validator as an isolated subagent. The validator is registered as
 
 (These examples are illustrative; `atlas_capabilities` is the runtime source of truth — see `references/host-adapters.md`.) In every case the only input is `state_path`. Do not paste the contract, diff, or task list inline. The validator reads everything it needs from the state file and the plan it points to.
 
+**Validator dispatch is blocking — wait idle.** Finish every local gate (lint, analyze, tests, `git diff --check`, diff-stat) and write the state file **before** dispatching. Once the validator is dispatched, do nothing until its verdict returns: no diff hygiene checks, no extra reads, no opportunistic edits, no parallel work. Running anything while the validator reads the slice can mutate what it is validating and breaks determinism (same failure class as the orchestrator's G9). Dispatch → wait → consume verdict.
+
 ### 9. Consume validator output with a bounded loop
 Parse validator output with `JSON.parse(output)`. Decide only from `verdict`:
 
@@ -128,7 +130,9 @@ else if (result.verdict === 'fail') repair_or_block(result.findings, { max_cycle
 else blocked('validator_verdict_invalid');
 ```
 
-Never decide by substring matching prose. Repair P1/P2 findings inside the current slice boundary and re-run up to a maximum of 2 cycles.
+Never decide by substring matching prose.
+
+**Only `fail` reopens the loop.** On `fail` only: repair P1/P2 findings inside the current slice boundary and re-dispatch the validator up to a maximum of 2 cycles. `pass` and `pass_with_observations` are terminal: close the slice immediately. Do not "fix" observations and re-validate — observations and `boundary_violations` returned alongside a non-`fail` verdict are reported residuals, not triggers for another validator dispatch. Once the slice is closed, do not edit code, tests, or boundary files just to satisfy an observation; that reopens the slice and forces an avoidable re-validation. If an observation reveals real follow-up work, record it as residual in the final report (or a backlog item), not as an extra in-slice change.
 
 ### 10. Report final outcome
 At the end of execution, report completed tasks, validations run, validator outcome, and any residual gaps.
