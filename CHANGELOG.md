@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.5.5 - 2026-06-06
+
+Tipo: **breaking aditivo** (schema_version 2 → 3 em `atlas_capabilities`; novo campo `validator_dispatch`). Campos v2 permanecem; consumidores antigos seguem funcionando, mas o contrato G4 muda no Codex.
+
+Resumo: corrige duas violações de isolamento descobertas em smoke G9 multi-host real (cobre v0.5.3 + v0.5.4 + v0.5.5 acumulados):
+
+- **Codex — validador frio agora é `sibling`, não `nested`.** No Codex atual, sub-agents não recebem `spawn_agent` → executor sub-agent não consegue disparar neto (validator aninhado). Em vez de degradar (rodar validator no fio principal = violação de G4/G9), o pipeline troca a **topologia**: executor termina ao escrever `state_path`; orquestrador despacha `atlas-task-validator` como **sub-agent irmão** isolado e re-despacha executor só em `fail` (loop de reparo P1/P2 fora do executor original). Topology resolvida via novo `atlas_capabilities.validator_dispatch.{topology,nested_subagent_available,dispatcher,repair_loop}`. Hosts `nested` (Claude/Cursor/opencode/pi) seguem inalterados; `generic` = `host_defined`. Remove `agents.max_depth=2` do gerador Codex (promessa falsa neste runtime). G9 e G4 preservados semanticamente (validator sempre frio e isolado, com contexto próprio).
+- **pi — executores agora carregam o contrato.** pi não tem skill loader no contexto de sub-agente: os shims finos (`atlas-plan-execute`, `atlas-direct-execute`, `atlas-slice-review`) falhavam antes do G4 ao tentar carregar `SKILL.md`. `build/gen-host-agent.mjs` agora **embute** o contrato canônico de `packages/skills/<name>/SKILL.md` no agente pi gerado (mesmo padrão auto-contido que o validator já usa). Fonte única segue o `SKILL.md`; o agente pi é cópia gerada (regenerável, nunca editada à mão). Demais hosts (Claude com tool `Skill`, Codex, opencode com loader) mantêm shim fino.
+- **Install global do pi — agora copia `skills/`.** `installPiGlobal` no `atlas-init.mjs` esquecia de copiar `<repo>/hosts/pi/skills/` (omissão vs install de projeto e vs `installOpencodeGlobal`). Agora copia para `<agentDir>/skills` mantendo o mesmo offset relativo do server; `uninstallPiGlobal` remove. Bug independente da versão.
+- **Dispatch host-agnóstico (consolidado de v0.5.3).** Prosa do orquestrador deixa de mandar "Agent tool" (verbo Claude) e passa a ler `atlas_capabilities.subagent_dispatch.mechanism` para o verbo nativo do host (resolve `generalPurpose` improvisado em Cursor/Codex/generic). Autoria inline de PRD estampa `Status: Aprovado para implementação`. `atlas_classify_input` trata input livre (idea) com status `not_a_file`/`direct` em vez de BLOCK genérico.
+- **Documentação explícita.** README ganha seção "Topologia do validador frio (G4) por host" com tabela `nested`/`sibling`/`host_defined` e critério PASS do smoke G9 por topologia. Adapter `host-adapters.md` espelha as topologias por host.
+
+Migração: ler `validator_dispatch.topology` antes de dispatch — `nested` (filho do executor) ou `sibling` (irmão pelo orquestrador). Schema v2 segue válido (campos preservados); consumidor que ignorar `validator_dispatch` continua no comportamento `nested` legado, mas não funciona no Codex. Smoke G9: aceitar a topologia correta do host como PASS — "validator aninhado literal" no Codex é leitura errada do contrato (host suporta só filho/irmão, não neto). Validação: 57/57 testes · conformance 5×9 · `smoke-hosts` (sv=3) · `smoke-install` · `claude plugin validate ./ --strict` — tudo verde.
+
 ## v0.5.0 - 2026-06-05
 
 Tipo: **breaking** (contrato de conformância de PRD). Sem dual-format — corte limpo.
