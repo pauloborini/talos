@@ -1,6 +1,6 @@
 {
   "name": "atlas-workflow-orchestrator",
-  "version": "0.5.5",
+  "version": "0.6.0",
   "description": "Orquestra pipelines via sub-agents (PRD, entrevista, plan handoff, execução, validator, review). Bundle único: 7 skills atlas-* + orquestrador + 5 templates canônicos.",
   "author": {
     "name": "Paulo Borini"

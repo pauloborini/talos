@@ -2,7 +2,7 @@
 
 Plugin **Atlas Workflow Orchestrator** v0.5 — pipeline determinístico (PRD → plano → execução → validação) com skills `atlas-*`, templates e MCP. Um pacote, cinco hosts: **Claude Code**, **Cursor**, **Codex App**, **opencode** e **pi cli**.
 
-**Versão:** [`VERSION`](VERSION) (`0.5.5`) · **Repo:** https://github.com/pauloborini/atlas-workflow
+**Versão:** [`VERSION`](VERSION) (`0.6.0`) · **Repo:** https://github.com/pauloborini/atlas-workflow
 
 ## Hosts
 
@@ -178,7 +178,7 @@ No Codex, opencode e pi, invoque a skill do orquestrador com o mesmo padrão de 
 |------|-------------|-----------|
 | **`full`** | Sprint/backlog novo ou feature do zero | Gera PRD → valida/entrevista se preciso → **plano** (`.atlas/plans/`) → **executa** o plano → review opcional |
 | **`direct`** | PRD já existe e está maduro | Valida PRD → entrevista só se houver gap → **executa direto** (sem fase de plan handoff) → review opcional |
-| **`execute`** | Já tenho um `PLAN_*.md` pronto | Reverifica o plano (artefato + conformidade) → **executa o plano existente** → review opcional. **Não regera plano.** Alias: `/workflow plan <PLAN.md>` |
+| **`execute`** | Já tenho um `PLAN_*.md` pronto | Reverifica o plano (artefato + conformidade) → **executa o plano existente** → review opcional. **Não regera plano.** |
 | `interview-only` | Só fechar decisões / brainstorm | Entrevista; não implementa |
 
 **Dica:** `full` = “quero PRD + plano + código”. `direct` = “já tenho PRD aprovado, implementa”. `execute` = “já tenho o plano, só executa”.
@@ -229,12 +229,6 @@ Plano já escrito; executar direto sem regerar (modo `execute`):
 
 ```
 /workflow execute plan "./.atlas/plans/PLAN_S05_login.md"
-```
-
-Mesma coisa, forma curta (alias de `execute`):
-
-```
-/workflow plan "./.atlas/plans/PLAN_S05_login.md"
 ```
 
 Só alinhar decisões antes de planejar:

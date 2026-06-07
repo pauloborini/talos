@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.6.0 - 2026-06-07
+
+Tipo: **breaking de UX** (remove alias ambíguo).
+
+Resumo: remove o alias `/workflow plan <PLAN.md>` do modo `execute`.
+
+Destaques:
+
+- **Modo único para plano existente:** executar um `PLAN_*.md` pronto agora deve usar somente `/workflow execute plan <PLAN.md>`.
+- **`plan` deixa de ser aceito como modo/alias:** o termo é ambíguo com planejamento documental e gerava leitura errada na landing/UX ("plan" parecia planejar, mas executava mutação de código).
+- **Contrato preservado:** `plan` continua válido como `input-type`/`artifact_type` para arquivos `PLAN_*.md`; a remoção afeta apenas o modo/atalho `/workflow plan`.
+- **Guard de teste:** `WORKFLOW_CONFIG.modes` agora afirma explicitamente que `plan` não é modo válido.
+
+Migração: trocar `/workflow plan <PLAN.md>` por `/workflow execute plan <PLAN.md>`.
+
 ## v0.5.5 - 2026-06-06
 
 Tipo: **breaking aditivo** (schema_version 2 → 3 em `atlas_capabilities`; novo campo `validator_dispatch`). Campos v2 permanecem; consumidores antigos seguem funcionando, mas o contrato G4 muda no Codex.

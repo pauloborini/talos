@@ -247,6 +247,7 @@ test('WORKFLOW_CONFIG: modo execute presente; interview-only/interview_only mant
   assert.ok(WORKFLOW_CONFIG.modes.includes('direct'));
   assert.ok(WORKFLOW_CONFIG.modes.includes('interview-only'));
   assert.ok(WORKFLOW_CONFIG.modes.includes('interview_only'));
+  assert.ok(!WORKFLOW_CONFIG.modes.includes('plan'));
 });
 
 test('expectedNextPhase: execute → plan_execute sem regredir full/direct/interview (T02)', () => {

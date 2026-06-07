@@ -22,7 +22,7 @@ Três modos **canônicos de execução** — `full`, `direct`, `execute` (PRD §
 
 - **`full`** — pipeline completo: PRD → validação → entrevista (se necessário) → **plano (artefato obrigatório)** → executor → review (opcional)
 - **`direct`** — pipeline enxuto: PRD → validação → entrevista (se necessário) → executor → review (opcional). **Não produz plano de handoff** — a diferença real para `full` é exatamente essa.
-- **`execute`** — recebe um **`PLAN_*.md` pronto** e o executa **sem gerar plano** (PRD D1). Entrada = caminho de plano; reverifica o artefato + conformidade de template e despacha `plan_execute` direto. Não regera nem replaneja: ajustes de plano pedem `full`. A forma curta **`/workflow plan <PLAN.md>`** é alias de `execute` (PRD D1/§9). `atlas_assert_after_plan` (gate pós-plano do `full`) **não se aplica** em `execute` — o plano já é o input; o equivalente é a reverificação na entrada (PRD D13).
+- **`execute`** — recebe um **`PLAN_*.md` pronto** e o executa **sem gerar plano** (PRD D1). Entrada = caminho de plano; reverifica o artefato + conformidade de template e despacha `plan_execute` direto. Não regera nem replaneja: ajustes de plano pedem `full`. `atlas_assert_after_plan` (gate pós-plano do `full`) **não se aplica** em `execute` — o plano já é o input; o equivalente é a reverificação na entrada (PRD D13). **Não há alias `plan`**: usar `plan` como modo é ambíguo com planejamento documental e deve ser rejeitado como modo inválido.
 - **`interview-only`** — entrevista direta (ex: brainstorm, resolução de decisões). Entrevista **sem execução**: não usa `guarantee_level` no fluxo (não há execução de código a garantir). Permanece modo separado (PRD D2).
 
 ### Input Types
@@ -55,9 +55,6 @@ Três modos **canônicos de execução** — `full`, `direct`, `execute` (PRD §
 
 /workflow execute plan "/path/to/PLAN_S05_login.md"
 → Reverifica o plano (artifact + TC), executa direto via plan_execute + validador frio. Não gera plano.
-
-/workflow plan "/path/to/PLAN_S05_login.md"
-→ Alias de execute (PRD D1): mesmo fluxo.
 ```
 
 ---
@@ -384,7 +381,7 @@ Regra de ouro: **um sub-agent por fase de execução, em série, blocking, suste
 
 ## Changelog
 
-- **v0.4.1** — Três modos canônicos de execução: adiciona **`execute`** (executa um `PLAN_*.md` pronto sem gerar plano; alias `/workflow plan <PLAN.md>`; reverifica artefato + TC na entrada; `assert_after_plan` não se aplica, PRD D13). `interview-only` permanece modo separado e não usa `guarantee_level` no fluxo (entrevista sem execução). **Roteamento por tipo de input** (Fase 0): `atlas_classify_input` classifica `backlog|prd|plan|unknown` e o tipo prevalece sobre o modo pedido (PRD D3/D6) — `PLAN_*.md` em `direct`/`full` (mesmo renomeado) auto-roteia para `execute`; `execute` sobre backlog/PRD roteia para `full`/`direct`; `unknown` pede esclarecimento; trocas avisam por banner sem bloquear. **Protocolo de banner**: comunicação de progresso só por banner de linha única `▸ atlas: <fase> · <ação>`, string vinda do MCP (campo `banner` dos gates), orquestrador só ecoa; proibido narrar intenção entre gates. **Fronteira documental-no-agente-principal** (G3/G7/G9): autoria de PRD/entrevista/plano é livre no fio principal **antes** do plano validado; **depois** do plano validado (artifact + TC) o orquestrador fica de mãos atadas fortes; execução de código continua **sempre** em sub-agent `plan_execute` + validador frio (não afrouxa).
+- **v0.4.1** — Três modos canônicos de execução: adiciona **`execute`** (executa um `PLAN_*.md` pronto sem gerar plano; reverifica artefato + TC na entrada; `assert_after_plan` não se aplica, PRD D13). `interview-only` permanece modo separado e não usa `guarantee_level` no fluxo (entrevista sem execução). **Roteamento por tipo de input** (Fase 0): `atlas_classify_input` classifica `backlog|prd|plan|unknown` e o tipo prevalece sobre o modo pedido (PRD D3/D6) — `PLAN_*.md` em `direct`/`full` (mesmo renomeado) auto-roteia para `execute`; `execute` sobre backlog/PRD roteia para `full`/`direct`; `unknown` pede esclarecimento; trocas avisam por banner sem bloquear. **Protocolo de banner**: comunicação de progresso só por banner de linha única `▸ atlas: <fase> · <ação>`, string vinda do MCP (campo `banner` dos gates), orquestrador só ecoa; proibido narrar intenção entre gates. **Fronteira documental-no-agente-principal** (G3/G7/G9): autoria de PRD/entrevista/plano é livre no fio principal **antes** do plano validado; **depois** do plano validado (artifact + TC) o orquestrador fica de mãos atadas fortes; execução de código continua **sempre** em sub-agent `plan_execute` + validador frio (não afrouxa).
 - **v0.3.0** — Família única `atlas-*`; remove o lock MCP de família; `atlas_preflight` trava modo/versão/ids sem família; `atlas-task-validator` vira subagent com boundary `.atlas/state/<run_id>/<slice>.json`; `atlas-slice-review` só roda com `--review`.
 - **v0.2.0-dev** — S10: orquestrador usa MCP como fonte obrigatória de status em preflight, PRD, scan, conformidade, dispatch, pós-plano, execução, review e ledger final; falha MCP aborta sem fallback narrativo.
 - **v0.1.10** — Config/defaults empacotados no plugin; sub-agent deve carregar o `SKILL.md` real do id resolvido; G5 ganha exclusão estreita para falso positivo `depende de plano`; executor permanece o `plan_execute` exato da família, sem variante.

@@ -19,8 +19,8 @@ Argumentos recebidos: `$ARGUMENTS`
 /workflow <mode> <input-type> [input] [flags]
 ```
 
-- **mode**: `full` · `direct` · `interview-only`
-- **input-type**: `backlog-item` · `idea` · `prd` · `brainstorm`
+- **mode**: `full` · `direct` · `execute` · `interview-only`
+- **input-type**: `backlog-item` · `idea` · `prd` · `plan` · `brainstorm`
 - **flags**: `--interview` · `--review` · `--help`
 
 Exemplos:
@@ -28,6 +28,7 @@ Exemplos:
 ```
 /workflow full backlog-item "S05"
 /workflow direct prd "/path/PRD_S05.md" --review
+/workflow execute plan "/path/PLAN_S05.md"
 /workflow interview-only brainstorm "que tal dark mode?"
 ```
 
