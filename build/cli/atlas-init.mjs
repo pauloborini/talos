@@ -369,18 +369,27 @@ function installPiGlobal(opts) {
   log(`instalando Atlas (pi v${VERSION}) GLOBAL em ${agentDir}`);
   assertConfigParseable(mcpFile);
   ensurePiDeps(opts);
+  const skillsDir = path.join(agentDir, 'skills'); // irmão de atlas/ — mantém o mesmo
+  // offset relativo (../../../skills a partir do server) do install de projeto.
   const { entry } = absServerEntry('pi', atlasRoot);
   if (opts.dryRun) {
-    log(`  [dry-run] copiaria runtime → ${atlasRoot}, agente → ${path.join(agentsDir, 'atlas-task-validator.md')}`);
+    log(`  [dry-run] copiaria runtime → ${atlasRoot}, skills → ${skillsDir}, agente → ${path.join(agentsDir, 'atlas-task-validator.md')}`);
     log(`  [dry-run] mesclaria mcpServers.atlas-workflow em ${mcpFile} (args absoluto)`);
   } else {
     fs.mkdirSync(agentDir, { recursive: true });
     rmPath(atlasRoot, opts);
     rmAtlasAgentsQuiet(agentsDir, opts);
+    rmAtlasSkillsQuiet(skillsDir, opts);
     fs.cpSync(path.join(ROOT, 'hosts/pi/atlas'), atlasRoot, { recursive: true });
+    // skills/ canônicas (paridade com install de projeto e com opencode global): copia
+    // só os subdirs atlas-* para não tocar skills do usuário.
+    const skillsSrc = path.join(ROOT, 'hosts/pi/skills');
+    for (const name of fs.readdirSync(skillsSrc)) {
+      if (name.startsWith('atlas-')) fs.cpSync(path.join(skillsSrc, name), path.join(skillsDir, name), { recursive: true });
+    }
     copyAtlasAgents(path.join(ROOT, 'hosts/pi/.pi/agents'), agentsDir);
     mergeServerInto(mcpFile, 'mcpServers', 'atlas-workflow', entry);
-    log(`ok — pi GLOBAL instalado (runtime + agente em ${agentsDir} + mcp.json).`);
+    log(`ok — pi GLOBAL instalado (runtime + skills + agente em ${agentsDir} + mcp.json).`);
   }
   log('próximo: abra `pi` em qualquer pasta  → atlas_ping (host=pi) + atlas_capabilities.');
 }
@@ -470,6 +479,7 @@ function uninstallPiGlobal(opts) {
   log(`removendo Atlas (pi) GLOBAL de ${agentDir}`);
   rmIfExists(path.join(agentDir, 'atlas'), opts);
   rmIfExists(path.join(piGlobalAgentsDir(), 'atlas-task-validator.md'), opts);
+  rmAtlasSkills(path.join(agentDir, 'skills'), opts);
   dropMcpKey(path.join(agentDir, 'mcp.json'), 'mcpServers', 'atlas-workflow', opts);
   log('ok — artefatos globais do Atlas removidos. As deps pi-mcp-adapter/pi-subagents ficam (uso geral).');
 }
