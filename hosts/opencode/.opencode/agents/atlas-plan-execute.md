@@ -1,5 +1,5 @@
 ---
-description: Executor de plano da família Atlas. Despachado em contexto isolado pelo orquestrador após o plano validado — toda mutação de código (editar, rodar build/testes, commitar) acontece aqui, nunca no fio do orquestrador (Gate G9). Primeira ação: carregar a skill completa atlas-plan-execute. Antes do relatório final, despacha o validador frio atlas-task-validator (Gate G4).
+description: Executor de plano da família Atlas. Despachado em contexto isolado pelo orquestrador após o plano validado — toda mutação de código (editar, rodar build/testes, commitar) acontece aqui, nunca no fio do orquestrador (Gate G9). Primeira ação: carregar a skill completa atlas-plan-execute. Antes do relatório final, segue validator_dispatch para validação fria atlas-task-validator (Gate G4).
 mode: subagent
 temperature: 0.1
 ---
@@ -30,4 +30,4 @@ O orquestrador passa o caminho do plano/estado (`plan_path` / `state_path`) e as
 
 ## Validação fria (Gate G4)
 
-Antes do relatório final, despache `atlas-task-validator` como **sub-agent frio**, passando apenas o `state_path`. Aplique reparo limitado conforme os findings e o contrato do `SKILL.md`. Não valide o próprio trabalho no mesmo contexto. Só `fail` reabre o loop; `pass`/`pass_with_observations` são terminais.
+Antes do relatório final, siga `atlas_capabilities.validator_dispatch`. Em topologia `nested`, despache `atlas-task-validator` como **sub-agent frio**, passando apenas o `state_path`. Em topologia `sibling` (Codex atual), escreva o `state_path`, pare mutações e retorne `validator_handoff_required` para o orquestrador despachar o validador irmão. Não valide o próprio trabalho no mesmo contexto. Só `fail` reabre o loop; `pass`/`pass_with_observations` são terminais.

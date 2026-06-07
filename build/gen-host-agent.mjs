@@ -74,10 +74,6 @@ if (host === 'opencode') {
     `description = ${JSON.stringify(description)}`,
     `developer_instructions = ${JSON.stringify(body.trim())}`,
   ];
-  if (name === 'atlas-plan-execute' || name === 'atlas-direct-execute') {
-    // Root thread depth 0 -> executor depth 1 -> validator depth 2 (G4).
-    lines.push('agents.max_depth = 2');
-  }
   header = lines.join('\n');
   fs.mkdirSync(path.dirname(outFile), { recursive: true });
   fs.writeFileSync(outFile, `${header}\n`, 'utf8');
@@ -93,6 +89,35 @@ if (host === 'opencode') {
     `tools: ${tools}`,
     '---',
   ].join('\n');
+  // pi NÃO tem loader de skills nativo no contexto de subagente: o shim fino dos
+  // executores/review ("carregue o SKILL.md") não tem como carregar o contrato e o
+  // executor falha antes do Gate G4 (confirmado em smoke real). O validator já é
+  // auto-contido (corpo canônico = contrato). Para os 3 shims, EMBUTIR o SKILL.md
+  // canônico no corpo gerado (mesmo padrão auto-contido), mantendo fonte única:
+  // o contrato continua vivendo só em packages/skills/<name>/SKILL.md; aqui é cópia
+  // gerada (regenerável), nunca editada à mão.
+  const PI_EMBED_SHIMS = new Set(['atlas-plan-execute', 'atlas-direct-execute', 'atlas-slice-review']);
+  let piBody = body;
+  if (PI_EMBED_SHIMS.has(name)) {
+    const skillPath = path.join(ROOT, `packages/skills/${name}/SKILL.md`);
+    if (!fs.existsSync(skillPath)) {
+      console.error(`SKILL.md ausente para embed pi: packages/skills/${name}/SKILL.md`);
+      process.exit(3);
+    }
+    const skillRaw = fs.readFileSync(skillPath, 'utf8');
+    const skillBody = skillRaw.replace(/^---\n[\s\S]*?\n---\n/u, '').trim();
+    // Remove a instrução "use o mecanismo nativo de skills" (inexistente no pi) e
+    // aponta para o contrato embutido logo abaixo, evitando contradição no corpo.
+    piBody = body.replace(
+      /^- \*\*Outros hosts:\*\*.*$/mu,
+      '- **pi (sem loader de skills):** o contrato completo está embutido abaixo (seção "Contrato completo da skill"); siga-o integralmente como se fosse o `SKILL.md` carregado.',
+    );
+    piBody += `\n\n---\n\n## Contrato completo da skill (embutido — fonte única: \`packages/skills/${name}/SKILL.md\`, gerado por build/gen-host-agent.mjs; não editar à mão)\n\n${skillBody}\n`;
+  }
+  fs.mkdirSync(path.dirname(outFile), { recursive: true });
+  fs.writeFileSync(outFile, `${header}\n${piBody}`, 'utf8');
+  console.log(`gerado: ${path.relative(ROOT, outFile)} (host=${host})`);
+  process.exit(0);
 } else {
   console.error(`host desconhecido: ${host}`);
   process.exit(2);

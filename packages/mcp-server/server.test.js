@@ -60,11 +60,12 @@ test('detectHost: host inválido em arg/env é ignorado (cai em generic)', () =>
   assert.equal(detectHost({}, { ATLAS_HOST: 'inexistente' }).host, 'generic');
 });
 
-test('capabilities: schema_version atual e campos do contrato v2', () => {
+test('capabilities: schema_version atual e campos do contrato v3', () => {
   const cap = capabilities({ host: 'claude' });
   assert.equal(cap.schema_version, CAPABILITIES_SCHEMA_VERSION);
-  assert.equal(cap.schema_version, 2);
+  assert.equal(cap.schema_version, 3);
   assert.ok(cap.capabilities_flags);
+  assert.ok(cap.validator_dispatch);
   assert.ok(cap.hooks);
   assert.deepEqual(cap.prerequisites, PREREQUISITES);
   assert.deepEqual(cap.known_hosts, HOST_NAMES);
@@ -84,6 +85,8 @@ test('capabilities: perfil opencode (subagente @, mcp local, todo nativo todowri
   assert.equal(cap.capabilities_flags.todo_available, true);
   assert.equal(cap.todo_tool, 'todowrite');
   assert.match(cap.subagent_dispatch.registration, /\.opencode\/agents/);
+  assert.equal(cap.validator_dispatch.topology, 'nested');
+  assert.equal(cap.validator_dispatch.dispatcher, 'executor');
 });
 
 test('capabilities: perfil codex usa subagent nativo, não $skill in-context', () => {
@@ -93,6 +96,9 @@ test('capabilities: perfil codex usa subagent nativo, não $skill in-context', (
   assert.match(cap.subagent_dispatch.registration, /\.codex\/agents/);
   assert.doesNotMatch(cap.subagent_dispatch.example, /\$atlas/);
   assert.equal(cap.capabilities_flags.subagent_available, true);
+  assert.equal(cap.validator_dispatch.topology, 'sibling');
+  assert.equal(cap.validator_dispatch.nested_subagent_available, false);
+  assert.equal(cap.validator_dispatch.dispatcher, 'orchestrator');
 });
 
 test('checkPrerequisites: opencode qualificado passa', () => {

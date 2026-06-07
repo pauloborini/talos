@@ -59,8 +59,9 @@ for (const c of CASES) {
   const cap = r.cap ?? {};
   if (cap.host !== c.host) errors.push(`${c.name}: host '${cap.host}' != esperado '${c.host}'`);
   if (cap.detected_via !== c.via) errors.push(`${c.name}: detected_via '${cap.detected_via}' != '${c.via}'`);
-  if (cap.schema_version !== 2) errors.push(`${c.name}: schema_version '${cap.schema_version}' != 2`);
+  if (cap.schema_version !== 3) errors.push(`${c.name}: schema_version '${cap.schema_version}' != 3`);
   if (!cap.capabilities_flags) errors.push(`${c.name}: sem capabilities_flags`);
+  if (!cap.validator_dispatch) errors.push(`${c.name}: sem validator_dispatch`);
   if (!r.ping || r.ping.status !== 'alive') errors.push(`${c.name}: atlas_ping status '${r.ping?.status}' != 'alive'`);
   if (!errors.some((e) => e.startsWith(c.name))) console.log(`  ✓ ${c.name} → host=${cap.host} sv=${cap.schema_version} ping=ok`);
 }

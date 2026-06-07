@@ -17,3 +17,6 @@ node_modules/
 
 # Estado de runs do orquestrador
 .atlas/
+
+# Artefatos de smoke G9 (prova efêmera, seguro apagar)
+.atlas-smoke/

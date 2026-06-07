@@ -135,7 +135,10 @@ for (const skillId of DISPATCHED_EXEC_AGENTS) {
       errors.push(`shim drift: ${rel} (${host}) não cita o skill_id '${skillId}' (shim aponta pra skill errada?)`);
     }
     // Shim fino: não deve embutir corpo de skill com veredito JSON (isso é do validator).
-    if (/```json[\s\S]*"verdict"/.test(text)) {
+    // EXCEÇÃO pi: pi não tem loader de skills no subagente, então o gerador EMBUTE o
+    // SKILL.md canônico no agente pi por design (build/gen-host-agent.mjs). Fonte única
+    // continua sendo o SKILL.md; o agente pi é cópia gerada. Demais hosts seguem shim fino.
+    if (host !== 'pi' && /```json[\s\S]*"verdict"/.test(text)) {
       errors.push(`shim drift: ${rel} (${host}) embute bloco de veredito — executor/review é shim fino, não cópia do SKILL.md`);
     }
   }

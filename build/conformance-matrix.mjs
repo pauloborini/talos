@@ -108,7 +108,7 @@ for (const { host, agent } of HOSTS) {
   // boot + ping
   (r[2] && r[2].status === 'alive') ? ok() : fail('ping != alive');
   // capabilities host + schema
-  (r[3] && r[3].host === host && r[3].schema_version === 2) ? ok() : fail(`capabilities host '${r[3]?.host}' sv '${r[3]?.schema_version}'`);
+  (r[3] && r[3].host === host && r[3].schema_version === 3 && r[3].validator_dispatch) ? ok() : fail(`capabilities host '${r[3]?.host}' sv '${r[3]?.schema_version}'`);
   // preflight PASS: prereq ok + rota travada no G10 (assert forte, não só !=PREREQ)
   (r[4] && r[4].status === 'passed' && r[4].gate === 'G10') ? ok() : fail(`preflight PASS != G10/passed (${JSON.stringify(r[4])})`);
   // preflight PREREQ hard-fail simulado
