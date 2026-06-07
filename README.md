@@ -2,7 +2,7 @@
 
 Plugin **Atlas Workflow Orchestrator** v0.5 — pipeline determinístico (PRD → plano → execução → validação) com skills `atlas-*`, templates e MCP. Um pacote, cinco hosts: **Claude Code**, **Cursor**, **Codex App**, **opencode** e **pi cli**.
 
-**Versão:** [`VERSION`](VERSION) (`0.5.0`) · **Repo:** https://github.com/pauloborini/atlas-workflow
+**Versão:** [`VERSION`](VERSION) (`0.5.5`) · **Repo:** https://github.com/pauloborini/atlas-workflow
 
 ## Hosts
 
@@ -16,7 +16,7 @@ Plugin **Atlas Workflow Orchestrator** v0.5 — pipeline determinístico (PRD �
 
 **Cursor:** não há pacote nem marketplace próprios — o plugin instalado via `claude plugin` no escopo do usuário já vale para o Cursor (mesmo manifest `.claude-plugin/`). Limitação de packaging, não do pipeline.
 
-**Conceito:** todos são *hosts* (onde as skills rodam), não famílias de skills. O pipeline é o mesmo; diferenças nativas (subagente, todo, MCP) vivem em [`host-adapters.md`](packages/orchestrator/references/host-adapters.md) e na tool `atlas_capabilities` (contrato `schema_version: 2`). Host sem subagente+MCP é **rejeitado no preflight** (gate `PREREQ`, hard-fail) — determinismo > alcance.
+**Conceito:** todos são *hosts* (onde as skills rodam), não famílias de skills. O pipeline é o mesmo; diferenças nativas (subagente, todo, MCP, topologia do validador frio) vivem em [`host-adapters.md`](packages/orchestrator/references/host-adapters.md) e na tool `atlas_capabilities` (contrato `schema_version: 3` — `validator_dispatch.topology` distingue `nested`/`sibling`; ver [Topologia do validador frio (G4) por host](#topologia-do-validador-frio-g4-por-host)). Host sem subagente+MCP é **rejeitado no preflight** (gate `PREREQ`, hard-fail) — determinismo > alcance.
 
 **Pré-requisito:** Node.js no host. Após instalar, confirme o MCP com `atlas_ping`.
 
