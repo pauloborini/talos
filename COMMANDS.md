@@ -35,22 +35,29 @@ npx github:pauloborini/atlas-workflow init cursor
 # Codex  (global por natureza)
 npx github:pauloborini/atlas-workflow init codex
 
-# opencode  — por-projeto (cwd) ou global
-npx github:pauloborini/atlas-workflow init opencode
+# opencode  — global (recomendado) ou por-projeto
 npx github:pauloborini/atlas-workflow init opencode --global
+npx github:pauloborini/atlas-workflow init opencode
 
-# pi  — por-projeto (cwd) ou global; --yes auto-instala as 2 deps obrigatórias
-npx github:pauloborini/atlas-workflow init pi --yes
+# pi  — global (recomendado) ou por-projeto; --yes auto-instala as 2 deps obrigatórias
 npx github:pauloborini/atlas-workflow init pi --global --yes
+npx github:pauloborini/atlas-workflow init pi --yes
 ```
 
 ## Desinstalar
 
 ```bash
+# Claude Code / Cursor / Codex (sempre globais)
 npx github:pauloborini/atlas-workflow uninstall claudecode    # ou cursor
 npx github:pauloborini/atlas-workflow uninstall codex
-npx github:pauloborini/atlas-workflow uninstall opencode      # --global se instalou global
-npx github:pauloborini/atlas-workflow uninstall pi            # --global se instalou global
+
+# opencode / pi — desinstalação global (recomendado)
+npx github:pauloborini/atlas-workflow uninstall opencode --global
+npx github:pauloborini/atlas-workflow uninstall pi --global
+
+# opencode / pi — desinstalação por-projeto (caso não tenha usado --global)
+npx github:pauloborini/atlas-workflow uninstall opencode
+npx github:pauloborini/atlas-workflow uninstall pi
 ```
 
 Remove **só** os artefatos do Atlas. Preserva config, skills e outros MCP servers do usuário.
