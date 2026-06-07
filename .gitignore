@@ -20,4 +20,4 @@ node_modules/
 
 #Atlas
 .atlas-smoke/
-.atlas/
+.atlas
