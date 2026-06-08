@@ -174,16 +174,20 @@ Estado lateral: `blocked` (registrar bloqueador e dono).
 
 Núcleo do backlog. Uma linha por sprint. Atualizar status aqui é a principal forma de manter o backlog vivo. Detalhe completo sempre no PRD apontado.
 
-| ID | Sprint | Fase-fonte | Objetivo (1 linha) | PRD | Depende de | Estado | Gate |
-|---|---|---|---|---|---|---|---|
-| S01 | [nome] | F0 | [objetivo curto] | `PRD_S01_[slug].md` | — | backlog | — |
-| S02 | [nome] | F1 | [objetivo curto] | `PRD_S02_[slug].md` | S01 | backlog | — |
-| S03 | [nome] | F1 | [objetivo curto] | `PRD_S03_[slug].md` | S01 | backlog | — |
-| S04 | [nome] | F2 | [objetivo curto] | `PRD_S04_[slug].md` | S02,S03 | backlog | — |
-| … | … | … | … | … | … | … | … |
+| ID | Sprint | Fase-fonte | Objetivo (1 linha) | MoSCoW | Ganho | Esforço | Prioridade | PRD | Depende de | Estado | Gate |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| S01 | [nome] | F0 | [objetivo curto] | Must | Alto | Baixo | P0 | `PRD_S01_[slug].md` | — | backlog | — |
+| S02 | [nome] | F1 | [objetivo curto] | Must | Alto | Médio | P0 | `PRD_S02_[slug].md` | S01 | backlog | — |
+| S03 | [nome] | F1 | [objetivo curto] | Should | Médio | Baixo | P1 | `PRD_S03_[slug].md` | S01 | backlog | — |
+| S04 | [nome] | F2 | [objetivo curto] | Must | Alto | Alto | P1 | `PRD_S04_[slug].md` | S02,S03 | backlog | — |
+| … | … | … | … | … | … | … | … | … | … | … | … |
 
 Legenda:
 - **Fase-fonte**: fase do catálogo (seções 9-15) de onde as tasks-modelo desta sprint vêm.
+- **MoSCoW**: `Must`, `Should`, `Could` ou `Won't now` (ver seção 8.3).
+- **Ganho**: valor, desbloqueio ou redução de risco esperada (`alto`, `médio`, `baixo`).
+- **Esforço**: esforço relativo para concluir a sprint (`baixo`, `médio`, `alto`).
+- **Prioridade**: `P0`, `P1`, `P2` ou `P3`, definida pela matriz da seção 8.3.
 - **PRD**: arquivo do PRD da sprint. Enquanto não existir, manter `[pendente]`.
 - **Depende de**: IDs de sprints que precisam estar `done` antes desta entrar em `ready`.
 - **Gate**: `✅` quando a sprint passou o gate de sequência aplicável (ver seção 17); senão `—`.
@@ -219,6 +223,50 @@ Contagem simples de sprints fechadas por fase. Substitui a sensação de "fase g
 | F5 — QA/homologação | [n] | [x] | [y] | [z] |
 | F6 — Produção/rollout | [n] | [x] | [y] | [z] |
 | **Total** | **[N]** | **[X]** | **[Y]** | **[Z]** |
+
+### 8.3 Priorização — MoSCoW e esforço x ganho
+
+Esta regra define como escolher a próxima sprint sem depender de preferência subjetiva. A ordem final respeita sempre: dependências, Definition of Ready, MoSCoW, esforço x ganho e risco.
+
+#### Classificação MoSCoW
+
+| Classe | Significa | Regra de uso |
+|---|---|---|
+| Must | Obrigatório para o resultado final, segurança, contrato, compliance ou desbloqueio de outras sprints. | Sem isto, a entrega não pode ser considerada válida. |
+| Should | Importante para qualidade, adoção ou robustez, mas contornável temporariamente. | Pode ficar depois de um Must se não bloquear fluxo crítico. |
+| Could | Melhoria desejável, otimização ou refinamento. | Fazer apenas após Must/Should críticos ou quando esforço for baixo. |
+| Won't now | Fora do ciclo atual. | Registrar para evitar reabrir discussão sem nova decisão. |
+
+Regras:
+
+- Todo item `Must` precisa ter critério de aceite verificável no PRD da sprint.
+- Um `Must` sem dependência pronta permanece bloqueado; não pula a fila por urgência verbal.
+- `Should` pode virar `Must` somente com decisão registrada na seção 18.
+- `Could` não deve atrasar sprint `Must` ou `Should` já pronta.
+- `Won't now` não entra em sprint executável do ciclo atual.
+
+#### Matriz esforço x ganho
+
+| Ganho | Esforço | Prioridade sugerida | Decisão padrão |
+|---|---|---|---|
+| Alto | Baixo | P0 | Fazer primeiro, se DoR estiver verde. |
+| Alto | Médio | P0/P1 | Fazer cedo; quebrar se esconder risco. |
+| Alto | Alto | P1 | Planejar, reduzir escopo ou quebrar em sprints menores. |
+| Médio | Baixo | P1 | Fazer quando desbloquear progresso ou reduzir risco. |
+| Médio | Médio | P2 | Fazer após Must/P1 críticos. |
+| Médio | Alto | P2/P3 | Reavaliar escopo antes de iniciar. |
+| Baixo | Baixo | P2 | Fazer se for rápido e não competir com fluxo crítico. |
+| Baixo | Médio | P3 | Adiar salvo dependência clara. |
+| Baixo | Alto | P3 | Adiar, remover ou transformar em `Won't now`. |
+
+#### Regra para escolher a próxima sprint
+
+1. Filtrar sprints com dependências satisfeitas.
+2. Filtrar sprints com DoR verde ou com ação clara para ficar `ready`.
+3. Priorizar `Must` antes de `Should`, `Should` antes de `Could`.
+4. Dentro da mesma classe MoSCoW, priorizar maior ganho e menor esforço.
+5. Em empate, priorizar a sprint que reduz maior risco ou desbloqueia mais sprints futuras.
+6. Registrar a escolhida na seção 20 com motivo explícito.
 
 ---
 
@@ -747,6 +795,14 @@ Motivo:
 - [Motivo 2]
 - [Motivo 3]
 
+Justificativa de priorização:
+
+- MoSCoW: [Must/Should/Could/Won't now]
+- Ganho: [alto/médio/baixo]
+- Esforço: [baixo/médio/alto]
+- Prioridade: [P0/P1/P2/P3]
+- Dependências satisfeitas: [sim/não — quais faltam]
+
 Ações imediatas:
 
 - [ ] [Ação imediata 1]
@@ -768,19 +824,21 @@ Ações imediatas:
 
 5. Percorrer o catálogo (seções 9-15) e identificar fatias verticais entregáveis.
 6. Para cada fatia, criar uma linha na seção 7 com ID `S<NN>`, objetivo e fase-fonte.
-7. Quebrar qualquer sprint que passe do limite (seção 6.3) em `S<NN>a/b/c`.
-8. Preferir muitas sprints curtas a poucas longas — para app complexo, planejar 30+ em vez de 10.
-9. Mapear dependências entre sprints na seção 8.1.
+7. Classificar cada sprint com MoSCoW, ganho, esforço e prioridade usando a seção 8.3.
+8. Quebrar qualquer sprint que passe do limite (seção 6.3) em `S<NN>a/b/c`.
+9. Preferir muitas sprints curtas a poucas longas — para app complexo, planejar 30+ em vez de 10.
+10. Mapear dependências entre sprints na seção 8.1.
 
 ### Executar
 
-10. Antes de iniciar uma sprint: criar o `PRD_S<NN>_*.md` a partir do `PRD_TEMPLATE.md` (template intocável) e validar a DoR (seção 6.5).
-11. Trabalhar com o PRD da sprint como fonte de detalhe. O backlog não recebe detalhe de execução.
-12. Atualizar o estado da sprint na seção 7 a cada transição (`backlog → ready → doing → review → done`).
-13. Ao fechar: validar a DoD (seção 6.6), registrar evidência, atualizar progresso na seção 8.2.
+11. Antes de iniciar uma sprint: criar o `PRD_S<NN>_*.md` a partir do `PRD_TEMPLATE.md` (template intocável) e validar a DoR (seção 6.5).
+12. Escolher a próxima sprint pela regra da seção 8.3 e registrar a decisão na seção 20.
+13. Trabalhar com o PRD da sprint como fonte de detalhe. O backlog não recebe detalhe de execução.
+14. Atualizar o estado da sprint na seção 7 a cada transição (`backlog → ready → doing → review → done`).
+15. Ao fechar: validar a DoD (seção 6.6), registrar evidência, atualizar progresso na seção 8.2.
 
 ### Manter vivo
 
-14. Toda decisão que muda escopo, contrato ou sequência atualiza: fonte canônica → PRD afetado → este backlog.
-15. Registrar decisões na seção 18 e riscos na seção 19.
-16. Manter o registro de sprints (seção 7) e o progresso (seção 8.2) como fonte de estado do projeto.
+16. Toda decisão que muda escopo, contrato ou sequência atualiza: fonte canônica → PRD afetado → este backlog.
+17. Registrar decisões na seção 18 e riscos na seção 19.
+18. Manter o registro de sprints (seção 7) e o progresso (seção 8.2) como fonte de estado do projeto.

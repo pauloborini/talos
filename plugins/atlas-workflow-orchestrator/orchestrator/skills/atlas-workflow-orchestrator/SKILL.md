@@ -327,6 +327,7 @@ Plugin verifica `PERGUNTAS_EM_ABERTO.md` durante validação de PRD. Se houver Q
 
 | Skill | Entrada | Saída (artefato) |
 |-------|---------|------------------|
+| `atlas-backlog-generator` | ideia/prompt/conversa/briefing | `BACKLOG_MESTRE_*.md` |
 | `atlas-sprint-prd-generator` | sprint_id/indicação | `PRD_*.md`, decisions_found |
 | `atlas-prd-interview` | prd_path, ambiguities | `PRD_*.md` atualizado, decisions |
 | `atlas-plan-handoff` | prd_path | `PLAN_*.md` |

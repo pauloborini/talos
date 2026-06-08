@@ -82,6 +82,7 @@ Cada `#### TNN.` deve ter, quando aplicável:
 
 - [PRD_TEMPLATE.md](./PRD_TEMPLATE.md)
 - [PLAN_TEMPLATE.md](./PLAN_TEMPLATE.md)
+- [BACKLOG_MESTRE_TEMPLATE.md](./BACKLOG_MESTRE_TEMPLATE.md)
 
 ## Pipeline
 
@@ -89,4 +90,4 @@ Cada `#### TNN.` deve ter, quando aplicável:
 2. PLAN derivado do PRD + código (uma passagem de leitura no repo).
 3. Execução: `atlas-plan-execute` lê PLAN + PRD §4–6; `project-rules` via AGENTS.
 
-Geradores (`atlas-sprint-prd-generator`, `atlas-plan-handoff`) devem seguir estes templates, não o formato legado (14 seções, ou §X de arquitetura no PRD).
+Geradores (`atlas-backlog-generator`, `atlas-sprint-prd-generator`, `atlas-plan-handoff`) devem seguir estes templates, não o formato legado (14 seções, ou §X de arquitetura no PRD).

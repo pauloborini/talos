@@ -50,6 +50,7 @@ const REQUIRED_PLAN_SECTIONS = [
 const WORKFLOW_CONFIG = {
   path: 'builtin:atlas-workflow',
   skills: {
+    backlog_generator: 'atlas-backlog-generator',
     prd_generator: 'atlas-sprint-prd-generator',
     prd_interview: 'atlas-prd-interview',
     plan_handoff: 'atlas-plan-handoff',

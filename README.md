@@ -251,7 +251,9 @@ Só alinhar decisões antes de planejar:
 
 ### Skills da cadeia
 
-`atlas-sprint-prd-generator` → `atlas-prd-interview` → `atlas-plan-handoff` → `atlas-plan-execute` (full) ou `atlas-direct-execute` (direct) → `atlas-task-validator` → `atlas-slice-review` (opcional)
+Uso preparatório explícito: `atlas-backlog-generator` cria `BACKLOG_MESTRE_*.md` quando o usuário pedir essa skill diretamente.
+
+Cadeia automática: `atlas-sprint-prd-generator` → `atlas-prd-interview` → `atlas-plan-handoff` → `atlas-plan-execute` (full) ou `atlas-direct-execute` (direct) → `atlas-task-validator` → `atlas-slice-review` (opcional)
 
 No modo `full`, as etapas documentais (`PRD`, entrevista, `PLAN_*.md`) ficam no agente principal/orquestrador. O primeiro sub-agent obrigatório nasce só na fase de execução (`atlas-plan-execute`).
 

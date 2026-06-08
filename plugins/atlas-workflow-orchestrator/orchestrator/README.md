@@ -174,7 +174,7 @@ Você escolhe A/B/C → pipeline continua conforme.
 
 ### Antes de rodar workflow
 
-1. Análise de sprints futuras
+1. Opcional: criar backlog mestre explicitamente com `$atlas-backlog-generator`
 2. Preenchimento de `PERGUNTAS_EM_ABERTO.md` (fora do plugin)
 3. Resolver perguntas abertas fora do pipeline (se necessário)
 
@@ -196,6 +196,7 @@ Plugin automatiza tudo. Você valida output.
 
 | Skill | Função |
 |-------|--------|
+| `atlas-backlog-generator` | Cria backlog mestre a partir de ideia, prompt, conversa ou briefing; uso preparatório explícito, fora da cadeia automática |
 | `atlas-sprint-prd-generator` | Gera PRD a partir de sprint/indicação |
 | `atlas-prd-interview` | Entrevista de PRD (resolve ambiguidades) |
 | `atlas-plan-handoff` | Cria plano executável |
