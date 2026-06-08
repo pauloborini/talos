@@ -10,7 +10,7 @@ Destaques:
 
 - **Fronteira do orquestrador clarificada:** `prd_generator`, `atlas-prd-interview` e `atlas-plan-handoff` passam a ser documentados explicitamente como fases conduzidas no fio principal/orquestrador. O primeiro sub-agent obrigatório do modo `full` nasce só em `atlas-plan-execute`.
 - **Topologia nested esclarecida sem ambiguidade:** em hosts `nested`, o feedback do `atlas-task-validator` é consumido dentro do próprio executor; findings intermediários não sobem ao avô/orquestrador. Em Codex (`sibling`), o loop continua `executor → validator irmão → novo executor` apenas em `fail`.
-- **Preflight/dispatchability corrigidos:** a verificação de despachabilidade agora distingue skills **documentais** (basta invocabilidade no fio principal) de skills de **execução/validação/review** (precisam ser despacháveis como sub-agent no host).
+- **Checklist de preflight do orquestrador ajustado:** o passo de verificação de despachabilidade no SKILL do orquestrador (G10) agora distingue skills **documentais** (basta invocabilidade no fio principal) de skills de **execução/validação/review** (precisam ser despacháveis como sub-agent no host). Sem mudança de código no tool `atlas_preflight` — apenas bump de versão no `mcp-server`.
 - **Docs cross-host sincronizadas:** README principal, skill do orquestrador, executores, READMEs auxiliares e cópias espelhadas (`packages/`, `plugins/`, `hosts/pi/`) foram alinhadas para o mesmo contrato operacional.
 - **Versionamento/documentação atualizados:** bump para `0.6.1`, smoke examples e metadados de release atualizados.
 
