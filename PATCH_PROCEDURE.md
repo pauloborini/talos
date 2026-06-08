@@ -85,7 +85,7 @@ Ao bumpar `VERSION`, atualizar `version` em `.claude-plugin/plugin.json` e regen
 Se qualquer arquivo em `packages/`, `plugin-manifests/`, `build/`, `hooks/`, docs de instalacao/release ou contrato empacotado mudar, regenerar:
 
 ```bash
-rtk build/build-plugins.sh
+bash build/build-plugins.sh
 ```
 
 Incluir no commit o diretorio `plugins/atlas-workflow-orchestrator/` (marketplace Codex from-source no GitHub).
@@ -94,13 +94,13 @@ Incluir tambem `hosts/opencode/` e `hosts/pi/` quando o build sincronizar catalo
 Depois validar:
 
 ```bash
-(cd dist && rtk shasum -a 256 -c SHA256SUMS)
-rtk unzip -t dist/atlas-workflow-claude.plugin
-rtk unzip -t dist/atlas-workflow-codex.plugin
-rtk unzip -t dist/atlas-workflow-opencode.plugin
-rtk unzip -t dist/atlas-workflow-pi.plugin
-rtk unzip -p dist/atlas-workflow-claude.plugin .claude-plugin/plugin.json
-rtk unzip -p dist/atlas-workflow-codex.plugin .codex-plugin/plugin.json
+(cd dist && shasum -a 256 -c SHA256SUMS)
+unzip -t dist/atlas-workflow-claude.plugin
+unzip -t dist/atlas-workflow-codex.plugin
+unzip -t dist/atlas-workflow-opencode.plugin
+unzip -t dist/atlas-workflow-pi.plugin
+unzip -p dist/atlas-workflow-claude.plugin .claude-plugin/plugin.json
+unzip -p dist/atlas-workflow-codex.plugin .codex-plugin/plugin.json
 ```
 
 Release operacional:
@@ -116,21 +116,31 @@ Release operacional:
 Rodar no minimo:
 
 ```bash
-rtk build/build-plugins.sh
-(cd dist && rtk shasum -a 256 -c SHA256SUMS)
-rtk unzip -t dist/atlas-workflow-claude.plugin
-rtk unzip -t dist/atlas-workflow-codex.plugin
-rtk unzip -t dist/atlas-workflow-opencode.plugin
-rtk unzip -t dist/atlas-workflow-pi.plugin
-rtk unzip -p dist/atlas-workflow-claude.plugin .claude-plugin/plugin.json
-rtk unzip -p dist/atlas-workflow-codex.plugin .codex-plugin/plugin.json
+bash build/build-plugins.sh
+node build/check-consistency.mjs
+node --test packages/mcp-server/server.test.js
+(cd dist && shasum -a 256 -c SHA256SUMS)
+unzip -t dist/atlas-workflow-claude.plugin
+unzip -t dist/atlas-workflow-codex.plugin
+unzip -t dist/atlas-workflow-opencode.plugin
+unzip -t dist/atlas-workflow-pi.plugin
+unzip -p dist/atlas-workflow-claude.plugin .claude-plugin/plugin.json
+unzip -p dist/atlas-workflow-codex.plugin .codex-plugin/plugin.json
 ```
+
+Se o CLI local oferecer validação de plugin, rodar também:
+
+```bash
+codex plugin validate ./ --strict
+```
+
+Se o subcomando `validate` não existir no CLI local, registrar a indisponibilidade no changelog/relatório do patch e manter as validações acima como fallback obrigatório.
 
 Rodar buscas direcionadas conforme o patch. Exemplos:
 
 ```bash
-rtk rg -n "vX.Y.Z|version|0\\.2\\." .
-rtk rg -n "standalone|marketplace|Cursor|checksum|SHA256SUMS" README.md PATCH_PROCEDURE.md CHANGELOG.md
+rg -n "vX.Y.Z|version|0\\.2\\." .
+rg -n "standalone|marketplace|Cursor|checksum|SHA256SUMS" README.md PATCH_PROCEDURE.md CHANGELOG.md
 ```
 
 ## Template de entrada no changelog

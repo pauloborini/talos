@@ -1,6 +1,6 @@
 {
   "name": "atlas-workflow-orchestrator",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "Orquestra pipelines de desenvolvimento de features no Atlas (PRD, validação, entrevista, plano, execução, review) e oferece geração explícita de backlog mestre. Bundle único: 8 skills atlas-* + orquestrador + 5 templates canônicos + validator subagente. Pipeline orientado a artefato com gates G1–G11.",
   "author": {
     "name": "Paulo Borini"

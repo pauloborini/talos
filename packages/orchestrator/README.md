@@ -220,9 +220,16 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `atlas-*` para o
 
 ---
 
-**Plugin version:** 0.6.1
+**Plugin version:** 0.6.2
 **Author:** Paulo Borini
 **Last updated:** 2026-06-08
+
+### Novidades v0.6.2 — backlog mestre explícito
+
+- `atlas-backlog-generator` cria backlog mestre a partir de ideia, prompt ou conversa somente quando acionado explicitamente.
+- O backlog padrão vai para `.atlas/backlog/BACKLOG_MESTRE_<slug>.md` quando o usuário não informa path.
+- `BACKLOG_MESTRE_TEMPLATE.md` inclui MoSCoW, esforço x ganho, dependências, riscos e próxima sprint executável.
+- A cadeia automática do workflow permanece começando no PRD; backlog é preparação documental opcional.
 
 ### Novidades v0.6.1 — fronteira documental no orquestrador
 

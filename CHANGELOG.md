@@ -1,5 +1,42 @@
 # Changelog
 
+## v0.6.2 - 2026-06-08
+
+Tipo: **runtime + packaging + docs** (sem breaking).
+
+Resumo: adiciona a skill explícita `atlas-backlog-generator` para criar backlog mestre Atlas a partir de ideia, prompt ou conversa, usando o template canônico com MoSCoW e esforço x ganho.
+
+Mudancas:
+- **Nova skill documental explícita:** `atlas-backlog-generator` cria ou atualiza `BACKLOG_MESTRE_*.md` somente quando o usuário aciona a skill explicitamente; não há `allow_implicit_invocation` e não entra na cadeia automática do workflow.
+- **Destino padrão Atlas:** quando o usuário não especifica path, o backlog é salvo em `.atlas/backlog/BACKLOG_MESTRE_<slug>.md` no projeto consumidor.
+- **Template de backlog priorizável:** `BACKLOG_MESTRE_TEMPLATE.md` passa a incluir MoSCoW, ganho, esforço, prioridade, regra de escolha da próxima sprint e justificativa de priorização.
+- **Mapa oficial e distribuição:** `atlas-backlog-generator` entra no mapa de skills do MCP e é empacotada para Codex, Claude/Cursor, opencode e pi via build.
+- **Docs alinhadas:** README, boundary de templates, manifestos e documentação do orquestrador deixam claro que backlog é uso preparatório explícito, fora da cadeia automática.
+
+Impacto:
+- Usuários podem criar backlog mestre pronto para alimentar `atlas-sprint-prd-generator`, com fases, sprints, dependências, riscos, gates e priorização objetiva.
+- O pipeline automático existente permanece igual: PRD → entrevista → plano → execução → validação fria → review opcional.
+- Hosts continuam instaláveis por marketplace/from-source; o patch exige rebuild dos bundles por alterar `packages/`, manifests e catálogos host.
+
+Arquivos/artefatos:
+- `packages/skills/atlas-backlog-generator/**`
+- `packages/templates/BACKLOG_MESTRE_TEMPLATE.md`
+- `packages/mcp-server/server.js`
+- `packages/templates/BOUNDARY_PRD_PLAN.md`
+- `packages/orchestrator/**`, `README.md`, `plugin-manifests/**`
+- `plugins/atlas-workflow-orchestrator/**`, `hosts/opencode/**`, `hosts/pi/**`
+- `dist/atlas-workflow-{claude,codex,opencode,pi}.plugin`, `dist/SHA256SUMS`
+
+Validacao:
+- `build/build-plugins.sh`
+- `node build/check-consistency.mjs`
+- `node --test packages/mcp-server/server.test.js`
+- `(cd dist && shasum -a 256 -c SHA256SUMS)`
+- `unzip -t dist/atlas-workflow-{claude,codex,opencode,pi}.plugin`
+- `unzip -p dist/atlas-workflow-claude.plugin .claude-plugin/plugin.json`
+- `unzip -p dist/atlas-workflow-codex.plugin .codex-plugin/plugin.json`
+- Observação: `Codex plugin validate ./ --strict` não está disponível neste CLI local (`codex plugin` não possui subcomando `validate`).
+
 ## v0.6.1 - 2026-06-08
 
 Tipo: **patch** (sem breaking).

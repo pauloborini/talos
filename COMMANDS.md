@@ -21,7 +21,7 @@ npx github:pauloborini/atlas-workflow init opencode --global
 npx github:pauloborini/atlas-workflow init pi --global --yes
 ```
 
-Smoke pós-update: `atlas_ping` → `version: 0.6.1`; `atlas_capabilities` → `schema_version: 3`.
+Smoke pós-update: `atlas_ping` → `version: 0.6.2`; `atlas_capabilities` → `schema_version: 3`.
 
 ---
 
