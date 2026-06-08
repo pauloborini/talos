@@ -30,4 +30,4 @@ O orquestrador passa o caminho do plano/estado (`plan_path` / `state_path`) e as
 
 ## Validação fria (Gate G4)
 
-Antes do relatório final, siga `atlas_capabilities.validator_dispatch`. Em topologia `nested`, despache `atlas-task-validator` como **sub-agent frio**, passando apenas o `state_path`. Em topologia `sibling` (Codex atual), escreva o `state_path`, pare mutações e retorne `validator_handoff_required` para o orquestrador despachar o validador irmão. Não valide o próprio trabalho no mesmo contexto. Só `fail` reabre o loop; `pass`/`pass_with_observations` são terminais.
+Antes do relatório final, siga `atlas_capabilities.validator_dispatch`. Em topologia `nested`, despache `atlas-task-validator` como **sub-agent frio**, passando apenas o `state_path`, consuma o feedback dentro deste mesmo loop e só então reporte o estado terminal ao orquestrador. Em topologia `sibling` (Codex atual), escreva o `state_path`, pare mutações e retorne `validator_handoff_required` para o orquestrador despachar o validador irmão. Não valide o próprio trabalho no mesmo contexto. Só `fail` reabre o loop; `pass`/`pass_with_observations` são terminais.

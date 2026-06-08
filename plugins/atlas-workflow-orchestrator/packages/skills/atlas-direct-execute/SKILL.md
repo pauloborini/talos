@@ -148,7 +148,7 @@ For direct execution, the state file is still the only validator input. Use the 
 
 Then validate with the isolated validator subagent using only the state path. First read `atlas_capabilities.validator_dispatch`:
 
-- If `validator_dispatch.topology == "nested"`, this executor invokes `atlas-task-validator` with the dispatch verb returned by `atlas_capabilities.subagent_dispatch` for the current host.
+- If `validator_dispatch.topology == "nested"`, this executor invokes `atlas-task-validator` with the dispatch verb returned by `atlas_capabilities.subagent_dispatch` for the current host, consumes its verdict/findings inside this same execution loop, and only reports the terminal slice status back to the orchestrator.
 - If `validator_dispatch.topology == "sibling"` (Codex current host), this executor **must not** attempt nested dispatch. It writes the state file, stops mutation, and returns `validator_handoff_required` with the `state_path`; the orchestrator dispatches `atlas-task-validator` as the next isolated sibling phase and re-dispatches this executor only if the validator returns `fail`.
 
 Nested dispatch example:
@@ -169,7 +169,7 @@ The validator must not patch files. Consume its verdict:
 
 **Only `fail` reopens the loop.** `pass` and `pass_with_observations` are terminal: close the slice immediately. Do not "fix" observations and re-validate — observations and `boundary_violations` returned alongside a non-`fail` verdict are reported residuals, not triggers for another validator dispatch. Once the slice is closed, do not edit code, tests, or boundary files just to satisfy an observation; that reopens the slice and forces an avoidable re-validation. Real follow-up from an observation goes to the final report or backlog, not into an extra in-slice change.
 
-In sibling topology, the orchestrator owns the validator loop: validator `fail` produces a repair packet and re-dispatches this executor with the findings; this executor repairs only current-slice P1/P2 items, rewrites state evidence, then returns another `validator_handoff_required`.
+In sibling topology, the orchestrator owns the validator loop: validator `fail` produces a repair packet and re-dispatches this executor with the findings; this executor repairs only current-slice P1/P2 items, rewrites state evidence, then returns another `validator_handoff_required`. In nested topology, that same repair loop stays entirely inside this executor after the child validator returns; findings do not bubble to the orchestrator/grandparent as an intermediate step.
 
 Stop validator repair only when the same finding repeats without new signal, repair would violate scope, or a user/product decision is needed. Do not final-report a repaired validator finding as "ready" without either a subsequent `pass` or an explicit residual-risk note.
 

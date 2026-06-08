@@ -28,4 +28,4 @@ O orquestrador passa o PRD/spec/path escopado e as flags da fase. Use `atlas_run
 
 ## Validação fria (Gate G4)
 
-Antes do relatório final, siga `atlas_capabilities.validator_dispatch`. Em topologia `nested`, despache `atlas-task-validator` como **sub-agent frio**, passando apenas o `state_path`. Em topologia `sibling` (Codex atual), escreva o `state_path`, pare mutações e retorne `validator_handoff_required` para o orquestrador despachar o validador irmão. Não valide o próprio trabalho no mesmo contexto. Só `fail` reabre o loop.
+Antes do relatório final, siga `atlas_capabilities.validator_dispatch`. Em topologia `nested`, despache `atlas-task-validator` como **sub-agent frio**, passando apenas o `state_path`, consuma o feedback dentro deste mesmo loop e só então reporte o estado terminal ao orquestrador. Em topologia `sibling` (Codex atual), escreva o `state_path`, pare mutações e retorne `validator_handoff_required` para o orquestrador despachar o validador irmão. Não valide o próprio trabalho no mesmo contexto. Só `fail` reabre o loop.

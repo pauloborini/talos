@@ -41,6 +41,8 @@ Se um plano legado for lido, o próximo artefato gerado deve ser salvo em `.atla
 atlas-plan-handoff → atlas-plan-execute → atlas-task-validator → atlas-slice-review (opcional, via `--review`)
 ```
 
+No workflow `full`, `atlas-plan-handoff` é autoria documental do agente principal/orquestrador. O primeiro sub-agent da cadeia só nasce em `atlas-plan-execute`.
+
 ---
 
 ## Fluxo obrigatório

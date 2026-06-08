@@ -151,7 +151,7 @@ Plugin detecta ambiguidades em:
 - **Fluxos e cenários UX (§4):** gaps, "a definir"
 - **Contrato funcional e invariantes (§5):** "ainda não definido", "mock"
 
-Se encontra ambiguidades → dispara `atlas-prd-interview` automaticamente.
+Se encontra ambiguidades → o orquestrador conduz `atlas-prd-interview` automaticamente no fio principal.
 
 ## Lógica de decisão
 
@@ -219,13 +219,13 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `atlas-*` para o
 
 ---
 
-**Plugin version:** 0.3.0
+**Plugin version:** 0.6.1
 **Author:** Paulo Borini
-**Last updated:** 2026-06-01
+**Last updated:** 2026-06-08
 
-### Novidades v0.3.0 — família única + validator subagent
+### Novidades v0.6.1 — fronteira documental no orquestrador
 
-- Skills finais: `atlas-sprint-prd-generator`, `atlas-prd-interview`, `atlas-plan-handoff`, `atlas-plan-execute`, `atlas-direct-execute`, `atlas-task-validator`, `atlas-slice-review`.
-- `atlas-task-validator` passa a ser subagent determinístico com boundary por `.atlas/state/<run_id>/<slice>.json`.
-- `atlas_preflight` não recebe parâmetro de família; `atlas_lock_dispatch` controla apenas fases.
-- `atlas-slice-review` só dispara com `--review`.
+- Fases documentais (`PRD`, entrevista, `PLAN_*.md`) são conduzidas no orquestrador; o primeiro sub-agent obrigatório do `full` nasce em `atlas-plan-execute`.
+- Os únicos sub-agents do pipeline são `atlas-plan-execute`/`atlas-direct-execute`, `atlas-task-validator` e `atlas-slice-review`.
+- Em hosts `nested`, o executor consome o feedback do validator dentro do próprio loop; em Codex (`sibling`), o orquestrador coordena o validator irmão e só reabre execução em `fail`.
+- `atlas_preflight`/dispatchability distinguem skills documentais de skills executoras, evitando exigir sub-agent para entrevista/plano.
