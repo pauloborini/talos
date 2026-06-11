@@ -74,13 +74,19 @@ test('capabilities: schema_version atual e campos do contrato v5', () => {
   assert.deepEqual(cap.known_hosts, HOST_NAMES);
 });
 
-test('capabilities: validator_dispatch de todos os hosts colapsa para sibling (dispatcher orchestrator, sem topology)', () => {
+test('capabilities: validator_dispatch de todos os hosts expõe exatamente { dispatcher, join } (sibling-only, sem campos de topologia legada)', () => {
   for (const host of HOST_NAMES) {
     const cap = capabilities({ host });
+    // Guard de forma: o contrato sibling-only tem APENAS estas duas chaves.
+    // Provar o conjunto exato garante que quaisquer campos de topologia legada
+    // (dispatcher por executor, flags de subagente-do-executor, loop de reparo
+    // embutido) sumiram do contrato sem precisar nomeá-los.
+    assert.deepEqual(
+      Object.keys(cap.validator_dispatch).sort(),
+      ['dispatcher', 'join'],
+      `host ${host}: validator_dispatch deve ter exatamente { dispatcher, join }`,
+    );
     assert.equal(cap.validator_dispatch.dispatcher, 'orchestrator', `host ${host}`);
-    assert.equal(cap.validator_dispatch.topology, undefined, `host ${host} não deve ter topology`);
-    assert.equal(cap.validator_dispatch.nested_subagent_available, undefined, `host ${host} não deve ter nested_subagent_available`);
-    assert.equal(cap.validator_dispatch.repair_loop, undefined, `host ${host} não deve ter repair_loop`);
   }
 });
 
@@ -99,7 +105,7 @@ test('capabilities: perfil opencode (subagente @, mcp local, todo nativo todowri
   assert.equal(cap.todo_tool, 'todowrite');
   assert.match(cap.subagent_dispatch.registration, /\.opencode\/agents/);
   assert.equal(cap.validator_dispatch.dispatcher, 'orchestrator');
-  assert.equal(cap.validator_dispatch.topology, undefined);
+  assert.deepEqual(Object.keys(cap.validator_dispatch).sort(), ['dispatcher', 'join']);
 });
 
 test('capabilities: perfil codex usa subagent nativo, não $skill in-context', () => {
@@ -110,8 +116,7 @@ test('capabilities: perfil codex usa subagent nativo, não $skill in-context', (
   assert.doesNotMatch(cap.subagent_dispatch.example, /\$atlas/);
   assert.equal(cap.capabilities_flags.subagent_available, true);
   assert.equal(cap.validator_dispatch.dispatcher, 'orchestrator');
-  assert.equal(cap.validator_dispatch.topology, undefined);
-  assert.equal(cap.validator_dispatch.nested_subagent_available, undefined);
+  assert.deepEqual(Object.keys(cap.validator_dispatch).sort(), ['dispatcher', 'join']);
 });
 
 test('checkPrerequisites: opencode qualificado passa', () => {
@@ -1517,9 +1522,9 @@ test('P3(c): estado legado pré-S04 sem dispatch_token — comportamento determi
   assert.equal(withoutToken.validator_status, 'passed');
 });
 
-// S05 — reforço: host claude (antes nested) percorre ciclo completo idêntico ao codex
-// após remoção dos guards de topologia. Prova que start→fail→repair→start→pass
-// funciona host-agnóstico sem qualquer gate de host residual.
+// S05 — reforço: host claude (antes era executor-dispatched) percorre ciclo completo
+// idêntico ao codex após remoção dos guards de topologia. Prova que
+// start→fail→repair→start→pass funciona host-agnóstico sem qualquer gate de host residual.
 test('S05: host claude percorre ciclo completo start→fail→repair→start→pass idêntico ao codex', () => {
   const root = tmpRoot();
   preflight({

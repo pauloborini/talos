@@ -283,12 +283,12 @@ const PREREQUISITE_FLAGS = [...PREREQUISITES.essential, ...PREREQUISITES.non_ess
 // Remoção/renomeação de campo ou mudança de semântica exige bump e nota de migração.
 // v1 → v2: adiciona capabilities_flags, hooks, prerequisites, known_hosts,
 //   required_deps, prereq_policy (aditivo).
-// v2 → v3: adiciona validator_dispatch para distinguir nested vs sibling G4.
+// v2 → v3: adiciona validator_dispatch (quem despacha o validador frio G4 e como).
 // v3 → v4 (DEC-SIB-001/003): sibling é a única topologia. validator_dispatch
-//   colapsa para `{ dispatcher: 'orchestrator' }` em todos os hosts; os campos
-//   topology, nested_subagent_available e repair_loop foram REMOVIDOS do contrato
-//   (mudança de semântica → bump consciente). Consumidores que liam validator_dispatch.topology
-//   devem assumir sibling incondicionalmente. Estado antigo em disco com esses
+//   colapsa para `{ dispatcher: 'orchestrator' }` em todos os hosts; os campos de
+//   topologia legada (dispatcher por executor) foram REMOVIDOS do contrato
+//   (mudança de semântica → bump consciente). Consumidores que liam o antigo
+//   validator_dispatch.topology devem assumir sibling incondicionalmente. Estado antigo em disco com esses
 //   campos é rollback-safe: campos extras são ignorados pelo spread/normalize.
 // v4 → v5 (DEC-SIB-003, S06, SPEC_JOIN_CAPABILITY_S03 §2.2): adiciona
 //   validator_dispatch.join { sync, confidence, mechanism } por host. Aditivo

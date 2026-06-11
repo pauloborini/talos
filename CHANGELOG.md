@@ -1,5 +1,35 @@
 # Changelog
 
+## Unreleased - migração sibling-only (base v0.6.2)
+
+Tipo: **runtime + skills + docs** (breaking de contrato `atlas_capabilities`; sem mudança de comportamento de execução).
+
+Resumo: purga total do conceito `nested` do produto. A topologia do validador frio (Gate G4) passa a ser **sibling em todos os hosts**: o executor escreve `state_path` e encerra, e o orquestrador despacha `atlas-task-validator` como sub-agent irmão isolado. Consolida as decisões DEC-SIB-001/002/003/004.
+
+Mudancas:
+- **`nested` removido por completo** de runtime, skills e docs vivas (README, SKILL.md do orquestrador, comentários do MCP). `CHANGELOG.md`, `reports/*` e `archive/*` preservam o termo como histórico.
+- **Sibling é a única topologia** (DEC-SIB-001): o executor nunca despacha o validador; o orquestrador é sempre o `dispatcher`. Acaba a variante em que o executor disparava um validador aninhado.
+- **Gate JOIN no preflight** (DEC-SIB-003): host sem join síncrono confiável do validador é **rejeitado no preflight (hard-fail)**, não degradado. `validator_dispatch.join { sync, confidence, mechanism }` declarado por host.
+- **`dispatch_token` monotônico** e **máximo de 2 validators inviolável por contrato** (DEC-SIB-002): o 3º validator é proibido; 2º `fail` termina a slice em `blocked`.
+- **Recovery de orquestrador re-spun** via `validator_recovery`: retornos de validator divergentes do slot ativo voltam `stale_discarded: true` e são descartados (idempotente, slot não reabre).
+- **`CAPABILITIES_SCHEMA_VERSION`** evoluiu de v3 → v5: v4 colapsa `validator_dispatch` para `{ dispatcher: 'orchestrator' }` (remove os campos de topologia legada); v5 adiciona `validator_dispatch.join` por host (gate JOIN).
+- **Guard de contrato reforçado** em `server.test.js`: assert de forma `Object.keys(validator_dispatch) === ['dispatcher','join']`, provando que os campos de topologia legada sumiram sem nomeá-los.
+
+Impacto:
+- Comportamento de execução do pipeline é idêntico (Codex já era sibling); os demais hosts convergem para o mesmo modelo determinístico.
+- Consumidores que liam `validator_dispatch.topology`/`nested_subagent_available`/`repair_loop` devem assumir sibling incondicionalmente; estado antigo em disco é rollback-safe (campos extras ignorados).
+
+Arquivos/artefatos:
+- `README.md`
+- `packages/orchestrator/skills/atlas-workflow-orchestrator/SKILL.md`
+- `packages/mcp-server/server.js`, `packages/mcp-server/server.test.js`
+- `hosts/**`, `plugins/**` (espelhos regenerados por `build/build-plugins.sh`)
+
+Validacao:
+- `grep -rni "nested" packages/ agents/ README.md hosts/ plugins/` (vazio, exceto falso-positivo `redact()`)
+- `bash build/build-plugins.sh` (`check-consistency: ok`)
+- `bash build/test-all.sh`
+
 ## v0.6.2 - 2026-06-08
 
 Tipo: **runtime + packaging + docs** (sem breaking).
