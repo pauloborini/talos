@@ -1,6 +1,6 @@
 {
   "name": "atlas-workflow",
-  "version": "0.6.2",
+  "version": "0.7.0",
   "description": "Instalador multi-host do Atlas Workflow Orchestrator (Claude Code, Cursor, Codex, opencode, pi). Roda via npx-from-GitHub.",
   "type": "module",
   "bin": {

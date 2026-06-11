@@ -220,9 +220,9 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `atlas-*` para o
 
 ---
 
-**Plugin version:** 0.6.2
+**Plugin version:** 0.7.0
 **Author:** Paulo Borini
-**Last updated:** 2026-06-08
+**Last updated:** 2026-06-11
 
 ### Novidades v0.6.2 — backlog mestre explícito
 
