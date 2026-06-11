@@ -48,7 +48,9 @@ Prefer finite, stage-based execution over continuous self-critique. The goal is 
 ## Execution Model
 
 Operate as a bounded state machine:
-`ready` → `implementing` → `gating` → `repairing` → `task_done` → `slice_validating` → `slice_done` (or `blocked`).
+`ready` → `implementing` → `gating` → `repairing` (self-repair LOCAL, gates pré-handoff) → `task_done` → `validator_handoff_required` (or `blocked`).
+
+`repairing` cobre exclusivamente falhas de gates locais (lint, analyze, tests, diff-check) introduzidas pelo diff corrente — máximo 2 passes por task. O executor não entra em `repairing` pós-validação; qualquer repair pós-veredito é de responsabilidade do orquestrador via `atlas-findings-repair`. Após `task_done` para todas as tasks da slice, o executor escreve o state file e transita para `validator_handoff_required` — não existe `slice_validating` nem `slice_done` no escopo deste executor.
 
 ## State persistence
 
@@ -76,7 +78,7 @@ The plan is the SSoT. Map `ready` to `pending`, `implementing`/`gating` to `in_p
 
 ## Review gate
 
-`atlas-slice-review` is dispatched only when `--review` is present in the user command or executor arguments. Without `--review`, stop at `slice_done` after validator pass/pass_with_observations.
+`atlas-slice-review` is dispatched only when `--review` is present in the user command or executor arguments. Without `--review`, the orchestrator closes the slice upon receiving `pass` or `pass_with_observations` from the validator — this executor is not involved in that decision and never observes the validator verdict directly.
 
 ## Entrada via modo `execute` (PRD D1/D13)
 
@@ -120,10 +122,10 @@ If the gate fails, classify the outcome as `fixable` (maximum 2 repair passes pe
 Stop repair and move to `blocked` when budget is exhausted, the same failure repeats twice, or the fix requires reopening closed plan decisions.
 
 ### 7. Close the task with evidence
-Mark a task complete and move to the next. Once all tasks are `completed`, move to `slice_validating`.
+Mark a task complete and move to the next. Once all tasks are `completed`, write the state file and transition to `validator_handoff_required`.
 
-### 8. Run mandatory internal slice validation
-After all tasks in the current slice are complete, write the state file boundary before invoking validation.
+### 8. Write the state file and hand off to the orchestrator
+After all tasks in the current slice are complete, write the state file boundary. The cold validation runs as an isolated **sibling** dispatched by the orchestrator — never by this executor (see below).
 
 #### State file boundary
 
@@ -143,37 +145,19 @@ Create `.atlas/state/<run_id>/<slice>.json` following `packages/templates/STATE_
 }
 ```
 
-Then validate with an isolated validator subagent. The validator is registered as a real subagent on every host, so always invoke it deterministically, never inline its logic. Read `validator_dispatch` from `atlas_capabilities` before dispatch:
+Validation is always **sibling**, on every host. The validator is registered as a real subagent on every host, but this executor **never** dispatches it and never validates its own work. After tasks and local gates pass and the state file is written, this executor **stops mutation** and returns `validator_handoff_required` with the `state_path`. The orchestrator dispatches `atlas-task-validator` as the next isolated sibling phase, locks it via `atlas_lock_validator`, and — if the verdict is `fail` — dispatches `atlas-findings-repair` (not this executor) before the **2nd and last** validator.
 
-- If `validator_dispatch.topology == "nested"`, this executor dispatches `atlas-task-validator` directly, consumes its verdict/findings inside this same execution loop, and only reports the terminal slice status back to the orchestrator.
-- If `validator_dispatch.topology == "sibling"` (Codex current host), this executor **does not** attempt nested dispatch. It writes the state file, stops mutation, and returns `validator_handoff_required` with the `state_path`; the orchestrator dispatches `atlas-task-validator` as the next isolated sibling phase and, if the validator returns `fail`, dispatches `atlas-findings-repair` instead of reusing this executor.
+The only handoff input is `state_path`. Do not paste the contract, diff, or task list inline. The validator reads everything it needs from the state file and the plan it points to. (`atlas_capabilities` is the runtime source of truth for the dispatch mechanism the orchestrator uses — see `references/host-adapters.md`.)
 
-For nested dispatch, read `subagent_dispatch.mechanism`/`.example` from `atlas_capabilities` and use the host-native verb:
+**Finish all local work before the handoff — then stop idle.** Finish every local gate (lint, analyze, tests, `git diff --check`, diff-stat) and write the state file **before** returning the handoff. After returning `validator_handoff_required`, the executor must not mutate anything: the orchestrator now owns the slice, and any mutation here would change what the sibling validator reads and breaks determinism (same failure class as the orchestrator's G9).
 
-- **Claude Code:** `Agent(subagent_type: "atlas-task-validator", prompt: ".atlas/state/<run_id>/<slice>.json")`
-- **Codex App:** `spawn_agent(agent_type: "atlas-task-validator", items: [{ type: "text", text: ".atlas/state/<run_id>/<slice>.json" }])`
-- **Generic / other hosts:** dispatch the `atlas-task-validator` subagent passing only `state_path`
+### 9. The orchestrator consumes the verdict
+This executor does not parse the validator output — the **orchestrator** does, deciding only from `verdict`:
 
-(These examples are illustrative; `atlas_capabilities` is the runtime source of truth — see `references/host-adapters.md`.) In every case the only input is `state_path`. Do not paste the contract, diff, or task list inline. The validator reads everything it needs from the state file and the plan it points to.
+- `pass` / `pass_with_observations`: terminal — close the slice. Observations and `boundary_violations` returned alongside a non-`fail` verdict are reported residuals, never a trigger for another validator dispatch.
+- `fail`: the orchestrator opens `repair_start`, dispatches `atlas-findings-repair`, closes with `repair_run_id`, then runs the **2nd and last** validator (max 2 cycles total). This executor is not reused for the retry.
 
-**Validator dispatch is blocking — wait idle.** Finish every local gate (lint, analyze, tests, `git diff --check`, diff-stat) and write the state file **before** validation. Once the validator is dispatched (nested by executor or sibling by orchestrator), the executor must not mutate anything until a verdict is available. Running anything while the validator reads the slice can mutate what it is validating and breaks determinism (same failure class as the orchestrator's G9). Dispatch → wait → consume verdict.
-
-### 9. Consume validator output with a bounded loop
-Parse validator output with `JSON.parse(output)`. Decide only from `verdict`:
-
-```js
-const result = JSON.parse(output);
-if (result.verdict === 'pass') slice_done();
-else if (result.verdict === 'pass_with_observations') slice_done({ observations: result.observations });
-else if (result.verdict === 'fail') repair_or_block(result.findings, { max_cycles: 2 });
-else blocked('validator_verdict_invalid');
-```
-
-Never decide by substring matching prose.
-
-In sibling topology, the orchestrator owns this loop: validator `fail` produces a repair packet, opens `repair_start`, dispatches `atlas-findings-repair`, closes with `repair_run_id`, then runs the **2º e último** validator. Este executor não volta para o retry sibling. In nested topology, that same repair loop stays entirely inside this executor after the child validator returns; findings do not bubble to the orchestrator/grandparent as an intermediate step.
-
-**Only `fail` reopens the loop.** On `fail` only: repair P1/P2 findings inside the current slice boundary and re-dispatch the validator up to a maximum of 2 cycles. `pass` and `pass_with_observations` are terminal: close the slice immediately. Do not "fix" observations and re-validate — observations and `boundary_violations` returned alongside a non-`fail` verdict are reported residuals, not triggers for another validator dispatch. Once the slice is closed, do not edit code, tests, or boundary files just to satisfy an observation; that reopens the slice and forces an avoidable re-validation. If an observation reveals real follow-up work, record it as residual in the final report (or a backlog item), not as an extra in-slice change.
+Never decide by substring matching prose. Once the slice is closed, do not edit code, tests, or boundary files just to satisfy an observation; that reopens the slice and forces an avoidable re-validation. Real follow-up from an observation goes to the final report or a backlog item, not into an extra in-slice change.
 
 ### 10. Report final outcome
 At the end of execution, report completed tasks, validations run, validator outcome, and any residual gaps.
