@@ -180,7 +180,7 @@ Só alinhar decisões antes de planejar:
 
 ### Skills da cadeia
 
-Cadeia automática: `atlas-sprint-prd-generator` → `atlas-prd-interview` → `atlas-plan-handoff` → `atlas-plan-execute` (full) ou `atlas-direct-execute` (direct) → `atlas-task-validator` → `atlas-slice-review` (opcional)
+Cadeia automática: `atlas-sprint-prd-generator` → `atlas-prd-interview` → `atlas-plan-handoff` → `atlas-plan-execute` (full) ou `atlas-direct-execute` (direct) → `atlas-task-validator` → `atlas-findings-repair` (só no retry sibling/Codex) → `atlas-slice-review` (opcional)
 
 No modo `full`, as etapas documentais (`PRD`, entrevista, `PLAN_*.md`) ficam no agente principal/orquestrador. O primeiro sub-agent obrigatório nasce só na fase de execução (`atlas-plan-execute`).
 
@@ -194,6 +194,7 @@ Além da cadeia automática, estas skills também podem ser chamadas diretamente
 - `atlas-plan-handoff` — converte um PRD validado em plano executável. Use quando a intenção é preparar a execução, não ainda codar.
 - `atlas-direct-execute` — executa diretamente quando o PRD já está maduro. Use quando você quer pular a fase de plan handoff.
 - `atlas-task-validator` — faz a validação fria da slice executada. Use como veredito final de conformidade, nunca como ação manual de rotina.
+- `atlas-findings-repair` — corrige findings P0/P1/P2 depois de um `fail` do validator sem reabrir a execução completa. Use só no caminho de retry.
 - `atlas-slice-review` — faz a revisão fria opcional depois da execução. Use quando quiser uma segunda passada focada em riscos e regressões.
 
 ### Topologia do validador frio (G4) por host
@@ -211,7 +212,7 @@ O validador frio (`atlas-task-validator`) **sempre** roda isolado, mas **quem o 
 - **G9 (mutação só em sub-agent isolado):** todo código continua mudando dentro do executor isolado — o fio principal nunca edita.
 - **G4 (validação fria separada):** o validator continua sendo um sub-agent **frio e isolado**, com contexto próprio; só não é filho do executor — é irmão coordenado pelo orquestrador.
 
-**Loop de reparo no Codex (sibling):** se o validator retorna `fail` com P1/P2, o orquestrador dispara um **novo executor** com as findings para reparar dentro do escopo da slice — não é o mesmo sub-agent "seguindo vivo". Em hosts `nested`, o reparo acontece dentro do executor original, antes do veredito terminal subir; o feedback do validator não passa pelo orquestrador como etapa intermediária.
+**Loop de reparo no Codex (sibling):** se o validator retorna `fail` com P0/P1/P2, o orquestrador abre o lock de reparo (`repair_start`), dispara `atlas-findings-repair` com os findings estruturados, fecha com `repair_run_id` e só então roda o **2º e último** validator. `validator_run_id` e `repair_run_id` existem para descartar retornos stale/duplicados. Se o 2º validator ainda falhar, a slice termina em `blocked` — **3º validator é proibido**. Em hosts `nested`, o reparo continua dentro do executor original até migração futura para o mesmo modelo.
 
 **Smoke G9 — critério PASS por host:** o smoke do Gate G9 deve aceitar a topologia correta do host. Em `nested`, exige validator filho do executor; em `sibling` (Codex), exige validator irmão disparado pelo orquestrador. Os dois são PASS — exigir "aninhado literal" no Codex é leitura errada do contrato.
 

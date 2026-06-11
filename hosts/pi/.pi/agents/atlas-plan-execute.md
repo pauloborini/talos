@@ -146,7 +146,7 @@ Create `.atlas/state/<run_id>/<slice>.json` following `packages/templates/STATE_
 Then validate with an isolated validator subagent. The validator is registered as a real subagent on every host, so always invoke it deterministically, never inline its logic. Read `validator_dispatch` from `atlas_capabilities` before dispatch:
 
 - If `validator_dispatch.topology == "nested"`, this executor dispatches `atlas-task-validator` directly, consumes its verdict/findings inside this same execution loop, and only reports the terminal slice status back to the orchestrator.
-- If `validator_dispatch.topology == "sibling"` (Codex current host), this executor **does not** attempt nested dispatch. It writes the state file, stops mutation, and returns `validator_handoff_required` with the `state_path`; the orchestrator dispatches `atlas-task-validator` as the next isolated sibling phase and re-dispatches this executor only if the validator returns `fail`.
+- If `validator_dispatch.topology == "sibling"` (Codex current host), this executor **does not** attempt nested dispatch. It writes the state file, stops mutation, and returns `validator_handoff_required` with the `state_path`; the orchestrator dispatches `atlas-task-validator` as the next isolated sibling phase and, if the validator returns `fail`, dispatches `atlas-findings-repair` instead of reusing this executor.
 
 For nested dispatch, read `subagent_dispatch.mechanism`/`.example` from `atlas_capabilities` and use the host-native verb:
 
@@ -171,7 +171,7 @@ else blocked('validator_verdict_invalid');
 
 Never decide by substring matching prose.
 
-In sibling topology, the orchestrator owns this loop: validator `fail` produces a repair packet and re-dispatches this executor with the findings; this executor repairs only current-slice P1/P2 items, rewrites state evidence, then returns another `validator_handoff_required`. In nested topology, that same repair loop stays entirely inside this executor after the child validator returns; findings do not bubble to the orchestrator/grandparent as an intermediate step.
+In sibling topology, the orchestrator owns this loop: validator `fail` produces a repair packet, opens `repair_start`, dispatches `atlas-findings-repair`, closes with `repair_run_id`, then runs the **2º e último** validator. Este executor não volta para o retry sibling. In nested topology, that same repair loop stays entirely inside this executor after the child validator returns; findings do not bubble to the orchestrator/grandparent as an intermediate step.
 
 **Only `fail` reopens the loop.** On `fail` only: repair P1/P2 findings inside the current slice boundary and re-dispatch the validator up to a maximum of 2 cycles. `pass` and `pass_with_observations` are terminal: close the slice immediately. Do not "fix" observations and re-validate — observations and `boundary_violations` returned alongside a non-`fail` verdict are reported residuals, not triggers for another validator dispatch. Once the slice is closed, do not edit code, tests, or boundary files just to satisfy an observation; that reopens the slice and forces an avoidable re-validation. If an observation reveals real follow-up work, record it as residual in the final report (or a backlog item), not as an extra in-slice change.
 

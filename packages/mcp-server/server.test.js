@@ -28,6 +28,7 @@ import {
   classifyInput,
   preflight,
   lockDispatch,
+  lockValidator,
   assertAfterPlan,
 } from './server.js';
 
@@ -533,6 +534,276 @@ test('atlas_lock_dispatch: start plan_execute em execute → banner exec não-va
   const r = lockDispatch({ run_id: 'rld', project_root: root, action: 'start', phase: 'plan_execute' });
   assert.equal(r.status, 'passed');
   assert.match(r.banner, /^▸ atlas: exec · slice \d+\/\d+$/);
+});
+
+test('atlas_lock_dispatch: plan_execute aceita passed_with_observations como terminal aprovado', () => {
+  const root = tmpRoot();
+  preflight({
+    run_id: 'rld-passobs', project_root: root, mode: 'execute',
+    host: 'codex', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: 'rld-passobs', project_root: root, action: 'start', phase: 'plan_execute' });
+  const r = lockDispatch({
+    run_id: 'rld-passobs',
+    project_root: root,
+    action: 'complete',
+    phase: 'plan_execute',
+    validator_status: 'passed_with_observations',
+  });
+  assert.equal(r.status, 'passed');
+  assert.equal(r.validator_status, 'passed_with_observations');
+});
+
+test('atlas_lock_validator: codex sibling bloqueia validator concorrente e exige repair antes do retry', () => {
+  const root = tmpRoot();
+  preflight({
+    run_id: 'rv1', project_root: root, mode: 'execute',
+    host: 'codex', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: 'rv1', project_root: root, action: 'start', phase: 'plan_execute' });
+
+  const start1 = lockValidator({
+    run_id: 'rv1',
+    project_root: root,
+    host: 'codex',
+    action: 'start',
+    state_path: '.atlas/state/rv1/slice.json',
+  });
+  assert.equal(start1.status, 'passed');
+  assert.equal(start1.validator_attempt, 1);
+  assert.match(start1.validator_run_id, /^rv1:validator:1:/);
+
+  const concurrent = lockValidator({
+    run_id: 'rv1',
+    project_root: root,
+    host: 'codex',
+    action: 'start',
+    state_path: '.atlas/state/rv1/slice.json',
+  });
+  assert.equal(concurrent.status, 'blocked');
+  assert.match(concurrent.error, /já está ativo/);
+
+  const fail1 = lockValidator({
+    run_id: 'rv1',
+    project_root: root,
+    host: 'codex',
+    action: 'complete',
+    state_path: '.atlas/state/rv1/slice.json',
+    validator_run_id: start1.validator_run_id,
+    verdict: 'fail',
+    data: { findings: [{ severity: 'P1', file: 'x.ts', line: 1, msg: 'boom' }] },
+  });
+  assert.equal(fail1.status, 'passed');
+  assert.equal(fail1.validator_status, 'repair_required');
+  assert.equal(fail1.next_action, 'start_findings_repair_lock');
+
+  const repairStart = lockValidator({
+    run_id: 'rv1',
+    project_root: root,
+    host: 'codex',
+    action: 'repair_start',
+    state_path: '.atlas/state/rv1/slice.json',
+  });
+  assert.equal(repairStart.status, 'passed');
+  assert.equal(repairStart.validator_status, 'repair_running');
+  assert.match(repairStart.repair_run_id, /^rv1:repair:1:/);
+
+  const repairConcurrent = lockValidator({
+    run_id: 'rv1',
+    project_root: root,
+    host: 'codex',
+    action: 'repair_start',
+    state_path: '.atlas/state/rv1/slice.json',
+  });
+  assert.equal(repairConcurrent.status, 'blocked');
+  assert.match(repairConcurrent.error, /Repair já está ativo/);
+
+  const retryBeforeRepair = lockValidator({
+    run_id: 'rv1',
+    project_root: root,
+    host: 'codex',
+    action: 'start',
+    state_path: '.atlas/state/rv1/slice-repaired.json',
+  });
+  assert.equal(retryBeforeRepair.status, 'blocked');
+  assert.equal(retryBeforeRepair.next_action, 'complete_findings_repair');
+
+  const repairDone = lockValidator({
+    run_id: 'rv1',
+    project_root: root,
+    host: 'codex',
+    action: 'repair_complete',
+    repair_run_id: repairStart.repair_run_id,
+    state_path: '.atlas/state/rv1/slice-repaired.json',
+  });
+  assert.equal(repairDone.status, 'passed');
+  assert.equal(repairDone.validator_status, 'ready_for_retry');
+
+  const start2 = lockValidator({
+    run_id: 'rv1',
+    project_root: root,
+    host: 'codex',
+    action: 'start',
+    state_path: '.atlas/state/rv1/slice-repaired.json',
+  });
+  assert.equal(start2.status, 'passed');
+  assert.equal(start2.validator_attempt, 2);
+});
+
+test('atlas_lock_validator: terceiro validator é impossível e segundo fail bloqueia a slice', () => {
+  const root = tmpRoot();
+  preflight({
+    run_id: 'rv2', project_root: root, mode: 'execute',
+    host: 'codex', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: 'rv2', project_root: root, action: 'start', phase: 'plan_execute' });
+
+  const start1 = lockValidator({
+    run_id: 'rv2',
+    project_root: root,
+    host: 'codex',
+    action: 'start',
+    state_path: '.atlas/state/rv2/slice.json',
+  });
+  lockValidator({
+    run_id: 'rv2',
+    project_root: root,
+    host: 'codex',
+    action: 'complete',
+    state_path: '.atlas/state/rv2/slice.json',
+    validator_run_id: start1.validator_run_id,
+    verdict: 'fail',
+    data: { findings: [{ severity: 'P1', file: 'x.ts', line: 1, msg: 'boom' }] },
+  });
+  const repairStart = lockValidator({
+    run_id: 'rv2',
+    project_root: root,
+    host: 'codex',
+    action: 'repair_start',
+    state_path: '.atlas/state/rv2/slice.json',
+  });
+  assert.equal(repairStart.status, 'passed');
+  const repair1 = lockValidator({
+    run_id: 'rv2',
+    project_root: root,
+    host: 'codex',
+    action: 'repair_complete',
+    repair_run_id: 'rv2:repair:1:fake',
+    state_path: '.atlas/state/rv2/slice-repaired.json',
+  });
+  assert.equal(repair1.status, 'blocked');
+  assert.match(repair1.error, /repair_run_id não corresponde/);
+
+  const repairConcurrent = lockValidator({
+    run_id: 'rv2',
+    project_root: root,
+    host: 'codex',
+    action: 'repair_start',
+    state_path: '.atlas/state/rv2/slice.json',
+  });
+  assert.equal(repairConcurrent.status, 'blocked');
+  assert.match(repairConcurrent.error, /Repair já está ativo/);
+
+  const repair1Done = lockValidator({
+    run_id: 'rv2',
+    project_root: root,
+    host: 'codex',
+    action: 'repair_complete',
+    repair_run_id: repairStart.repair_run_id,
+    state_path: '.atlas/state/rv2/slice-repaired.json',
+  });
+  assert.equal(repair1Done.status, 'passed');
+
+  const start2 = lockValidator({
+    run_id: 'rv2',
+    project_root: root,
+    host: 'codex',
+    action: 'start',
+    state_path: '.atlas/state/rv2/slice-repaired.json',
+  });
+  assert.equal(start2.status, 'passed');
+
+  const fail2 = lockValidator({
+    run_id: 'rv2',
+    project_root: root,
+    host: 'codex',
+    action: 'complete',
+    state_path: '.atlas/state/rv2/slice-repaired.json',
+    validator_run_id: start2.validator_run_id,
+    verdict: 'fail',
+    data: { findings: [{ severity: 'P1', file: 'y.ts', line: 2, msg: 'still bad' }] },
+  });
+  assert.equal(fail2.status, 'blocked');
+  assert.equal(fail2.validator_status, 'blocked_final_validator_failed');
+
+  const third = lockValidator({
+    run_id: 'rv2',
+    project_root: root,
+    host: 'codex',
+    action: 'start',
+    state_path: '.atlas/state/rv2/slice-third.json',
+  });
+  assert.equal(third.status, 'blocked');
+  assert.match(third.error, /Terceiro validator proibido/);
+});
+
+test('atlas_lock_validator: retorno stale do validator não fecha slot ativo', () => {
+  const root = tmpRoot();
+  preflight({
+    run_id: 'rv4', project_root: root, mode: 'execute',
+    host: 'codex', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: 'rv4', project_root: root, action: 'start', phase: 'plan_execute' });
+
+  const start1 = lockValidator({
+    run_id: 'rv4',
+    project_root: root,
+    host: 'codex',
+    action: 'start',
+    state_path: '.atlas/state/rv4/slice.json',
+  });
+
+  const stale = lockValidator({
+    run_id: 'rv4',
+    project_root: root,
+    host: 'codex',
+    action: 'complete',
+    state_path: '.atlas/state/rv4/slice.json',
+    validator_run_id: 'rv4:validator:1:stale',
+    verdict: 'pass',
+  });
+  assert.equal(stale.status, 'blocked');
+  assert.match(stale.error, /validator_run_id não corresponde/);
+
+  const good = lockValidator({
+    run_id: 'rv4',
+    project_root: root,
+    host: 'codex',
+    action: 'complete',
+    state_path: '.atlas/state/rv4/slice.json',
+    validator_run_id: start1.validator_run_id,
+    verdict: 'pass',
+  });
+  assert.equal(good.status, 'passed');
+  assert.equal(good.validator_status, 'passed');
+});
+
+test('atlas_lock_validator: hosts nested não usam o gate sibling', () => {
+  const root = tmpRoot();
+  preflight({
+    run_id: 'rv3', project_root: root, mode: 'execute',
+    host: 'claude', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: 'rv3', project_root: root, action: 'start', phase: 'plan_execute' });
+  const r = lockValidator({
+    run_id: 'rv3',
+    project_root: root,
+    host: 'claude',
+    action: 'start',
+    state_path: '.atlas/state/rv3/slice.json',
+  });
+  assert.equal(r.status, 'blocked');
+  assert.match(r.error, /topologia sibling/);
 });
 
 test('atlas_assert_after_plan: execute → banner plano não-vazio (T07)', () => {

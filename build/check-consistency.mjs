@@ -118,7 +118,7 @@ for (const rel of [
 // slice-review revisa — todos são DESPACHADOS pelo orquestrador e por isso precisam
 // de registro de agente nativo por host. Ausência = orquestrador cai pro fio principal
 // (Gate G9 violado). O corpo é um SHIM fino que DEVE citar o skill_id carregado.
-const DISPATCHED_EXEC_AGENTS = ['atlas-plan-execute', 'atlas-direct-execute', 'atlas-slice-review'];
+const DISPATCHED_EXEC_AGENTS = ['atlas-plan-execute', 'atlas-direct-execute', 'atlas-findings-repair', 'atlas-slice-review'];
 const AGENT_DIRS = [
   ['claude', 'agents'],
   ['codex', 'plugins/atlas-workflow-orchestrator/.codex/agents'],

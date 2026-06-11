@@ -55,11 +55,23 @@ const WORKFLOW_CONFIG = {
     prd_interview: 'atlas-prd-interview',
     plan_handoff: 'atlas-plan-handoff',
     plan_execute: 'atlas-plan-execute',
+    findings_repair: 'atlas-findings-repair',
     slice_review: 'atlas-slice-review',
     task_validator: 'atlas-task-validator',
   },
   modes: ['full', 'direct', 'execute', 'interview-only', 'interview_only'],
 };
+
+const VALIDATOR_MAX_ATTEMPTS = 2;
+const VALIDATOR_PASSED_STATUSES = new Set(['passed', 'passed_with_observations']);
+
+function validatorRunId(runId, attempt, timestamp) {
+  return `${runId}:validator:${attempt}:${timestamp}`;
+}
+
+function repairRunId(runId, attempt, timestamp) {
+  return `${runId}:repair:${attempt}:${timestamp}`;
+}
 
 // Nível de garantia declarado no routing/output (PRD D12). Enum fechado:
 // pipelines completas (full/direct/execute) declaram full_pipeline; uso avulso
@@ -161,7 +173,7 @@ const HOST_ADAPTERS = {
       topology: 'sibling',
       nested_subagent_available: false,
       dispatcher: 'orchestrator',
-      repair_loop: 'orchestrator_dispatches_executor_repair_after_validator_fail',
+      repair_loop: 'orchestrator_dispatches_findings_repair_after_validator_fail',
     },
     todo_tool: 'tasks',
     hooks: { supported: false, mechanism: null },
@@ -533,6 +545,7 @@ function ping() {
       'atlas_verify_template_conformance',
       'atlas_preflight',
       'atlas_lock_dispatch',
+      'atlas_lock_validator',
       'atlas_assert_after_plan',
     ],
     state_dir: RUN_DIR,
@@ -798,6 +811,78 @@ function patchDispatchResult(runId, result, args = {}) {
     phase: previous.phase ?? 'dispatch',
     status: result.status === 'passed' ? 'dispatch_ok' : 'dispatch_blocked',
     summary: `${result.gate ?? 'G7'}: ${result.status}`,
+    data,
+  });
+}
+
+function normalizeValidatorCycle(cycle = {}) {
+  return {
+    topology: typeof cycle.topology === 'string' ? cycle.topology : null,
+    max_attempts: Number.isInteger(cycle.max_attempts) ? cycle.max_attempts : VALIDATOR_MAX_ATTEMPTS,
+    attempts_used: Number.isInteger(cycle.attempts_used) ? cycle.attempts_used : 0,
+    status: typeof cycle.status === 'string' ? cycle.status : 'idle',
+    active: cycle.active && typeof cycle.active === 'object' ? cycle.active : null,
+    last_state_path: typeof cycle.last_state_path === 'string' ? cycle.last_state_path : null,
+    last_verdict: typeof cycle.last_verdict === 'string' ? cycle.last_verdict : null,
+    findings_packet: cycle.findings_packet && typeof cycle.findings_packet === 'object' ? cycle.findings_packet : null,
+    repair: cycle.repair && typeof cycle.repair === 'object'
+      ? {
+        skill: typeof cycle.repair.skill === 'string' ? cycle.repair.skill : WORKFLOW_CONFIG.skills.findings_repair,
+        status: typeof cycle.repair.status === 'string' ? cycle.repair.status : 'not_needed',
+        required_from_attempt: Number.isInteger(cycle.repair.required_from_attempt) ? cycle.repair.required_from_attempt : null,
+        requested_at: typeof cycle.repair.requested_at === 'string' ? cycle.repair.requested_at : null,
+        completed_at: typeof cycle.repair.completed_at === 'string' ? cycle.repair.completed_at : null,
+        active: cycle.repair.active && typeof cycle.repair.active === 'object' ? cycle.repair.active : null,
+      }
+      : {
+        skill: WORKFLOW_CONFIG.skills.findings_repair,
+        status: 'not_needed',
+        required_from_attempt: null,
+        requested_at: null,
+        completed_at: null,
+        active: null,
+      },
+    history: Array.isArray(cycle.history) ? cycle.history : [],
+  };
+}
+
+function patchValidatorResult(runId, result, args = {}) {
+  const previous = readState(runId, args);
+  const current = normalizeValidatorCycle(previous.data?.validator_cycle ?? {});
+  const history = [
+    ...current.history,
+    {
+      timestamp: result.timestamp,
+      action: result.action,
+      status: result.status,
+      validator_status: result.validator_status ?? null,
+      validator_attempt: result.validator_attempt ?? null,
+      validator_run_id: result.validator_run_id ?? null,
+      repair_run_id: result.repair_run_id ?? null,
+      state_path: result.state_path ?? null,
+      next_action: result.next_action ?? null,
+      error: result.error ?? null,
+    },
+  ];
+  const data = {
+    ...(previous.data ?? {}),
+    validator_cycle: {
+      ...current,
+      ...(result.validator_cycle ?? {}),
+      history,
+    },
+    gates: {
+      ...(previous.data?.gates ?? {}),
+      [result.gate ?? 'G4']: redact(result),
+    },
+  };
+
+  return upsertState({
+    run_id: runId,
+    project_root: args.project_root,
+    phase: previous.phase ?? 'dispatch',
+    status: result.status === 'passed' ? 'validator_gate_ok' : 'validator_gate_blocked',
+    summary: `${result.gate ?? 'G4'}: ${result.status}`,
     data,
   });
 }
@@ -1555,14 +1640,14 @@ function completeDispatch(args, context) {
 
   if (phase === 'plan_execute') {
     const validatorStatus = requiredString(args, 'validator_status');
-    if (validatorStatus !== 'passed') {
+    if (!VALIDATOR_PASSED_STATUSES.has(validatorStatus)) {
       return {
         gate: 'G8',
         action: 'complete',
         phase,
         status: 'blocked',
         timestamp,
-        error: `Execução não pode concluir sem validator passed; recebido ${validatorStatus}`,
+        error: `Execução não pode concluir sem validator terminal aprovado; recebido ${validatorStatus}`,
         current_phase: phase,
         expected_phase: 'task_validator',
         next_action: 'rodar_task_validator_antes_do_review',
@@ -1663,6 +1748,496 @@ function lockDispatch(args = {}) {
 
   result.banner = dispatchBanner(result);
   patchDispatchResult(runId, result, args);
+  return result;
+}
+
+function validatorStart(args, context) {
+  const runId = validateRunId(args.run_id);
+  const statePathValue = requiredString(args, 'state_path');
+  const timestamp = nowIso();
+  const cap = capabilities(args);
+  const cycle = normalizeValidatorCycle(context.state.data?.validator_cycle ?? {});
+
+  if (cap.validator_dispatch.topology !== 'sibling') {
+    return {
+      gate: 'G4',
+      action: 'start',
+      status: 'blocked',
+      timestamp,
+      error: `atlas_lock_validator é suportado apenas em topologia sibling; recebido ${cap.validator_dispatch.topology}`,
+      next_action: 'usar_loop_nested_no_executor',
+    };
+  }
+
+  if (context.dispatch.active?.phase !== 'plan_execute') {
+    return {
+      gate: 'G4',
+      action: 'start',
+      status: 'blocked',
+      timestamp,
+      error: 'Validator só pode iniciar com plan_execute ativo',
+      current_phase: context.dispatch.active?.phase ?? null,
+      next_action: 'manter_plan_execute_ativo_antes_da_validacao',
+    };
+  }
+
+  if (cycle.active) {
+    return {
+      gate: 'G4',
+      action: 'start',
+      status: 'blocked',
+      timestamp,
+      error: `Validator já está ativo (attempt ${cycle.active.attempt})`,
+      validator_attempt: cycle.active.attempt,
+      next_action: 'aguardar_validator_ativo',
+    };
+  }
+
+  if (cycle.attempts_used >= cycle.max_attempts) {
+    return {
+      gate: 'G4',
+      action: 'start',
+      status: 'blocked',
+      timestamp,
+      error: `Terceiro validator proibido: attempts=${cycle.attempts_used}, máximo=${cycle.max_attempts}`,
+      validator_attempt: cycle.attempts_used,
+      next_action: 'tratar_como_blocked_final_validator_failed',
+    };
+  }
+
+  if (cycle.status === 'blocked') {
+    return {
+      gate: 'G4',
+      action: 'start',
+      status: 'blocked',
+      timestamp,
+      error: 'Ciclo do validator já está bloqueado para esta slice',
+      next_action: 'encerrar_run_ou_reiniciar_slice_com_decisao_explicita',
+    };
+  }
+
+  if (cycle.status === 'repair_required' || cycle.status === 'repair_running') {
+    return {
+      gate: 'G4',
+      action: 'start',
+      status: 'blocked',
+      timestamp,
+      error: cycle.status === 'repair_running'
+        ? 'Retry do validator exige o término do repair ativo antes de novo dispatch'
+        : 'Retry do validator exige conclusão explícita do repair antes de novo dispatch',
+      validator_attempt: cycle.attempts_used,
+      next_action: 'complete_findings_repair',
+    };
+  }
+
+  const attempt = cycle.attempts_used + 1;
+  const activeValidatorRunId = validatorRunId(runId, attempt, timestamp);
+  return {
+    gate: 'G4',
+    action: 'start',
+    status: 'passed',
+    timestamp,
+    state_path: statePathValue,
+    validator_attempt: attempt,
+    validator_run_id: activeValidatorRunId,
+    validator_status: 'running',
+    next_action: 'await_validator_verdict',
+    banner: renderBanner('validacao', { status: `running ${attempt}/${cycle.max_attempts}` }),
+    validator_cycle: {
+      topology: cap.validator_dispatch.topology,
+      max_attempts: cycle.max_attempts,
+      attempts_used: attempt,
+      status: 'running',
+      active: {
+        attempt,
+        run_id: activeValidatorRunId,
+        state_path: statePathValue,
+        started_at: timestamp,
+      },
+      last_state_path: statePathValue,
+      repair: {
+        skill: WORKFLOW_CONFIG.skills.findings_repair,
+        status: 'not_needed',
+        required_from_attempt: null,
+        requested_at: null,
+        completed_at: null,
+        active: null,
+      },
+      findings_packet: null,
+    },
+  };
+}
+
+function validatorComplete(args, context) {
+  const timestamp = nowIso();
+  const cap = capabilities(args);
+  const cycle = normalizeValidatorCycle(context.state.data?.validator_cycle ?? {});
+  const statePathValue = requiredString(args, 'state_path');
+  const activeValidatorRunId = requiredString(args, 'validator_run_id');
+  const verdict = requiredString(args, 'verdict');
+  const packet = optionalData(args);
+
+  if (cap.validator_dispatch.topology !== 'sibling') {
+    return {
+      gate: 'G4',
+      action: 'complete',
+      status: 'blocked',
+      timestamp,
+      error: `atlas_lock_validator é suportado apenas em topologia sibling; recebido ${cap.validator_dispatch.topology}`,
+      next_action: 'usar_loop_nested_no_executor',
+    };
+  }
+
+  if (!cycle.active) {
+    return {
+      gate: 'G4',
+      action: 'complete',
+      status: 'blocked',
+      timestamp,
+      error: 'Nenhum validator ativo para concluir',
+      next_action: 'start_validator_primeiro',
+    };
+  }
+
+  if (cycle.active.run_id !== activeValidatorRunId) {
+    return {
+      gate: 'G4',
+      action: 'complete',
+      status: 'blocked',
+      timestamp,
+      validator_attempt: cycle.active.attempt,
+      validator_run_id: activeValidatorRunId,
+      error: `validator_run_id não corresponde ao validator ativo: recebido ${activeValidatorRunId}`,
+      next_action: 'aguardar_ou_descartar_retorno_stale_do_validator',
+    };
+  }
+
+  if (cycle.active.state_path !== statePathValue) {
+    return {
+      gate: 'G4',
+      action: 'complete',
+      status: 'blocked',
+      timestamp,
+      validator_attempt: cycle.active.attempt,
+      validator_run_id: activeValidatorRunId,
+      state_path: statePathValue,
+      error: `state_path do validator ativo diverge: esperado ${cycle.active.state_path}, recebido ${statePathValue}`,
+      next_action: 'corrigir_payload_do_validator',
+    };
+  }
+
+  const normalizedVerdict = verdict === 'pass'
+    ? 'passed'
+    : verdict === 'pass_with_observations'
+      ? 'passed_with_observations'
+      : verdict;
+
+  if (VALIDATOR_PASSED_STATUSES.has(normalizedVerdict)) {
+    return {
+      gate: 'G4',
+      action: 'complete',
+      status: 'passed',
+      timestamp,
+      validator_attempt: cycle.active.attempt,
+      validator_run_id: activeValidatorRunId,
+      state_path: statePathValue,
+      validator_status: normalizedVerdict,
+      next_action: 'complete_plan_execute',
+      banner: renderBanner('validacao', { status: normalizedVerdict }),
+      validator_cycle: {
+        status: normalizedVerdict,
+        active: null,
+        last_state_path: statePathValue,
+        last_verdict: normalizedVerdict,
+        findings_packet: packet ?? null,
+        repair: {
+          skill: WORKFLOW_CONFIG.skills.findings_repair,
+          status: cycle.repair.status === 'completed' ? 'completed' : 'not_needed',
+          required_from_attempt: cycle.repair.required_from_attempt,
+          requested_at: cycle.repair.requested_at,
+          completed_at: cycle.repair.completed_at,
+          active: null,
+        },
+      },
+    };
+  }
+
+  if (normalizedVerdict !== 'fail') {
+    return {
+      gate: 'G4',
+      action: 'complete',
+      status: 'blocked',
+      timestamp,
+      error: `Veredito inválido do validator: ${verdict}`,
+      validator_attempt: cycle.active.attempt,
+      next_action: 'corrigir_output_do_validator',
+    };
+  }
+
+  if (cycle.active.attempt >= cycle.max_attempts) {
+    return {
+      gate: 'G4',
+      action: 'complete',
+      status: 'blocked',
+      timestamp,
+      validator_attempt: cycle.active.attempt,
+      validator_run_id: activeValidatorRunId,
+      state_path: statePathValue,
+      validator_status: 'blocked_final_validator_failed',
+      error: `Segundo validator falhou; terceiro validator é proibido (máximo=${cycle.max_attempts})`,
+      next_action: 'encerrar_com_blocked_final_validator_failed',
+      banner: renderBanner('validacao', { status: 'blocked_final_validator_failed' }),
+      validator_cycle: {
+        status: 'blocked',
+        active: null,
+        last_state_path: statePathValue,
+        last_verdict: 'fail',
+        findings_packet: packet ?? null,
+        repair: {
+          skill: WORKFLOW_CONFIG.skills.findings_repair,
+          status: 'exhausted',
+          required_from_attempt: cycle.active.attempt,
+          requested_at: cycle.repair.requested_at,
+          completed_at: cycle.repair.completed_at,
+          active: null,
+        },
+      },
+    };
+  }
+
+  return {
+    gate: 'G4',
+    action: 'complete',
+    status: 'passed',
+    timestamp,
+    validator_attempt: cycle.active.attempt,
+    validator_run_id: activeValidatorRunId,
+    state_path: statePathValue,
+    validator_status: 'repair_required',
+    next_action: 'start_findings_repair_lock',
+    banner: renderBanner('validacao', { status: 'repair_required' }),
+    validator_cycle: {
+      status: 'repair_required',
+      active: null,
+      last_state_path: statePathValue,
+      last_verdict: 'fail',
+      findings_packet: packet ?? null,
+      repair: {
+        skill: WORKFLOW_CONFIG.skills.findings_repair,
+        status: 'required',
+        required_from_attempt: cycle.active.attempt,
+        requested_at: timestamp,
+        completed_at: null,
+        active: null,
+      },
+    },
+  };
+}
+
+function validatorRepairStart(args, context) {
+  const runId = validateRunId(args.run_id);
+  const timestamp = nowIso();
+  const cap = capabilities(args);
+  const cycle = normalizeValidatorCycle(context.state.data?.validator_cycle ?? {});
+  const statePathValue = requiredString(args, 'state_path');
+
+  if (cap.validator_dispatch.topology !== 'sibling') {
+    return {
+      gate: 'G4',
+      action: 'repair_start',
+      status: 'blocked',
+      timestamp,
+      error: `atlas_lock_validator é suportado apenas em topologia sibling; recebido ${cap.validator_dispatch.topology}`,
+      next_action: 'usar_loop_nested_no_executor',
+    };
+  }
+
+  if (cycle.active) {
+    return {
+      gate: 'G4',
+      action: 'repair_start',
+      status: 'blocked',
+      timestamp,
+      error: 'Repair não pode iniciar enquanto há validator ativo',
+      validator_attempt: cycle.active.attempt,
+      next_action: 'aguardar_validator_ativo',
+    };
+  }
+
+  if (cycle.repair.active) {
+    return {
+      gate: 'G4',
+      action: 'repair_start',
+      status: 'blocked',
+      timestamp,
+      validator_attempt: cycle.attempts_used,
+      repair_run_id: cycle.repair.active.run_id ?? null,
+      error: `Repair já está ativo para attempt ${cycle.attempts_used}`,
+      next_action: 'aguardar_findings_repair_ativo',
+    };
+  }
+
+  if (cycle.status !== 'repair_required') {
+    return {
+      gate: 'G4',
+      action: 'repair_start',
+      status: 'blocked',
+      timestamp,
+      error: `Repair fora de ordem: status atual ${cycle.status}`,
+      next_action: 'completar_validator_fail_antes_do_repair',
+    };
+  }
+
+  if (cycle.last_state_path && cycle.last_state_path !== statePathValue) {
+    return {
+      gate: 'G4',
+      action: 'repair_start',
+      status: 'blocked',
+      timestamp,
+      validator_attempt: cycle.attempts_used,
+      state_path: statePathValue,
+      error: `Repair deve partir do state_path do fail: esperado ${cycle.last_state_path}, recebido ${statePathValue}`,
+      next_action: 'corrigir_state_path_do_repair',
+    };
+  }
+
+  const activeRepairRunId = repairRunId(runId, cycle.attempts_used, timestamp);
+  return {
+    gate: 'G4',
+    action: 'repair_start',
+    status: 'passed',
+    timestamp,
+    validator_attempt: cycle.attempts_used,
+    repair_run_id: activeRepairRunId,
+    state_path: statePathValue,
+    validator_status: 'repair_running',
+    next_action: `dispatch_${WORKFLOW_CONFIG.skills.findings_repair}`,
+    banner: renderBanner('validacao', { status: 'repair_running' }),
+    validator_cycle: {
+      status: 'repair_running',
+      repair: {
+        skill: WORKFLOW_CONFIG.skills.findings_repair,
+        status: 'running',
+        required_from_attempt: cycle.repair.required_from_attempt ?? cycle.attempts_used,
+        requested_at: cycle.repair.requested_at ?? timestamp,
+        completed_at: null,
+        active: {
+          run_id: activeRepairRunId,
+          state_path: statePathValue,
+          started_at: timestamp,
+        },
+      },
+    },
+  };
+}
+
+function validatorRepairComplete(args, context) {
+  const timestamp = nowIso();
+  const cap = capabilities(args);
+  const cycle = normalizeValidatorCycle(context.state.data?.validator_cycle ?? {});
+  const statePathValue = requiredString(args, 'state_path');
+  const activeRepairRunId = requiredString(args, 'repair_run_id');
+
+  if (cap.validator_dispatch.topology !== 'sibling') {
+    return {
+      gate: 'G4',
+      action: 'repair_complete',
+      status: 'blocked',
+      timestamp,
+      error: `atlas_lock_validator é suportado apenas em topologia sibling; recebido ${cap.validator_dispatch.topology}`,
+      next_action: 'usar_loop_nested_no_executor',
+    };
+  }
+
+  if (cycle.active) {
+    return {
+      gate: 'G4',
+      action: 'repair_complete',
+      status: 'blocked',
+      timestamp,
+      error: 'Repair não pode fechar enquanto há validator ativo',
+      validator_attempt: cycle.active.attempt,
+      next_action: 'aguardar_validator_ativo',
+    };
+  }
+
+  if (cycle.status !== 'repair_running') {
+    return {
+      gate: 'G4',
+      action: 'repair_complete',
+      status: 'blocked',
+      timestamp,
+      error: `Repair fora de ordem: status atual ${cycle.status}`,
+      next_action: 'iniciar_findings_repair_antes_de_concluir',
+    };
+  }
+
+  if (!cycle.repair.active) {
+    return {
+      gate: 'G4',
+      action: 'repair_complete',
+      status: 'blocked',
+      timestamp,
+      error: 'Nenhum repair ativo para concluir',
+      next_action: 'start_findings_repair_primeiro',
+    };
+  }
+
+  if (cycle.repair.active.run_id !== activeRepairRunId) {
+    return {
+      gate: 'G4',
+      action: 'repair_complete',
+      status: 'blocked',
+      timestamp,
+      validator_attempt: cycle.attempts_used,
+      repair_run_id: activeRepairRunId,
+      error: `repair_run_id não corresponde ao repair ativo: recebido ${activeRepairRunId}`,
+      next_action: 'aguardar_ou_descartar_retorno_stale_do_repair',
+    };
+  }
+
+  return {
+    gate: 'G4',
+    action: 'repair_complete',
+    status: 'passed',
+    timestamp,
+    validator_attempt: cycle.attempts_used,
+    repair_run_id: activeRepairRunId,
+    validator_status: 'ready_for_retry',
+    state_path: statePathValue,
+    next_action: 'dispatch_task_validator_retry',
+    banner: renderBanner('validacao', { status: 'ready_for_retry' }),
+    validator_cycle: {
+      status: 'ready_for_retry',
+      active: null,
+      last_state_path: statePathValue,
+      repair: {
+        skill: WORKFLOW_CONFIG.skills.findings_repair,
+        status: 'completed',
+        required_from_attempt: cycle.repair.required_from_attempt ?? cycle.attempts_used,
+        requested_at: cycle.repair.requested_at,
+        completed_at: timestamp,
+        active: null,
+      },
+    },
+  };
+}
+
+function lockValidator(args = {}) {
+  const runId = validateRunId(args.run_id);
+  const action = args.action ?? 'start';
+  if (!['start', 'complete', 'repair_start', 'repair_complete'].includes(action)) {
+    throw rpcError(-32602, `Ação inválida para atlas_lock_validator: ${action}`);
+  }
+  const context = getDispatchState(runId, args);
+  const result = action === 'start'
+    ? validatorStart(args, context)
+    : action === 'complete'
+      ? validatorComplete(args, context)
+      : action === 'repair_start'
+        ? validatorRepairStart(args, context)
+        : validatorRepairComplete(args, context);
+  patchValidatorResult(runId, result, args);
   return result;
 }
 
@@ -1924,6 +2499,26 @@ function toolsList() {
         },
       },
       {
+        name: 'atlas_lock_validator',
+        description: 'Gate G4/G8 (Codex sibling): enforça um validator por vez, máximo de 2 attempts, repair obrigatório entre fail e retry, e bloqueio explícito do terceiro validator.',
+        inputSchema: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['run_id', 'action'],
+          properties: {
+            run_id: { type: 'string', minLength: 1 },
+            project_root: { type: 'string', minLength: 1 },
+            action: { type: 'string', enum: ['start', 'complete', 'repair_start', 'repair_complete'] },
+            state_path: { type: 'string' },
+            validator_run_id: { type: 'string' },
+            repair_run_id: { type: 'string' },
+            verdict: { type: 'string', enum: ['pass', 'pass_with_observations', 'fail'] },
+            data: { type: 'object', additionalProperties: true },
+            host: { type: 'string', enum: HOST_NAMES },
+          },
+        },
+      },
+      {
         name: 'atlas_assert_after_plan',
         description: 'Gate G11: bloqueia encerramento prematuro do modo full após plano validado e antes da execução.',
         inputSchema: {
@@ -1968,6 +2563,7 @@ function handleRequest(message) {
         name === 'atlas_classify_input' ? classifyInput(args) :
         name === 'atlas_preflight' ? preflight(args) :
         name === 'atlas_lock_dispatch' ? lockDispatch(args) :
+        name === 'atlas_lock_validator' ? lockValidator(args) :
         name === 'atlas_assert_after_plan' ? assertAfterPlan(args) :
         (() => { throw rpcError(-32601, `Tool desconhecida: ${name}`); })();
       logCall({ tool: name, run: args.run_id ?? null, status: 'ok' }, args);
@@ -2077,5 +2673,6 @@ export {
   classifyInput,
   preflight,
   lockDispatch,
+  lockValidator,
   assertAfterPlan,
 };
