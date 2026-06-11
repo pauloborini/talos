@@ -30,6 +30,7 @@ import {
   lockDispatch,
   lockValidator,
   assertAfterPlan,
+  runState,
 } from './server.js';
 
 test('detectHost: arg host explícito tem prioridade máxima', () => {
@@ -806,6 +807,161 @@ test('atlas_lock_validator: hosts nested não usam o gate sibling', () => {
   assert.match(r.error, /topologia sibling/);
 });
 
+// --- S04: token de dispatch monotônico explícito no validator_cycle ---
+
+function readRunJson(root, runId) {
+  const file = path.join(root, '.atlas', 'state', runId, 'run.json');
+  return JSON.parse(fs.readFileSync(file, 'utf8'));
+}
+
+test('S04: dispatch_token incrementa monotonicamente a cada validatorStart aceito', () => {
+  const root = tmpRoot();
+  preflight({
+    run_id: 'tok1', project_root: root, mode: 'execute',
+    host: 'codex', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: 'tok1', project_root: root, action: 'start', phase: 'plan_execute' });
+
+  const start1 = lockValidator({
+    run_id: 'tok1', project_root: root, host: 'codex', action: 'start',
+    state_path: '.atlas/state/tok1/slice.json',
+  });
+  assert.equal(start1.status, 'passed');
+  assert.equal(start1.dispatch_token, 1);
+  let cycle = readRunJson(root, 'tok1').data.validator_cycle;
+  assert.equal(cycle.dispatch_token, 1);
+  assert.equal(cycle.active.dispatch_token, 1);
+
+  // fail → repair → retry → segundo start incrementa o token (1 → 2).
+  lockValidator({
+    run_id: 'tok1', project_root: root, host: 'codex', action: 'complete',
+    state_path: '.atlas/state/tok1/slice.json',
+    validator_run_id: start1.validator_run_id, verdict: 'fail',
+    data: { findings: [{ severity: 'P1', file: 'x.ts', line: 1, msg: 'boom' }] },
+  });
+  // token sobrevive ao complete (preservado pelo merge), slot fechado.
+  cycle = readRunJson(root, 'tok1').data.validator_cycle;
+  assert.equal(cycle.dispatch_token, 1);
+  assert.equal(cycle.active, null);
+
+  const repairStart = lockValidator({
+    run_id: 'tok1', project_root: root, host: 'codex', action: 'repair_start',
+    state_path: '.atlas/state/tok1/slice.json',
+  });
+  lockValidator({
+    run_id: 'tok1', project_root: root, host: 'codex', action: 'repair_complete',
+    repair_run_id: repairStart.repair_run_id,
+    state_path: '.atlas/state/tok1/slice-repaired.json',
+  });
+
+  const start2 = lockValidator({
+    run_id: 'tok1', project_root: root, host: 'codex', action: 'start',
+    state_path: '.atlas/state/tok1/slice-repaired.json',
+  });
+  assert.equal(start2.status, 'passed');
+  assert.equal(start2.dispatch_token, 2);
+  cycle = readRunJson(root, 'tok1').data.validator_cycle;
+  assert.equal(cycle.dispatch_token, 2);
+  assert.equal(cycle.active.dispatch_token, 2);
+});
+
+test('S04: dispatch_token sobrevive a re-spun (releitura do estado em disco)', () => {
+  const root = tmpRoot();
+  preflight({
+    run_id: 'tok2', project_root: root, mode: 'execute',
+    host: 'codex', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: 'tok2', project_root: root, action: 'start', phase: 'plan_execute' });
+
+  const start1 = lockValidator({
+    run_id: 'tok2', project_root: root, host: 'codex', action: 'start',
+    state_path: '.atlas/state/tok2/slice.json',
+  });
+  assert.equal(start1.dispatch_token, 1);
+
+  // Re-spun: lê o run.json do disco como faria a próxima chamada após reinício.
+  const reread = readRunJson(root, 'tok2').data.validator_cycle;
+  assert.equal(reread.dispatch_token, 1);
+  assert.equal(reread.active.dispatch_token, 1);
+  assert.equal(reread.status, 'running');
+
+  // complete com o token preservado de disco fecha normalmente.
+  const done = lockValidator({
+    run_id: 'tok2', project_root: root, host: 'codex', action: 'complete',
+    state_path: '.atlas/state/tok2/slice.json',
+    validator_run_id: start1.validator_run_id,
+    dispatch_token: reread.active.dispatch_token,
+    verdict: 'pass',
+  });
+  assert.equal(done.status, 'passed');
+});
+
+test('S04: validatorComplete com token divergente → blocked, slot não fecha', () => {
+  const root = tmpRoot();
+  preflight({
+    run_id: 'tok3', project_root: root, mode: 'execute',
+    host: 'codex', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: 'tok3', project_root: root, action: 'start', phase: 'plan_execute' });
+
+  const start1 = lockValidator({
+    run_id: 'tok3', project_root: root, host: 'codex', action: 'start',
+    state_path: '.atlas/state/tok3/slice.json',
+  });
+  assert.equal(start1.dispatch_token, 1);
+
+  const stale = lockValidator({
+    run_id: 'tok3', project_root: root, host: 'codex', action: 'complete',
+    state_path: '.atlas/state/tok3/slice.json',
+    validator_run_id: start1.validator_run_id,
+    dispatch_token: 99,
+    verdict: 'pass',
+  });
+  assert.equal(stale.status, 'blocked');
+  assert.match(stale.error, /token de dispatch divergente: esperado 1, recebido 99/);
+
+  // Slot permanece ativo após divergência.
+  const cycle = readRunJson(root, 'tok3').data.validator_cycle;
+  assert.notEqual(cycle.active, null);
+  assert.equal(cycle.active.dispatch_token, 1);
+  assert.equal(cycle.status, 'running');
+
+  // complete com token correto fecha normalmente (slot não foi corrompido).
+  const good = lockValidator({
+    run_id: 'tok3', project_root: root, host: 'codex', action: 'complete',
+    state_path: '.atlas/state/tok3/slice.json',
+    validator_run_id: start1.validator_run_id,
+    dispatch_token: 1,
+    verdict: 'pass',
+  });
+  assert.equal(good.status, 'passed');
+  assert.equal(good.validator_status, 'passed');
+});
+
+test('S04: validatorComplete sem dispatch_token mantém compat (caminho Codex por run_id)', () => {
+  const root = tmpRoot();
+  preflight({
+    run_id: 'tok4', project_root: root, mode: 'execute',
+    host: 'codex', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: 'tok4', project_root: root, action: 'start', phase: 'plan_execute' });
+
+  const start1 = lockValidator({
+    run_id: 'tok4', project_root: root, host: 'codex', action: 'start',
+    state_path: '.atlas/state/tok4/slice.json',
+  });
+
+  // Sem dispatch_token no payload: a checagem por run_id continua valendo.
+  const good = lockValidator({
+    run_id: 'tok4', project_root: root, host: 'codex', action: 'complete',
+    state_path: '.atlas/state/tok4/slice.json',
+    validator_run_id: start1.validator_run_id,
+    verdict: 'pass',
+  });
+  assert.equal(good.status, 'passed');
+  assert.equal(good.validator_status, 'passed');
+});
+
 test('atlas_assert_after_plan: execute → banner plano não-vazio (T07)', () => {
   const root = tmpRoot();
   preflight({
@@ -815,4 +971,141 @@ test('atlas_assert_after_plan: execute → banner plano não-vazio (T07)', () =>
   const r = assertAfterPlan({ run_id: 'raa', project_root: root, attempted_action: 'dispatch_plan_execute' });
   assert.equal(r.applicable, false);
   assert.equal(r.banner, '▸ atlas: plano · validado (TC pass)');
+});
+
+// ── P3: testes de segurança e robustez do dispatch_token (S04 slice-review) ───
+
+// P3(a): redação — chave genérica `token` é redatada; `dispatch_token` sobrevive.
+test('P3(a): redact() redigita token/access_token/password mas preserva dispatch_token', () => {
+  const root = tmpRoot();
+  // Upsert de estado com payload sensível misturado a dispatch_token legítimo.
+  runState({
+    action: 'upsert',
+    run_id: 'redact1',
+    project_root: root,
+    phase: 'plan_execute',
+    status: 'running',
+    summary: 'teste de redação P3(a)',
+    data: {
+      auth: {
+        token: 'Bearer sk-SEGREDO',
+        access_token: 'ghp_SECRETO',
+        password: 'hunter2',
+      },
+      dispatch_token: 5,
+    },
+  });
+
+  const persisted = readRunJson(root, 'redact1');
+
+  // Campos sensíveis devem ter sido redatados.
+  assert.equal(persisted.data.auth.token, '[REDACTED]');
+  assert.equal(persisted.data.auth.access_token, '[REDACTED]');
+  assert.equal(persisted.data.auth.password, '[REDACTED]');
+
+  // dispatch_token (allowlist exata) deve sobreviver intacto.
+  assert.equal(persisted.data.dispatch_token, 5);
+});
+
+// P3(b): monotonicidade travada — dispatch_token nunca reseta entre ciclos.
+test('P3(b): dispatch_token do 2º validatorStart > 1º após start→fail→repair→start', () => {
+  const root = tmpRoot();
+  preflight({
+    run_id: 'mono1', project_root: root, mode: 'execute',
+    host: 'codex', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: 'mono1', project_root: root, action: 'start', phase: 'plan_execute' });
+
+  const start1 = lockValidator({
+    run_id: 'mono1', project_root: root, host: 'codex', action: 'start',
+    state_path: '.atlas/state/mono1/slice.json',
+  });
+  const token1 = readRunJson(root, 'mono1').data.validator_cycle.dispatch_token;
+
+  lockValidator({
+    run_id: 'mono1', project_root: root, host: 'codex', action: 'complete',
+    state_path: '.atlas/state/mono1/slice.json',
+    validator_run_id: start1.validator_run_id,
+    verdict: 'fail',
+    data: { findings: [{ severity: 'P1', file: 'a.ts', line: 1, msg: 'x' }] },
+  });
+
+  // dispatch_token persiste após complete (não reseta).
+  const tokenAfterFail = readRunJson(root, 'mono1').data.validator_cycle.dispatch_token;
+  assert.equal(tokenAfterFail, token1);
+
+  const repairStart = lockValidator({
+    run_id: 'mono1', project_root: root, host: 'codex', action: 'repair_start',
+    state_path: '.atlas/state/mono1/slice.json',
+  });
+  lockValidator({
+    run_id: 'mono1', project_root: root, host: 'codex', action: 'repair_complete',
+    repair_run_id: repairStart.repair_run_id,
+    state_path: '.atlas/state/mono1/slice-repaired.json',
+  });
+
+  const start2 = lockValidator({
+    run_id: 'mono1', project_root: root, host: 'codex', action: 'start',
+    state_path: '.atlas/state/mono1/slice-repaired.json',
+  });
+  const token2 = readRunJson(root, 'mono1').data.validator_cycle.dispatch_token;
+
+  // Monotonicidade: token do 2º start é estritamente maior que o do 1º.
+  assert.ok(token2 > token1, `esperado token2 (${token2}) > token1 (${token1})`);
+  assert.equal(start2.dispatch_token, token2);
+});
+
+// P3(c): estado legado pré-S04 (sem dispatch_token no run.json) entra em
+// validatorComplete — comportamento determinístico, sem mascarar divergência.
+// Resultado esperado: como cycle.dispatch_token normaliza para 0 e active.dispatch_token
+// também normaliza para 0, uma chamada com dispatch_token=1 (valor do caller)
+// detecta divergência (0 !== 1) e retorna blocked. Ausência de dispatch_token
+// no payload segue o caminho legado por run_id (passes se run_id bate).
+test('P3(c): estado legado pré-S04 sem dispatch_token — comportamento determinístico documentado', () => {
+  const root = tmpRoot();
+  // Simular estado legado: preflight + lockDispatch + validatorStart (gera active),
+  // depois apagar dispatch_token manualmente do run.json para imitar estado pré-S04.
+  preflight({
+    run_id: 'legacy1', project_root: root, mode: 'execute',
+    host: 'codex', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: 'legacy1', project_root: root, action: 'start', phase: 'plan_execute' });
+
+  const start1 = lockValidator({
+    run_id: 'legacy1', project_root: root, host: 'codex', action: 'start',
+    state_path: '.atlas/state/legacy1/slice.json',
+  });
+
+  // Reescrever o run.json removendo dispatch_token do ciclo e do active
+  // para simular estado gerado por versão pré-S04.
+  const runFile = path.join(root, '.atlas', 'state', 'legacy1', 'run.json');
+  const raw = JSON.parse(fs.readFileSync(runFile, 'utf8'));
+  delete raw.data.validator_cycle.dispatch_token;
+  delete raw.data.validator_cycle.active.dispatch_token;
+  fs.writeFileSync(runFile, JSON.stringify(raw, null, 2));
+
+  // Caso 1: caller envia dispatch_token=1 → normalizeValidatorCycle normaliza
+  // o dispatch_token ausente como 0; active.dispatch_token ausente também normaliza
+  // como 0. Divergência 0 !== 1 → blocked (sem mascarar, determinístico).
+  const withToken = lockValidator({
+    run_id: 'legacy1', project_root: root, host: 'codex', action: 'complete',
+    state_path: '.atlas/state/legacy1/slice.json',
+    validator_run_id: start1.validator_run_id,
+    dispatch_token: 1,
+    verdict: 'pass',
+  });
+  // dispatch_token ausente no estado legado normaliza para 0; caller envia 1 → divergência.
+  assert.equal(withToken.status, 'blocked');
+  assert.match(withToken.error, /token de dispatch divergente/);
+
+  // Caso 2: caller não envia dispatch_token → caminho legado por run_id,
+  // fecha normalmente sem verificar token.
+  const withoutToken = lockValidator({
+    run_id: 'legacy1', project_root: root, host: 'codex', action: 'complete',
+    state_path: '.atlas/state/legacy1/slice.json',
+    validator_run_id: start1.validator_run_id,
+    verdict: 'pass',
+  });
+  assert.equal(withoutToken.status, 'passed');
+  assert.equal(withoutToken.validator_status, 'passed');
 });

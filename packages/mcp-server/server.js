@@ -7,6 +7,12 @@ import { fileURLToPath } from 'node:url';
 const SERVER_NAME = 'atlas-workflow-orchestrator';
 const RUN_DIR = path.join('.atlas', 'state');
 const SENSITIVE_KEY = /(authorization|credential|password|secret|token|api[_-]?key)/i;
+// S04: chaves cujo nome casa com SENSITIVE_KEY (substring `token`) mas NÃO são
+// segredo/PII — são contadores monotônicos do slot de validação que PRECISAM
+// persistir e sobreviver a re-spun. Allowlist exata (não substring).
+// APENAS `dispatch_token` (nome interno específico); a chave genérica `token`
+// permanece sujeita a redação para não expor segredos de payloads de usuário.
+const NON_SENSITIVE_KEYS = new Set(['dispatch_token']);
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PRD_PATTERNS = {
   section_1_context: ['TBD', 'a confirmar', 'talvez', 'não definido'],
@@ -511,7 +517,7 @@ function redact(value) {
   return Object.fromEntries(
     Object.entries(value).map(([key, nested]) => [
       key,
-      SENSITIVE_KEY.test(key) ? '[REDACTED]' : redact(nested),
+      SENSITIVE_KEY.test(key) && !NON_SENSITIVE_KEYS.has(key) ? '[REDACTED]' : redact(nested),
     ]),
   );
 }
@@ -818,6 +824,9 @@ function patchDispatchResult(runId, result, args = {}) {
 function normalizeValidatorCycle(cycle = {}) {
   return {
     topology: typeof cycle.topology === 'string' ? cycle.topology : null,
+    // S04: token de dispatch monotônico explícito do slot de validação. Inteiro,
+    // sempre crescente, nunca reusado; persiste no run.json e sobrevive a re-spun.
+    dispatch_token: Number.isInteger(cycle.dispatch_token) ? cycle.dispatch_token : 0,
     max_attempts: Number.isInteger(cycle.max_attempts) ? cycle.max_attempts : VALIDATOR_MAX_ATTEMPTS,
     attempts_used: Number.isInteger(cycle.attempts_used) ? cycle.attempts_used : 0,
     status: typeof cycle.status === 'string' ? cycle.status : 'idle',
@@ -1832,6 +1841,9 @@ function validatorStart(args, context) {
 
   const attempt = cycle.attempts_used + 1;
   const activeValidatorRunId = validatorRunId(runId, attempt, timestamp);
+  // S04: token de dispatch monotônico — incrementa a cada dispatch aceito
+  // (status passed). Nunca decrementado nem reusado dentro da slice.
+  const dispatchToken = cycle.dispatch_token + 1;
   return {
     gate: 'G4',
     action: 'start',
@@ -1841,10 +1853,12 @@ function validatorStart(args, context) {
     validator_attempt: attempt,
     validator_run_id: activeValidatorRunId,
     validator_status: 'running',
+    dispatch_token: dispatchToken,
     next_action: 'await_validator_verdict',
     banner: renderBanner('validacao', { status: `running ${attempt}/${cycle.max_attempts}` }),
     validator_cycle: {
       topology: cap.validator_dispatch.topology,
+      dispatch_token: dispatchToken,
       max_attempts: cycle.max_attempts,
       attempts_used: attempt,
       status: 'running',
@@ -1852,6 +1866,7 @@ function validatorStart(args, context) {
         attempt,
         run_id: activeValidatorRunId,
         state_path: statePathValue,
+        dispatch_token: dispatchToken,
         started_at: timestamp,
       },
       last_state_path: statePathValue,
@@ -1876,6 +1891,10 @@ function validatorComplete(args, context) {
   const activeValidatorRunId = requiredString(args, 'validator_run_id');
   const verdict = requiredString(args, 'verdict');
   const packet = optionalData(args);
+  // S04: token de dispatch opcional. Quando presente, é verificado contra o slot
+  // ativo (reconciliação anti-stale idempotente). Ausente → mantém compat com a
+  // checagem por run_id existente (caminho Codex não envia token).
+  const dispatchToken = Number.isInteger(args.dispatch_token) ? args.dispatch_token : null;
 
   if (cap.validator_dispatch.topology !== 'sibling') {
     return {
@@ -1926,6 +1945,24 @@ function validatorComplete(args, context) {
     };
   }
 
+  // S04: verificação idempotente do token de dispatch (anti-stale). Só executa
+  // quando o caller informa o token; divergência → blocked SEM fechar o slot
+  // (não retorna validator_cycle, então active é preservado pelo merge).
+  // O endurecimento completo é S10; aqui só a checagem básica idempotente.
+  if (dispatchToken !== null && cycle.active.dispatch_token !== dispatchToken) {
+    return {
+      gate: 'G4',
+      action: 'complete',
+      status: 'blocked',
+      timestamp,
+      validator_attempt: cycle.active.attempt,
+      validator_run_id: activeValidatorRunId,
+      state_path: statePathValue,
+      error: `token de dispatch divergente: esperado ${cycle.active.dispatch_token}, recebido ${dispatchToken}`,
+      next_action: 'aguardar_ou_descartar_retorno_stale_do_validator',
+    };
+  }
+
   const normalizedVerdict = verdict === 'pass'
     ? 'passed'
     : verdict === 'pass_with_observations'
@@ -1945,6 +1982,7 @@ function validatorComplete(args, context) {
       next_action: 'complete_plan_execute',
       banner: renderBanner('validacao', { status: normalizedVerdict }),
       validator_cycle: {
+        dispatch_token: cycle.dispatch_token,
         status: normalizedVerdict,
         active: null,
         last_state_path: statePathValue,
@@ -1988,6 +2026,7 @@ function validatorComplete(args, context) {
       next_action: 'encerrar_com_blocked_final_validator_failed',
       banner: renderBanner('validacao', { status: 'blocked_final_validator_failed' }),
       validator_cycle: {
+        dispatch_token: cycle.dispatch_token,
         status: 'blocked',
         active: null,
         last_state_path: statePathValue,
@@ -2017,6 +2056,7 @@ function validatorComplete(args, context) {
     next_action: 'start_findings_repair_lock',
     banner: renderBanner('validacao', { status: 'repair_required' }),
     validator_cycle: {
+      dispatch_token: cycle.dispatch_token,
       status: 'repair_required',
       active: null,
       last_state_path: statePathValue,
@@ -2512,6 +2552,7 @@ function toolsList() {
             state_path: { type: 'string' },
             validator_run_id: { type: 'string' },
             repair_run_id: { type: 'string' },
+            dispatch_token: { type: 'integer' },
             verdict: { type: 'string', enum: ['pass', 'pass_with_observations', 'fail'] },
             data: { type: 'object', additionalProperties: true },
             host: { type: 'string', enum: HOST_NAMES },
@@ -2675,4 +2716,5 @@ export {
   lockDispatch,
   lockValidator,
   assertAfterPlan,
+  runState,
 };
