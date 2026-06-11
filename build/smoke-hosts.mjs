@@ -11,14 +11,19 @@ import { fileURLToPath } from 'node:url';
 
 const SERVER = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../packages/mcp-server/server.js');
 
-// caso → { env extra, host esperado, via esperado, label }
+// Contrato atlas_capabilities atual: ver CAPABILITIES_SCHEMA_VERSION em
+// packages/mcp-server/server.js (v5). join_sync por perfil: hosts nativos
+// (claude/codex/opencode) = 'self_evident'; hosts must_report (pi/generic) = 'must_report'.
+const EXPECTED_SCHEMA_VERSION = 5;
+
+// caso → { env extra, host esperado, via esperado, join_sync esperado, label }
 const CASES = [
-  { name: 'claude (= cursor via CLAUDE_PLUGIN_ROOT)', env: { CLAUDE_PLUGIN_ROOT: '/tmp/x' }, host: 'claude', via: 'env:CLAUDE_PLUGIN_ROOT' },
-  { name: 'codex (CODEX_HOME)', env: { CODEX_HOME: '/tmp/y' }, host: 'codex', via: 'env:CODEX' },
-  { name: 'opencode (ATLAS_HOST via opencode.json)', env: { ATLAS_HOST: 'opencode' }, host: 'opencode', via: 'env:ATLAS_HOST' },
-  { name: 'pi (ATLAS_HOST via mcp.json)', env: { ATLAS_HOST: 'pi' }, host: 'pi', via: 'env:ATLAS_HOST' },
-  { name: 'generic (sem env)', env: {}, host: 'generic', via: 'default' },
-  { name: 'override ATLAS_HOST', env: { ATLAS_HOST: 'codex', CLAUDE_PLUGIN_ROOT: '/tmp/x' }, host: 'codex', via: 'env:ATLAS_HOST' },
+  { name: 'claude (= cursor via CLAUDE_PLUGIN_ROOT)', env: { CLAUDE_PLUGIN_ROOT: '/tmp/x' }, host: 'claude', via: 'env:CLAUDE_PLUGIN_ROOT', join_sync: 'self_evident' },
+  { name: 'codex (CODEX_HOME)', env: { CODEX_HOME: '/tmp/y' }, host: 'codex', via: 'env:CODEX', join_sync: 'self_evident' },
+  { name: 'opencode (ATLAS_HOST via opencode.json)', env: { ATLAS_HOST: 'opencode' }, host: 'opencode', via: 'env:ATLAS_HOST', join_sync: 'self_evident' },
+  { name: 'pi (ATLAS_HOST via mcp.json)', env: { ATLAS_HOST: 'pi' }, host: 'pi', via: 'env:ATLAS_HOST', join_sync: 'must_report' },
+  { name: 'generic (sem env)', env: {}, host: 'generic', via: 'default', join_sync: 'must_report' },
+  { name: 'override ATLAS_HOST', env: { ATLAS_HOST: 'codex', CLAUDE_PLUGIN_ROOT: '/tmp/x' }, host: 'codex', via: 'env:ATLAS_HOST', join_sync: 'self_evident' },
 ];
 
 function rpc(server, msg) {
@@ -59,9 +64,16 @@ for (const c of CASES) {
   const cap = r.cap ?? {};
   if (cap.host !== c.host) errors.push(`${c.name}: host '${cap.host}' != esperado '${c.host}'`);
   if (cap.detected_via !== c.via) errors.push(`${c.name}: detected_via '${cap.detected_via}' != '${c.via}'`);
-  if (cap.schema_version !== 3) errors.push(`${c.name}: schema_version '${cap.schema_version}' != 3`);
+  if (cap.schema_version !== EXPECTED_SCHEMA_VERSION) errors.push(`${c.name}: schema_version '${cap.schema_version}' != ${EXPECTED_SCHEMA_VERSION}`);
   if (!cap.capabilities_flags) errors.push(`${c.name}: sem capabilities_flags`);
+  // Topologia sibling (DEC-SIB-001/003): dispatcher sempre 'orchestrator',
+  // campo topology REMOVIDO do contrato, join.sync por perfil.
+  const vd = cap.validator_dispatch ?? {};
   if (!cap.validator_dispatch) errors.push(`${c.name}: sem validator_dispatch`);
+  if (vd.dispatcher !== 'orchestrator') errors.push(`${c.name}: validator_dispatch.dispatcher '${vd.dispatcher}' != 'orchestrator'`);
+  if (vd.topology !== undefined) errors.push(`${c.name}: validator_dispatch.topology presente ('${vd.topology}') — campo removido (sibling-only)`);
+  if (!vd.join) errors.push(`${c.name}: validator_dispatch.join ausente`);
+  if (vd.join && vd.join.sync !== c.join_sync) errors.push(`${c.name}: validator_dispatch.join.sync '${vd.join?.sync}' != '${c.join_sync}'`);
   if (!r.ping || r.ping.status !== 'alive') errors.push(`${c.name}: atlas_ping status '${r.ping?.status}' != 'alive'`);
   if (!errors.some((e) => e.startsWith(c.name))) console.log(`  ✓ ${c.name} → host=${cap.host} sv=${cap.schema_version} ping=ok`);
 }
