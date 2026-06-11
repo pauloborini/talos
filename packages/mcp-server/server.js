@@ -949,9 +949,30 @@ function patchValidatorResult(runId, result, args = {}) {
   });
 }
 
+// S10: deriva o slot de recovery para um orquestrador re-spun reconhecer de forma
+// determinística qual retorno aceitar. Aditivo, não-quebrante: campo top-level
+// `validator_recovery` no retorno de leitura (null quando não há slot ativo).
+// Construído na leitura (fora do caminho de persistência/redact), então
+// `expected_dispatch_token` não é redigido — não reabre a chave genérica `token`.
+function deriveValidatorRecovery(state) {
+  const cycle = state?.data?.validator_cycle;
+  const active = cycle && typeof cycle === 'object' ? cycle.active : null;
+  if (!active || typeof active !== 'object') return null;
+  return {
+    expected_validator_run_id: typeof active.run_id === 'string' ? active.run_id : null,
+    expected_dispatch_token: Number.isInteger(active.dispatch_token) ? active.dispatch_token : null,
+    expected_state_path: typeof active.state_path === 'string' ? active.state_path : null,
+    attempt: Number.isInteger(active.attempt) ? active.attempt : null,
+    status: typeof cycle.status === 'string' ? cycle.status : null,
+  };
+}
+
 function runState(args = {}) {
   const action = args.action ?? 'get';
-  if (action === 'get') return readState(validateRunId(args.run_id), args);
+  if (action === 'get') {
+    const state = readState(validateRunId(args.run_id), args);
+    return { ...state, validator_recovery: deriveValidatorRecovery(state) };
+  }
   if (action === 'upsert') return upsertState(args);
   throw rpcError(-32602, `Ação inválida para atlas_run_state: ${action}`);
 }
@@ -1950,11 +1971,43 @@ function validatorComplete(args, context) {
   const dispatchToken = Number.isInteger(args.dispatch_token) ? args.dispatch_token : null;
 
   if (!cycle.active) {
+    // S10: slot já fechado. Distinguir retorno duplicado já aplicado (idempotente
+    // reconhecível) de payload sem nenhum slot conhecido. NUNCA reabrir o ciclo.
+    // Um complete já aplicado para este run_id aparece no history como evento
+    // `action: 'complete'`/`status: 'passed'` com o mesmo validator_run_id.
+    const appliedCompleteEvent = cycle.history.find(
+      (event) =>
+        event.action === 'complete' &&
+        event.status === 'passed' &&
+        event.validator_run_id === activeValidatorRunId,
+    );
+    if (appliedCompleteEvent) {
+      return {
+        gate: 'G4',
+        action: 'complete',
+        status: 'blocked',
+        timestamp,
+        validator_run_id: activeValidatorRunId,
+        state_path: statePathValue,
+        stale_discarded: true,
+        reason: 'stale_duplicate_already_applied',
+        last_verdict: cycle.last_verdict,
+        // S10/P3-2: ecoa o veredito real que o complete casado produziu no history
+        // (repair_required, passed, passed_with_observations,
+        // blocked_final_validator_failed). last_verdict reflete só o ciclo atual e
+        // pode divergir do estado real daquele evento — applied_validator_status
+        // evita que o consumidor leia um fail→repair como conclusão bem-sucedida.
+        applied_validator_status: appliedCompleteEvent.validator_status ?? null,
+        error: `Retorno duplicado do validator já aplicado (run_id ${activeValidatorRunId}); descartado de forma idempotente`,
+        next_action: 'descartar_retorno_duplicado_idempotente',
+      };
+    }
     return {
       gate: 'G4',
       action: 'complete',
       status: 'blocked',
       timestamp,
+      stale_discarded: true,
       error: 'Nenhum validator ativo para concluir',
       next_action: 'start_validator_primeiro',
     };
@@ -1968,6 +2021,7 @@ function validatorComplete(args, context) {
       timestamp,
       validator_attempt: cycle.active.attempt,
       validator_run_id: activeValidatorRunId,
+      stale_discarded: true,
       error: `validator_run_id não corresponde ao validator ativo: recebido ${activeValidatorRunId}`,
       next_action: 'aguardar_ou_descartar_retorno_stale_do_validator',
     };
@@ -1982,6 +2036,7 @@ function validatorComplete(args, context) {
       validator_attempt: cycle.active.attempt,
       validator_run_id: activeValidatorRunId,
       state_path: statePathValue,
+      stale_discarded: true,
       error: `state_path do validator ativo diverge: esperado ${cycle.active.state_path}, recebido ${statePathValue}`,
       next_action: 'corrigir_payload_do_validator',
     };
@@ -1990,7 +2045,7 @@ function validatorComplete(args, context) {
   // S04: verificação idempotente do token de dispatch (anti-stale). Só executa
   // quando o caller informa o token; divergência → blocked SEM fechar o slot
   // (não retorna validator_cycle, então active é preservado pelo merge).
-  // O endurecimento completo é S10; aqui só a checagem básica idempotente.
+  // S10: marca stale_discarded para o orquestrador distinguir stale de erro real.
   if (dispatchToken !== null && cycle.active.dispatch_token !== dispatchToken) {
     return {
       gate: 'G4',
@@ -2000,6 +2055,7 @@ function validatorComplete(args, context) {
       validator_attempt: cycle.active.attempt,
       validator_run_id: activeValidatorRunId,
       state_path: statePathValue,
+      stale_discarded: true,
       error: `token de dispatch divergente: esperado ${cycle.active.dispatch_token}, recebido ${dispatchToken}`,
       next_action: 'aguardar_ou_descartar_retorno_stale_do_validator',
     };
@@ -2219,14 +2275,31 @@ function validatorRepairComplete(args, context) {
     };
   }
 
+  // S10: idempotência reconhecível — um repair_complete já aplicado para este
+  // repair_run_id aparece no history como evento `repair_complete`/`passed`.
+  // Distingue duplicado/fora de ordem após repair concluído de erro real.
+  const appliedRepairEvent = cycle.history.find(
+    (event) =>
+      event.action === 'repair_complete' &&
+      event.status === 'passed' &&
+      event.repair_run_id === activeRepairRunId,
+  );
+
   if (cycle.status !== 'repair_running') {
     return {
       gate: 'G4',
       action: 'repair_complete',
       status: 'blocked',
       timestamp,
-      error: `Repair fora de ordem: status atual ${cycle.status}`,
-      next_action: 'iniciar_findings_repair_antes_de_concluir',
+      repair_run_id: activeRepairRunId,
+      stale_discarded: true,
+      ...(appliedRepairEvent ? { reason: 'repair_duplicate_already_applied' } : {}),
+      error: appliedRepairEvent
+        ? `Repair duplicado já aplicado (run_id ${activeRepairRunId}); descartado de forma idempotente`
+        : `Repair fora de ordem: status atual ${cycle.status}`,
+      next_action: appliedRepairEvent
+        ? 'descartar_retorno_duplicado_idempotente'
+        : 'iniciar_findings_repair_antes_de_concluir',
     };
   }
 
@@ -2236,8 +2309,15 @@ function validatorRepairComplete(args, context) {
       action: 'repair_complete',
       status: 'blocked',
       timestamp,
-      error: 'Nenhum repair ativo para concluir',
-      next_action: 'start_findings_repair_primeiro',
+      repair_run_id: activeRepairRunId,
+      stale_discarded: true,
+      ...(appliedRepairEvent ? { reason: 'repair_duplicate_already_applied' } : {}),
+      error: appliedRepairEvent
+        ? `Repair duplicado já aplicado (run_id ${activeRepairRunId}); descartado de forma idempotente`
+        : 'Nenhum repair ativo para concluir',
+      next_action: appliedRepairEvent
+        ? 'descartar_retorno_duplicado_idempotente'
+        : 'start_findings_repair_primeiro',
     };
   }
 
@@ -2249,6 +2329,8 @@ function validatorRepairComplete(args, context) {
       timestamp,
       validator_attempt: cycle.attempts_used,
       repair_run_id: activeRepairRunId,
+      stale_discarded: true,
+      ...(appliedRepairEvent ? { reason: 'repair_duplicate_already_applied' } : {}),
       error: `repair_run_id não corresponde ao repair ativo: recebido ${activeRepairRunId}`,
       next_action: 'aguardar_ou_descartar_retorno_stale_do_repair',
     };

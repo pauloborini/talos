@@ -1341,3 +1341,286 @@ test('S05: host claude percorre ciclo completo start→fail→repair→start→p
   assert.equal(cycle.status, 'passed', 'ciclo fechado como passed');
   assert.equal(cycle.active, null, 'slot nulo após pass terminal');
 });
+
+// ── S10: endurecimento de bordas anti-stale / idempotência reconhecível ───────
+
+// (a) attempt-1 retorna DEPOIS de attempt-2 despachado → blocked, slot do
+// attempt-2 intacto, marcado stale_discarded (run_id divergente).
+test('S10(a): retorno stale do attempt-1 após attempt-2 despachado → blocked, slot intacto', () => {
+  const root = tmpRoot();
+  preflight({
+    run_id: 's10a', project_root: root, mode: 'execute',
+    host: 'codex', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: 's10a', project_root: root, action: 'start', phase: 'plan_execute' });
+
+  const start1 = lockValidator({
+    run_id: 's10a', project_root: root, host: 'codex', action: 'start',
+    state_path: '.atlas/state/s10a/slice.json',
+  });
+  // attempt-1 falha → repair → attempt-2 (novo slot ativo).
+  lockValidator({
+    run_id: 's10a', project_root: root, host: 'codex', action: 'complete',
+    state_path: '.atlas/state/s10a/slice.json',
+    validator_run_id: start1.validator_run_id, verdict: 'fail',
+    data: { findings: [{ severity: 'P1', file: 'x.ts', line: 1, msg: 'boom' }] },
+  });
+  const repairStart = lockValidator({
+    run_id: 's10a', project_root: root, host: 'codex', action: 'repair_start',
+    state_path: '.atlas/state/s10a/slice.json',
+  });
+  lockValidator({
+    run_id: 's10a', project_root: root, host: 'codex', action: 'repair_complete',
+    repair_run_id: repairStart.repair_run_id,
+    state_path: '.atlas/state/s10a/slice-repaired.json',
+  });
+  const start2 = lockValidator({
+    run_id: 's10a', project_root: root, host: 'codex', action: 'start',
+    state_path: '.atlas/state/s10a/slice-repaired.json',
+  });
+  assert.equal(start2.status, 'passed');
+
+  // attempt-1 (run_id antigo) chega tarde → blocked, stale_discarded, slot intacto.
+  const stale = lockValidator({
+    run_id: 's10a', project_root: root, host: 'codex', action: 'complete',
+    state_path: '.atlas/state/s10a/slice.json',
+    validator_run_id: start1.validator_run_id, verdict: 'pass',
+  });
+  assert.equal(stale.status, 'blocked');
+  assert.equal(stale.stale_discarded, true);
+  assert.match(stale.error, /validator_run_id não corresponde/);
+
+  const cycle = readRunJson(root, 's10a').data.validator_cycle;
+  assert.equal(cycle.active.run_id, start2.validator_run_id, 'slot do attempt-2 preservado');
+  assert.equal(cycle.status, 'running');
+});
+
+// (b) complete duplicado do mesmo run_id após slot fechado → blocked
+// stale_discarded idempotente, last_verdict ecoado.
+test('S10(b): complete duplicado após slot fechado → idempotente reconhecível, last_verdict ecoado', () => {
+  const root = tmpRoot();
+  preflight({
+    run_id: 's10b', project_root: root, mode: 'execute',
+    host: 'codex', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: 's10b', project_root: root, action: 'start', phase: 'plan_execute' });
+
+  const start1 = lockValidator({
+    run_id: 's10b', project_root: root, host: 'codex', action: 'start',
+    state_path: '.atlas/state/s10b/slice.json',
+  });
+  const good = lockValidator({
+    run_id: 's10b', project_root: root, host: 'codex', action: 'complete',
+    state_path: '.atlas/state/s10b/slice.json',
+    validator_run_id: start1.validator_run_id, verdict: 'pass_with_observations',
+  });
+  assert.equal(good.status, 'passed');
+  assert.equal(good.validator_status, 'passed_with_observations');
+
+  // Retorno duplicado do MESMO run_id após slot fechado.
+  const dup = lockValidator({
+    run_id: 's10b', project_root: root, host: 'codex', action: 'complete',
+    state_path: '.atlas/state/s10b/slice.json',
+    validator_run_id: start1.validator_run_id, verdict: 'pass_with_observations',
+  });
+  assert.equal(dup.status, 'blocked');
+  assert.equal(dup.stale_discarded, true);
+  assert.equal(dup.reason, 'stale_duplicate_already_applied');
+  assert.equal(dup.last_verdict, 'passed_with_observations');
+  assert.equal(dup.applied_validator_status, 'passed_with_observations');
+  assert.equal(dup.next_action, 'descartar_retorno_duplicado_idempotente');
+
+  // Slot continua fechado, ciclo terminal intacto.
+  const cycle = readRunJson(root, 's10b').data.validator_cycle;
+  assert.equal(cycle.active, null);
+  assert.equal(cycle.status, 'passed_with_observations');
+
+  // run_id desconhecido após slot fechado → erro genérico, mas stale_discarded.
+  const unknown = lockValidator({
+    run_id: 's10b', project_root: root, host: 'codex', action: 'complete',
+    state_path: '.atlas/state/s10b/slice.json',
+    validator_run_id: 's10b:validator:99:desconhecido', verdict: 'pass',
+  });
+  assert.equal(unknown.status, 'blocked');
+  assert.equal(unknown.stale_discarded, true);
+  assert.equal(unknown.next_action, 'start_validator_primeiro');
+  assert.equal(unknown.reason, undefined, 'sem reason de duplicado para run_id desconhecido');
+});
+
+// (c) repair_complete duplicado → idempotente reconhecível.
+test('S10(c): repair_complete duplicado → idempotente reconhecível', () => {
+  const root = tmpRoot();
+  preflight({
+    run_id: 's10c', project_root: root, mode: 'execute',
+    host: 'codex', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: 's10c', project_root: root, action: 'start', phase: 'plan_execute' });
+
+  const start1 = lockValidator({
+    run_id: 's10c', project_root: root, host: 'codex', action: 'start',
+    state_path: '.atlas/state/s10c/slice.json',
+  });
+  lockValidator({
+    run_id: 's10c', project_root: root, host: 'codex', action: 'complete',
+    state_path: '.atlas/state/s10c/slice.json',
+    validator_run_id: start1.validator_run_id, verdict: 'fail',
+    data: { findings: [{ severity: 'P1', file: 'x.ts', line: 1, msg: 'boom' }] },
+  });
+  const repairStart = lockValidator({
+    run_id: 's10c', project_root: root, host: 'codex', action: 'repair_start',
+    state_path: '.atlas/state/s10c/slice.json',
+  });
+  const repairDone = lockValidator({
+    run_id: 's10c', project_root: root, host: 'codex', action: 'repair_complete',
+    repair_run_id: repairStart.repair_run_id,
+    state_path: '.atlas/state/s10c/slice-repaired.json',
+  });
+  assert.equal(repairDone.status, 'passed');
+
+  // Retorno duplicado do MESMO repair_run_id após repair concluído.
+  const dup = lockValidator({
+    run_id: 's10c', project_root: root, host: 'codex', action: 'repair_complete',
+    repair_run_id: repairStart.repair_run_id,
+    state_path: '.atlas/state/s10c/slice-repaired.json',
+  });
+  assert.equal(dup.status, 'blocked');
+  assert.equal(dup.stale_discarded, true);
+  assert.equal(dup.reason, 'repair_duplicate_already_applied');
+  assert.equal(dup.next_action, 'descartar_retorno_duplicado_idempotente');
+
+  // Ciclo continua em ready_for_retry, não corrompido.
+  const cycle = readRunJson(root, 's10c').data.validator_cycle;
+  assert.equal(cycle.status, 'ready_for_retry');
+  assert.equal(cycle.repair.active, null);
+
+  // repair_run_id desconhecido fora de ordem → blocked stale_discarded, sem reason.
+  const unknown = lockValidator({
+    run_id: 's10c', project_root: root, host: 'codex', action: 'repair_complete',
+    repair_run_id: 's10c:repair:99:desconhecido',
+    state_path: '.atlas/state/s10c/slice-repaired.json',
+  });
+  assert.equal(unknown.status, 'blocked');
+  assert.equal(unknown.stale_discarded, true);
+  assert.equal(unknown.reason, undefined);
+});
+
+// (d) re-spun: ler estado de disco, obter validator_recovery determinístico.
+test('S10(d): atlas_run_state(get) expõe validator_recovery do slot ativo (recovery re-spun)', () => {
+  const root = tmpRoot();
+  preflight({
+    run_id: 's10d', project_root: root, mode: 'execute',
+    host: 'codex', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: 's10d', project_root: root, action: 'start', phase: 'plan_execute' });
+
+  // Sem slot ativo ainda → validator_recovery null.
+  const before = runState({ action: 'get', run_id: 's10d', project_root: root });
+  assert.equal(before.validator_recovery, null);
+
+  const start1 = lockValidator({
+    run_id: 's10d', project_root: root, host: 'codex', action: 'start',
+    state_path: '.atlas/state/s10d/slice.json',
+  });
+
+  // Re-spun: leitura pura do disco expõe o slot esperado de forma determinística.
+  const recovery = runState({ action: 'get', run_id: 's10d', project_root: root });
+  assert.notEqual(recovery.validator_recovery, null);
+  assert.equal(recovery.validator_recovery.expected_validator_run_id, start1.validator_run_id);
+  assert.equal(recovery.validator_recovery.expected_dispatch_token, start1.dispatch_token);
+  assert.equal(recovery.validator_recovery.expected_state_path, '.atlas/state/s10d/slice.json');
+  assert.equal(recovery.validator_recovery.status, 'running');
+
+  // Após fechar o slot, validator_recovery volta a null.
+  lockValidator({
+    run_id: 's10d', project_root: root, host: 'codex', action: 'complete',
+    state_path: '.atlas/state/s10d/slice.json',
+    validator_run_id: start1.validator_run_id, verdict: 'pass',
+  });
+  const after = runState({ action: 'get', run_id: 's10d', project_root: root });
+  assert.equal(after.validator_recovery, null);
+});
+
+// (e) regressão Codex sem token: caminho idempotente não exige dispatch_token.
+test('S10(e): regressão Codex sem dispatch_token — idempotência por run_id intacta', () => {
+  const root = tmpRoot();
+  preflight({
+    run_id: 's10e', project_root: root, mode: 'execute',
+    host: 'codex', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: 's10e', project_root: root, action: 'start', phase: 'plan_execute' });
+
+  const start1 = lockValidator({
+    run_id: 's10e', project_root: root, host: 'codex', action: 'start',
+    state_path: '.atlas/state/s10e/slice.json',
+  });
+  // complete sem dispatch_token (caminho Codex).
+  const good = lockValidator({
+    run_id: 's10e', project_root: root, host: 'codex', action: 'complete',
+    state_path: '.atlas/state/s10e/slice.json',
+    validator_run_id: start1.validator_run_id, verdict: 'pass',
+  });
+  assert.equal(good.status, 'passed');
+
+  // Duplicado sem dispatch_token → idempotente reconhecível por run_id.
+  const dup = lockValidator({
+    run_id: 's10e', project_root: root, host: 'codex', action: 'complete',
+    state_path: '.atlas/state/s10e/slice.json',
+    validator_run_id: start1.validator_run_id, verdict: 'pass',
+  });
+  assert.equal(dup.status, 'blocked');
+  assert.equal(dup.stale_discarded, true);
+  assert.equal(dup.reason, 'stale_duplicate_already_applied');
+  assert.equal(dup.last_verdict, 'passed');
+});
+
+// (f) P3-2: duplicado de attempt-1 (fail→repair_required) chegando com o ciclo
+// já em repair_required. O complete fail grava status:'passed' no history (result
+// .status é 'passed' no caminho repair); o duplicado tardio casa o evento e
+// retorna applied_validator_status='repair_required' para o consumidor não
+// confundir com slice concluída. Slot NÃO reabre (blocked, stale_discarded).
+test('S10(f): duplicado de attempt-1 (fail→repair_required) em repair_required → applied_validator_status=repair_required', () => {
+  const root = tmpRoot();
+  preflight({
+    run_id: 's10f', project_root: root, mode: 'execute',
+    host: 'codex', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: 's10f', project_root: root, action: 'start', phase: 'plan_execute' });
+
+  const start1 = lockValidator({
+    run_id: 's10f', project_root: root, host: 'codex', action: 'start',
+    state_path: '.atlas/state/s10f/slice.json',
+  });
+  // attempt-1 falha → repair_required (result.status='passed', validator_status='repair_required').
+  const fail1 = lockValidator({
+    run_id: 's10f', project_root: root, host: 'codex', action: 'complete',
+    state_path: '.atlas/state/s10f/slice.json',
+    validator_run_id: start1.validator_run_id, verdict: 'fail',
+    data: { findings: [{ severity: 'P1', file: 'x.ts', line: 1, msg: 'boom' }] },
+  });
+  assert.equal(fail1.status, 'passed');
+  assert.equal(fail1.validator_status, 'repair_required');
+
+  // Ciclo está em repair_required (slot fechado, repair ainda não iniciado).
+  const cycleMid = readRunJson(root, 's10f').data.validator_cycle;
+  assert.equal(cycleMid.status, 'repair_required');
+  assert.equal(cycleMid.active, null);
+
+  // Complete duplicado tardio do MESMO run_id de attempt-1 chega em repair_required.
+  const dup = lockValidator({
+    run_id: 's10f', project_root: root, host: 'codex', action: 'complete',
+    state_path: '.atlas/state/s10f/slice.json',
+    validator_run_id: start1.validator_run_id, verdict: 'fail',
+  });
+  assert.equal(dup.status, 'blocked');
+  assert.equal(dup.stale_discarded, true);
+  assert.equal(dup.reason, 'stale_duplicate_already_applied');
+  // Estado real que aquele complete produziu — NÃO uma conclusão bem-sucedida.
+  assert.equal(dup.applied_validator_status, 'repair_required');
+  assert.equal(dup.last_verdict, 'fail');
+  assert.equal(dup.next_action, 'descartar_retorno_duplicado_idempotente');
+
+  // Slot NÃO reabriu; ciclo permanece em repair_required.
+  const cycleAfter = readRunJson(root, 's10f').data.validator_cycle;
+  assert.equal(cycleAfter.status, 'repair_required');
+  assert.equal(cycleAfter.active, null);
+});
