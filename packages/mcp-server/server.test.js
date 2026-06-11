@@ -1873,3 +1873,397 @@ test('S10(f): duplicado de attempt-1 (fail→repair_required) em repair_required
   assert.equal(cycleAfter.status, 'repair_required');
   assert.equal(cycleAfter.active, null);
 });
+
+// =====================================================================
+// S12 — Contrato legível da FSM sibling (SPEC_FSM_SIBLING_S02 §1 e §2)
+// =====================================================================
+//
+// Objetivo S12: travar a FSM como PROPRIEDADE legível. Dois eixos:
+//   1. Transição canônica completa — dirige o ciclo por TODOS os estados
+//      do §1 e asserta cycle.status PERSISTIDO em disco em cada transição.
+//   2. Matriz de transições ILEGAIS (§2 hard-fails) ainda não cobertas.
+//
+// Helper local: lê o cycle.status diretamente do run.json (fonte de verdade
+// persistida), em vez de confiar só no retorno do tool. Determinístico:
+// nenhuma asserção depende de timestamp.
+
+// --- S12.1: transição canônica da FSM (teste-contrato) ---
+//
+// Mapeamento estado → evento (SPEC §1.2), asserido via cycle.status no disco:
+//
+//   ESTADO INICIAL          idle                  (ciclo não iniciado)
+//     --[validatorStart]-->  running              (attempt 1)
+//     --[complete(fail)]-->  repair_required      (attempt<max → reparo pendente)
+//     --[repair_start]-->    repair_running       (atlas-findings-repair ativo)
+//     --[repair_complete]--> ready_for_retry      (reparo concluído; retry autorizado)
+//     --[validatorStart]-->  running              (attempt 2, último dispatch)
+//     --[complete(pass)]-->  passed               (TERMINAL; active=null)
+//
+test('S12.1: ciclo canônico da FSM percorre idle→running→repair_required→repair_running→ready_for_retry→running→passed (cycle.status persistido em cada transição)', () => {
+  const root = tmpRoot();
+  preflight({
+    run_id: 's12fsm', project_root: root, mode: 'execute',
+    host: 'codex', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: 's12fsm', project_root: root, action: 'start', phase: 'plan_execute' });
+
+  // Lê o status persistido no disco — fonte de verdade da FSM, não o retorno do tool.
+  const status = () => {
+    const cycle = readRunJson(root, 's12fsm').data?.validator_cycle ?? {};
+    // Default 'idle' espelha normalizeValidatorCycle (SPEC §1.1 / server.js:823).
+    return typeof cycle.status === 'string' ? cycle.status : 'idle';
+  };
+  const slot = () => readRunJson(root, 's12fsm').data?.validator_cycle?.active ?? null;
+
+  // [estado inicial] idle — antes de qualquer despacho do validator.
+  // (lockDispatch cria o run.json; o validator_cycle ainda não foi iniciado.)
+  assert.equal(status(), 'idle', 'estado inicial deve ser idle (SPEC §1.1)');
+
+  // idle --[validatorStart]--> running (attempt 1).
+  const start1 = lockValidator({
+    run_id: 's12fsm', project_root: root, host: 'codex', action: 'start',
+    state_path: '.atlas/state/s12fsm/slice.json',
+  });
+  assert.equal(start1.status, 'passed');
+  assert.equal(start1.validator_attempt, 1);
+  assert.equal(status(), 'running', 'após validatorStart → running');
+  assert.notEqual(slot(), null, 'running tem slot ativo');
+
+  // running --[complete(fail), attempt<max]--> repair_required.
+  const fail1 = lockValidator({
+    run_id: 's12fsm', project_root: root, host: 'codex', action: 'complete',
+    state_path: '.atlas/state/s12fsm/slice.json',
+    validator_run_id: start1.validator_run_id, verdict: 'fail',
+    data: { findings: [{ severity: 'P1', file: 'x.ts', line: 1, msg: 'boom' }] },
+  });
+  assert.equal(fail1.validator_status, 'repair_required');
+  assert.equal(status(), 'repair_required', 'após complete(fail) attempt<max → repair_required');
+  assert.equal(slot(), null, 'repair_required fecha o slot do validator');
+
+  // repair_required --[repair_start]--> repair_running.
+  const repairStart = lockValidator({
+    run_id: 's12fsm', project_root: root, host: 'codex', action: 'repair_start',
+    state_path: '.atlas/state/s12fsm/slice.json',
+  });
+  assert.equal(repairStart.validator_status, 'repair_running');
+  assert.equal(status(), 'repair_running', 'após repair_start → repair_running');
+
+  // repair_running --[repair_complete]--> ready_for_retry.
+  const repairDone = lockValidator({
+    run_id: 's12fsm', project_root: root, host: 'codex', action: 'repair_complete',
+    repair_run_id: repairStart.repair_run_id,
+    state_path: '.atlas/state/s12fsm/slice-repaired.json',
+  });
+  assert.equal(repairDone.validator_status, 'ready_for_retry');
+  assert.equal(status(), 'ready_for_retry', 'após repair_complete → ready_for_retry (retry autorizado)');
+
+  // ready_for_retry --[validatorStart]--> running (attempt 2, último dispatch).
+  const start2 = lockValidator({
+    run_id: 's12fsm', project_root: root, host: 'codex', action: 'start',
+    state_path: '.atlas/state/s12fsm/slice-repaired.json',
+  });
+  assert.equal(start2.status, 'passed');
+  assert.equal(start2.validator_attempt, 2);
+  assert.equal(status(), 'running', 'após 2º validatorStart → running (attempt 2)');
+
+  // running --[complete(pass)]--> passed (TERMINAL).
+  const pass2 = lockValidator({
+    run_id: 's12fsm', project_root: root, host: 'codex', action: 'complete',
+    state_path: '.atlas/state/s12fsm/slice-repaired.json',
+    validator_run_id: start2.validator_run_id, verdict: 'pass',
+  });
+  assert.equal(pass2.status, 'passed');
+  assert.equal(pass2.validator_status, 'passed');
+  assert.equal(status(), 'passed', 'após complete(pass) → passed (terminal)');
+  assert.equal(slot(), null, 'terminal passed: slot ativo é null (SPEC §1.1)');
+});
+
+// S12.1b — Simetria de terminais: ciclo canônico com passed_with_observations.
+// P3-1: garante que passed_with_observations também fecha slot (cycle.active===null),
+// simétrico ao assert já existente para passed em S12.1.
+test('S12.1b: ciclo canônico termina em passed_with_observations com slot fechado (cycle.active===null — simetria com passed)', () => {
+  const root = tmpRoot();
+  preflight({
+    run_id: 's12fsm_pwo', project_root: root, mode: 'execute',
+    host: 'codex', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: 's12fsm_pwo', project_root: root, action: 'start', phase: 'plan_execute' });
+
+  const slot = () => readRunJson(root, 's12fsm_pwo').data?.validator_cycle?.active ?? null;
+
+  // Attempt 1 — start aceito.
+  const start1 = lockValidator({
+    run_id: 's12fsm_pwo', project_root: root, host: 'codex', action: 'start',
+    state_path: '.atlas/state/s12fsm_pwo/slice.json',
+  });
+  assert.equal(start1.status, 'passed');
+  assert.notEqual(slot(), null, 'slot ativo após start');
+
+  // complete com pass_with_observations → passed_with_observations (TERMINAL).
+  const pwo = lockValidator({
+    run_id: 's12fsm_pwo', project_root: root, host: 'codex', action: 'complete',
+    state_path: '.atlas/state/s12fsm_pwo/slice.json',
+    validator_run_id: start1.validator_run_id, verdict: 'pass_with_observations',
+  });
+  assert.equal(pwo.validator_status, 'passed_with_observations');
+  const cycle = readRunJson(root, 's12fsm_pwo').data.validator_cycle;
+  assert.equal(cycle.status, 'passed_with_observations', 'status persistido = passed_with_observations');
+  // P3-1: slot DEVE ser null — terminal aprovado fecha o slot (simetria com passed).
+  assert.equal(cycle.active, null, 'terminal passed_with_observations: slot ativo é null (SPEC §1.1)');
+});
+
+// --- S12.2: matriz de transições ILEGAIS (§2 hard-fails) ---
+//
+// Cobertura existente (NÃO duplicada aqui):
+//   - 2º start em repair_required SEM repair concluído (HF-07) → já coberto no
+//     teste "codex sibling bloqueia validator concorrente..." (retryBeforeRepair).
+//   - complete com run_id desconhecido após slot fechado (HF-09) → já coberto em S10(b).
+//   - repair_complete DUPLICADO após repair concluído → já coberto em S10(c).
+//   - validator/repair concorrente (HF-04/HF-14) → já coberto nos testes sibling.
+//
+// Novos abaixo: as transições ilegais do §2 que ainda NÃO tinham teste dedicado.
+
+// (a) HF-08: complete SEM start prévio — ciclo idle puro, nenhum slot jamais aberto.
+test('S12.2(a): complete sem start prévio (ciclo idle) → blocked, start_validator_primeiro', () => {
+  const root = tmpRoot();
+  preflight({
+    run_id: 's12a', project_root: root, mode: 'execute',
+    host: 'codex', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: 's12a', project_root: root, action: 'start', phase: 'plan_execute' });
+
+  // Nunca houve validatorStart → cycle idle, active null.
+  const complete = lockValidator({
+    run_id: 's12a', project_root: root, host: 'codex', action: 'complete',
+    state_path: '.atlas/state/s12a/slice.json',
+    validator_run_id: 's12a:validator:1:fake', verdict: 'pass',
+  });
+  assert.equal(complete.status, 'blocked');
+  assert.match(complete.error, /Nenhum validator ativo/);
+  assert.equal(complete.next_action, 'start_validator_primeiro');
+});
+
+// (b) HF-15: repair_start quando status != repair_required (fora de ordem).
+// Caso: logo após um validatorStart aceito, status=running → repair não pode iniciar.
+test('S12.2(b): repair_start em status running (fora de ordem) → blocked, completar_validator_fail_antes_do_repair', () => {
+  const root = tmpRoot();
+  preflight({
+    run_id: 's12b', project_root: root, mode: 'execute',
+    host: 'codex', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: 's12b', project_root: root, action: 'start', phase: 'plan_execute' });
+
+  // start aceito → status running (validator ainda ativo).
+  lockValidator({
+    run_id: 's12b', project_root: root, host: 'codex', action: 'start',
+    state_path: '.atlas/state/s12b/slice.json',
+  });
+
+  // repair_start com validator ativo: o 1º guard (validator ativo) dispara primeiro.
+  const repairWhileActive = lockValidator({
+    run_id: 's12b', project_root: root, host: 'codex', action: 'repair_start',
+    state_path: '.atlas/state/s12b/slice.json',
+  });
+  assert.equal(repairWhileActive.status, 'blocked');
+  assert.match(repairWhileActive.error, /Repair não pode iniciar enquanto há validator ativo/);
+});
+
+// (b2) HF-15 puro: status repair_running (não repair_required) → "Repair fora de ordem".
+// Atinge o branch cycle.status !== 'repair_required' sem o slot de validator ativo,
+// dirigindo o ciclo até repair_running e tentando um 2º repair_start fora de ordem.
+test('S12.2(b2): repair_start em status repair_running (fora de ordem, sem validator ativo) → blocked', () => {
+  const root = tmpRoot();
+  preflight({
+    run_id: 's12b2', project_root: root, mode: 'execute',
+    host: 'codex', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: 's12b2', project_root: root, action: 'start', phase: 'plan_execute' });
+
+  const start1 = lockValidator({
+    run_id: 's12b2', project_root: root, host: 'codex', action: 'start',
+    state_path: '.atlas/state/s12b2/slice.json',
+  });
+  lockValidator({
+    run_id: 's12b2', project_root: root, host: 'codex', action: 'complete',
+    state_path: '.atlas/state/s12b2/slice.json',
+    validator_run_id: start1.validator_run_id, verdict: 'fail',
+    data: { findings: [{ severity: 'P1', file: 'x.ts', line: 1, msg: 'boom' }] },
+  });
+  // status → repair_running.
+  lockValidator({
+    run_id: 's12b2', project_root: root, host: 'codex', action: 'repair_start',
+    state_path: '.atlas/state/s12b2/slice.json',
+  });
+  // 2º repair_start: repair já ativo → blocked (guard de concorrência dispara antes do "fora de ordem").
+  const second = lockValidator({
+    run_id: 's12b2', project_root: root, host: 'codex', action: 'repair_start',
+    state_path: '.atlas/state/s12b2/slice.json',
+  });
+  assert.equal(second.status, 'blocked');
+  assert.match(second.error, /Repair já está ativo/);
+});
+
+// (c) HF-19: repair_complete SEM repair ativo — nenhum repair jamais iniciado.
+test('S12.2(c): repair_complete sem repair ativo (ciclo idle) → blocked', () => {
+  const root = tmpRoot();
+  preflight({
+    run_id: 's12c', project_root: root, mode: 'execute',
+    host: 'codex', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: 's12c', project_root: root, action: 'start', phase: 'plan_execute' });
+
+  // Nenhum validator, nenhum repair → repair_complete é fora de ordem.
+  const repairComplete = lockValidator({
+    run_id: 's12c', project_root: root, host: 'codex', action: 'repair_complete',
+    repair_run_id: 's12c:repair:1:fake',
+    state_path: '.atlas/state/s12c/slice.json',
+  });
+  assert.equal(repairComplete.status, 'blocked');
+  // status idle ≠ repair_running → "Repair fora de ordem" OU "Nenhum repair ativo".
+  assert.match(repairComplete.error, /Repair fora de ordem|Nenhum repair ativo/);
+});
+
+// (d) GAP FECHADO em S12: start após terminal passed/passed_with_observations.
+// SPEC §1.3 / D-S02-2: terminais NÃO têm transição de saída — não reabrem.
+// Antes do fix, um 2º validatorStart após pass reabria como attempt 2 (defeito).
+test('S12.2(d): validatorStart após terminal passed → blocked (terminal não reabre — SPEC §1.3)', () => {
+  const root = tmpRoot();
+  preflight({
+    run_id: 's12d', project_root: root, mode: 'execute',
+    host: 'codex', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: 's12d', project_root: root, action: 'start', phase: 'plan_execute' });
+
+  const start1 = lockValidator({
+    run_id: 's12d', project_root: root, host: 'codex', action: 'start',
+    state_path: '.atlas/state/s12d/slice.json',
+  });
+  const pass1 = lockValidator({
+    run_id: 's12d', project_root: root, host: 'codex', action: 'complete',
+    state_path: '.atlas/state/s12d/slice.json',
+    validator_run_id: start1.validator_run_id, verdict: 'pass',
+  });
+  assert.equal(pass1.validator_status, 'passed');
+  assert.equal(readRunJson(root, 's12d').data.validator_cycle.status, 'passed');
+
+  // Novo start sobre terminal passed → blocked (não reabre, não vira attempt 2).
+  const reopen = lockValidator({
+    run_id: 's12d', project_root: root, host: 'codex', action: 'start',
+    state_path: '.atlas/state/s12d/slice-2.json',
+  });
+  assert.equal(reopen.status, 'blocked');
+  assert.equal(reopen.validator_attempt, undefined, 'terminal não gera novo attempt');
+  assert.match(reopen.error, /terminal não reabre|já concluído/);
+  // Ciclo permanece terminal passed; slot não reabre.
+  const cycle = readRunJson(root, 's12d').data.validator_cycle;
+  assert.equal(cycle.status, 'passed');
+  assert.equal(cycle.active, null);
+});
+
+// (d2) Mesmo gap para passed_with_observations (terminal aprovado com observações).
+test('S12.2(d2): validatorStart após terminal passed_with_observations → blocked (terminal não reabre)', () => {
+  const root = tmpRoot();
+  preflight({
+    run_id: 's12d2', project_root: root, mode: 'execute',
+    host: 'codex', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: 's12d2', project_root: root, action: 'start', phase: 'plan_execute' });
+
+  const start1 = lockValidator({
+    run_id: 's12d2', project_root: root, host: 'codex', action: 'start',
+    state_path: '.atlas/state/s12d2/slice.json',
+  });
+  lockValidator({
+    run_id: 's12d2', project_root: root, host: 'codex', action: 'complete',
+    state_path: '.atlas/state/s12d2/slice.json',
+    validator_run_id: start1.validator_run_id, verdict: 'pass_with_observations',
+  });
+  assert.equal(readRunJson(root, 's12d2').data.validator_cycle.status, 'passed_with_observations');
+
+  const reopen = lockValidator({
+    run_id: 's12d2', project_root: root, host: 'codex', action: 'start',
+    state_path: '.atlas/state/s12d2/slice-2.json',
+  });
+  assert.equal(reopen.status, 'blocked');
+  assert.equal(reopen.validator_status, 'passed_with_observations');
+  assert.match(reopen.error, /terminal não reabre|já concluído/);
+});
+
+// P2 — regressão da ordem de guards: terminal atingido no attempt 2 (último).
+//
+// Antes da correção da ordem, quando a slice PASSA no attempt 2, o estado fica
+// attempts_used=2 e max_attempts=2. Um novo validatorStart disparava HF-05
+// ("Terceiro validator proibido") ANTES do guard terminal, devolvendo causa de
+// FALHA para uma slice que foi APROVADA.
+//
+// Após a correção: guard terminal precede HF-05 → reopen retorna causa
+// "terminal não reabre" (encerrar_slice_terminal_aprovada), não "terceiro proibido".
+test('S12.2(e): reabrir slice que passou no attempt 2 (terminal no último attempt) → blocked com causa TERMINAL, não "terceiro proibido" — P2 guard-order regression', () => {
+  const root = tmpRoot();
+  preflight({
+    run_id: 's12e', project_root: root, mode: 'execute',
+    host: 'codex', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: 's12e', project_root: root, action: 'start', phase: 'plan_execute' });
+
+  // Attempt 1: fail → repair.
+  const start1 = lockValidator({
+    run_id: 's12e', project_root: root, host: 'codex', action: 'start',
+    state_path: '.atlas/state/s12e/slice.json',
+  });
+  assert.equal(start1.status, 'passed', 'attempt 1 aceito');
+  const fail1 = lockValidator({
+    run_id: 's12e', project_root: root, host: 'codex', action: 'complete',
+    state_path: '.atlas/state/s12e/slice.json',
+    validator_run_id: start1.validator_run_id, verdict: 'fail',
+    data: { findings: [{ severity: 'P1', file: 'x.ts', line: 1, msg: 'falha1' }] },
+  });
+  assert.equal(fail1.validator_status, 'repair_required', 'fail1 → repair_required');
+
+  const repairStart = lockValidator({
+    run_id: 's12e', project_root: root, host: 'codex', action: 'repair_start',
+    state_path: '.atlas/state/s12e/slice.json',
+  });
+  lockValidator({
+    run_id: 's12e', project_root: root, host: 'codex', action: 'repair_complete',
+    repair_run_id: repairStart.repair_run_id,
+    state_path: '.atlas/state/s12e/slice-repaired.json',
+  });
+
+  // Attempt 2 (último): pass → terminal.
+  const start2 = lockValidator({
+    run_id: 's12e', project_root: root, host: 'codex', action: 'start',
+    state_path: '.atlas/state/s12e/slice-repaired.json',
+  });
+  assert.equal(start2.status, 'passed', 'attempt 2 aceito');
+  assert.equal(start2.validator_attempt, 2, 'é o attempt 2');
+  const pass2 = lockValidator({
+    run_id: 's12e', project_root: root, host: 'codex', action: 'complete',
+    state_path: '.atlas/state/s12e/slice-repaired.json',
+    validator_run_id: start2.validator_run_id, verdict: 'pass',
+  });
+  assert.equal(pass2.validator_status, 'passed', 'attempt 2 terminou em passed');
+
+  // Estado: attempts_used=2, max_attempts=2, cycle.status='passed' (terminal).
+  const cycleAfterPass = readRunJson(root, 's12e').data.validator_cycle;
+  assert.equal(cycleAfterPass.attempts_used, 2, 'attempts_used=2 após attempt 2');
+  assert.equal(cycleAfterPass.status, 'passed', 'ciclo em estado terminal passed');
+  assert.equal(cycleAfterPass.active, null, 'slot fechado após terminal');
+
+  // Reabrir: DEVE retornar causa TERMINAL (não "terceiro validator proibido").
+  const reopen = lockValidator({
+    run_id: 's12e', project_root: root, host: 'codex', action: 'start',
+    state_path: '.atlas/state/s12e/slice-3.json',
+  });
+  assert.equal(reopen.status, 'blocked', 'reopen bloqueado');
+  // Causa deve ser a do guard terminal, não a de HF-05 (contagem).
+  assert.equal(reopen.next_action, 'encerrar_slice_terminal_aprovada',
+    'next_action deve ser encerrar_slice_terminal_aprovada (não tratar_como_blocked_final_validator_failed)');
+  assert.equal(reopen.validator_status, 'passed', 'validator_status ecoado = passed');
+  assert.match(reopen.error, /terminal não reabre|já concluído/,
+    'error menciona terminal, não "terceiro proibido"');
+  // Ciclo permanece intacto — não foi modificado.
+  const cycleAfterReopen = readRunJson(root, 's12e').data.validator_cycle;
+  assert.equal(cycleAfterReopen.status, 'passed', 'ciclo permanece passed após reopen bloqueado');
+  assert.equal(cycleAfterReopen.active, null, 'slot permanece null');
+});

@@ -1895,6 +1895,27 @@ function validatorStart(args, context) {
     };
   }
 
+  // SPEC_FSM_SIBLING_S02 §1.3 / D-S02-2: `passed` e `passed_with_observations`
+  // são terminais SEM transição de saída. A slice fechou com sucesso; um novo
+  // validatorStart não pode reabri-la. Este guard DEVE preceder o HF-05
+  // (attempts_used >= max_attempts) porque quando o terminal é atingido no
+  // attempt 2 (último), attempts_used==max_attempts==2 — sem a prioridade
+  // correta, HF-05 dispararia primeiro retornando causa enganosa
+  // ("Terceiro validator proibido") em vez da causa real ("terminal não reabre").
+  if (VALIDATOR_PASSED_STATUSES.has(cycle.status)) {
+    return {
+      gate: 'G4',
+      action: 'start',
+      status: 'blocked',
+      timestamp,
+      error: `Ciclo do validator já concluído (${cycle.status}); terminal não reabre para novo dispatch`,
+      validator_status: cycle.status,
+      next_action: 'encerrar_slice_terminal_aprovada',
+    };
+  }
+
+  // HF-05: teto de max_attempts atingido. Só chega aqui se o ciclo NÃO está
+  // em estado terminal aprovado (guard acima já descartou esse caso).
   if (cycle.attempts_used >= cycle.max_attempts) {
     return {
       gate: 'G4',
