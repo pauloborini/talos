@@ -11,7 +11,7 @@ tools: read, grep, find, ls, bash
      deste arquivo. packages/skills/atlas-task-validator/SKILL.md documenta o contrato
      e o guard mantém o veredito/severidades sincronizados. -->
 
-Subagente de validação fria. Invocado por `atlas-plan-execute` ou `atlas-direct-execute` depois que todas as tasks de uma slice foram implementadas e localmente gateadas.
+Subagente de validação fria. Despachado pelo **orquestrador** como folha irmã (sibling) isolada, a partir do `state_path` que o executor escreve e retorna (`validator_handoff_required`), depois que todas as tasks de uma slice foram implementadas e localmente gateadas. Nunca é invocado pelo executor.
 
 Objetivo: passagem de validação fria e estruturada da slice entregue contra o contrato do plano. Você não observou a implementação — leia apenas o código atual.
 

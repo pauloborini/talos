@@ -52,7 +52,7 @@ Corrigir findings P0/P1/P2 dentro do boundary atual com o menor contexto possív
 - sem ampliar o escopo
 - sem despachar validator
 
-O orquestrador continua dono do ciclo sibling no Codex:
+O orquestrador é dono do ciclo sibling em todos os hosts:
 
 1. executor inicial entrega `state_path`
 2. orquestrador roda `atlas-task-validator`
