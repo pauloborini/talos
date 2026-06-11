@@ -158,7 +158,14 @@ const HOST_ADAPTERS = {
       example: 'Agent(subagent_type: "atlas-task-validator", prompt: "<state_path>")',
       registration: 'agents/<name>.md na raiz do plugin',
     },
-    validator_dispatch: { dispatcher: 'orchestrator' },
+    validator_dispatch: {
+      dispatcher: 'orchestrator',
+      join: {
+        sync: 'self_evident',
+        confidence: 'presumed',
+        mechanism: 'Agent(subagent_type) bloqueante por design do host',
+      },
+    },
     todo_tool: 'TodoWrite',
     hooks: { supported: true, mechanism: 'hooks/claude/settings.snippet.json' },
     capabilities_flags: { subagent_available: true, mcp_available: true, todo_available: true },
@@ -170,7 +177,14 @@ const HOST_ADAPTERS = {
       example: 'spawn_agent(agent_type: "atlas-task-validator", items: [{ type: "text", text: "<state_path>" }])',
       registration: '.codex/agents/<name>.toml (custom agent nativo; developer_instructions carrega o SKILL.md)',
     },
-    validator_dispatch: { dispatcher: 'orchestrator' },
+    validator_dispatch: {
+      dispatcher: 'orchestrator',
+      join: {
+        sync: 'self_evident',
+        confidence: 'confirmed',
+        mechanism: 'spawn_agent bloqueante; retorno via state_path + veredito',
+      },
+    },
     todo_tool: 'tasks',
     hooks: { supported: false, mechanism: null },
     // Codex subagents are native, but spawned agents do not receive spawn_agent in
@@ -185,7 +199,14 @@ const HOST_ADAPTERS = {
       example: 'invocar @atlas-task-validator passando <state_path>',
       registration: '.opencode/agents/<name>.md (frontmatter description + mode: subagent)',
     },
-    validator_dispatch: { dispatcher: 'orchestrator' },
+    validator_dispatch: {
+      dispatcher: 'orchestrator',
+      join: {
+        sync: 'self_evident',
+        confidence: 'presumed',
+        mechanism: '@<name> bloqueante presumido',
+      },
+    },
     // opencode expõe `todowrite` nativo ao agente primário (orquestrador). O `todoread`
     // foi fundido em `todowrite` (mar/2026): a tool retorna a lista atual no output.
     // Subagentes têm `todowrite` desabilitado por padrão, mas o todo é usado pelo
@@ -204,7 +225,14 @@ const HOST_ADAPTERS = {
       example: 'subagent({ agent: "atlas-task-validator", task: "<state_path>", context: "fresh" })',
       registration: '.pi/agents/<name>.md (pi-subagents; frontmatter name + description + tools)',
     },
-    validator_dispatch: { dispatcher: 'orchestrator' },
+    validator_dispatch: {
+      dispatcher: 'orchestrator',
+      join: {
+        sync: 'must_report',
+        confidence: 'reported_required',
+        mechanism: 'subagent({agent,task}) via pi-subagents; join depende de dep externa',
+      },
+    },
     todo_tool: null,
     hooks: { supported: false, mechanism: null },
     // pi exige 2 deps externas obrigatórias (DEC-005): pi-mcp-adapter (MCP) e
@@ -223,7 +251,14 @@ const HOST_ADAPTERS = {
       example: 'despachar o subagente atlas-task-validator passando apenas <state_path>',
       registration: 'mecanismo nativo equivalente do host',
     },
-    validator_dispatch: { dispatcher: 'orchestrator' },
+    validator_dispatch: {
+      dispatcher: 'orchestrator',
+      join: {
+        sync: 'must_report',
+        confidence: 'reported_required',
+        mechanism: 'indeterminado; host deve reportar',
+      },
+    },
     todo_tool: null,
     hooks: { supported: false, mechanism: null },
     // generic EXIGE subagente+MCP do host (DEC-004); host MCP-only sem subagente
@@ -255,7 +290,12 @@ const PREREQUISITE_FLAGS = [...PREREQUISITES.essential, ...PREREQUISITES.non_ess
 //   (mudança de semântica → bump consciente). Consumidores que liam validator_dispatch.topology
 //   devem assumir sibling incondicionalmente. Estado antigo em disco com esses
 //   campos é rollback-safe: campos extras são ignorados pelo spread/normalize.
-const CAPABILITIES_SCHEMA_VERSION = 4;
+// v4 → v5 (DEC-SIB-003, S06, SPEC_JOIN_CAPABILITY_S03 §2.2): adiciona
+//   validator_dispatch.join { sync, confidence, mechanism } por host. Aditivo
+//   (campo novo; nenhum campo removido nesta etapa). O input do preflight ganha
+//   host_capabilities.join_sync_available (opcional, gate JOIN separado — NÃO é
+//   flag de prereq). Consumidores que ignoram campos desconhecidos seguem compatíveis.
+const CAPABILITIES_SCHEMA_VERSION = 5;
 
 // Nomes de host derivados do registry — única fonte de verdade para enums de schema.
 // Adicionar host em HOST_ADAPTERS propaga automaticamente (sem enum hardcoded).
@@ -366,6 +406,39 @@ function checkPrerequisites(args = {}) {
       ? 'instalar_pi-mcp-adapter_e_pi-subagents_e_reportar_host_capabilities'
       : 'usar_host_com_subagente_e_mcp_nativos_ou_reportar_host_capabilities',
   };
+}
+
+// Gate JOIN (DEC-SIB-003, SPEC_JOIN_CAPABILITY_S03 §3/§5). Espelha checkPrerequisites:
+// lê validator_dispatch.join do adapter e decide hard-fail por política.
+//   - join.sync === 'self_evident' (claude/codex/opencode): host nativo conhecido;
+//     o runtime presume join disponível e NÃO exige report. confidence 'presumed'
+//     (claude/opencode) passa, mas é registrado para observabilidade (smoke S13).
+//   - join.sync === 'must_report' (pi/generic): fail-closed. Só passa se o caller
+//     reportar host_capabilities.join_sync_available === true. Ausente/não-bool ⇒ blocked.
+// join_sync_available é gate SEPARADO — não entra em PREREQUISITE_FLAGS nem polui
+// effective_flags de checkPrerequisites (o merge daquele loop ignora chaves desconhecidas).
+function checkJoinCapability(args = {}) {
+  const { host } = detectHost(args);
+  const adapter = HOST_ADAPTERS[host];
+  const join = adapter.validator_dispatch?.join ?? {};
+  const reported = args.host_capabilities && typeof args.host_capabilities === 'object'
+    ? args.host_capabilities
+    : {};
+  if (join.sync === 'must_report') {
+    if (reported.join_sync_available === true) {
+      return { status: 'passed', host, confidence: join.confidence };
+    }
+    return {
+      status: 'blocked',
+      host,
+      error: `host '${host}' não reportou join síncrono; sibling exige join (DEC-SIB-003)`,
+      cause: 'host_nao_reportou_join_sincrono',
+      impact: 'sem_join_sincrono_o_slot_de_validacao_vaza_em_fire_and_forget',
+      next_action: 'instalar_deps_de_subagente_sincrono_ou_usar_host_nativo_e_reportar_join_sync_available',
+    };
+  }
+  // self_evident: passa sem report (host nativo). confidence preservado p/ observabilidade.
+  return { status: 'passed', host, confidence: join.confidence };
 }
 
 const LEGACY_ROUTE_KEY = ['fam', 'ily'].join('');
@@ -1393,6 +1466,7 @@ function preflight(args = {}) {
   let result;
 
   const prereq = checkPrerequisites(args);
+  const join = checkJoinCapability(args);
   if (prereq.status === 'blocked') {
     result = {
       gate: 'PREREQ',
@@ -1406,6 +1480,19 @@ function preflight(args = {}) {
       cause: prereq.cause,
       impact: prereq.impact,
       next_action: prereq.next_action,
+    };
+  } else if (join.status === 'blocked') {
+    // Gate JOIN após PREREQ passar (ordem determinística: prereq → join → versão/lock).
+    result = {
+      gate: 'JOIN',
+      status: 'blocked',
+      timestamp,
+      mode,
+      host: join.host,
+      error: join.error,
+      cause: join.cause,
+      impact: join.impact,
+      next_action: join.next_action,
     };
   } else if (version.status === 'blocked') {
     result = {
@@ -2448,6 +2535,9 @@ function toolsList() {
                 subagent_available: { type: 'boolean' },
                 mcp_available: { type: 'boolean' },
                 todo_available: { type: 'boolean' },
+                // Gate JOIN separado (DEC-SIB-003): report afirmativo de join síncrono
+                // para hosts must_report (pi/generic). NÃO entra em PREREQUISITE_FLAGS.
+                join_sync_available: { type: 'boolean' },
               },
             },
           },
@@ -2633,6 +2723,7 @@ export {
   detectHost,
   capabilities,
   checkPrerequisites,
+  checkJoinCapability,
   expectedNextPhase,
   guaranteeLevelForMode,
   classifyArtifactContent,

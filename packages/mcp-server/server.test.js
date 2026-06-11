@@ -16,6 +16,7 @@ import {
   detectHost,
   capabilities,
   checkPrerequisites,
+  checkJoinCapability,
   expectedNextPhase,
   guaranteeLevelForMode,
   classifyArtifactContent,
@@ -62,10 +63,10 @@ test('detectHost: host inválido em arg/env é ignorado (cai em generic)', () =>
   assert.equal(detectHost({}, { ATLAS_HOST: 'inexistente' }).host, 'generic');
 });
 
-test('capabilities: schema_version atual e campos do contrato v4', () => {
+test('capabilities: schema_version atual e campos do contrato v5', () => {
   const cap = capabilities({ host: 'claude' });
   assert.equal(cap.schema_version, CAPABILITIES_SCHEMA_VERSION);
-  assert.equal(cap.schema_version, 4);
+  assert.equal(cap.schema_version, 5);
   assert.ok(cap.capabilities_flags);
   assert.ok(cap.validator_dispatch);
   assert.ok(cap.hooks);
@@ -249,6 +250,152 @@ test('PREREQUISITES: subagente e mcp são essenciais; todo não', () => {
   assert.ok(PREREQUISITES.essential.includes('mcp_available'));
   assert.ok(PREREQUISITES.non_essential.includes('todo_available'));
   assert.ok(!PREREQUISITES.essential.includes('todo_available'));
+});
+
+// ── Gate JOIN (DEC-SIB-003, SPEC_JOIN_CAPABILITY_S03 §6) ─────────────────────
+
+test('HOST_ADAPTERS: validator_dispatch.join declarado em todos os hosts', () => {
+  for (const host of HOST_NAMES) {
+    const join = capabilities({ host }).validator_dispatch.join;
+    assert.ok(join, `host ${host} deve ter join`);
+    assert.ok(['self_evident', 'must_report'].includes(join.sync), `host ${host} sync`);
+    assert.ok(typeof join.mechanism === 'string' && join.mechanism.length > 0, `host ${host} mechanism`);
+  }
+});
+
+test('capabilities: join self_evident em claude/codex/opencode, must_report em pi/generic', () => {
+  assert.equal(capabilities({ host: 'codex' }).validator_dispatch.join.sync, 'self_evident');
+  assert.equal(capabilities({ host: 'codex' }).validator_dispatch.join.confidence, 'confirmed');
+  assert.equal(capabilities({ host: 'claude' }).validator_dispatch.join.sync, 'self_evident');
+  assert.equal(capabilities({ host: 'claude' }).validator_dispatch.join.confidence, 'presumed');
+  assert.equal(capabilities({ host: 'opencode' }).validator_dispatch.join.sync, 'self_evident');
+  assert.equal(capabilities({ host: 'pi' }).validator_dispatch.join.sync, 'must_report');
+  assert.equal(capabilities({ host: 'pi' }).validator_dispatch.join.confidence, 'reported_required');
+  assert.equal(capabilities({ host: 'generic' }).validator_dispatch.join.sync, 'must_report');
+});
+
+test('checkJoinCapability: codex self_evident passa sem reportar join (confidence confirmed)', () => {
+  const r = checkJoinCapability({ host: 'codex' });
+  assert.equal(r.status, 'passed');
+  assert.equal(r.confidence, 'confirmed');
+});
+
+test('checkJoinCapability: claude/opencode self_evident presumido passa sem report', () => {
+  for (const host of ['claude', 'opencode']) {
+    const r = checkJoinCapability({ host });
+    assert.equal(r.status, 'passed', `host ${host}`);
+    assert.equal(r.confidence, 'presumed', `host ${host}`);
+  }
+});
+
+test('checkJoinCapability: pi sem join_sync_available → blocked (DEC-SIB-003)', () => {
+  const r = checkJoinCapability({ host: 'pi' });
+  assert.equal(r.status, 'blocked');
+  assert.match(r.error, /pi.*join síncrono.*DEC-SIB-003/);
+  assert.equal(r.impact, 'sem_join_sincrono_o_slot_de_validacao_vaza_em_fire_and_forget');
+  assert.ok(r.next_action);
+});
+
+test('checkJoinCapability: pi com join_sync_available:true passa', () => {
+  const r = checkJoinCapability({ host: 'pi', host_capabilities: { join_sync_available: true } });
+  assert.equal(r.status, 'passed');
+});
+
+test('checkJoinCapability: generic sem report → blocked', () => {
+  assert.equal(checkJoinCapability({ host: 'generic' }).status, 'blocked');
+});
+
+test('checkJoinCapability: join_sync_available:false (não true) → blocked (fail-closed)', () => {
+  assert.equal(checkJoinCapability({ host: 'pi', host_capabilities: { join_sync_available: false } }).status, 'blocked');
+});
+
+test('checkJoinCapability: join_sync_available não polui effective_flags do prereq', () => {
+  const r = checkPrerequisites({ host: 'claude', host_capabilities: { join_sync_available: true } });
+  assert.equal(r.status, 'passed');
+  assert.equal(r.effective_flags.join_sync_available, undefined);
+});
+
+test('preflight: gate JOIN — pi sem join_sync_available → blocked gate JOIN', () => {
+  const root = tmpRoot();
+  const r = preflight({
+    run_id: 'rjoin-pi-fail', project_root: root, mode: 'execute',
+    host: 'pi', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  assert.equal(r.status, 'blocked');
+  assert.equal(r.gate, 'JOIN');
+  assert.match(r.error, /join síncrono/);
+});
+
+test('preflight: gate JOIN — pi com prereq+join reportados passa', () => {
+  const root = tmpRoot();
+  const r = preflight({
+    run_id: 'rjoin-pi-ok', project_root: root, mode: 'execute',
+    host: 'pi',
+    host_capabilities: { subagent_available: true, mcp_available: true, join_sync_available: true },
+  });
+  assert.equal(r.status, 'passed');
+});
+
+test('preflight: gate JOIN — generic sem join → blocked; com subagent+mcp+join → passa', () => {
+  const root = tmpRoot();
+  const blocked = preflight({
+    run_id: 'rjoin-gen-fail', project_root: root, mode: 'execute',
+    host: 'generic', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  assert.equal(blocked.status, 'blocked');
+  assert.equal(blocked.gate, 'JOIN');
+  const ok = preflight({
+    run_id: 'rjoin-gen-ok', project_root: root, mode: 'execute',
+    host: 'generic',
+    host_capabilities: { subagent_available: true, mcp_available: true, join_sync_available: true },
+  });
+  assert.equal(ok.status, 'passed');
+});
+
+test('preflight: ordem determinística — PREREQ precede JOIN (pi sem prereq → gate PREREQ, não JOIN)', () => {
+  const root = tmpRoot();
+  const r = preflight({
+    run_id: 'rjoin-order', project_root: root, mode: 'execute',
+    host: 'pi', host_capabilities: { subagent_available: false },
+  });
+  assert.equal(r.status, 'blocked');
+  assert.equal(r.gate, 'PREREQ');
+});
+
+test('checkJoinCapability: join_sync_available não-booleano (string "true" ou número 1) → blocked (fail-closed)', () => {
+  // Garante que a defesa server-side `=== true` rejeita valores truthy não-booleanos.
+  for (const host of ['pi', 'generic']) {
+    for (const nonBool of ['true', 1]) {
+      const r = checkJoinCapability({ host, host_capabilities: { join_sync_available: nonBool } });
+      assert.equal(r.status, 'blocked', `host=${host} join_sync_available=${JSON.stringify(nonBool)} deveria ser blocked`);
+    }
+  }
+});
+
+test('preflight: join_sync_available não-booleano (string "true" ou número 1) em must_report → gate JOIN blocked', () => {
+  const root = tmpRoot();
+  for (const host of ['pi', 'generic']) {
+    for (const nonBool of ['true', 1]) {
+      const r = preflight({
+        run_id: `rjoin-nonbool-${host}-${nonBool}`, project_root: root, mode: 'execute',
+        host,
+        host_capabilities: { subagent_available: true, mcp_available: true, join_sync_available: nonBool },
+      });
+      assert.equal(r.status, 'blocked', `host=${host} join_sync_available=${JSON.stringify(nonBool)} deveria ser blocked`);
+      assert.equal(r.gate, 'JOIN', `host=${host} gate deveria ser JOIN`);
+    }
+  }
+});
+
+test('preflight: self_evident — codex/claude/opencode passam sem reportar join', () => {
+  const root = tmpRoot();
+  for (const host of ['codex', 'claude', 'opencode']) {
+    const r = preflight({
+      run_id: `rjoin-self-${host}`, project_root: root, mode: 'execute',
+      host, host_capabilities: { subagent_available: true, mcp_available: true },
+    });
+    assert.equal(r.status, 'passed', `host ${host}`);
+  }
 });
 
 // ── Slice A: modo execute, classify_input, routing, guarantee_level ──────────
