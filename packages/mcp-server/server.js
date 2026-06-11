@@ -880,8 +880,25 @@ function normalizeValidatorCycle(cycle = {}) {
     // S04: token de dispatch monotônico explícito do slot de validação. Inteiro,
     // sempre crescente, nunca reusado; persiste no run.json e sobrevive a re-spun.
     dispatch_token: Number.isInteger(cycle.dispatch_token) ? cycle.dispatch_token : 0,
-    max_attempts: Number.isInteger(cycle.max_attempts) ? cycle.max_attempts : VALIDATOR_MAX_ATTEMPTS,
-    attempts_used: Number.isInteger(cycle.attempts_used) ? cycle.attempts_used : 0,
+    // DEC-SIB-002: o teto de attempts é invariante de CONTRATO (enforcement por
+    // tool MCP, não por estado/prosa). VALIDATOR_MAX_ATTEMPTS é o teto canônico e
+    // NÃO é configurável via estado persistido. Um run.json adulterado/corrompido
+    // com max_attempts inflado (ex.: 99) não pode elevar o teto e liberar um 3º+
+    // validator. Por isso clampamos max_attempts: inteiro válido e ≥1 vira
+    // min(estado, teto); qualquer 0/negativo/ausente/não-inteiro cai no default
+    // canônico. O valor efetivo nunca excede VALIDATOR_MAX_ATTEMPTS, e como todos
+    // os fluxos (start/complete/fail) leem o cycle por esta normalização, os
+    // retornos que ecoam cycle.max_attempts já recebem o valor clampado.
+    // Pela mesma razão, attempts_used recebe piso ≥0: um valor negativo adulterado
+    // (ex.: -5) inflaria o teto efetivo (max_attempts - attempts_used) e permitiria
+    // dispatches além do limite. Valor float/string/null cai em 0. Teto superior
+    // NÃO é necessário — attempts_used=99 já cai no lado seguro (99>=2 → blocked).
+    max_attempts: Number.isInteger(cycle.max_attempts) && cycle.max_attempts >= 1
+      ? Math.min(cycle.max_attempts, VALIDATOR_MAX_ATTEMPTS)
+      : VALIDATOR_MAX_ATTEMPTS,
+    attempts_used: Number.isInteger(cycle.attempts_used) && cycle.attempts_used >= 0
+      ? cycle.attempts_used
+      : 0,
     status: typeof cycle.status === 'string' ? cycle.status : 'idle',
     active: cycle.active && typeof cycle.active === 'object' ? cycle.active : null,
     last_state_path: typeof cycle.last_state_path === 'string' ? cycle.last_state_path : null,

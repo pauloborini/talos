@@ -905,6 +905,255 @@ test('atlas_lock_validator: terceiro validator é impossível e segundo fail blo
   assert.match(third.error, /Terceiro validator proibido/);
 });
 
+// --- S11 (DEC-SIB-002): teto de attempts é invariante de CONTRATO MCP ---
+// O teto canônico VALIDATOR_MAX_ATTEMPTS=2 não pode ser elevado por um run.json
+// adulterado/corrompido. normalizeValidatorCycle clampa max_attempts ao teto.
+
+test('S11: run.json adulterado (max_attempts=99, attempts_used=2) → 3º validator blocked', () => {
+  const root = tmpRoot();
+  preflight({
+    run_id: 's11a', project_root: root, mode: 'execute',
+    host: 'codex', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: 's11a', project_root: root, action: 'start', phase: 'plan_execute' });
+
+  // Gera um validator_cycle real, depois adultera o run.json em disco para
+  // inflar max_attempts e marcar 2 attempts já usados (estado terminal de teto).
+  const start1 = lockValidator({
+    run_id: 's11a', project_root: root, host: 'codex', action: 'start',
+    state_path: '.atlas/state/s11a/slice.json',
+  });
+  assert.equal(start1.status, 'passed');
+
+  const runFile = path.join(root, '.atlas', 'state', 's11a', 'run.json');
+  const raw = JSON.parse(fs.readFileSync(runFile, 'utf8'));
+  raw.data.validator_cycle.max_attempts = 99;
+  raw.data.validator_cycle.attempts_used = 2;
+  raw.data.validator_cycle.status = 'idle';
+  raw.data.validator_cycle.active = null;
+  fs.writeFileSync(runFile, JSON.stringify(raw, null, 2));
+
+  // Apesar de max_attempts=99 no disco, o teto efetivo é 2 → 3º proibido.
+  const third = lockValidator({
+    run_id: 's11a', project_root: root, host: 'codex', action: 'start',
+    state_path: '.atlas/state/s11a/slice-third.json',
+  });
+  assert.equal(third.status, 'blocked');
+  assert.match(third.error, /Terceiro validator proibido/);
+  // O erro reporta o teto clampado (2), não o valor adulterado (99).
+  assert.match(third.error, /máximo=2/);
+});
+
+test('S11: run.json com max_attempts=99 e attempts_used=1 → start permitido, cycle reporta max_attempts=2', () => {
+  const root = tmpRoot();
+  preflight({
+    run_id: 's11b', project_root: root, mode: 'execute',
+    host: 'codex', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: 's11b', project_root: root, action: 'start', phase: 'plan_execute' });
+
+  const start1 = lockValidator({
+    run_id: 's11b', project_root: root, host: 'codex', action: 'start',
+    state_path: '.atlas/state/s11b/slice.json',
+  });
+  assert.equal(start1.status, 'passed');
+
+  // Adultera: max_attempts=99, attempts_used=1, slot livre (idle) → permite attempt 2.
+  const runFile = path.join(root, '.atlas', 'state', 's11b', 'run.json');
+  const raw = JSON.parse(fs.readFileSync(runFile, 'utf8'));
+  raw.data.validator_cycle.max_attempts = 99;
+  raw.data.validator_cycle.attempts_used = 1;
+  raw.data.validator_cycle.status = 'idle';
+  raw.data.validator_cycle.active = null;
+  fs.writeFileSync(runFile, JSON.stringify(raw, null, 2));
+
+  const start2 = lockValidator({
+    run_id: 's11b', project_root: root, host: 'codex', action: 'start',
+    state_path: '.atlas/state/s11b/slice-2.json',
+  });
+  assert.equal(start2.status, 'passed', 'attempt 2 ainda permitido');
+  assert.equal(start2.validator_attempt, 2);
+  // O cycle resultante ecoa o teto clampado (2), nunca o valor adulterado (99).
+  assert.equal(start2.validator_cycle.max_attempts, 2);
+  assert.match(start2.banner ?? '', /running 2\/2/);
+});
+
+test('S11: max_attempts ausente/inválido no run.json → default 2', () => {
+  const root = tmpRoot();
+  preflight({
+    run_id: 's11c', project_root: root, mode: 'execute',
+    host: 'codex', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: 's11c', project_root: root, action: 'start', phase: 'plan_execute' });
+
+  const start1 = lockValidator({
+    run_id: 's11c', project_root: root, host: 'codex', action: 'start',
+    state_path: '.atlas/state/s11c/slice.json',
+  });
+  assert.equal(start1.status, 'passed');
+
+  const runFile = path.join(root, '.atlas', 'state', 's11c', 'run.json');
+
+  // Variante ausente → default 2.
+  let raw = JSON.parse(fs.readFileSync(runFile, 'utf8'));
+  delete raw.data.validator_cycle.max_attempts;
+  raw.data.validator_cycle.attempts_used = 1;
+  raw.data.validator_cycle.status = 'idle';
+  raw.data.validator_cycle.active = null;
+  fs.writeFileSync(runFile, JSON.stringify(raw, null, 2));
+  const startMissing = lockValidator({
+    run_id: 's11c', project_root: root, host: 'codex', action: 'start',
+    state_path: '.atlas/state/s11c/slice-missing.json',
+  });
+  assert.equal(startMissing.status, 'passed');
+  assert.equal(startMissing.validator_cycle.max_attempts, 2);
+
+  // Variante 0/inválido → piso ≥1 não aceito do estado, cai no default 2.
+  // attempts_used=1 garante que, se o teto caísse para 0/1 indevidamente,
+  // o start seria bloqueado; como o default é 2, o attempt 2 passa.
+  raw = JSON.parse(fs.readFileSync(runFile, 'utf8'));
+  raw.data.validator_cycle.max_attempts = 0;
+  raw.data.validator_cycle.attempts_used = 1;
+  raw.data.validator_cycle.status = 'idle';
+  raw.data.validator_cycle.active = null;
+  fs.writeFileSync(runFile, JSON.stringify(raw, null, 2));
+  const startZero = lockValidator({
+    run_id: 's11c', project_root: root, host: 'codex', action: 'start',
+    state_path: '.atlas/state/s11c/slice-zero.json',
+  });
+  assert.equal(startZero.status, 'passed', 'max_attempts=0 no disco não rebaixa o teto');
+  assert.equal(startZero.validator_cycle.max_attempts, 2);
+});
+
+// S11 (DEC-SIB-002): piso ≥0 em attempts_used — adulteração negativa não eleva teto efetivo.
+// attempts_used=-5 com max_attempts=2 não pode liberar 7 dispatches (2 - (-5) = 7).
+// O teto efetivo deve permanecer 2 independentemente do valor de attempts_used no disco.
+
+test('S11: attempts_used=-5 adulterado → teto efetivo continua 2 (máx 2 dispatches, 3º blocked)', () => {
+  const root = tmpRoot();
+  preflight({
+    run_id: 's11d', project_root: root, mode: 'execute',
+    host: 'codex', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: 's11d', project_root: root, action: 'start', phase: 'plan_execute' });
+
+  // Adultera o run.json antes de qualquer validator: attempts_used=-5.
+  // Sem o piso ≥0, isso criaria teto efetivo de 7 (2 - (-5) = 7), permitindo
+  // 7 dispatches em vez de 2. Com o piso, normaliza para 0 e o teto efetivo
+  // permanece 2. Após cada start aceito, o servidor grava attempts_used correto
+  // em disco (1, depois 2) — o ataque de adulteração vale apenas na leitura inicial.
+  const runFile = path.join(root, '.atlas', 'state', 's11d', 'run.json');
+  let raw = JSON.parse(fs.readFileSync(runFile, 'utf8'));
+  raw.data.validator_cycle = raw.data.validator_cycle ?? {};
+  raw.data.validator_cycle.max_attempts = 2;
+  raw.data.validator_cycle.attempts_used = -5;
+  raw.data.validator_cycle.status = 'idle';
+  raw.data.validator_cycle.active = null;
+  fs.writeFileSync(runFile, JSON.stringify(raw, null, 2));
+
+  // Attempt 1 — deve passar (attempts_used normalizado para 0, 0 < 2).
+  // O servidor grava attempts_used=1 no run.json após aceitar o start.
+  const start1 = lockValidator({
+    run_id: 's11d', project_root: root, host: 'codex', action: 'start',
+    state_path: '.atlas/state/s11d/slice-1.json',
+  });
+  assert.equal(start1.status, 'passed', 'attempt 1 deve ser permitido');
+  assert.equal(start1.validator_attempt, 1);
+
+  // Completa attempt 1 via fail → repair_required para liberar slot e manter
+  // attempts_used=1 gravado no run.json pelo servidor.
+  const complete1 = lockValidator({
+    run_id: 's11d', project_root: root, host: 'codex', action: 'complete',
+    state_path: '.atlas/state/s11d/slice-1.json',
+    validator_run_id: start1.validator_run_id,
+    verdict: 'fail',
+  });
+  assert.equal(complete1.status, 'passed', 'complete 1 deve funcionar');
+
+  // Inicia repair (obrigatório após verdict=fail).
+  const repairStart = lockValidator({
+    run_id: 's11d', project_root: root, host: 'codex', action: 'repair_start',
+    state_path: '.atlas/state/s11d/slice-1.json',
+  });
+  assert.equal(repairStart.status, 'passed', 'repair_start deve funcionar');
+
+  // Conclui repair para liberar retry.
+  const repairComplete = lockValidator({
+    run_id: 's11d', project_root: root, host: 'codex', action: 'repair_complete',
+    repair_run_id: repairStart.repair_run_id,
+    state_path: '.atlas/state/s11d/slice-1.json',
+  });
+  assert.equal(repairComplete.status, 'passed', 'repair_complete deve funcionar');
+
+  // Attempt 2 — deve passar. O servidor leu attempts_used=1 (gravado por ele mesmo
+  // após start1), não -5. Portanto validator_attempt=2.
+  const start2 = lockValidator({
+    run_id: 's11d', project_root: root, host: 'codex', action: 'start',
+    state_path: '.atlas/state/s11d/slice-2.json',
+  });
+  assert.equal(start2.status, 'passed', 'attempt 2 deve ser permitido');
+  assert.equal(start2.validator_attempt, 2, 'attempt 2 é o segundo dispatch correto');
+
+  // Completa attempt 2 com fail: como attempt=2 >= max_attempts=2, o servidor
+  // retorna status='blocked' sinalizando que o ciclo está esgotado
+  // (blocked_final_validator_failed). Isso é o comportamento correto — o teto
+  // foi respeitado e não há 3º dispatch disponível.
+  const complete2 = lockValidator({
+    run_id: 's11d', project_root: root, host: 'codex', action: 'complete',
+    state_path: '.atlas/state/s11d/slice-2.json',
+    validator_run_id: start2.validator_run_id,
+    verdict: 'fail',
+  });
+  // O complete do 2º attempt com fail retorna blocked_final_validator_failed
+  // (teto esgotado), não um erro de validação — confirma que o teto efetivo=2.
+  assert.equal(complete2.status, 'blocked', 'complete 2 com fail esgota o teto → blocked_final_validator_failed');
+  assert.match(complete2.error, /Segundo validator falhou/);
+  assert.match(complete2.error, /máximo=2/);
+
+  // Confirma que o ciclo foi marcado como bloqueado no run.json.
+  // Qualquer tentativa de start adicional deve ser rejeitada.
+  const start3 = lockValidator({
+    run_id: 's11d', project_root: root, host: 'codex', action: 'start',
+    state_path: '.atlas/state/s11d/slice-3.json',
+  });
+  assert.equal(start3.status, 'blocked', '3º attempt deve ser bloqueado');
+  // A adulteração inicial com attempts_used=-5 não inflou o teto efetivo:
+  // apenas 2 dispatches foram realizados, não 7 (que seria 2-(-5)+1).
+});
+
+test('S11: attempts_used float/string/null → normalizado para 0, start permitido como attempt 1', () => {
+  const invalidValues = [-3.7, '2', null, undefined, false, {}, []];
+  for (const [idx, badValue] of invalidValues.entries()) {
+    const runId = `s11e${idx}`;
+    const root = tmpRoot();
+    preflight({
+      run_id: runId, project_root: root, mode: 'execute',
+      host: 'codex', host_capabilities: { subagent_available: true, mcp_available: true },
+    });
+    lockDispatch({ run_id: runId, project_root: root, action: 'start', phase: 'plan_execute' });
+
+    // Adultera attempts_used com valor inválido.
+    const runFile = path.join(root, '.atlas', 'state', runId, 'run.json');
+    const raw = JSON.parse(fs.readFileSync(runFile, 'utf8'));
+    raw.data.validator_cycle = raw.data.validator_cycle ?? {};
+    raw.data.validator_cycle.attempts_used = badValue;
+    raw.data.validator_cycle.status = 'idle';
+    raw.data.validator_cycle.active = null;
+    fs.writeFileSync(runFile, JSON.stringify(raw, null, 2));
+
+    // Start deve ser permitido como attempt 1 (attempts_used normalizado para 0).
+    const start = lockValidator({
+      run_id: runId, project_root: root, host: 'codex', action: 'start',
+      state_path: `.atlas/state/${runId}/slice.json`,
+    });
+    assert.equal(
+      start.status, 'passed',
+      `attempts_used=${JSON.stringify(badValue)} deve normalizar para 0 e permitir attempt 1`,
+    );
+    assert.equal(start.validator_attempt, 1, `validator_attempt deve ser 1 para attempts_used=${JSON.stringify(badValue)}`);
+  }
+});
+
 test('atlas_lock_validator: retorno stale do validator não fecha slot ativo', () => {
   const root = tmpRoot();
   preflight({
