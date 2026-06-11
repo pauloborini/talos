@@ -158,12 +158,7 @@ const HOST_ADAPTERS = {
       example: 'Agent(subagent_type: "atlas-task-validator", prompt: "<state_path>")',
       registration: 'agents/<name>.md na raiz do plugin',
     },
-    validator_dispatch: {
-      topology: 'nested',
-      nested_subagent_available: true,
-      dispatcher: 'executor',
-      repair_loop: 'executor_repair_then_redispatch_validator',
-    },
+    validator_dispatch: { dispatcher: 'orchestrator' },
     todo_tool: 'TodoWrite',
     hooks: { supported: true, mechanism: 'hooks/claude/settings.snippet.json' },
     capabilities_flags: { subagent_available: true, mcp_available: true, todo_available: true },
@@ -175,12 +170,7 @@ const HOST_ADAPTERS = {
       example: 'spawn_agent(agent_type: "atlas-task-validator", items: [{ type: "text", text: "<state_path>" }])',
       registration: '.codex/agents/<name>.toml (custom agent nativo; developer_instructions carrega o SKILL.md)',
     },
-    validator_dispatch: {
-      topology: 'sibling',
-      nested_subagent_available: false,
-      dispatcher: 'orchestrator',
-      repair_loop: 'orchestrator_dispatches_findings_repair_after_validator_fail',
-    },
+    validator_dispatch: { dispatcher: 'orchestrator' },
     todo_tool: 'tasks',
     hooks: { supported: false, mechanism: null },
     // Codex subagents are native, but spawned agents do not receive spawn_agent in
@@ -195,12 +185,7 @@ const HOST_ADAPTERS = {
       example: 'invocar @atlas-task-validator passando <state_path>',
       registration: '.opencode/agents/<name>.md (frontmatter description + mode: subagent)',
     },
-    validator_dispatch: {
-      topology: 'nested',
-      nested_subagent_available: true,
-      dispatcher: 'executor',
-      repair_loop: 'executor_repair_then_redispatch_validator',
-    },
+    validator_dispatch: { dispatcher: 'orchestrator' },
     // opencode expõe `todowrite` nativo ao agente primário (orquestrador). O `todoread`
     // foi fundido em `todowrite` (mar/2026): a tool retorna a lista atual no output.
     // Subagentes têm `todowrite` desabilitado por padrão, mas o todo é usado pelo
@@ -219,12 +204,7 @@ const HOST_ADAPTERS = {
       example: 'subagent({ agent: "atlas-task-validator", task: "<state_path>", context: "fresh" })',
       registration: '.pi/agents/<name>.md (pi-subagents; frontmatter name + description + tools)',
     },
-    validator_dispatch: {
-      topology: 'nested',
-      nested_subagent_available: true,
-      dispatcher: 'executor',
-      repair_loop: 'executor_repair_then_redispatch_validator',
-    },
+    validator_dispatch: { dispatcher: 'orchestrator' },
     todo_tool: null,
     hooks: { supported: false, mechanism: null },
     // pi exige 2 deps externas obrigatórias (DEC-005): pi-mcp-adapter (MCP) e
@@ -243,12 +223,7 @@ const HOST_ADAPTERS = {
       example: 'despachar o subagente atlas-task-validator passando apenas <state_path>',
       registration: 'mecanismo nativo equivalente do host',
     },
-    validator_dispatch: {
-      topology: 'host_defined',
-      nested_subagent_available: null,
-      dispatcher: 'host_defined',
-      repair_loop: 'host_defined',
-    },
+    validator_dispatch: { dispatcher: 'orchestrator' },
     todo_tool: null,
     hooks: { supported: false, mechanism: null },
     // generic EXIGE subagente+MCP do host (DEC-004); host MCP-only sem subagente
@@ -274,7 +249,13 @@ const PREREQUISITE_FLAGS = [...PREREQUISITES.essential, ...PREREQUISITES.non_ess
 // v1 → v2: adiciona capabilities_flags, hooks, prerequisites, known_hosts,
 //   required_deps, prereq_policy (aditivo).
 // v2 → v3: adiciona validator_dispatch para distinguir nested vs sibling G4.
-const CAPABILITIES_SCHEMA_VERSION = 3;
+// v3 → v4 (DEC-SIB-001/003): sibling é a única topologia. validator_dispatch
+//   colapsa para `{ dispatcher: 'orchestrator' }` em todos os hosts; os campos
+//   topology, nested_subagent_available e repair_loop foram REMOVIDOS do contrato
+//   (mudança de semântica → bump consciente). Consumidores que liam validator_dispatch.topology
+//   devem assumir sibling incondicionalmente. Estado antigo em disco com esses
+//   campos é rollback-safe: campos extras são ignorados pelo spread/normalize.
+const CAPABILITIES_SCHEMA_VERSION = 4;
 
 // Nomes de host derivados do registry — única fonte de verdade para enums de schema.
 // Adicionar host em HOST_ADAPTERS propaga automaticamente (sem enum hardcoded).
@@ -823,7 +804,6 @@ function patchDispatchResult(runId, result, args = {}) {
 
 function normalizeValidatorCycle(cycle = {}) {
   return {
-    topology: typeof cycle.topology === 'string' ? cycle.topology : null,
     // S04: token de dispatch monotônico explícito do slot de validação. Inteiro,
     // sempre crescente, nunca reusado; persiste no run.json e sobrevive a re-spun.
     dispatch_token: Number.isInteger(cycle.dispatch_token) ? cycle.dispatch_token : 0,
@@ -1764,19 +1744,7 @@ function validatorStart(args, context) {
   const runId = validateRunId(args.run_id);
   const statePathValue = requiredString(args, 'state_path');
   const timestamp = nowIso();
-  const cap = capabilities(args);
   const cycle = normalizeValidatorCycle(context.state.data?.validator_cycle ?? {});
-
-  if (cap.validator_dispatch.topology !== 'sibling') {
-    return {
-      gate: 'G4',
-      action: 'start',
-      status: 'blocked',
-      timestamp,
-      error: `atlas_lock_validator é suportado apenas em topologia sibling; recebido ${cap.validator_dispatch.topology}`,
-      next_action: 'usar_loop_nested_no_executor',
-    };
-  }
 
   if (context.dispatch.active?.phase !== 'plan_execute') {
     return {
@@ -1857,7 +1825,6 @@ function validatorStart(args, context) {
     next_action: 'await_validator_verdict',
     banner: renderBanner('validacao', { status: `running ${attempt}/${cycle.max_attempts}` }),
     validator_cycle: {
-      topology: cap.validator_dispatch.topology,
       dispatch_token: dispatchToken,
       max_attempts: cycle.max_attempts,
       attempts_used: attempt,
@@ -1885,7 +1852,6 @@ function validatorStart(args, context) {
 
 function validatorComplete(args, context) {
   const timestamp = nowIso();
-  const cap = capabilities(args);
   const cycle = normalizeValidatorCycle(context.state.data?.validator_cycle ?? {});
   const statePathValue = requiredString(args, 'state_path');
   const activeValidatorRunId = requiredString(args, 'validator_run_id');
@@ -1895,17 +1861,6 @@ function validatorComplete(args, context) {
   // ativo (reconciliação anti-stale idempotente). Ausente → mantém compat com a
   // checagem por run_id existente (caminho Codex não envia token).
   const dispatchToken = Number.isInteger(args.dispatch_token) ? args.dispatch_token : null;
-
-  if (cap.validator_dispatch.topology !== 'sibling') {
-    return {
-      gate: 'G4',
-      action: 'complete',
-      status: 'blocked',
-      timestamp,
-      error: `atlas_lock_validator é suportado apenas em topologia sibling; recebido ${cap.validator_dispatch.topology}`,
-      next_action: 'usar_loop_nested_no_executor',
-    };
-  }
 
   if (!cycle.active) {
     return {
@@ -2077,20 +2032,8 @@ function validatorComplete(args, context) {
 function validatorRepairStart(args, context) {
   const runId = validateRunId(args.run_id);
   const timestamp = nowIso();
-  const cap = capabilities(args);
   const cycle = normalizeValidatorCycle(context.state.data?.validator_cycle ?? {});
   const statePathValue = requiredString(args, 'state_path');
-
-  if (cap.validator_dispatch.topology !== 'sibling') {
-    return {
-      gate: 'G4',
-      action: 'repair_start',
-      status: 'blocked',
-      timestamp,
-      error: `atlas_lock_validator é suportado apenas em topologia sibling; recebido ${cap.validator_dispatch.topology}`,
-      next_action: 'usar_loop_nested_no_executor',
-    };
-  }
 
   if (cycle.active) {
     return {
@@ -2173,21 +2116,9 @@ function validatorRepairStart(args, context) {
 
 function validatorRepairComplete(args, context) {
   const timestamp = nowIso();
-  const cap = capabilities(args);
   const cycle = normalizeValidatorCycle(context.state.data?.validator_cycle ?? {});
   const statePathValue = requiredString(args, 'state_path');
   const activeRepairRunId = requiredString(args, 'repair_run_id');
-
-  if (cap.validator_dispatch.topology !== 'sibling') {
-    return {
-      gate: 'G4',
-      action: 'repair_complete',
-      status: 'blocked',
-      timestamp,
-      error: `atlas_lock_validator é suportado apenas em topologia sibling; recebido ${cap.validator_dispatch.topology}`,
-      next_action: 'usar_loop_nested_no_executor',
-    };
-  }
 
   if (cycle.active) {
     return {

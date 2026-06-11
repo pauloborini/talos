@@ -62,15 +62,25 @@ test('detectHost: host inválido em arg/env é ignorado (cai em generic)', () =>
   assert.equal(detectHost({}, { ATLAS_HOST: 'inexistente' }).host, 'generic');
 });
 
-test('capabilities: schema_version atual e campos do contrato v3', () => {
+test('capabilities: schema_version atual e campos do contrato v4', () => {
   const cap = capabilities({ host: 'claude' });
   assert.equal(cap.schema_version, CAPABILITIES_SCHEMA_VERSION);
-  assert.equal(cap.schema_version, 3);
+  assert.equal(cap.schema_version, 4);
   assert.ok(cap.capabilities_flags);
   assert.ok(cap.validator_dispatch);
   assert.ok(cap.hooks);
   assert.deepEqual(cap.prerequisites, PREREQUISITES);
   assert.deepEqual(cap.known_hosts, HOST_NAMES);
+});
+
+test('capabilities: validator_dispatch de todos os hosts colapsa para sibling (dispatcher orchestrator, sem topology)', () => {
+  for (const host of HOST_NAMES) {
+    const cap = capabilities({ host });
+    assert.equal(cap.validator_dispatch.dispatcher, 'orchestrator', `host ${host}`);
+    assert.equal(cap.validator_dispatch.topology, undefined, `host ${host} não deve ter topology`);
+    assert.equal(cap.validator_dispatch.nested_subagent_available, undefined, `host ${host} não deve ter nested_subagent_available`);
+    assert.equal(cap.validator_dispatch.repair_loop, undefined, `host ${host} não deve ter repair_loop`);
+  }
 });
 
 test('detectHost: opencode via ATLAS_HOST injetado pelo packaging', () => {
@@ -87,8 +97,8 @@ test('capabilities: perfil opencode (subagente @, mcp local, todo nativo todowri
   assert.equal(cap.capabilities_flags.todo_available, true);
   assert.equal(cap.todo_tool, 'todowrite');
   assert.match(cap.subagent_dispatch.registration, /\.opencode\/agents/);
-  assert.equal(cap.validator_dispatch.topology, 'nested');
-  assert.equal(cap.validator_dispatch.dispatcher, 'executor');
+  assert.equal(cap.validator_dispatch.dispatcher, 'orchestrator');
+  assert.equal(cap.validator_dispatch.topology, undefined);
 });
 
 test('capabilities: perfil codex usa subagent nativo, não $skill in-context', () => {
@@ -98,9 +108,9 @@ test('capabilities: perfil codex usa subagent nativo, não $skill in-context', (
   assert.match(cap.subagent_dispatch.registration, /\.codex\/agents/);
   assert.doesNotMatch(cap.subagent_dispatch.example, /\$atlas/);
   assert.equal(cap.capabilities_flags.subagent_available, true);
-  assert.equal(cap.validator_dispatch.topology, 'sibling');
-  assert.equal(cap.validator_dispatch.nested_subagent_available, false);
   assert.equal(cap.validator_dispatch.dispatcher, 'orchestrator');
+  assert.equal(cap.validator_dispatch.topology, undefined);
+  assert.equal(cap.validator_dispatch.nested_subagent_available, undefined);
 });
 
 test('checkPrerequisites: opencode qualificado passa', () => {
@@ -789,7 +799,7 @@ test('atlas_lock_validator: retorno stale do validator não fecha slot ativo', (
   assert.equal(good.validator_status, 'passed');
 });
 
-test('atlas_lock_validator: hosts nested não usam o gate sibling', () => {
+test('atlas_lock_validator: sibling é a única topologia; todos os hosts operam o lock sem gate', () => {
   const root = tmpRoot();
   preflight({
     run_id: 'rv3', project_root: root, mode: 'execute',
@@ -803,8 +813,9 @@ test('atlas_lock_validator: hosts nested não usam o gate sibling', () => {
     action: 'start',
     state_path: '.atlas/state/rv3/slice.json',
   });
-  assert.equal(r.status, 'blocked');
-  assert.match(r.error, /topologia sibling/);
+  assert.equal(r.status, 'passed');
+  assert.equal(r.validator_status, 'running');
+  assert.equal(r.validator_cycle.topology, undefined);
 });
 
 // --- S04: token de dispatch monotônico explícito no validator_cycle ---
@@ -1108,4 +1119,78 @@ test('P3(c): estado legado pré-S04 sem dispatch_token — comportamento determi
   });
   assert.equal(withoutToken.status, 'passed');
   assert.equal(withoutToken.validator_status, 'passed');
+});
+
+// S05 — reforço: host claude (antes nested) percorre ciclo completo idêntico ao codex
+// após remoção dos guards de topologia. Prova que start→fail→repair→start→pass
+// funciona host-agnóstico sem qualquer gate de host residual.
+test('S05: host claude percorre ciclo completo start→fail→repair→start→pass idêntico ao codex', () => {
+  const root = tmpRoot();
+  preflight({
+    run_id: 'claude1', project_root: root, mode: 'execute',
+    host: 'claude', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: 'claude1', project_root: root, action: 'start', phase: 'plan_execute' });
+
+  // 1º start — deve retornar passed/running com dispatch_token = 1.
+  const start1 = lockValidator({
+    run_id: 'claude1', project_root: root, host: 'claude', action: 'start',
+    state_path: '.atlas/state/claude1/slice.json',
+  });
+  assert.equal(start1.status, 'passed');
+  assert.equal(start1.validator_status, 'running');
+  assert.equal(start1.dispatch_token, 1);
+  assert.equal(start1.validator_cycle.topology, undefined, 'sem topology residual pós-S05');
+
+  // 1º complete com verdict fail → status 'passed', validator_status 'repair_required', slot fecha.
+  const fail1 = lockValidator({
+    run_id: 'claude1', project_root: root, host: 'claude', action: 'complete',
+    state_path: '.atlas/state/claude1/slice.json',
+    validator_run_id: start1.validator_run_id,
+    verdict: 'fail',
+    data: { findings: [{ severity: 'P1', file: 'foo.ts', line: 1, msg: 'erro' }] },
+  });
+  assert.equal(fail1.status, 'passed');
+  assert.equal(fail1.validator_status, 'repair_required');
+  assert.equal(fail1.next_action, 'start_findings_repair_lock');
+  let cycle = readRunJson(root, 'claude1').data.validator_cycle;
+  assert.equal(cycle.dispatch_token, 1, 'token preservado após fail');
+  assert.equal(cycle.active, null, 'slot fechado após complete');
+
+  // repair_start → repair_complete.
+  const repairStart = lockValidator({
+    run_id: 'claude1', project_root: root, host: 'claude', action: 'repair_start',
+    state_path: '.atlas/state/claude1/slice.json',
+  });
+  assert.ok(repairStart.repair_run_id, 'repair_run_id presente');
+  lockValidator({
+    run_id: 'claude1', project_root: root, host: 'claude', action: 'repair_complete',
+    repair_run_id: repairStart.repair_run_id,
+    state_path: '.atlas/state/claude1/slice-repaired.json',
+  });
+
+  // 2º start — attempt e dispatch_token incrementam (monotonicidade).
+  const start2 = lockValidator({
+    run_id: 'claude1', project_root: root, host: 'claude', action: 'start',
+    state_path: '.atlas/state/claude1/slice-repaired.json',
+  });
+  assert.equal(start2.status, 'passed');
+  assert.equal(start2.validator_status, 'running');
+  assert.ok(start2.dispatch_token > 1, `dispatch_token deve ser > 1 (foi ${start2.dispatch_token})`);
+  cycle = readRunJson(root, 'claude1').data.validator_cycle;
+  assert.equal(cycle.dispatch_token, start2.dispatch_token, 'run.json em sincronia com retorno');
+  assert.equal(cycle.active.dispatch_token, start2.dispatch_token, 'active.dispatch_token sincronizado');
+
+  // 2º complete com verdict pass → fecha o ciclo.
+  const pass1 = lockValidator({
+    run_id: 'claude1', project_root: root, host: 'claude', action: 'complete',
+    state_path: '.atlas/state/claude1/slice-repaired.json',
+    validator_run_id: start2.validator_run_id,
+    verdict: 'pass',
+  });
+  assert.equal(pass1.status, 'passed');
+  assert.equal(pass1.validator_status, 'passed');
+  cycle = readRunJson(root, 'claude1').data.validator_cycle;
+  assert.equal(cycle.status, 'passed', 'ciclo fechado como passed');
+  assert.equal(cycle.active, null, 'slot nulo após pass terminal');
 });
