@@ -11,6 +11,8 @@ Mudancas:
 - **Sibling é a única topologia** (DEC-SIB-001/003): o executor nunca despacha o validador; o orquestrador é sempre o `dispatcher`. Acaba a variante em que o executor disparava um validador aninhado.
 - **Gate JOIN no preflight** (DEC-SIB-003): host sem join síncrono confiável do validador é **rejeitado no preflight (hard-fail)**, não degradado. `validator_dispatch.join { sync, confidence, mechanism }` declarado por host.
 - **`dispatch_token` monotônico** e **máximo de 2 validators inviolável por contrato** (DEC-SIB-002): o 3º validator é proibido; 2º `fail` termina a slice em `blocked`.
+- **Correlação obrigatória no retorno:** `atlas-task-validator` devolve `dispatch_token`; `atlas_lock_validator(action=complete)` rejeita retorno sem token ou divergente sem fechar o slot.
+- **Repair correlacionado:** `repair_start` retorna `repair_budget: 1`; `atlas-findings-repair` recebe `repair_run_id` e atualiza o mesmo `state_path` em lugar. Redirecionar boundary no `repair_complete` é bloqueado.
 - **Recovery de orquestrador re-spun** via `validator_recovery`: retornos de validator divergentes do slot ativo voltam `stale_discarded: true` e são descartados (idempotente, slot não reabre).
 - **`CAPABILITIES_SCHEMA_VERSION`** evoluiu de v3 → v5: v4 colapsa `validator_dispatch` para `{ dispatcher: 'orchestrator' }` (remove os campos de topologia legada); v5 adiciona `validator_dispatch.join` por host (gate JOIN).
 - **Guard de contrato reforçado** em `server.test.js`: assert de forma `Object.keys(validator_dispatch) === ['dispatcher','join']`, provando que os campos de topologia legada sumiram sem nomeá-los.

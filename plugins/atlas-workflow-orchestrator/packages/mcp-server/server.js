@@ -549,6 +549,15 @@ function requiredString(args, key) {
   return value;
 }
 
+function optionalInteger(args, key) {
+  const value = args[key];
+  if (value === undefined || value === null) return undefined;
+  if (!Number.isInteger(value)) {
+    throw rpcError(-32602, `Campo inválido: ${key} deve ser inteiro`);
+  }
+  return value;
+}
+
 function resolveConsumerPath(inputPath, args = {}) {
   const value = requiredString({ value: inputPath }, 'value');
   return path.resolve(consumerRoot(args), value);
@@ -2003,10 +2012,10 @@ function validatorComplete(args, context) {
   const activeValidatorRunId = requiredString(args, 'validator_run_id');
   const verdict = requiredString(args, 'verdict');
   const packet = optionalData(args);
-  // S04: token de dispatch opcional. Quando presente, é verificado contra o slot
-  // ativo (reconciliação anti-stale idempotente). Ausente → mantém compat com a
-  // checagem por run_id existente (caminho Codex não envia token).
-  const dispatchToken = Number.isInteger(args.dispatch_token) ? args.dispatch_token : null;
+  // S04/S16: token de dispatch é obrigatório para fechar o slot ativo. Ele vem
+  // do validator_recovery lido pela folha fria e volta no output estruturado do
+  // validator. Sem token não existe garantia anti-stale completa.
+  const dispatchToken = optionalInteger(args, 'dispatch_token');
 
   if (!cycle.active) {
     // S10: slot já fechado. Distinguir retorno duplicado já aplicado (idempotente
@@ -2080,11 +2089,26 @@ function validatorComplete(args, context) {
     };
   }
 
-  // S04: verificação idempotente do token de dispatch (anti-stale). Só executa
-  // quando o caller informa o token; divergência → blocked SEM fechar o slot
-  // (não retorna validator_cycle, então active é preservado pelo merge).
+  if (dispatchToken === undefined) {
+    return {
+      gate: 'G4',
+      action: 'complete',
+      status: 'blocked',
+      timestamp,
+      validator_attempt: cycle.active.attempt,
+      validator_run_id: activeValidatorRunId,
+      state_path: statePathValue,
+      stale_discarded: true,
+      error: 'dispatch_token obrigatório para concluir validator ativo',
+      next_action: 'reler_validator_recovery_e_reenviar_token',
+    };
+  }
+
+  // S04: verificação idempotente do token de dispatch (anti-stale).
+  // Divergência → blocked SEM fechar o slot (não retorna validator_cycle, então
+  // active é preservado pelo merge).
   // S10: marca stale_discarded para o orquestrador distinguir stale de erro real.
-  if (dispatchToken !== null && cycle.active.dispatch_token !== dispatchToken) {
+  if (cycle.active.dispatch_token !== dispatchToken) {
     return {
       gate: 'G4',
       action: 'complete',
@@ -2273,6 +2297,7 @@ function validatorRepairStart(args, context) {
     timestamp,
     validator_attempt: cycle.attempts_used,
     repair_run_id: activeRepairRunId,
+    repair_budget: 1,
     state_path: statePathValue,
     validator_status: 'repair_running',
     next_action: `dispatch_${WORKFLOW_CONFIG.skills.findings_repair}`,
@@ -2371,6 +2396,21 @@ function validatorRepairComplete(args, context) {
       ...(appliedRepairEvent ? { reason: 'repair_duplicate_already_applied' } : {}),
       error: `repair_run_id não corresponde ao repair ativo: recebido ${activeRepairRunId}`,
       next_action: 'aguardar_ou_descartar_retorno_stale_do_repair',
+    };
+  }
+
+  if (cycle.repair.active.state_path !== statePathValue) {
+    return {
+      gate: 'G4',
+      action: 'repair_complete',
+      status: 'blocked',
+      timestamp,
+      validator_attempt: cycle.attempts_used,
+      repair_run_id: activeRepairRunId,
+      state_path: statePathValue,
+      stale_discarded: true,
+      error: `state_path do repair ativo diverge: esperado ${cycle.repair.active.state_path}, recebido ${statePathValue}`,
+      next_action: 'atualizar_o_state_path_original_sem_redirecionar_boundary',
     };
   }
 
@@ -2681,7 +2721,7 @@ function toolsList() {
       },
       {
         name: 'atlas_lock_validator',
-        description: 'Gate G4/G8 (Codex sibling): enforça um validator por vez, máximo de 2 attempts, repair obrigatório entre fail e retry, e bloqueio explícito do terceiro validator.',
+        description: 'Gate G4/G8 sibling: enforça um validator por vez em todos os hosts, dispatch_token obrigatório no retorno, máximo de 2 attempts, repair obrigatório entre fail e retry e bloqueio explícito do terceiro validator.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,

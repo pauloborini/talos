@@ -29,10 +29,27 @@ import {
   classifyInput,
   preflight,
   lockDispatch,
-  lockValidator,
+  lockValidator as lockValidatorCore,
   assertAfterPlan,
   runState,
 } from './server.js';
+
+function lockValidator(args) {
+  if (args.action === 'complete' && args.dispatch_token === undefined) {
+    try {
+      const state = runState({
+        action: 'get',
+        run_id: args.run_id,
+        project_root: args.project_root,
+      });
+      const token = state.validator_recovery?.expected_dispatch_token;
+      if (Number.isInteger(token)) args = { ...args, dispatch_token: token };
+    } catch {
+      // Testes de hard-fail sem slot/estado devem alcançar o runtime sem token.
+    }
+  }
+  return lockValidatorCore(args);
+}
 
 test('detectHost: arg host explícito tem prioridade máxima', () => {
   const r = detectHost({ host: 'codex' }, { CLAUDE_PLUGIN_ROOT: '/x' });
@@ -769,6 +786,7 @@ test('atlas_lock_validator: codex sibling bloqueia validator concorrente e exige
   });
   assert.equal(repairStart.status, 'passed');
   assert.equal(repairStart.validator_status, 'repair_running');
+  assert.equal(repairStart.repair_budget, 1);
   assert.match(repairStart.repair_run_id, /^rv1:repair:1:/);
 
   const repairConcurrent = lockValidator({
@@ -791,13 +809,25 @@ test('atlas_lock_validator: codex sibling bloqueia validator concorrente e exige
   assert.equal(retryBeforeRepair.status, 'blocked');
   assert.equal(retryBeforeRepair.next_action, 'complete_findings_repair');
 
-  const repairDone = lockValidator({
+  const redirectedRepair = lockValidator({
     run_id: 'rv1',
     project_root: root,
     host: 'codex',
     action: 'repair_complete',
     repair_run_id: repairStart.repair_run_id,
     state_path: '.atlas/state/rv1/slice-repaired.json',
+  });
+  assert.equal(redirectedRepair.status, 'blocked');
+  assert.equal(redirectedRepair.stale_discarded, true);
+  assert.match(redirectedRepair.error, /state_path do repair ativo diverge/);
+
+  const repairDone = lockValidator({
+    run_id: 'rv1',
+    project_root: root,
+    host: 'codex',
+    action: 'repair_complete',
+    repair_run_id: repairStart.repair_run_id,
+    state_path: '.atlas/state/rv1/slice.json',
   });
   assert.equal(repairDone.status, 'passed');
   assert.equal(repairDone.validator_status, 'ready_for_retry');
@@ -807,7 +837,7 @@ test('atlas_lock_validator: codex sibling bloqueia validator concorrente e exige
     project_root: root,
     host: 'codex',
     action: 'start',
-    state_path: '.atlas/state/rv1/slice-repaired.json',
+    state_path: '.atlas/state/rv1/slice.json',
   });
   assert.equal(start2.status, 'passed');
   assert.equal(start2.validator_attempt, 2);
@@ -873,7 +903,7 @@ test('atlas_lock_validator: terceiro validator é impossível e segundo fail blo
     host: 'codex',
     action: 'repair_complete',
     repair_run_id: repairStart.repair_run_id,
-    state_path: '.atlas/state/rv2/slice-repaired.json',
+    state_path: '.atlas/state/rv2/slice.json',
   });
   assert.equal(repair1Done.status, 'passed');
 
@@ -882,7 +912,7 @@ test('atlas_lock_validator: terceiro validator é impossível e segundo fail blo
     project_root: root,
     host: 'codex',
     action: 'start',
-    state_path: '.atlas/state/rv2/slice-repaired.json',
+    state_path: '.atlas/state/rv2/slice.json',
   });
   assert.equal(start2.status, 'passed');
 
@@ -891,7 +921,7 @@ test('atlas_lock_validator: terceiro validator é impossível e segundo fail blo
     project_root: root,
     host: 'codex',
     action: 'complete',
-    state_path: '.atlas/state/rv2/slice-repaired.json',
+    state_path: '.atlas/state/rv2/slice.json',
     validator_run_id: start2.validator_run_id,
     verdict: 'fail',
     data: { findings: [{ severity: 'P1', file: 'y.ts', line: 2, msg: 'still bad' }] },
@@ -1263,12 +1293,12 @@ test('S04: dispatch_token incrementa monotonicamente a cada validatorStart aceit
   lockValidator({
     run_id: 'tok1', project_root: root, host: 'codex', action: 'repair_complete',
     repair_run_id: repairStart.repair_run_id,
-    state_path: '.atlas/state/tok1/slice-repaired.json',
+    state_path: '.atlas/state/tok1/slice.json',
   });
 
   const start2 = lockValidator({
     run_id: 'tok1', project_root: root, host: 'codex', action: 'start',
-    state_path: '.atlas/state/tok1/slice-repaired.json',
+    state_path: '.atlas/state/tok1/slice.json',
   });
   assert.equal(start2.status, 'passed');
   assert.equal(start2.dispatch_token, 2);
@@ -1350,7 +1380,7 @@ test('S04: validatorComplete com token divergente → blocked, slot não fecha',
   assert.equal(good.validator_status, 'passed');
 });
 
-test('S04: validatorComplete sem dispatch_token mantém compat (caminho Codex por run_id)', () => {
+test('S04: validatorComplete sem dispatch_token bloqueia e preserva slot ativo', () => {
   const root = tmpRoot();
   preflight({
     run_id: 'tok4', project_root: root, mode: 'execute',
@@ -1363,15 +1393,16 @@ test('S04: validatorComplete sem dispatch_token mantém compat (caminho Codex po
     state_path: '.atlas/state/tok4/slice.json',
   });
 
-  // Sem dispatch_token no payload: a checagem por run_id continua valendo.
-  const good = lockValidator({
+  const missingToken = lockValidatorCore({
     run_id: 'tok4', project_root: root, host: 'codex', action: 'complete',
     state_path: '.atlas/state/tok4/slice.json',
     validator_run_id: start1.validator_run_id,
     verdict: 'pass',
   });
-  assert.equal(good.status, 'passed');
-  assert.equal(good.validator_status, 'passed');
+  assert.equal(missingToken.status, 'blocked');
+  assert.equal(missingToken.stale_discarded, true);
+  assert.equal(missingToken.next_action, 'reler_validator_recovery_e_reenviar_token');
+  assert.notEqual(readRunJson(root, 'tok4').data.validator_cycle.active, null);
 });
 
 test('atlas_assert_after_plan: execute → banner plano não-vazio (T07)', () => {
@@ -1453,12 +1484,12 @@ test('P3(b): dispatch_token do 2º validatorStart > 1º após start→fail→rep
   lockValidator({
     run_id: 'mono1', project_root: root, host: 'codex', action: 'repair_complete',
     repair_run_id: repairStart.repair_run_id,
-    state_path: '.atlas/state/mono1/slice-repaired.json',
+    state_path: '.atlas/state/mono1/slice.json',
   });
 
   const start2 = lockValidator({
     run_id: 'mono1', project_root: root, host: 'codex', action: 'start',
-    state_path: '.atlas/state/mono1/slice-repaired.json',
+    state_path: '.atlas/state/mono1/slice.json',
   });
   const token2 = readRunJson(root, 'mono1').data.validator_cycle.dispatch_token;
 
@@ -1510,16 +1541,16 @@ test('P3(c): estado legado pré-S04 sem dispatch_token — comportamento determi
   assert.equal(withToken.status, 'blocked');
   assert.match(withToken.error, /token de dispatch divergente/);
 
-  // Caso 2: caller não envia dispatch_token → caminho legado por run_id,
-  // fecha normalmente sem verificar token.
-  const withoutToken = lockValidator({
+  // Caso 2: caller não envia dispatch_token → hard-fail, slot permanece ativo.
+  const withoutToken = lockValidatorCore({
     run_id: 'legacy1', project_root: root, host: 'codex', action: 'complete',
     state_path: '.atlas/state/legacy1/slice.json',
     validator_run_id: start1.validator_run_id,
     verdict: 'pass',
   });
-  assert.equal(withoutToken.status, 'passed');
-  assert.equal(withoutToken.validator_status, 'passed');
+  assert.equal(withoutToken.status, 'blocked');
+  assert.equal(withoutToken.next_action, 'reler_validator_recovery_e_reenviar_token');
+  assert.notEqual(readRunJson(root, 'legacy1').data.validator_cycle.active, null);
 });
 
 // S05 — reforço: host claude (antes era executor-dispatched) percorre ciclo completo
@@ -1567,13 +1598,13 @@ test('S05: host claude percorre ciclo completo start→fail→repair→start→p
   lockValidator({
     run_id: 'claude1', project_root: root, host: 'claude', action: 'repair_complete',
     repair_run_id: repairStart.repair_run_id,
-    state_path: '.atlas/state/claude1/slice-repaired.json',
+    state_path: '.atlas/state/claude1/slice.json',
   });
 
   // 2º start — attempt e dispatch_token incrementam (monotonicidade).
   const start2 = lockValidator({
     run_id: 'claude1', project_root: root, host: 'claude', action: 'start',
-    state_path: '.atlas/state/claude1/slice-repaired.json',
+    state_path: '.atlas/state/claude1/slice.json',
   });
   assert.equal(start2.status, 'passed');
   assert.equal(start2.validator_status, 'running');
@@ -1585,7 +1616,7 @@ test('S05: host claude percorre ciclo completo start→fail→repair→start→p
   // 2º complete com verdict pass → fecha o ciclo.
   const pass1 = lockValidator({
     run_id: 'claude1', project_root: root, host: 'claude', action: 'complete',
-    state_path: '.atlas/state/claude1/slice-repaired.json',
+    state_path: '.atlas/state/claude1/slice.json',
     validator_run_id: start2.validator_run_id,
     verdict: 'pass',
   });
@@ -1626,11 +1657,11 @@ test('S10(a): retorno stale do attempt-1 após attempt-2 despachado → blocked,
   lockValidator({
     run_id: 's10a', project_root: root, host: 'codex', action: 'repair_complete',
     repair_run_id: repairStart.repair_run_id,
-    state_path: '.atlas/state/s10a/slice-repaired.json',
+    state_path: '.atlas/state/s10a/slice.json',
   });
   const start2 = lockValidator({
     run_id: 's10a', project_root: root, host: 'codex', action: 'start',
-    state_path: '.atlas/state/s10a/slice-repaired.json',
+    state_path: '.atlas/state/s10a/slice.json',
   });
   assert.equal(start2.status, 'passed');
 
@@ -1727,7 +1758,7 @@ test('S10(c): repair_complete duplicado → idempotente reconhecível', () => {
   const repairDone = lockValidator({
     run_id: 's10c', project_root: root, host: 'codex', action: 'repair_complete',
     repair_run_id: repairStart.repair_run_id,
-    state_path: '.atlas/state/s10c/slice-repaired.json',
+    state_path: '.atlas/state/s10c/slice.json',
   });
   assert.equal(repairDone.status, 'passed');
 
@@ -1735,7 +1766,7 @@ test('S10(c): repair_complete duplicado → idempotente reconhecível', () => {
   const dup = lockValidator({
     run_id: 's10c', project_root: root, host: 'codex', action: 'repair_complete',
     repair_run_id: repairStart.repair_run_id,
-    state_path: '.atlas/state/s10c/slice-repaired.json',
+    state_path: '.atlas/state/s10c/slice.json',
   });
   assert.equal(dup.status, 'blocked');
   assert.equal(dup.stale_discarded, true);
@@ -1751,7 +1782,7 @@ test('S10(c): repair_complete duplicado → idempotente reconhecível', () => {
   const unknown = lockValidator({
     run_id: 's10c', project_root: root, host: 'codex', action: 'repair_complete',
     repair_run_id: 's10c:repair:99:desconhecido',
-    state_path: '.atlas/state/s10c/slice-repaired.json',
+    state_path: '.atlas/state/s10c/slice.json',
   });
   assert.equal(unknown.status, 'blocked');
   assert.equal(unknown.stale_discarded, true);
@@ -1795,7 +1826,7 @@ test('S10(d): atlas_run_state(get) expõe validator_recovery do slot ativo (reco
 });
 
 // (e) regressão Codex sem token: caminho idempotente não exige dispatch_token.
-test('S10(e): regressão Codex sem dispatch_token — idempotência por run_id intacta', () => {
+test('S10(e): Codex com dispatch_token mantém idempotência por run_id', () => {
   const root = tmpRoot();
   preflight({
     run_id: 's10e', project_root: root, mode: 'execute',
@@ -1807,7 +1838,7 @@ test('S10(e): regressão Codex sem dispatch_token — idempotência por run_id i
     run_id: 's10e', project_root: root, host: 'codex', action: 'start',
     state_path: '.atlas/state/s10e/slice.json',
   });
-  // complete sem dispatch_token (caminho Codex).
+  // Helper injeta o dispatch_token do validator_recovery, como faz o orquestrador.
   const good = lockValidator({
     run_id: 's10e', project_root: root, host: 'codex', action: 'complete',
     state_path: '.atlas/state/s10e/slice.json',
@@ -1815,7 +1846,7 @@ test('S10(e): regressão Codex sem dispatch_token — idempotência por run_id i
   });
   assert.equal(good.status, 'passed');
 
-  // Duplicado sem dispatch_token → idempotente reconhecível por run_id.
+  // Duplicado → idempotente reconhecível por run_id.
   const dup = lockValidator({
     run_id: 's10e', project_root: root, host: 'codex', action: 'complete',
     state_path: '.atlas/state/s10e/slice.json',
@@ -1957,7 +1988,7 @@ test('S12.1: ciclo canônico da FSM percorre idle→running→repair_required→
   const repairDone = lockValidator({
     run_id: 's12fsm', project_root: root, host: 'codex', action: 'repair_complete',
     repair_run_id: repairStart.repair_run_id,
-    state_path: '.atlas/state/s12fsm/slice-repaired.json',
+    state_path: '.atlas/state/s12fsm/slice.json',
   });
   assert.equal(repairDone.validator_status, 'ready_for_retry');
   assert.equal(status(), 'ready_for_retry', 'após repair_complete → ready_for_retry (retry autorizado)');
@@ -1965,7 +1996,7 @@ test('S12.1: ciclo canônico da FSM percorre idle→running→repair_required→
   // ready_for_retry --[validatorStart]--> running (attempt 2, último dispatch).
   const start2 = lockValidator({
     run_id: 's12fsm', project_root: root, host: 'codex', action: 'start',
-    state_path: '.atlas/state/s12fsm/slice-repaired.json',
+    state_path: '.atlas/state/s12fsm/slice.json',
   });
   assert.equal(start2.status, 'passed');
   assert.equal(start2.validator_attempt, 2);
@@ -1974,7 +2005,7 @@ test('S12.1: ciclo canônico da FSM percorre idle→running→repair_required→
   // running --[complete(pass)]--> passed (TERMINAL).
   const pass2 = lockValidator({
     run_id: 's12fsm', project_root: root, host: 'codex', action: 'complete',
-    state_path: '.atlas/state/s12fsm/slice-repaired.json',
+    state_path: '.atlas/state/s12fsm/slice.json',
     validator_run_id: start2.validator_run_id, verdict: 'pass',
   });
   assert.equal(pass2.status, 'passed');
@@ -2232,19 +2263,19 @@ test('S12.2(e): reabrir slice que passou no attempt 2 (terminal no último attem
   lockValidator({
     run_id: 's12e', project_root: root, host: 'codex', action: 'repair_complete',
     repair_run_id: repairStart.repair_run_id,
-    state_path: '.atlas/state/s12e/slice-repaired.json',
+    state_path: '.atlas/state/s12e/slice.json',
   });
 
   // Attempt 2 (último): pass → terminal.
   const start2 = lockValidator({
     run_id: 's12e', project_root: root, host: 'codex', action: 'start',
-    state_path: '.atlas/state/s12e/slice-repaired.json',
+    state_path: '.atlas/state/s12e/slice.json',
   });
   assert.equal(start2.status, 'passed', 'attempt 2 aceito');
   assert.equal(start2.validator_attempt, 2, 'é o attempt 2');
   const pass2 = lockValidator({
     run_id: 's12e', project_root: root, host: 'codex', action: 'complete',
-    state_path: '.atlas/state/s12e/slice-repaired.json',
+    state_path: '.atlas/state/s12e/slice.json',
     validator_run_id: start2.validator_run_id, verdict: 'pass',
   });
   assert.equal(pass2.validator_status, 'passed', 'attempt 2 terminou em passed');

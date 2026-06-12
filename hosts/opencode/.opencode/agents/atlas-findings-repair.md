@@ -23,7 +23,7 @@ Proibido “agir como executor” a partir deste resumo. Se não conseguir carre
 
 ## Input
 
-O orquestrador passa `state_path` + findings estruturados do validator. Use `atlas_run_state` como fonte primária do estado da run.
+O orquestrador passa obrigatoriamente `state_path`, findings estruturados, `validator_attempt`, `repair_run_id` e `repair_budget: 1`. Use `atlas_run_state` como fonte primária do estado da run.
 
 ## Limites
 
@@ -31,4 +31,5 @@ O orquestrador passa `state_path` + findings estruturados do validator. Use `atl
 - Não despachar validator nem outro subagente
 - Não replanejar
 - Não ampliar escopo
+- Atualizar o `state_path` original em lugar; não trocar o boundary para outro arquivo
 - Ao terminar, devolver `repair_complete` ou `blocked`

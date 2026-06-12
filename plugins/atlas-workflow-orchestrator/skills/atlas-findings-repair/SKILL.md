@@ -23,7 +23,7 @@ O orquestrador é dono do ciclo sibling em todos os hosts:
 2. orquestrador roda `atlas-task-validator`
 3. se `fail`, orquestrador trava o ciclo em `repair_required`
 4. orquestrador chama `atlas_lock_validator(action=repair_start, state_path=...)`
-5. orquestrador despacha `atlas-findings-repair`
+5. orquestrador despacha `atlas-findings-repair` com o pacote retornado pelo lock
 6. esta skill corrige e devolve `repair_complete`
 7. orquestrador fecha o lock com `repair_run_id`
 8. orquestrador roda o **2º e último** validator
@@ -35,7 +35,8 @@ Receba do orquestrador:
 - `state_path`
 - findings estruturados do validator
 - `validator_attempt`
-- `repair_budget`
+- `repair_run_id`
+- `repair_budget: 1`
 
 Leia `atlas_run_state` como fonte primária do estado da run. O `state_path` continua sendo a fronteira canônica da slice.
 
@@ -47,6 +48,7 @@ Leia `atlas_run_state` como fonte primária do estado da run. O `state_path` con
 4. **Não corrigir observações/P3 por capricho.** O foco é fechamento do `fail`.
 5. **Não despachar validator, review ou qualquer subagente.** O orquestrador faz isso.
 6. **Não iniciar terceiro ciclo.** Esta skill existe só entre validator 1 e validator 2.
+7. **Não trocar o `state_path`.** Atualize o arquivo original em lugar; redirecionar o boundary invalida a correlação do repair.
 
 ## Fluxo
 
@@ -113,7 +115,7 @@ Se o finding persistir por falta de decisão de produto, dependência externa ou
 
 Ao terminar:
 
-- atualize o `state_path` se a evidência do boundary mudou
+- atualize o conteúdo do `state_path` original se a evidência do boundary mudou
 - mantenha a mesma slice
 - não invente novo run state paralelo
 
@@ -122,12 +124,13 @@ Ao terminar:
 Retorne saída curta e estruturada com:
 
 - `status: repair_complete | blocked`
+- `repair_run_id`
 - `state_path`
 - `files_touched`
 - `checks_run`
 - `residual_risk` (se houver)
 
-O orquestrador chamará `atlas_lock_validator(action=repair_complete, state_path=...)` e só então poderá despachar o validator final.
+O orquestrador chamará `atlas_lock_validator(action=repair_complete, repair_run_id=..., state_path=<mesmo path original>)` e só então poderá despachar o validator final.
 Antes disso, ele deve ter aberto o slot com `atlas_lock_validator(action=repair_start, state_path=...)`; `repair_run_id` é obrigatório no fechamento.
 
 ## Stop conditions

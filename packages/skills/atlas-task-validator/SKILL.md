@@ -19,6 +19,8 @@ Purpose: perform a cold, structured validation pass of the delivered slice again
 
 Use `atlas_run_state` as the primary source for run metadata and gate state. The `state_path` JSON is the slice boundary projection for validation, not a replacement for MCP state. If `atlas_run_state` is unavailable when required to confirm run state, return `verdict: "fail"` with a P1 finding instead of inferring status.
 
+Before validation, derive `run_id` from `state_path`, call `atlas_run_state(action=get)`, and require an active `validator_recovery` whose `expected_state_path` matches the input. Copy `expected_dispatch_token` unchanged into the output. If correlation is unavailable, return `dispatch_token: null`, `verdict: "fail"`, and a P1 finding; never invent a token.
+
 ## Invocation Contract
 
 The subagent must receive only one base input: `state_path`.
@@ -101,6 +103,7 @@ Return strict JSON as the final output. Do not wrap it in Markdown and do not pr
 
 ```json
 {
+  "dispatch_token": 1,
   "verdict": "pass | fail | pass_with_observations",
   "findings": [
     {
@@ -126,7 +129,7 @@ Return strict JSON as the final output. Do not wrap it in Markdown and do not pr
 }
 ```
 
-`findings`, `observations`, and `boundary_violations` must always be arrays. Use empty arrays when there are no items.
+`dispatch_token` must equal `validator_recovery.expected_dispatch_token`. `findings`, `observations`, and `boundary_violations` must always be arrays. Use empty arrays when there are no items.
 
 ---
 
