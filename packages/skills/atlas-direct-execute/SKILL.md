@@ -146,32 +146,18 @@ After tasks and local gates pass, write `.atlas/state/<run_id>/<slice>.json` fol
 
 For direct execution, the state file is still the only validator input. Use the user-provided PRD/spec path as `plan_path` when no handoff plan exists, and include direct-contract anchors in `boundary_refs` such as `direct.O1`, `direct.invariant.permissions`, or `direct.risk.partial_failure`.
 
-Then validate with the isolated validator subagent using only the state path. First read `atlas_capabilities.validator_dispatch`:
+The state file is the only validator input. Validation is always **sibling**, on every host: this executor **never** dispatches `atlas-task-validator` itself and never validates its own work in the same context. After tasks and local gates pass and the state file is written, this executor **stops mutation** and returns `validator_handoff_required` with the `state_path`. The orchestrator then dispatches `atlas-task-validator` as the next isolated sibling phase, locks it via `atlas_lock_validator`, and — if the verdict is `fail` — dispatches `atlas-findings-repair` (not this executor) before the **2nd and last** validator.
 
-- If `validator_dispatch.topology == "nested"`, this executor invokes `atlas-task-validator` with the dispatch verb returned by `atlas_capabilities.subagent_dispatch` for the current host, consumes its verdict/findings inside this same execution loop, and only reports the terminal slice status back to the orchestrator.
-- If `validator_dispatch.topology == "sibling"` (Codex current host), this executor **must not** attempt nested dispatch. It writes the state file, stops mutation, and returns `validator_handoff_required` with the `state_path`; the orchestrator dispatches `atlas-task-validator` as the next isolated sibling phase and re-dispatches this executor only if the validator returns `fail`.
+Do not paste the compact contract, diff, obligation ledger, local checks, or closure analysis packet into the state file's handoff. Those belong in the state file and referenced artifacts.
 
-Nested dispatch example:
+**Finish all local work before the handoff — then stop idle.** Finish every local gate (lint, analyze, tests, `git diff --check`, diff-stat) and write the state file **before** returning the handoff. After returning `validator_handoff_required`, do nothing: no diff hygiene checks, no extra reads, no opportunistic edits, no parallel work. The orchestrator now owns the slice; any mutation here would change what the sibling validator reads and breaks determinism (same failure class as the orchestrator's G9).
 
-```text
-Agent(subagent_type: "atlas-task-validator", prompt: ".atlas/state/<run_id>/<slice>.json")
-```
+The verdict is consumed by the **orchestrator**, not by this executor:
 
-Do not paste the compact contract, diff, obligation ledger, local checks, or closure analysis packet into the validator prompt. Those belong in the state file and referenced artifacts.
+- `pass` / `pass_with_observations`: terminal — the orchestrator closes the slice (observations are reported residuals, never a trigger for another validator dispatch).
+- `fail`: the orchestrator opens `repair_start`, dispatches `atlas-findings-repair`, closes with `repair_run_id`, and runs the **2nd and last** validator. This executor does not re-validate itself and is not reused for the repair retry.
 
-**Validator dispatch is blocking — wait idle.** Finish every local gate (lint, analyze, tests, `git diff --check`, diff-stat) and write the state file **before** validation. Once the validator is dispatched (nested by executor or sibling by orchestrator), do nothing until its verdict returns: no diff hygiene checks, no extra reads, no opportunistic edits, no parallel work. Running anything while the validator reads the slice can mutate what it is validating and breaks determinism (same failure class as the orchestrator's G9). Dispatch → wait → consume verdict.
-
-The validator must not patch files. Consume its verdict:
-
-- `pass`: close slice
-- `pass_with_observations`: close slice and report observations
-- `fail`: repair P1/P2 findings when they map to PRD obligations, invariants, determinism, dependencies, or fixtures; rerun validator after material repair
-
-**Only `fail` reopens the loop.** `pass` and `pass_with_observations` are terminal: close the slice immediately. Do not "fix" observations and re-validate — observations and `boundary_violations` returned alongside a non-`fail` verdict are reported residuals, not triggers for another validator dispatch. Once the slice is closed, do not edit code, tests, or boundary files just to satisfy an observation; that reopens the slice and forces an avoidable re-validation. Real follow-up from an observation goes to the final report or backlog, not into an extra in-slice change.
-
-In sibling topology, the orchestrator owns the validator loop: validator `fail` produces a repair packet and re-dispatches this executor with the findings; this executor repairs only current-slice P1/P2 items, rewrites state evidence, then returns another `validator_handoff_required`. In nested topology, that same repair loop stays entirely inside this executor after the child validator returns; findings do not bubble to the orchestrator/grandparent as an intermediate step.
-
-Stop validator repair only when the same finding repeats without new signal, repair would violate scope, or a user/product decision is needed. Do not final-report a repaired validator finding as "ready" without either a subsequent `pass` or an explicit residual-risk note.
+This executor only re-engages if the orchestrator explicitly re-dispatches it for a new slice. It must not "fix" observations and reopen a closed slice; real follow-up from an observation goes to the final report or backlog, not into an extra in-slice change.
 
 If isolated subagents are unavailable in the current environment, do not pretend the slice is validator-closed. Run a local self-check against the same contract, report `validator not run`, and mark residual risk explicitly.
 

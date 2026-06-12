@@ -1,8 +1,8 @@
 # Atlas Workflow
 
-Plugin **Atlas Workflow Orchestrator** v0.6.2 — pipeline determinístico (PRD → plano → execução → validação) com skills `atlas-*`, templates e MCP. Um pacote, cinco hosts: **Claude Code**, **Cursor**, **Codex App**, **OpenCode** e **Pi CLI**.
+Plugin **Atlas Workflow Orchestrator** v0.7.0 — pipeline determinístico (PRD → plano → execução → validação) com skills `atlas-*`, templates e MCP. Um pacote, cinco hosts: **Claude Code**, **Cursor**, **Codex App**, **OpenCode** e **Pi CLI**.
 
-**Versão:** [`VERSION`](VERSION) (`0.6.2`) · **Repo:** https://github.com/pauloborini/atlas-workflow
+**Versão:** [`VERSION`](VERSION) (`0.7.0`) · **Repo:** https://github.com/pauloborini/atlas-workflow
 
 ## Hosts
 
@@ -16,7 +16,7 @@ Plugin **Atlas Workflow Orchestrator** v0.6.2 — pipeline determinístico (PRD 
 
 **Cursor:** não há pacote nem marketplace próprios — o plugin instalado via `claude plugin` no escopo do usuário já vale para o Cursor (mesmo manifest `.claude-plugin/`). Limitação de packaging, não do pipeline.
 
-**Conceito:** todos são *hosts* (onde as skills rodam). O pipeline é o mesmo; diferenças nativas (subagente, todo, MCP, topologia do validador frio) vivem em [`host-adapters.md`](packages/orchestrator/references/host-adapters.md) e na tool `atlas_capabilities` (contrato `schema_version: 3` — `validator_dispatch.topology` distingue `nested`/`sibling`; ver [Topologia do validador frio (G4) por host](#topologia-do-validador-frio-g4-por-host)). Host sem subagente+MCP é **rejeitado no preflight** (gate `PREREQ`, hard-fail) — determinismo > alcance.
+**Conceito:** todos são *hosts* (onde as skills rodam). O pipeline é o mesmo; diferenças nativas (subagente, todo, MCP, dispatch do validador frio) vivem em [`host-adapters.md`](packages/orchestrator/references/host-adapters.md) e na tool `atlas_capabilities` (contrato `schema_version: 5` — `validator_dispatch` declara `dispatcher` + `join` por host; ver [Topologia do validador frio (G4)](#topologia-do-validador-frio-g4)). Host sem subagente+MCP é **rejeitado no preflight** (gate `PREREQ`, hard-fail); host sem join síncrono do validador é **rejeitado no preflight** (gate `JOIN`, hard-fail) — determinismo > alcance.
 
 **Pré-requisito:** Node.js no host. Após instalar, confirme o MCP com `atlas_ping`.
 
@@ -180,7 +180,7 @@ Só alinhar decisões antes de planejar:
 
 ### Skills da cadeia
 
-Cadeia automática: `atlas-sprint-prd-generator` → `atlas-prd-interview` → `atlas-plan-handoff` → `atlas-plan-execute` (full) ou `atlas-direct-execute` (direct) → `atlas-task-validator` → `atlas-slice-review` (opcional)
+Cadeia automática: `atlas-sprint-prd-generator` → `atlas-prd-interview` → `atlas-plan-handoff` → `atlas-plan-execute` (full) ou `atlas-direct-execute` (direct) → `atlas-task-validator` → `atlas-findings-repair` (só após `fail`, em qualquer host) → `atlas-slice-review` (opcional)
 
 No modo `full`, as etapas documentais (`PRD`, entrevista, `PLAN_*.md`) ficam no agente principal/orquestrador. O primeiro sub-agent obrigatório nasce só na fase de execução (`atlas-plan-execute`).
 
@@ -194,26 +194,21 @@ Além da cadeia automática, estas skills também podem ser chamadas diretamente
 - `atlas-plan-handoff` — converte um PRD validado em plano executável. Use quando a intenção é preparar a execução, não ainda codar.
 - `atlas-direct-execute` — executa diretamente quando o PRD já está maduro. Use quando você quer pular a fase de plan handoff.
 - `atlas-task-validator` — faz a validação fria da slice executada. Use como veredito final de conformidade, nunca como ação manual de rotina.
+- `atlas-findings-repair` — corrige findings P0/P1/P2 depois de um `fail` do validator sem reabrir a execução completa. Use só no caminho de retry.
 - `atlas-slice-review` — faz a revisão fria opcional depois da execução. Use quando quiser uma segunda passada focada em riscos e regressões.
 
-### Topologia do validador frio (G4) por host
+### Topologia do validador frio (G4)
 
-O validador frio (`atlas-task-validator`) **sempre** roda isolado, mas **quem o dispara** varia por host. O orquestrador lê `atlas_capabilities.validator_dispatch` em runtime e segue a topologia correta automaticamente — você não escolhe à mão.
+O validador frio (`atlas-task-validator`) **sempre** roda isolado e **sempre** como sub-agent irmão (sibling) despachado pelo orquestrador — em todos os hosts, sem exceção. O orquestrador lê `atlas_capabilities.validator_dispatch` em runtime; o `dispatcher` é sempre `orchestrator`. Fluxo único: orquestrador → executor escreve `state_path` e encerra → **validator irmão** lê `state_path` → veredito → orquestrador consome. Você não escolhe à mão.
 
-| Host | Topologia | Quem dispara o validator | Fluxo |
-|------|-----------|--------------------------|-------|
-| Claude Code, Cursor, opencode, pi | **`nested`** | O próprio executor (filho do executor) | orquestrador → executor → **validator filho** → executor consome veredito/findings → executor reporta |
-| **Codex App** | **`sibling`** | O orquestrador (irmão do executor) | orquestrador → executor escreve `state_path` e encerra → **validator irmão** lê `state_path` → veredito |
-| Hosts genéricos | `host_defined` | Definido pelo adapter do host | — |
+**Por que sibling em todos os hosts:** o executor sub-agent **não** despacha o validador (evita validar o próprio trabalho e evita depender de o host permitir um sub-agent disparar um neto). Em vez disso, o executor termina ao escrever o `state_path`, e o orquestrador dispara o validator como **irmão isolado**. Hosts sem join síncrono confiável do validador são **rejeitados no preflight** (gate `JOIN`, hard-fail) — não há degradação. Os dois invariantes seguem firmes:
 
-**Por que Codex é diferente:** no Codex atual, sub-agents não recebem a tool `spawn_agent` — ou seja, um executor sub-agent **não consegue** disparar um neto (validator aninhado). Em vez de degradar o G4 (validar no fio principal = violação), o pipeline troca a topologia: o executor termina ao escrever o state, e o orquestrador dispara o validator como **irmão isolado**. Os dois invariantes seguem firmes:
+- **G9 (mutação só em sub-agent isolado):** todo código muda dentro do executor isolado — o fio principal nunca edita.
+- **G4 (validação fria separada):** o validator é um sub-agent **frio e isolado**, com contexto próprio, irmão do executor e coordenado pelo orquestrador — nunca filho do executor.
 
-- **G9 (mutação só em sub-agent isolado):** todo código continua mudando dentro do executor isolado — o fio principal nunca edita.
-- **G4 (validação fria separada):** o validator continua sendo um sub-agent **frio e isolado**, com contexto próprio; só não é filho do executor — é irmão coordenado pelo orquestrador.
+**Loop de reparo (sibling):** se o validator retorna `fail` com P0/P1/P2, o orquestrador abre o lock de reparo (`repair_start`), dispara `atlas-findings-repair` com os findings estruturados, fecha com `repair_run_id` e só então roda o **2º e último** validator. `validator_run_id` e `repair_run_id` existem para descartar retornos stale/duplicados. Se o 2º validator ainda falhar, a slice termina em `blocked` — **3º validator é proibido**.
 
-**Loop de reparo no Codex (sibling):** se o validator retorna `fail` com P1/P2, o orquestrador dispara um **novo executor** com as findings para reparar dentro do escopo da slice — não é o mesmo sub-agent "seguindo vivo". Em hosts `nested`, o reparo acontece dentro do executor original, antes do veredito terminal subir; o feedback do validator não passa pelo orquestrador como etapa intermediária.
-
-**Smoke G9 — critério PASS por host:** o smoke do Gate G9 deve aceitar a topologia correta do host. Em `nested`, exige validator filho do executor; em `sibling` (Codex), exige validator irmão disparado pelo orquestrador. Os dois são PASS — exigir "aninhado literal" no Codex é leitura errada do contrato.
+**Smoke G9 — critério PASS:** o smoke do Gate G9 exige validator irmão disparado pelo orquestrador (sibling) em todos os hosts. Exigir que o executor dispare o validador (validador aninhado) é leitura errada do contrato.
 
 ## Estrutura do repo
 

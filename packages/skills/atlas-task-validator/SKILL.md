@@ -3,13 +3,13 @@ name: atlas-task-validator
 description: Skill `atlas-task-validator`. Validador frio de slice executada por `atlas-plan-execute` ou `atlas-direct-execute`. Invocado como subagente obrigatório antes do relatório final. Recebe boundary da slice, contrato/plano, tasks executadas e compara código real vs contrato, retornando findings P1/P2/P3 estruturados com evidência e veredito determinístico. Não corrige código. Não propõe diff.
 ---
 
-> Registro de subagente: este validador é exposto como subagent real por registro nativo de cada host. O despachante é definido por `atlas_capabilities.validator_dispatch`: em hosts `nested`, o executor invoca o validador; no Codex atual (`sibling`), o orquestrador invoca `spawn_agent(agent_type: "atlas-task-validator", items: [{ type: "text", text: "<state_path>" }])` após o executor retornar `state_path`. Este `SKILL.md` documenta o contrato; o corpo do agente é o system prompt efetivo.
+> Registro de subagente: este validador é exposto como subagent real por registro nativo de cada host. A topologia é **sibling** em todos os hosts: o **orquestrador** despacha o validador (nunca o executor) após o executor retornar `state_path`, usando o verbo nativo de `atlas_capabilities.subagent_dispatch` (ex.: `spawn_agent(agent_type: "atlas-task-validator", items: [{ type: "text", text: "<state_path>" }])` no Codex), controlando o ciclo por `atlas_lock_validator` e, em caso de `fail`, chamando `atlas-findings-repair` antes do **2º e último** validator. Este validador nunca se re-despacha nem despacha outro subagente. Este `SKILL.md` documenta o contrato; o corpo do agente é o system prompt efetivo.
 >
 > **Manutenção (cross-host):** no host Claude o system prompt efetivo é `agents/atlas-task-validator.md`; no host Codex o custom agent `.codex/agents/atlas-task-validator.toml` é gerado do mesmo agente canônico. `agents/openai.yaml` é apenas metadata de skill/UI e não é fronteira de isolamento.
 
 # Atlas Task Validator
 
-Use this skill as an internal subagent invoked by `atlas-plan-execute` or `atlas-direct-execute` after all tasks in a slice are implemented and locally gated.
+Use this skill as an isolated sibling subagent dispatched by the **orchestrator** from the `state_path` the executor writes and returns (`validator_handoff_required`), after all tasks in a slice are implemented and locally gated. It is never invoked by the executor.
 
 Purpose: perform a cold, structured validation pass of the delivered slice against the plan contract. 
 
@@ -18,6 +18,8 @@ Purpose: perform a cold, structured validation pass of the delivered slice again
 ## State persistence
 
 Use `atlas_run_state` as the primary source for run metadata and gate state. The `state_path` JSON is the slice boundary projection for validation, not a replacement for MCP state. If `atlas_run_state` is unavailable when required to confirm run state, return `verdict: "fail"` with a P1 finding instead of inferring status.
+
+Before validation, derive `run_id` from `state_path`, call `atlas_run_state(action=get)`, and require an active `validator_recovery` whose `expected_state_path` matches the input. Copy `expected_dispatch_token` unchanged into the output. If correlation is unavailable, return `dispatch_token: null`, `verdict: "fail"`, and a P1 finding; never invent a token.
 
 ## Invocation Contract
 
@@ -101,6 +103,7 @@ Return strict JSON as the final output. Do not wrap it in Markdown and do not pr
 
 ```json
 {
+  "dispatch_token": 1,
   "verdict": "pass | fail | pass_with_observations",
   "findings": [
     {
@@ -126,7 +129,7 @@ Return strict JSON as the final output. Do not wrap it in Markdown and do not pr
 }
 ```
 
-`findings`, `observations`, and `boundary_violations` must always be arrays. Use empty arrays when there are no items.
+`dispatch_token` must equal `validator_recovery.expected_dispatch_token`. `findings`, `observations`, and `boundary_violations` must always be arrays. Use empty arrays when there are no items.
 
 ---
 

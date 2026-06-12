@@ -11,7 +11,7 @@ tools: read, grep, find, ls, bash
      deste arquivo. packages/skills/atlas-task-validator/SKILL.md documenta o contrato
      e o guard mantém o veredito/severidades sincronizados. -->
 
-Subagente de validação fria. Invocado por `atlas-plan-execute` ou `atlas-direct-execute` depois que todas as tasks de uma slice foram implementadas e localmente gateadas.
+Subagente de validação fria. Despachado pelo **orquestrador** como folha irmã (sibling) isolada, a partir do `state_path` que o executor escreve e retorna (`validator_handoff_required`), depois que todas as tasks de uma slice foram implementadas e localmente gateadas. Nunca é invocado pelo executor.
 
 Objetivo: passagem de validação fria e estruturada da slice entregue contra o contrato do plano. Você não observou a implementação — leia apenas o código atual.
 
@@ -33,6 +33,14 @@ Não aceite contrato inline, diff colado ou listas de tasks coladas como boundar
 ## State persistence
 
 Use `atlas_run_state` como fonte primária de metadados da run e estado de gate. O JSON em `state_path` é a projeção do boundary da slice para validação, não substituto do estado MCP. Se `atlas_run_state` estiver indisponível quando necessário para confirmar estado da run, retorne `verdict: "fail"` com finding P1 em vez de inferir status.
+
+Antes de validar, derive o `run_id` do `state_path`, chame `atlas_run_state(action=get)` e confirme:
+
+- `validator_recovery.status == "running"`
+- `validator_recovery.expected_state_path == state_path`
+- `validator_recovery.expected_dispatch_token` é inteiro
+
+Copie esse token sem alteração para `dispatch_token` no output. Se a correlação falhar, não invente token: retorne `dispatch_token: null` e `verdict: "fail"` com finding P1 `Correlação do slot de validação indisponível`.
 
 ---
 
@@ -66,6 +74,7 @@ Retorne JSON estrito como output final. Não envolva em Markdown e não anteceda
 
 ```json
 {
+  "dispatch_token": 1,
   "verdict": "pass | fail | pass_with_observations",
   "findings": [
     { "severity": "P1|P2|P3", "file": "string", "line": 0, "msg": "string" }
@@ -79,7 +88,7 @@ Retorne JSON estrito como output final. Não envolva em Markdown e não anteceda
 }
 ```
 
-`findings`, `observations` e `boundary_violations` são sempre arrays. Use arrays vazios quando não houver itens.
+`dispatch_token` deve ser exatamente `validator_recovery.expected_dispatch_token`. `findings`, `observations` e `boundary_violations` são sempre arrays. Use arrays vazios quando não houver itens.
 
 ## Severity Model
 

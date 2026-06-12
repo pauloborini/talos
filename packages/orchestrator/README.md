@@ -138,8 +138,8 @@ Atlas é família única. Cliente (Claude Code, Cursor, Codex App) é apenas o h
 
 | Mode | Sequência |
 |------|-----------|
-| `full` | `atlas-sprint-prd-generator` → `atlas-prd-interview` quando necessário → `atlas-plan-handoff` → `atlas-plan-execute` → `atlas-task-validator` → `atlas-slice-review` somente com `--review` |
-| `direct` | PRD/spec existente → `atlas-direct-execute` → `atlas-task-validator` → `atlas-slice-review` somente com `--review` |
+| `full` | `atlas-sprint-prd-generator` → `atlas-prd-interview` quando necessário → `atlas-plan-handoff` → `atlas-plan-execute` → `atlas-task-validator` → `atlas-findings-repair` (no `fail`) → `atlas-slice-review` somente com `--review` |
+| `direct` | PRD/spec existente → `atlas-direct-execute` → `atlas-task-validator` → `atlas-findings-repair` (no `fail`) → `atlas-slice-review` somente com `--review` |
 | `interview-only` | `atlas-prd-interview` |
 
 ## Validação automática
@@ -220,9 +220,9 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `atlas-*` para o
 
 ---
 
-**Plugin version:** 0.6.2
+**Plugin version:** 0.7.0
 **Author:** Paulo Borini
-**Last updated:** 2026-06-08
+**Last updated:** 2026-06-11
 
 ### Novidades v0.6.2 — backlog mestre explícito
 
@@ -234,6 +234,6 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `atlas-*` para o
 ### Novidades v0.6.1 — fronteira documental no orquestrador
 
 - Fases documentais (`PRD`, entrevista, `PLAN_*.md`) são conduzidas no orquestrador; o primeiro sub-agent obrigatório do `full` nasce em `atlas-plan-execute`.
-- Os únicos sub-agents do pipeline são `atlas-plan-execute`/`atlas-direct-execute`, `atlas-task-validator` e `atlas-slice-review`.
-- Em hosts `nested`, o executor consome o feedback do validator dentro do próprio loop; em Codex (`sibling`), o orquestrador coordena o validator irmão e só reabre execução em `fail`.
+- Os únicos sub-agents do pipeline são `atlas-plan-execute`/`atlas-direct-execute`, `atlas-task-validator`, `atlas-findings-repair` e `atlas-slice-review`.
+- A topologia é **sibling** em todos os hosts: o orquestrador coordena o validator irmão a partir do `state_path` retornado pelo executor e só reabre execução em `fail`. Host sem join síncrono é rejeitado no preflight (gate JOIN).
 - `atlas_preflight`/dispatchability distinguem skills documentais de skills executoras, evitando exigir sub-agent para entrevista/plano.

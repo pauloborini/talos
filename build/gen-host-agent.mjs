@@ -46,11 +46,13 @@ const description = get('description') || '';
 // listá-la explicitamente faz o agente FALHAR no load ("Failed to load extension
 // pi-subagents/..."). Confirmado em smoke real: agentes com `subagent` em tools não
 // carregam; o validator (read-only, sem `subagent`) carrega e despacha normalmente. O
-// executor dispara o validador frio (Gate G4) usando a tool ambiente, sem declará-la.
+// orquestrador despacha o validador frio (Gate G4) usando a tool ambiente, sem
+// conceder ao executor/reparador permissão para criar subagentes.
 // model omitido: pi-subagents herda o default do host. opencode NÃO lista tools (herda
 // do host por convenção do repo) — o SKILL.md governa read-only vs executor.
 const PI_TOOLS = {
   'atlas-task-validator': 'read, grep, find, ls, bash',
+  'atlas-findings-repair': 'read, write, edit, grep, find, ls, bash',
   'atlas-slice-review': 'read, grep, find, ls, bash',
   'atlas-plan-execute': 'read, write, edit, grep, find, ls, bash',
   'atlas-direct-execute': 'read, write, edit, grep, find, ls, bash',
@@ -96,7 +98,7 @@ if (host === 'opencode') {
   // canônico no corpo gerado (mesmo padrão auto-contido), mantendo fonte única:
   // o contrato continua vivendo só em packages/skills/<name>/SKILL.md; aqui é cópia
   // gerada (regenerável), nunca editada à mão.
-  const PI_EMBED_SHIMS = new Set(['atlas-plan-execute', 'atlas-direct-execute', 'atlas-slice-review']);
+  const PI_EMBED_SHIMS = new Set(['atlas-plan-execute', 'atlas-direct-execute', 'atlas-slice-review', 'atlas-findings-repair']);
   let piBody = body;
   if (PI_EMBED_SHIMS.has(name)) {
     const skillPath = path.join(ROOT, `packages/skills/${name}/SKILL.md`);

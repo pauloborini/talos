@@ -118,7 +118,7 @@ for (const rel of [
 // slice-review revisa — todos são DESPACHADOS pelo orquestrador e por isso precisam
 // de registro de agente nativo por host. Ausência = orquestrador cai pro fio principal
 // (Gate G9 violado). O corpo é um SHIM fino que DEVE citar o skill_id carregado.
-const DISPATCHED_EXEC_AGENTS = ['atlas-plan-execute', 'atlas-direct-execute', 'atlas-slice-review'];
+const DISPATCHED_EXEC_AGENTS = ['atlas-plan-execute', 'atlas-direct-execute', 'atlas-findings-repair', 'atlas-slice-review'];
 const AGENT_DIRS = [
   ['claude', 'agents'],
   ['codex', 'plugins/atlas-workflow-orchestrator/.codex/agents'],
@@ -199,6 +199,25 @@ if (orchestratorSkill != null) {
   for (const token of ['host_capabilities', 'atlas_preflight']) {
     if (!orchestratorSkill.includes(token)) {
       errors.push(`PREREQ prosa-regressão: SKILL do orquestrador não cita '${token}' (passo de report sustenta o fail-closed)`);
+    }
+  }
+  for (const token of ['dispatch_token', 'repair_run_id', 'repair_budget: 1']) {
+    if (!orchestratorSkill.includes(token)) {
+      errors.push(`G4 prosa-regressão: SKILL do orquestrador não cita '${token}'`);
+    }
+  }
+}
+
+const validatorAgent = read('agents/atlas-task-validator.md');
+if (validatorAgent != null && !/"dispatch_token"\s*:/.test(validatorAgent)) {
+  errors.push('G4 contrato-regressão: output do atlas-task-validator não inclui dispatch_token');
+}
+
+const findingsRepairSkill = read('packages/skills/atlas-findings-repair/SKILL.md');
+if (findingsRepairSkill != null) {
+  for (const token of ['repair_run_id', 'repair_budget: 1', 'Não trocar o `state_path`']) {
+    if (!findingsRepairSkill.includes(token)) {
+      errors.push(`G4 repair-regressão: atlas-findings-repair não cita '${token}'`);
     }
   }
 }
