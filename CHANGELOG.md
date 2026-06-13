@@ -2,6 +2,8 @@
 
 ## 0.7.0 - 2026-06-11
 
+> ⚠️ **BREAKING (consumidores MCP):** `validator_dispatch` agora expõe apenas `{ dispatcher, join }`. Quem lia `validator_dispatch.topology`, `nested_subagent_available` ou `repair_loop` **DEVE migrar** para `validator_dispatch.join` e assumir sibling incondicionalmente. `CAPABILITIES_SCHEMA_VERSION` salta 3 → 5. **Comportamento de execução do pipeline: inalterado.** Bump minor pré-1.0 é proposital (SemVer 0.y.z permite breaking sem major).
+
 Tipo: **breaking de contrato `atlas_capabilities`** (schema v3 → v5; topologia única). Pré-1.0 → bump minor consciente; **sem mudança de comportamento de execução** e **sem mudança na superfície de instalação do usuário**.
 
 Resumo: purga total do conceito `nested` do produto. A topologia do validador frio (Gate G4) passa a ser **sibling em todos os hosts**: o executor escreve `state_path` e encerra, e o orquestrador despacha `atlas-task-validator` como sub-agent irmão isolado. Consolida as decisões DEC-SIB-001/002/003/004.
