@@ -22,9 +22,9 @@ Duas metas inegociáveis, sempre juntas:
 
 ## Estado atual (2026-06)
 
-- Versão: `0.5.0`. Breaking vs v0.4.x: PRD enxuto 14→6 seções (corte limpo, sem dual-format). Família única `atlas-*` (colapso de claude/cursor/codex).
+- Versão: `0.7.1`. Topologia **sibling-only** (v0.7.0, BREAKING de contrato `atlas_capabilities` schema v3→v5, sem mudança de comportamento de execução): validador frio é sempre sub-agent irmão; executor escreve `state_path` e para; orquestrador despacha `atlas-task-validator`. v0.7.1 = patch de confiabilidade (merge no `upsertState`, version-conflict só em lock real, banner por `artifact_kind`, G4 endurecido R17/R19). Smoke S18 multi-host: Claude Code/Codex/Cursor/opencode PASS em tarefa real (2026-06-14); pi pendente.
 - Cinco hosts: **Claude Code**, **Cursor**, **Codex App**, **opencode** e **pi cli**. Claude/Cursor/Codex via marketplace-from-source; opencode/pi via catálogo from-source (`hosts/`) com `build/install-host.sh` (1 comando). pi exige deps externas `pi-mcp-adapter` + `pi-subagents` (DEC-005).
-- Camada de adapter: `atlas_capabilities` (MCP, schema v2) detecta `claude`/`codex`/`opencode`/`pi`/`generic` (data-driven em `HOST_ADAPTERS`).
+- Camada de adapter: `atlas_capabilities` (MCP, schema v5) detecta `claude`/`codex`/`opencode`/`pi`/`generic` (data-driven em `HOST_ADAPTERS`); `validator_dispatch.join { sync, confidence, mechanism }` por host (gate JOIN).
 - Determinismo: gate PREREQ no `atlas_preflight` é hard-fail (DEC-004). Hosts `must_report` (pi/generic) falham-fechado se o orquestrador não reportar `host_capabilities`; nativos (claude/codex/opencode) são `self_evident`. `pass`/`pass_with_observations` do validador são terminais (só `fail` reabre loop).
 - Backlog pós-v0.5.0: `.app-vault/docs/BACKLOG_MESTRE_MULTIHOST.md`; template canônico de PRD: `packages/templates/PRD_TEMPLATE.md` (6 seções).
 
