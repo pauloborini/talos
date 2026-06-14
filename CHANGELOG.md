@@ -1,5 +1,64 @@
 # Changelog
 
+## 0.7.1 - 2026-06-14
+
+Tipo: **patch de confiabilidade** (correção de bugs + endurecimento de skill). **Sem breaking**, **sem mudança de comportamento de pipeline**, `CAPABILITIES_SCHEMA_VERSION` segue **v5**. Origem: smoke S18 multi-host real (Claude Code, Codex, Cursor, opencode) — 4 de 5 hosts PASS em tarefas reais, com 3 bugs e 2 furos de contrato identificados pelos relatórios de execução.
+
+Correções:
+- **State drift `dispatch.active` (P2 — Codex + opencode).** `atlas_run_state(action=upsert)` com `data` parcial fazia **replace cego** do `data` inteiro, apagando `data.dispatch.active={plan_execute}` quando o executor persistia o handoff. O `atlas_lock_validator(start)` seguinte bloqueava ("plan_execute não ativo") e o orquestrador precisava reabrir a fase na mão. Agora o upsert faz **merge top-level**: chaves novas entram sem derrubar `dispatch`/`routing`/`validator_cycle`/`gates`. (`server.js` `upsertState`.)
+- **Version-conflict travava todo run novo.** `findActiveRunConflict` dava hard-fail de versão em **qualquer** `run.json` do diretório, inclusive runs antigos **inativos** — quem atualizava de 0.6.x ficava com todo run novo bloqueado até limpar `.atlas/state/` na mão (viola "atualização simples"). Agora só bloqueia em conflito de lock **real**: outro run com `dispatch.active` **e** versão atual. Run inativo/de versão anterior é resíduo, ignorado. (`server.js` `findActiveRunConflict`.)
+- **Banner cosmético na verificação de PRD.** `atlas_verify_artifact` sempre ecoava `▸ atlas: plano · validado` mesmo verificando um PRD. Adicionado param opcional aditivo `artifact_kind` (`prd`|`plan`): `prd` → banner de PRD; ausente/`plan` mantém o banner de plano (compat com callers antigos).
+
+Endurecimento (skill do orquestrador, Gate G4):
+- **R17 — falha de dispatch do validador em runtime = `blocked`, nunca inline.** Cláusula explícita: se o despacho do `task_validator` errar ou não retornar (sub-agent que falha, host sem sub-agent vivo), a slice **bloqueia** com causa — proibido validar inline ou relatar veredito que o irmão frio não produziu. Não há caminho de degradação.
+- **R19 — proveniência do `dispatch_token`.** O token submetido no `lock_validator(complete)` tem que ser o que **o próprio validador irmão devolveu no output** — não um valor lido de `validator_recovery` e repassado sem o irmão ter rodado. `validator_recovery` serve para reconhecer/descartar stale, não para fabricar token de validador que não executou.
+
+Limite conhecido (honesto): R17/R19 **não** são prova de isolamento criptograficamente não-forjável. O MCP fala stdio com um único cliente e não distingue orquestrador de sub-agente; um token sempre é tecnicamente reproduzível pelo orquestrador. O endurecimento acima fecha o atalho preguiçoso (o threat model real: LLM tomando atalho), não um adversário com acesso ao código. Prova de isolamento mais forte fica para sprint futura (S22).
+
+Testes: 110 (era 107) — +3 regressões cobrindo merge de upsert parcial, version-conflict de run inativo e banner por `artifact_kind`. `check-consistency` ok, `plugin validate --strict` ok.
+
+## 0.7.0 - 2026-06-11
+
+> ⚠️ **BREAKING (consumidores MCP):** `validator_dispatch` agora expõe apenas `{ dispatcher, join }`. Quem lia `validator_dispatch.topology`, `nested_subagent_available` ou `repair_loop` **DEVE migrar** para `validator_dispatch.join` e assumir sibling incondicionalmente. `CAPABILITIES_SCHEMA_VERSION` salta 3 → 5. **Comportamento de execução do pipeline: inalterado.** Bump minor pré-1.0 é proposital (SemVer 0.y.z permite breaking sem major).
+
+Tipo: **breaking de contrato `atlas_capabilities`** (schema v3 → v5; topologia única). Pré-1.0 → bump minor consciente; **sem mudança de comportamento de execução** e **sem mudança na superfície de instalação do usuário**.
+
+Resumo: purga total do conceito `nested` do produto. A topologia do validador frio (Gate G4) passa a ser **sibling em todos os hosts**: o executor escreve `state_path` e encerra, e o orquestrador despacha `atlas-task-validator` como sub-agent irmão isolado. Consolida as decisões DEC-SIB-001/002/003/004.
+
+Mudancas:
+- **`nested` removido por completo** de runtime, skills e docs vivas (README, SKILL.md do orquestrador, comentários do MCP). `CHANGELOG.md`, `reports/*` e `archive/*` preservam o termo como histórico.
+- **Sibling é a única topologia** (DEC-SIB-001/003): o executor nunca despacha o validador; o orquestrador é sempre o `dispatcher`. Acaba a variante em que o executor disparava um validador aninhado.
+- **Gate JOIN no preflight** (DEC-SIB-003): host sem join síncrono confiável do validador é **rejeitado no preflight (hard-fail)**, não degradado. `validator_dispatch.join { sync, confidence, mechanism }` declarado por host.
+- **`dispatch_token` monotônico** e **máximo de 2 validators inviolável por contrato** (DEC-SIB-002): o 3º validator é proibido; 2º `fail` termina a slice em `blocked`.
+- **Correlação obrigatória no retorno:** `atlas-task-validator` devolve `dispatch_token`; `atlas_lock_validator(action=complete)` rejeita retorno sem token ou divergente sem fechar o slot.
+- **Repair correlacionado:** `repair_start` retorna `repair_budget: 1`; `atlas-findings-repair` recebe `repair_run_id` e atualiza o mesmo `state_path` em lugar. Redirecionar boundary no `repair_complete` é bloqueado.
+- **Recovery de orquestrador re-spun** via `validator_recovery`: retornos de validator divergentes do slot ativo voltam `stale_discarded: true` e são descartados (idempotente, slot não reabre).
+- **`CAPABILITIES_SCHEMA_VERSION`** evoluiu de v3 → v5: v4 colapsa `validator_dispatch` para `{ dispatcher: 'orchestrator' }` (remove os campos de topologia legada); v5 adiciona `validator_dispatch.join` por host (gate JOIN).
+- **Guard de contrato reforçado** em `server.test.js`: assert de forma `Object.keys(validator_dispatch) === ['dispatcher','join']`, provando que os campos de topologia legada sumiram sem nomeá-los.
+
+Impacto:
+- Comportamento de execução do pipeline é idêntico (Codex já era sibling); os demais hosts convergem para o mesmo modelo determinístico.
+- Consumidores que liam `validator_dispatch.topology`/`nested_subagent_available`/`repair_loop` devem assumir sibling incondicionalmente; estado antigo em disco é rollback-safe (campos extras ignorados).
+
+**Nota de migração (BREAKING):**
+- Consumidores do MCP que liam `validator_dispatch.topology` (ou `nested_subagent_available`/`repair_loop`) devem migrar para `validator_dispatch.join` — o objeto agora expõe apenas `{ dispatcher, join }`, sem campos de topologia legada.
+- A topologia é **sempre sibling**: o orquestrador é o único `dispatcher` do validador; nenhum executor despacha validador aninhado.
+- **Host sem join síncrono confiável do validador é rejeitado no preflight (hard-fail)** — não há degradação. Hosts devem declarar `validator_dispatch.join { sync, confidence, mechanism }`.
+- `CAPABILITIES_SCHEMA_VERSION` salta de 3 → 5. Estado antigo em disco é rollback-safe (campos extras ignorados), mas leitores devem reconhecer schema 5.
+
+Arquivos/artefatos:
+- `VERSION`, `.claude-plugin/plugin.json`, `package.json`, `packages/mcp-server/package.json`
+- `README.md`, `COMMANDS.md`, `packages/orchestrator/README.md`
+- `packages/orchestrator/skills/atlas-workflow-orchestrator/SKILL.md`
+- `packages/mcp-server/server.js`, `packages/mcp-server/server.test.js`
+- `hosts/**`, `plugins/**` (espelhos regenerados por `build/build-plugins.sh`)
+
+Validacao:
+- `grep -rni "nested" packages/ agents/ README.md hosts/ plugins/` (vazio, exceto falso-positivo `redact()`)
+- `bash build/build-plugins.sh` (`check-consistency: ok`)
+- `claude plugin validate ./ --strict`
+- `bash build/test-all.sh`
+
 ## v0.6.2 - 2026-06-08
 
 Tipo: **runtime + packaging + docs** (sem breaking).

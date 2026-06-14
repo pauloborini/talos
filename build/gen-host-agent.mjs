@@ -46,7 +46,8 @@ const description = get('description') || '';
 // listá-la explicitamente faz o agente FALHAR no load ("Failed to load extension
 // pi-subagents/..."). Confirmado em smoke real: agentes com `subagent` em tools não
 // carregam; o validator (read-only, sem `subagent`) carrega e despacha normalmente. O
-// executor dispara o validador frio (Gate G4) usando a tool ambiente, sem declará-la.
+// orquestrador despacha o validador frio (Gate G4) usando a tool ambiente, sem
+// conceder ao executor/reparador permissão para criar subagentes.
 // model omitido: pi-subagents herda o default do host. opencode NÃO lista tools (herda
 // do host por convenção do repo) — o SKILL.md governa read-only vs executor.
 const PI_TOOLS = {

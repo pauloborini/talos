@@ -7,6 +7,12 @@ import { fileURLToPath } from 'node:url';
 const SERVER_NAME = 'atlas-workflow-orchestrator';
 const RUN_DIR = path.join('.atlas', 'state');
 const SENSITIVE_KEY = /(authorization|credential|password|secret|token|api[_-]?key)/i;
+// S04: chaves cujo nome casa com SENSITIVE_KEY (substring `token`) mas NÃO são
+// segredo/PII — são contadores monotônicos do slot de validação que PRECISAM
+// persistir e sobreviver a re-spun. Allowlist exata (não substring).
+// APENAS `dispatch_token` (nome interno específico); a chave genérica `token`
+// permanece sujeita a redação para não expor segredos de payloads de usuário.
+const NON_SENSITIVE_KEYS = new Set(['dispatch_token']);
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PRD_PATTERNS = {
   section_1_context: ['TBD', 'a confirmar', 'talvez', 'não definido'],
@@ -153,10 +159,12 @@ const HOST_ADAPTERS = {
       registration: 'agents/<name>.md na raiz do plugin',
     },
     validator_dispatch: {
-      topology: 'nested',
-      nested_subagent_available: true,
-      dispatcher: 'executor',
-      repair_loop: 'executor_repair_then_redispatch_validator',
+      dispatcher: 'orchestrator',
+      join: {
+        sync: 'self_evident',
+        confidence: 'presumed',
+        mechanism: 'Agent(subagent_type) bloqueante por design do host',
+      },
     },
     todo_tool: 'TodoWrite',
     hooks: { supported: true, mechanism: 'hooks/claude/settings.snippet.json' },
@@ -170,10 +178,12 @@ const HOST_ADAPTERS = {
       registration: '.codex/agents/<name>.toml (custom agent nativo; developer_instructions carrega o SKILL.md)',
     },
     validator_dispatch: {
-      topology: 'sibling',
-      nested_subagent_available: false,
       dispatcher: 'orchestrator',
-      repair_loop: 'orchestrator_dispatches_findings_repair_after_validator_fail',
+      join: {
+        sync: 'self_evident',
+        confidence: 'confirmed',
+        mechanism: 'spawn_agent bloqueante; retorno via state_path + veredito',
+      },
     },
     todo_tool: 'tasks',
     hooks: { supported: false, mechanism: null },
@@ -190,10 +200,12 @@ const HOST_ADAPTERS = {
       registration: '.opencode/agents/<name>.md (frontmatter description + mode: subagent)',
     },
     validator_dispatch: {
-      topology: 'nested',
-      nested_subagent_available: true,
-      dispatcher: 'executor',
-      repair_loop: 'executor_repair_then_redispatch_validator',
+      dispatcher: 'orchestrator',
+      join: {
+        sync: 'self_evident',
+        confidence: 'presumed',
+        mechanism: '@<name> bloqueante presumido',
+      },
     },
     // opencode expõe `todowrite` nativo ao agente primário (orquestrador). O `todoread`
     // foi fundido em `todowrite` (mar/2026): a tool retorna a lista atual no output.
@@ -214,10 +226,12 @@ const HOST_ADAPTERS = {
       registration: '.pi/agents/<name>.md (pi-subagents; frontmatter name + description + tools)',
     },
     validator_dispatch: {
-      topology: 'nested',
-      nested_subagent_available: true,
-      dispatcher: 'executor',
-      repair_loop: 'executor_repair_then_redispatch_validator',
+      dispatcher: 'orchestrator',
+      join: {
+        sync: 'must_report',
+        confidence: 'reported_required',
+        mechanism: 'subagent({agent,task}) via pi-subagents; join depende de dep externa',
+      },
     },
     todo_tool: null,
     hooks: { supported: false, mechanism: null },
@@ -238,10 +252,12 @@ const HOST_ADAPTERS = {
       registration: 'mecanismo nativo equivalente do host',
     },
     validator_dispatch: {
-      topology: 'host_defined',
-      nested_subagent_available: null,
-      dispatcher: 'host_defined',
-      repair_loop: 'host_defined',
+      dispatcher: 'orchestrator',
+      join: {
+        sync: 'must_report',
+        confidence: 'reported_required',
+        mechanism: 'indeterminado; host deve reportar',
+      },
     },
     todo_tool: null,
     hooks: { supported: false, mechanism: null },
@@ -267,8 +283,19 @@ const PREREQUISITE_FLAGS = [...PREREQUISITES.essential, ...PREREQUISITES.non_ess
 // Remoção/renomeação de campo ou mudança de semântica exige bump e nota de migração.
 // v1 → v2: adiciona capabilities_flags, hooks, prerequisites, known_hosts,
 //   required_deps, prereq_policy (aditivo).
-// v2 → v3: adiciona validator_dispatch para distinguir nested vs sibling G4.
-const CAPABILITIES_SCHEMA_VERSION = 3;
+// v2 → v3: adiciona validator_dispatch (quem despacha o validador frio G4 e como).
+// v3 → v4 (DEC-SIB-001/003): sibling é a única topologia. validator_dispatch
+//   colapsa para `{ dispatcher: 'orchestrator' }` em todos os hosts; os campos de
+//   topologia legada (dispatcher por executor) foram REMOVIDOS do contrato
+//   (mudança de semântica → bump consciente). Consumidores que liam o antigo
+//   validator_dispatch.topology devem assumir sibling incondicionalmente. Estado antigo em disco com esses
+//   campos é rollback-safe: campos extras são ignorados pelo spread/normalize.
+// v4 → v5 (DEC-SIB-003, S06, SPEC_JOIN_CAPABILITY_S03 §2.2): adiciona
+//   validator_dispatch.join { sync, confidence, mechanism } por host. Aditivo
+//   (campo novo; nenhum campo removido nesta etapa). O input do preflight ganha
+//   host_capabilities.join_sync_available (opcional, gate JOIN separado — NÃO é
+//   flag de prereq). Consumidores que ignoram campos desconhecidos seguem compatíveis.
+const CAPABILITIES_SCHEMA_VERSION = 5;
 
 // Nomes de host derivados do registry — única fonte de verdade para enums de schema.
 // Adicionar host em HOST_ADAPTERS propaga automaticamente (sem enum hardcoded).
@@ -381,6 +408,39 @@ function checkPrerequisites(args = {}) {
   };
 }
 
+// Gate JOIN (DEC-SIB-003, SPEC_JOIN_CAPABILITY_S03 §3/§5). Espelha checkPrerequisites:
+// lê validator_dispatch.join do adapter e decide hard-fail por política.
+//   - join.sync === 'self_evident' (claude/codex/opencode): host nativo conhecido;
+//     o runtime presume join disponível e NÃO exige report. confidence 'presumed'
+//     (claude/opencode) passa, mas é registrado para observabilidade (smoke S13).
+//   - join.sync === 'must_report' (pi/generic): fail-closed. Só passa se o caller
+//     reportar host_capabilities.join_sync_available === true. Ausente/não-bool ⇒ blocked.
+// join_sync_available é gate SEPARADO — não entra em PREREQUISITE_FLAGS nem polui
+// effective_flags de checkPrerequisites (o merge daquele loop ignora chaves desconhecidas).
+function checkJoinCapability(args = {}) {
+  const { host } = detectHost(args);
+  const adapter = HOST_ADAPTERS[host];
+  const join = adapter.validator_dispatch?.join ?? {};
+  const reported = args.host_capabilities && typeof args.host_capabilities === 'object'
+    ? args.host_capabilities
+    : {};
+  if (join.sync === 'must_report') {
+    if (reported.join_sync_available === true) {
+      return { status: 'passed', host, confidence: join.confidence };
+    }
+    return {
+      status: 'blocked',
+      host,
+      error: `host '${host}' não reportou join síncrono; sibling exige join (DEC-SIB-003)`,
+      cause: 'host_nao_reportou_join_sincrono',
+      impact: 'sem_join_sincrono_o_slot_de_validacao_vaza_em_fire_and_forget',
+      next_action: 'instalar_deps_de_subagente_sincrono_ou_usar_host_nativo_e_reportar_join_sync_available',
+    };
+  }
+  // self_evident: passa sem report (host nativo). confidence preservado p/ observabilidade.
+  return { status: 'passed', host, confidence: join.confidence };
+}
+
 const LEGACY_ROUTE_KEY = ['fam', 'ily'].join('');
 const VERSION_CANDIDATES = [
   path.resolve(SERVER_DIR, '../../VERSION'),
@@ -489,6 +549,15 @@ function requiredString(args, key) {
   return value;
 }
 
+function optionalInteger(args, key) {
+  const value = args[key];
+  if (value === undefined || value === null) return undefined;
+  if (!Number.isInteger(value)) {
+    throw rpcError(-32602, `Campo inválido: ${key} deve ser inteiro`);
+  }
+  return value;
+}
+
 function resolveConsumerPath(inputPath, args = {}) {
   const value = requiredString({ value: inputPath }, 'value');
   return path.resolve(consumerRoot(args), value);
@@ -511,7 +580,7 @@ function redact(value) {
   return Object.fromEntries(
     Object.entries(value).map(([key, nested]) => [
       key,
-      SENSITIVE_KEY.test(key) ? '[REDACTED]' : redact(nested),
+      SENSITIVE_KEY.test(key) && !NON_SENSITIVE_KEYS.has(key) ? '[REDACTED]' : redact(nested),
     ]),
   );
 }
@@ -613,12 +682,26 @@ function findActiveRunConflict(runId, args = {}) {
   for (const name of fs.readdirSync(dir)) {
     const file = path.join(dir, name, 'run.json');
     if (!fs.existsSync(file)) continue;
-    const inspected = inspectRunStateFile(file);
-    if (inspected.status === 'blocked') return inspected;
-    const state = inspected.state;
-    if (state.run_id === runId) continue;
+    // Atualização-simples: um run ANTIGO inativo (inclusive de versão anterior do
+    // plugin) não pode travar um run NOVO. A varredura de conflito só importa pra
+    // runs de OUTRO run_id que estejam com dispatch ATIVO. Por isso parseamos de
+    // forma tolerante e ignoramos runs inativos/corrompidos/de versão velha — a
+    // validação estrita de versão/shape do PRÓPRIO run continua em readState
+    // (validateStateShape) no caminho que de fato opera sobre aquele estado.
+    let state;
+    try {
+      state = JSON.parse(fs.readFileSync(file, 'utf8'));
+    } catch {
+      continue; // run alheio corrompido não é nosso conflito
+    }
+    if (!state || typeof state !== 'object' || state.run_id === runId) continue;
     const active = state.data?.dispatch?.active;
     if (active?.phase) {
+      // Conflito real só quando o OUTRO run ativo é da versão atual; um run ativo
+      // de versão antiga é resíduo de processo morto, não lock vivo.
+      const stateVersion = state.data?.routing?.version;
+      const currentVersion = readVersionInfo().version;
+      if (stateVersion && stateVersion !== currentVersion) continue;
       return {
         status: 'blocked',
         error: `Lock conflict: run ativa ${state.run_id} na fase ${active.phase}`,
@@ -681,7 +764,14 @@ function upsertState(args) {
     phase: phase ?? previous?.phase ?? 'unknown',
     status: status ?? previous?.status ?? 'unknown',
     summary: summary ?? previous?.summary ?? null,
-    data: redact(data ?? previous?.data ?? {}),
+    // P2/S22: upsert parcial DEVE preservar chaves irmãs do estado (dispatch,
+    // validator_cycle, routing, gates). O executor escreve o handoff via
+    // atlas_run_state(upsert) com um `data` parcial; um replace cego apagava
+    // `data.dispatch.active={plan_execute}`, fazendo o lock_validator(start)
+    // seguinte bloquear ("current_phase null"). Merge top-level: o caller adiciona
+    // chaves novas sem derrubar as existentes. Sem `data` no payload → mantém o
+    // estado anterior intacto (comportamento de no-op preservado).
+    data: redact(data !== undefined ? { ...(previous?.data ?? {}), ...data } : (previous?.data ?? {})),
     created_at: previous?.created_at ?? timestamp,
     updated_at: timestamp,
     last_call: {
@@ -817,9 +907,28 @@ function patchDispatchResult(runId, result, args = {}) {
 
 function normalizeValidatorCycle(cycle = {}) {
   return {
-    topology: typeof cycle.topology === 'string' ? cycle.topology : null,
-    max_attempts: Number.isInteger(cycle.max_attempts) ? cycle.max_attempts : VALIDATOR_MAX_ATTEMPTS,
-    attempts_used: Number.isInteger(cycle.attempts_used) ? cycle.attempts_used : 0,
+    // S04: token de dispatch monotônico explícito do slot de validação. Inteiro,
+    // sempre crescente, nunca reusado; persiste no run.json e sobrevive a re-spun.
+    dispatch_token: Number.isInteger(cycle.dispatch_token) ? cycle.dispatch_token : 0,
+    // DEC-SIB-002: o teto de attempts é invariante de CONTRATO (enforcement por
+    // tool MCP, não por estado/prosa). VALIDATOR_MAX_ATTEMPTS é o teto canônico e
+    // NÃO é configurável via estado persistido. Um run.json adulterado/corrompido
+    // com max_attempts inflado (ex.: 99) não pode elevar o teto e liberar um 3º+
+    // validator. Por isso clampamos max_attempts: inteiro válido e ≥1 vira
+    // min(estado, teto); qualquer 0/negativo/ausente/não-inteiro cai no default
+    // canônico. O valor efetivo nunca excede VALIDATOR_MAX_ATTEMPTS, e como todos
+    // os fluxos (start/complete/fail) leem o cycle por esta normalização, os
+    // retornos que ecoam cycle.max_attempts já recebem o valor clampado.
+    // Pela mesma razão, attempts_used recebe piso ≥0: um valor negativo adulterado
+    // (ex.: -5) inflaria o teto efetivo (max_attempts - attempts_used) e permitiria
+    // dispatches além do limite. Valor float/string/null cai em 0. Teto superior
+    // NÃO é necessário — attempts_used=99 já cai no lado seguro (99>=2 → blocked).
+    max_attempts: Number.isInteger(cycle.max_attempts) && cycle.max_attempts >= 1
+      ? Math.min(cycle.max_attempts, VALIDATOR_MAX_ATTEMPTS)
+      : VALIDATOR_MAX_ATTEMPTS,
+    attempts_used: Number.isInteger(cycle.attempts_used) && cycle.attempts_used >= 0
+      ? cycle.attempts_used
+      : 0,
     status: typeof cycle.status === 'string' ? cycle.status : 'idle',
     active: cycle.active && typeof cycle.active === 'object' ? cycle.active : null,
     last_state_path: typeof cycle.last_state_path === 'string' ? cycle.last_state_path : null,
@@ -887,9 +996,30 @@ function patchValidatorResult(runId, result, args = {}) {
   });
 }
 
+// S10: deriva o slot de recovery para um orquestrador re-spun reconhecer de forma
+// determinística qual retorno aceitar. Aditivo, não-quebrante: campo top-level
+// `validator_recovery` no retorno de leitura (null quando não há slot ativo).
+// Construído na leitura (fora do caminho de persistência/redact), então
+// `expected_dispatch_token` não é redigido — não reabre a chave genérica `token`.
+function deriveValidatorRecovery(state) {
+  const cycle = state?.data?.validator_cycle;
+  const active = cycle && typeof cycle === 'object' ? cycle.active : null;
+  if (!active || typeof active !== 'object') return null;
+  return {
+    expected_validator_run_id: typeof active.run_id === 'string' ? active.run_id : null,
+    expected_dispatch_token: Number.isInteger(active.dispatch_token) ? active.dispatch_token : null,
+    expected_state_path: typeof active.state_path === 'string' ? active.state_path : null,
+    attempt: Number.isInteger(active.attempt) ? active.attempt : null,
+    status: typeof cycle.status === 'string' ? cycle.status : null,
+  };
+}
+
 function runState(args = {}) {
   const action = args.action ?? 'get';
-  if (action === 'get') return readState(validateRunId(args.run_id), args);
+  if (action === 'get') {
+    const state = readState(validateRunId(args.run_id), args);
+    return { ...state, validator_recovery: deriveValidatorRecovery(state) };
+  }
   if (action === 'upsert') return upsertState(args);
   throw rpcError(-32602, `Ação inválida para atlas_run_state: ${action}`);
 }
@@ -899,6 +1029,14 @@ function verifyArtifact(args = {}) {
   const artifactPath = requiredString(args, 'artifact_path');
   const absolutePath = resolveConsumerPath(artifactPath, args);
   const timestamp = nowIso();
+  // Banner correto por tipo de artefato: verificar um PRD não pode ecoar
+  // "plano · validado". `artifact_kind` é opcional e aditivo — `prd` → banner de
+  // PRD; ausente/`plan` mantém o banner de plano (compat com callers antigos que
+  // só verificavam plano).
+  const artifactKind = optionalString(args, 'artifact_kind');
+  const okBanner = artifactKind === 'prd'
+    ? renderBanner('prd_ok', {})
+    : renderBanner('plano', {});
   let result;
 
   try {
@@ -921,7 +1059,7 @@ function verifyArtifact(args = {}) {
         artifact_path: artifactPath,
         bytes: stat.size,
         timestamp,
-        banner: renderBanner('plano', {}),
+        banner: okBanner,
         next_action: 'avançar',
       };
     }
@@ -1404,6 +1542,7 @@ function preflight(args = {}) {
   let result;
 
   const prereq = checkPrerequisites(args);
+  const join = checkJoinCapability(args);
   if (prereq.status === 'blocked') {
     result = {
       gate: 'PREREQ',
@@ -1417,6 +1556,19 @@ function preflight(args = {}) {
       cause: prereq.cause,
       impact: prereq.impact,
       next_action: prereq.next_action,
+    };
+  } else if (join.status === 'blocked') {
+    // Gate JOIN após PREREQ passar (ordem determinística: prereq → join → versão/lock).
+    result = {
+      gate: 'JOIN',
+      status: 'blocked',
+      timestamp,
+      mode,
+      host: join.host,
+      error: join.error,
+      cause: join.cause,
+      impact: join.impact,
+      next_action: join.next_action,
     };
   } else if (version.status === 'blocked') {
     result = {
@@ -1755,19 +1907,7 @@ function validatorStart(args, context) {
   const runId = validateRunId(args.run_id);
   const statePathValue = requiredString(args, 'state_path');
   const timestamp = nowIso();
-  const cap = capabilities(args);
   const cycle = normalizeValidatorCycle(context.state.data?.validator_cycle ?? {});
-
-  if (cap.validator_dispatch.topology !== 'sibling') {
-    return {
-      gate: 'G4',
-      action: 'start',
-      status: 'blocked',
-      timestamp,
-      error: `atlas_lock_validator é suportado apenas em topologia sibling; recebido ${cap.validator_dispatch.topology}`,
-      next_action: 'usar_loop_nested_no_executor',
-    };
-  }
 
   if (context.dispatch.active?.phase !== 'plan_execute') {
     return {
@@ -1793,6 +1933,27 @@ function validatorStart(args, context) {
     };
   }
 
+  // SPEC_FSM_SIBLING_S02 §1.3 / D-S02-2: `passed` e `passed_with_observations`
+  // são terminais SEM transição de saída. A slice fechou com sucesso; um novo
+  // validatorStart não pode reabri-la. Este guard DEVE preceder o HF-05
+  // (attempts_used >= max_attempts) porque quando o terminal é atingido no
+  // attempt 2 (último), attempts_used==max_attempts==2 — sem a prioridade
+  // correta, HF-05 dispararia primeiro retornando causa enganosa
+  // ("Terceiro validator proibido") em vez da causa real ("terminal não reabre").
+  if (VALIDATOR_PASSED_STATUSES.has(cycle.status)) {
+    return {
+      gate: 'G4',
+      action: 'start',
+      status: 'blocked',
+      timestamp,
+      error: `Ciclo do validator já concluído (${cycle.status}); terminal não reabre para novo dispatch`,
+      validator_status: cycle.status,
+      next_action: 'encerrar_slice_terminal_aprovada',
+    };
+  }
+
+  // HF-05: teto de max_attempts atingido. Só chega aqui se o ciclo NÃO está
+  // em estado terminal aprovado (guard acima já descartou esse caso).
   if (cycle.attempts_used >= cycle.max_attempts) {
     return {
       gate: 'G4',
@@ -1832,6 +1993,9 @@ function validatorStart(args, context) {
 
   const attempt = cycle.attempts_used + 1;
   const activeValidatorRunId = validatorRunId(runId, attempt, timestamp);
+  // S04: token de dispatch monotônico — incrementa a cada dispatch aceito
+  // (status passed). Nunca decrementado nem reusado dentro da slice.
+  const dispatchToken = cycle.dispatch_token + 1;
   return {
     gate: 'G4',
     action: 'start',
@@ -1841,10 +2005,11 @@ function validatorStart(args, context) {
     validator_attempt: attempt,
     validator_run_id: activeValidatorRunId,
     validator_status: 'running',
+    dispatch_token: dispatchToken,
     next_action: 'await_validator_verdict',
     banner: renderBanner('validacao', { status: `running ${attempt}/${cycle.max_attempts}` }),
     validator_cycle: {
-      topology: cap.validator_dispatch.topology,
+      dispatch_token: dispatchToken,
       max_attempts: cycle.max_attempts,
       attempts_used: attempt,
       status: 'running',
@@ -1852,6 +2017,7 @@ function validatorStart(args, context) {
         attempt,
         run_id: activeValidatorRunId,
         state_path: statePathValue,
+        dispatch_token: dispatchToken,
         started_at: timestamp,
       },
       last_state_path: statePathValue,
@@ -1870,30 +2036,54 @@ function validatorStart(args, context) {
 
 function validatorComplete(args, context) {
   const timestamp = nowIso();
-  const cap = capabilities(args);
   const cycle = normalizeValidatorCycle(context.state.data?.validator_cycle ?? {});
   const statePathValue = requiredString(args, 'state_path');
   const activeValidatorRunId = requiredString(args, 'validator_run_id');
   const verdict = requiredString(args, 'verdict');
   const packet = optionalData(args);
-
-  if (cap.validator_dispatch.topology !== 'sibling') {
-    return {
-      gate: 'G4',
-      action: 'complete',
-      status: 'blocked',
-      timestamp,
-      error: `atlas_lock_validator é suportado apenas em topologia sibling; recebido ${cap.validator_dispatch.topology}`,
-      next_action: 'usar_loop_nested_no_executor',
-    };
-  }
+  // S04/S16: token de dispatch é obrigatório para fechar o slot ativo. Ele vem
+  // do validator_recovery lido pela folha fria e volta no output estruturado do
+  // validator. Sem token não existe garantia anti-stale completa.
+  const dispatchToken = optionalInteger(args, 'dispatch_token');
 
   if (!cycle.active) {
+    // S10: slot já fechado. Distinguir retorno duplicado já aplicado (idempotente
+    // reconhecível) de payload sem nenhum slot conhecido. NUNCA reabrir o ciclo.
+    // Um complete já aplicado para este run_id aparece no history como evento
+    // `action: 'complete'`/`status: 'passed'` com o mesmo validator_run_id.
+    const appliedCompleteEvent = cycle.history.find(
+      (event) =>
+        event.action === 'complete' &&
+        event.status === 'passed' &&
+        event.validator_run_id === activeValidatorRunId,
+    );
+    if (appliedCompleteEvent) {
+      return {
+        gate: 'G4',
+        action: 'complete',
+        status: 'blocked',
+        timestamp,
+        validator_run_id: activeValidatorRunId,
+        state_path: statePathValue,
+        stale_discarded: true,
+        reason: 'stale_duplicate_already_applied',
+        last_verdict: cycle.last_verdict,
+        // S10/P3-2: ecoa o veredito real que o complete casado produziu no history
+        // (repair_required, passed, passed_with_observations,
+        // blocked_final_validator_failed). last_verdict reflete só o ciclo atual e
+        // pode divergir do estado real daquele evento — applied_validator_status
+        // evita que o consumidor leia um fail→repair como conclusão bem-sucedida.
+        applied_validator_status: appliedCompleteEvent.validator_status ?? null,
+        error: `Retorno duplicado do validator já aplicado (run_id ${activeValidatorRunId}); descartado de forma idempotente`,
+        next_action: 'descartar_retorno_duplicado_idempotente',
+      };
+    }
     return {
       gate: 'G4',
       action: 'complete',
       status: 'blocked',
       timestamp,
+      stale_discarded: true,
       error: 'Nenhum validator ativo para concluir',
       next_action: 'start_validator_primeiro',
     };
@@ -1907,6 +2097,7 @@ function validatorComplete(args, context) {
       timestamp,
       validator_attempt: cycle.active.attempt,
       validator_run_id: activeValidatorRunId,
+      stale_discarded: true,
       error: `validator_run_id não corresponde ao validator ativo: recebido ${activeValidatorRunId}`,
       next_action: 'aguardar_ou_descartar_retorno_stale_do_validator',
     };
@@ -1921,8 +2112,43 @@ function validatorComplete(args, context) {
       validator_attempt: cycle.active.attempt,
       validator_run_id: activeValidatorRunId,
       state_path: statePathValue,
+      stale_discarded: true,
       error: `state_path do validator ativo diverge: esperado ${cycle.active.state_path}, recebido ${statePathValue}`,
       next_action: 'corrigir_payload_do_validator',
+    };
+  }
+
+  if (dispatchToken === undefined) {
+    return {
+      gate: 'G4',
+      action: 'complete',
+      status: 'blocked',
+      timestamp,
+      validator_attempt: cycle.active.attempt,
+      validator_run_id: activeValidatorRunId,
+      state_path: statePathValue,
+      stale_discarded: true,
+      error: 'dispatch_token obrigatório para concluir validator ativo',
+      next_action: 'reler_validator_recovery_e_reenviar_token',
+    };
+  }
+
+  // S04: verificação idempotente do token de dispatch (anti-stale).
+  // Divergência → blocked SEM fechar o slot (não retorna validator_cycle, então
+  // active é preservado pelo merge).
+  // S10: marca stale_discarded para o orquestrador distinguir stale de erro real.
+  if (cycle.active.dispatch_token !== dispatchToken) {
+    return {
+      gate: 'G4',
+      action: 'complete',
+      status: 'blocked',
+      timestamp,
+      validator_attempt: cycle.active.attempt,
+      validator_run_id: activeValidatorRunId,
+      state_path: statePathValue,
+      stale_discarded: true,
+      error: `token de dispatch divergente: esperado ${cycle.active.dispatch_token}, recebido ${dispatchToken}`,
+      next_action: 'aguardar_ou_descartar_retorno_stale_do_validator',
     };
   }
 
@@ -1945,6 +2171,7 @@ function validatorComplete(args, context) {
       next_action: 'complete_plan_execute',
       banner: renderBanner('validacao', { status: normalizedVerdict }),
       validator_cycle: {
+        dispatch_token: cycle.dispatch_token,
         status: normalizedVerdict,
         active: null,
         last_state_path: statePathValue,
@@ -1988,6 +2215,7 @@ function validatorComplete(args, context) {
       next_action: 'encerrar_com_blocked_final_validator_failed',
       banner: renderBanner('validacao', { status: 'blocked_final_validator_failed' }),
       validator_cycle: {
+        dispatch_token: cycle.dispatch_token,
         status: 'blocked',
         active: null,
         last_state_path: statePathValue,
@@ -2017,6 +2245,7 @@ function validatorComplete(args, context) {
     next_action: 'start_findings_repair_lock',
     banner: renderBanner('validacao', { status: 'repair_required' }),
     validator_cycle: {
+      dispatch_token: cycle.dispatch_token,
       status: 'repair_required',
       active: null,
       last_state_path: statePathValue,
@@ -2037,20 +2266,8 @@ function validatorComplete(args, context) {
 function validatorRepairStart(args, context) {
   const runId = validateRunId(args.run_id);
   const timestamp = nowIso();
-  const cap = capabilities(args);
   const cycle = normalizeValidatorCycle(context.state.data?.validator_cycle ?? {});
   const statePathValue = requiredString(args, 'state_path');
-
-  if (cap.validator_dispatch.topology !== 'sibling') {
-    return {
-      gate: 'G4',
-      action: 'repair_start',
-      status: 'blocked',
-      timestamp,
-      error: `atlas_lock_validator é suportado apenas em topologia sibling; recebido ${cap.validator_dispatch.topology}`,
-      next_action: 'usar_loop_nested_no_executor',
-    };
-  }
 
   if (cycle.active) {
     return {
@@ -2109,6 +2326,7 @@ function validatorRepairStart(args, context) {
     timestamp,
     validator_attempt: cycle.attempts_used,
     repair_run_id: activeRepairRunId,
+    repair_budget: 1,
     state_path: statePathValue,
     validator_status: 'repair_running',
     next_action: `dispatch_${WORKFLOW_CONFIG.skills.findings_repair}`,
@@ -2133,21 +2351,9 @@ function validatorRepairStart(args, context) {
 
 function validatorRepairComplete(args, context) {
   const timestamp = nowIso();
-  const cap = capabilities(args);
   const cycle = normalizeValidatorCycle(context.state.data?.validator_cycle ?? {});
   const statePathValue = requiredString(args, 'state_path');
   const activeRepairRunId = requiredString(args, 'repair_run_id');
-
-  if (cap.validator_dispatch.topology !== 'sibling') {
-    return {
-      gate: 'G4',
-      action: 'repair_complete',
-      status: 'blocked',
-      timestamp,
-      error: `atlas_lock_validator é suportado apenas em topologia sibling; recebido ${cap.validator_dispatch.topology}`,
-      next_action: 'usar_loop_nested_no_executor',
-    };
-  }
 
   if (cycle.active) {
     return {
@@ -2161,14 +2367,31 @@ function validatorRepairComplete(args, context) {
     };
   }
 
+  // S10: idempotência reconhecível — um repair_complete já aplicado para este
+  // repair_run_id aparece no history como evento `repair_complete`/`passed`.
+  // Distingue duplicado/fora de ordem após repair concluído de erro real.
+  const appliedRepairEvent = cycle.history.find(
+    (event) =>
+      event.action === 'repair_complete' &&
+      event.status === 'passed' &&
+      event.repair_run_id === activeRepairRunId,
+  );
+
   if (cycle.status !== 'repair_running') {
     return {
       gate: 'G4',
       action: 'repair_complete',
       status: 'blocked',
       timestamp,
-      error: `Repair fora de ordem: status atual ${cycle.status}`,
-      next_action: 'iniciar_findings_repair_antes_de_concluir',
+      repair_run_id: activeRepairRunId,
+      stale_discarded: true,
+      ...(appliedRepairEvent ? { reason: 'repair_duplicate_already_applied' } : {}),
+      error: appliedRepairEvent
+        ? `Repair duplicado já aplicado (run_id ${activeRepairRunId}); descartado de forma idempotente`
+        : `Repair fora de ordem: status atual ${cycle.status}`,
+      next_action: appliedRepairEvent
+        ? 'descartar_retorno_duplicado_idempotente'
+        : 'iniciar_findings_repair_antes_de_concluir',
     };
   }
 
@@ -2178,8 +2401,15 @@ function validatorRepairComplete(args, context) {
       action: 'repair_complete',
       status: 'blocked',
       timestamp,
-      error: 'Nenhum repair ativo para concluir',
-      next_action: 'start_findings_repair_primeiro',
+      repair_run_id: activeRepairRunId,
+      stale_discarded: true,
+      ...(appliedRepairEvent ? { reason: 'repair_duplicate_already_applied' } : {}),
+      error: appliedRepairEvent
+        ? `Repair duplicado já aplicado (run_id ${activeRepairRunId}); descartado de forma idempotente`
+        : 'Nenhum repair ativo para concluir',
+      next_action: appliedRepairEvent
+        ? 'descartar_retorno_duplicado_idempotente'
+        : 'start_findings_repair_primeiro',
     };
   }
 
@@ -2191,8 +2421,25 @@ function validatorRepairComplete(args, context) {
       timestamp,
       validator_attempt: cycle.attempts_used,
       repair_run_id: activeRepairRunId,
+      stale_discarded: true,
+      ...(appliedRepairEvent ? { reason: 'repair_duplicate_already_applied' } : {}),
       error: `repair_run_id não corresponde ao repair ativo: recebido ${activeRepairRunId}`,
       next_action: 'aguardar_ou_descartar_retorno_stale_do_repair',
+    };
+  }
+
+  if (cycle.repair.active.state_path !== statePathValue) {
+    return {
+      gate: 'G4',
+      action: 'repair_complete',
+      status: 'blocked',
+      timestamp,
+      validator_attempt: cycle.attempts_used,
+      repair_run_id: activeRepairRunId,
+      state_path: statePathValue,
+      stale_discarded: true,
+      error: `state_path do repair ativo diverge: esperado ${cycle.repair.active.state_path}, recebido ${statePathValue}`,
+      next_action: 'atualizar_o_state_path_original_sem_redirecionar_boundary',
     };
   }
 
@@ -2407,6 +2654,7 @@ function toolsList() {
             run_id: { type: 'string', minLength: 1 },
             project_root: { type: 'string', minLength: 1 },
             artifact_path: { type: 'string', minLength: 1 },
+            artifact_kind: { enum: ['prd', 'plan'] },
           },
         },
       },
@@ -2477,6 +2725,9 @@ function toolsList() {
                 subagent_available: { type: 'boolean' },
                 mcp_available: { type: 'boolean' },
                 todo_available: { type: 'boolean' },
+                // Gate JOIN separado (DEC-SIB-003): report afirmativo de join síncrono
+                // para hosts must_report (pi/generic). NÃO entra em PREREQUISITE_FLAGS.
+                join_sync_available: { type: 'boolean' },
               },
             },
           },
@@ -2500,7 +2751,7 @@ function toolsList() {
       },
       {
         name: 'atlas_lock_validator',
-        description: 'Gate G4/G8 (Codex sibling): enforça um validator por vez, máximo de 2 attempts, repair obrigatório entre fail e retry, e bloqueio explícito do terceiro validator.',
+        description: 'Gate G4/G8 sibling: enforça um validator por vez em todos os hosts, dispatch_token obrigatório no retorno, máximo de 2 attempts, repair obrigatório entre fail e retry e bloqueio explícito do terceiro validator.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
@@ -2512,6 +2763,7 @@ function toolsList() {
             state_path: { type: 'string' },
             validator_run_id: { type: 'string' },
             repair_run_id: { type: 'string' },
+            dispatch_token: { type: 'integer' },
             verdict: { type: 'string', enum: ['pass', 'pass_with_observations', 'fail'] },
             data: { type: 'object', additionalProperties: true },
             host: { type: 'string', enum: HOST_NAMES },
@@ -2661,6 +2913,7 @@ export {
   detectHost,
   capabilities,
   checkPrerequisites,
+  checkJoinCapability,
   expectedNextPhase,
   guaranteeLevelForMode,
   classifyArtifactContent,
@@ -2675,4 +2928,5 @@ export {
   lockDispatch,
   lockValidator,
   assertAfterPlan,
+  runState,
 };
