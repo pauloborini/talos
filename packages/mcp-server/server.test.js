@@ -2303,3 +2303,65 @@ test('S12.2(e): reabrir slice que passou no attempt 2 (terminal no último attem
   assert.equal(cycleAfterReopen.status, 'passed', 'ciclo permanece passed após reopen bloqueado');
   assert.equal(cycleAfterReopen.active, null, 'slot permanece null');
 });
+
+// ───────────────────────────────────────────────────────────────────────────
+// Regressões do lote de confiabilidade 0.7.1 (achados do smoke S18 multi-host).
+// ───────────────────────────────────────────────────────────────────────────
+
+// P2: `atlas_run_state(upsert)` com `data` parcial DEVE preservar dispatch.active.
+// O executor escreve o handoff via upsert parcial; antes do fix, o replace cego
+// apagava dispatch.active={plan_execute} e o lock_validator(start) seguinte
+// bloqueava ("current_phase null"). Confirmado em Codex + opencode @ 0.7.0.
+test('P2: upsert parcial preserva dispatch.active (não derruba o lock de fase)', () => {
+  const root = tmpRoot();
+  preflight({
+    run_id: 'p2merge', project_root: root, mode: 'execute',
+    host: 'claude', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: 'p2merge', project_root: root, action: 'start', phase: 'plan_execute' });
+  // Executor persiste o handoff com um data parcial (sem repetir dispatch/routing).
+  runState({
+    action: 'upsert',
+    run_id: 'p2merge',
+    project_root: root,
+    data: { validator_handoff_required: true, state_path: '.atlas/state/p2merge/slice.json' },
+  });
+  const after = readRunJson(root, 'p2merge');
+  assert.equal(after.data.dispatch?.active?.phase, 'plan_execute', 'dispatch.active preservado após upsert parcial');
+  assert.equal(after.data.validator_handoff_required, true, 'chave nova do upsert aplicada');
+  assert.equal(after.data.routing?.mode, 'execute', 'routing preservado após upsert parcial');
+});
+
+// Version-conflict: um run ANTIGO inativo (versão anterior do plugin) não pode
+// travar um run NOVO. Antes do fix, findActiveRunConflict dava hard-fail de versão
+// em qualquer run.json do diretório — quem atualizava de 0.6.x ficava com todo run
+// novo bloqueado. Confirmado ao retomar PV08a (state pv01–pv07 em 0.6.2).
+test('version-conflict: run antigo inativo de versão anterior não bloqueia run novo', () => {
+  const root = tmpRoot();
+  // Resíduo de versão anterior, sem dispatch ativo.
+  const oldDir = path.join(root, '.atlas', 'state', 'run-velho');
+  fs.mkdirSync(oldDir, { recursive: true });
+  fs.writeFileSync(path.join(oldDir, 'run.json'), JSON.stringify({
+    run_id: 'run-velho',
+    phase: 'preflight',
+    status: 'dispatch_ok',
+    data: { routing: { version: '0.6.2', mode: 'full' }, dispatch: { active: null } },
+  }, null, 2));
+  const r = preflight({
+    run_id: 'run-novo', project_root: root, mode: 'execute',
+    host: 'claude', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  assert.equal(r.status, 'passed', 'run novo passa apesar do resíduo 0.6.2 inativo');
+});
+
+// Banner cosmético: verificar um PRD não pode ecoar "plano · validado".
+test('banner: verify_artifact com artifact_kind=prd ecoa banner de PRD; default mantém plano', () => {
+  const root = tmpRoot();
+  fs.writeFileSync(path.join(root, 'PRD_x.md'), VALID_PRD);
+  fs.writeFileSync(path.join(root, 'PLAN_x.md'), CONFORMANT_PLAN_DOC);
+  const prd = verifyArtifact({ run_id: 'bk', project_root: root, artifact_path: 'PRD_x.md', artifact_kind: 'prd' });
+  assert.equal(prd.status, 'passed');
+  assert.equal(prd.banner, '▸ atlas: prd · ok');
+  const plan = verifyArtifact({ run_id: 'bk', project_root: root, artifact_path: 'PLAN_x.md' });
+  assert.equal(plan.banner, '▸ atlas: plano · validado (TC pass)', 'default (sem kind) preserva banner de plano');
+});

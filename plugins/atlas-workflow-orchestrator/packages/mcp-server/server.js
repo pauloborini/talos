@@ -682,12 +682,26 @@ function findActiveRunConflict(runId, args = {}) {
   for (const name of fs.readdirSync(dir)) {
     const file = path.join(dir, name, 'run.json');
     if (!fs.existsSync(file)) continue;
-    const inspected = inspectRunStateFile(file);
-    if (inspected.status === 'blocked') return inspected;
-    const state = inspected.state;
-    if (state.run_id === runId) continue;
+    // Atualização-simples: um run ANTIGO inativo (inclusive de versão anterior do
+    // plugin) não pode travar um run NOVO. A varredura de conflito só importa pra
+    // runs de OUTRO run_id que estejam com dispatch ATIVO. Por isso parseamos de
+    // forma tolerante e ignoramos runs inativos/corrompidos/de versão velha — a
+    // validação estrita de versão/shape do PRÓPRIO run continua em readState
+    // (validateStateShape) no caminho que de fato opera sobre aquele estado.
+    let state;
+    try {
+      state = JSON.parse(fs.readFileSync(file, 'utf8'));
+    } catch {
+      continue; // run alheio corrompido não é nosso conflito
+    }
+    if (!state || typeof state !== 'object' || state.run_id === runId) continue;
     const active = state.data?.dispatch?.active;
     if (active?.phase) {
+      // Conflito real só quando o OUTRO run ativo é da versão atual; um run ativo
+      // de versão antiga é resíduo de processo morto, não lock vivo.
+      const stateVersion = state.data?.routing?.version;
+      const currentVersion = readVersionInfo().version;
+      if (stateVersion && stateVersion !== currentVersion) continue;
       return {
         status: 'blocked',
         error: `Lock conflict: run ativa ${state.run_id} na fase ${active.phase}`,
@@ -750,7 +764,14 @@ function upsertState(args) {
     phase: phase ?? previous?.phase ?? 'unknown',
     status: status ?? previous?.status ?? 'unknown',
     summary: summary ?? previous?.summary ?? null,
-    data: redact(data ?? previous?.data ?? {}),
+    // P2/S22: upsert parcial DEVE preservar chaves irmãs do estado (dispatch,
+    // validator_cycle, routing, gates). O executor escreve o handoff via
+    // atlas_run_state(upsert) com um `data` parcial; um replace cego apagava
+    // `data.dispatch.active={plan_execute}`, fazendo o lock_validator(start)
+    // seguinte bloquear ("current_phase null"). Merge top-level: o caller adiciona
+    // chaves novas sem derrubar as existentes. Sem `data` no payload → mantém o
+    // estado anterior intacto (comportamento de no-op preservado).
+    data: redact(data !== undefined ? { ...(previous?.data ?? {}), ...data } : (previous?.data ?? {})),
     created_at: previous?.created_at ?? timestamp,
     updated_at: timestamp,
     last_call: {
@@ -1008,6 +1029,14 @@ function verifyArtifact(args = {}) {
   const artifactPath = requiredString(args, 'artifact_path');
   const absolutePath = resolveConsumerPath(artifactPath, args);
   const timestamp = nowIso();
+  // Banner correto por tipo de artefato: verificar um PRD não pode ecoar
+  // "plano · validado". `artifact_kind` é opcional e aditivo — `prd` → banner de
+  // PRD; ausente/`plan` mantém o banner de plano (compat com callers antigos que
+  // só verificavam plano).
+  const artifactKind = optionalString(args, 'artifact_kind');
+  const okBanner = artifactKind === 'prd'
+    ? renderBanner('prd_ok', {})
+    : renderBanner('plano', {});
   let result;
 
   try {
@@ -1030,7 +1059,7 @@ function verifyArtifact(args = {}) {
         artifact_path: artifactPath,
         bytes: stat.size,
         timestamp,
-        banner: renderBanner('plano', {}),
+        banner: okBanner,
         next_action: 'avançar',
       };
     }
@@ -2625,6 +2654,7 @@ function toolsList() {
             run_id: { type: 'string', minLength: 1 },
             project_root: { type: 'string', minLength: 1 },
             artifact_path: { type: 'string', minLength: 1 },
+            artifact_kind: { enum: ['prd', 'plan'] },
           },
         },
       },

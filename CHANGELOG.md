@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.7.1 - 2026-06-14
+
+Tipo: **patch de confiabilidade** (correção de bugs + endurecimento de skill). **Sem breaking**, **sem mudança de comportamento de pipeline**, `CAPABILITIES_SCHEMA_VERSION` segue **v5**. Origem: smoke S18 multi-host real (Claude Code, Codex, Cursor, opencode) — 4 de 5 hosts PASS em tarefas reais, com 3 bugs e 2 furos de contrato identificados pelos relatórios de execução.
+
+Correções:
+- **State drift `dispatch.active` (P2 — Codex + opencode).** `atlas_run_state(action=upsert)` com `data` parcial fazia **replace cego** do `data` inteiro, apagando `data.dispatch.active={plan_execute}` quando o executor persistia o handoff. O `atlas_lock_validator(start)` seguinte bloqueava ("plan_execute não ativo") e o orquestrador precisava reabrir a fase na mão. Agora o upsert faz **merge top-level**: chaves novas entram sem derrubar `dispatch`/`routing`/`validator_cycle`/`gates`. (`server.js` `upsertState`.)
+- **Version-conflict travava todo run novo.** `findActiveRunConflict` dava hard-fail de versão em **qualquer** `run.json` do diretório, inclusive runs antigos **inativos** — quem atualizava de 0.6.x ficava com todo run novo bloqueado até limpar `.atlas/state/` na mão (viola "atualização simples"). Agora só bloqueia em conflito de lock **real**: outro run com `dispatch.active` **e** versão atual. Run inativo/de versão anterior é resíduo, ignorado. (`server.js` `findActiveRunConflict`.)
+- **Banner cosmético na verificação de PRD.** `atlas_verify_artifact` sempre ecoava `▸ atlas: plano · validado` mesmo verificando um PRD. Adicionado param opcional aditivo `artifact_kind` (`prd`|`plan`): `prd` → banner de PRD; ausente/`plan` mantém o banner de plano (compat com callers antigos).
+
+Endurecimento (skill do orquestrador, Gate G4):
+- **R17 — falha de dispatch do validador em runtime = `blocked`, nunca inline.** Cláusula explícita: se o despacho do `task_validator` errar ou não retornar (sub-agent que falha, host sem sub-agent vivo), a slice **bloqueia** com causa — proibido validar inline ou relatar veredito que o irmão frio não produziu. Não há caminho de degradação.
+- **R19 — proveniência do `dispatch_token`.** O token submetido no `lock_validator(complete)` tem que ser o que **o próprio validador irmão devolveu no output** — não um valor lido de `validator_recovery` e repassado sem o irmão ter rodado. `validator_recovery` serve para reconhecer/descartar stale, não para fabricar token de validador que não executou.
+
+Limite conhecido (honesto): R17/R19 **não** são prova de isolamento criptograficamente não-forjável. O MCP fala stdio com um único cliente e não distingue orquestrador de sub-agente; um token sempre é tecnicamente reproduzível pelo orquestrador. O endurecimento acima fecha o atalho preguiçoso (o threat model real: LLM tomando atalho), não um adversário com acesso ao código. Prova de isolamento mais forte fica para sprint futura (S22).
+
+Testes: 110 (era 107) — +3 regressões cobrindo merge de upsert parcial, version-conflict de run inativo e banner por `artifact_kind`. `check-consistency` ok, `plugin validate --strict` ok.
+
 ## 0.7.0 - 2026-06-11
 
 > ⚠️ **BREAKING (consumidores MCP):** `validator_dispatch` agora expõe apenas `{ dispatcher, join }`. Quem lia `validator_dispatch.topology`, `nested_subagent_available` ou `repair_loop` **DEVE migrar** para `validator_dispatch.join` e assumir sibling incondicionalmente. `CAPABILITIES_SCHEMA_VERSION` salta 3 → 5. **Comportamento de execução do pipeline: inalterado.** Bump minor pré-1.0 é proposital (SemVer 0.y.z permite breaking sem major).
