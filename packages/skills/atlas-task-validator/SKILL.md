@@ -106,6 +106,7 @@ Return strict JSON as the final output. Do not wrap it in Markdown and do not pr
 ```json
 {
   "dispatch_token": 1,
+  "challenge_response": "string (sha256 hex do challenge.file; null se sem challenge)",
   "verdict": "pass | fail | pass_with_observations",
   "findings": [
     {
@@ -132,6 +133,8 @@ Return strict JSON as the final output. Do not wrap it in Markdown and do not pr
 ```
 
 `dispatch_token` must equal `validator_recovery.expected_dispatch_token`. `findings`, `observations`, and `boundary_violations` must always be arrays. Use empty arrays when there are no items.
+
+**Proof-of-work (`challenge_response`).** If `validator_recovery.challenge` is not `null`, it carries `{ file, algo: "sha256" }` — a boundary file you must have read. Compute the sha256 of that file's raw bytes (`shasum -a 256 "<challenge.file>"`) and return the hex (first token) in `challenge_response`. If `challenge` is `null`, return `null`. Never fabricate the hash: the orchestrator recomputes it from disk and blocks the slice (`challenge_failed`) on mismatch. This is the mechanical attestation that the verdict actually read the boundary — it is not a non-forgeable isolation proof (the MCP shares one stdio caller), but it closes the laziest bypass.
 
 ---
 
