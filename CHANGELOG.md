@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.8.0 - 2026-06-15
+
+Tipo: **feature de determinismo** (novo mecanismo de gate). **Sem breaking de contrato `atlas_capabilities`** (`CAPABILITIES_SCHEMA_VERSION` segue **v5**); adiciona enforcement novo ao Gate G4. Origem: P1.1 camada 1 do relatório de melhorias.
+
+Proof-of-work do validador frio (Gate G4, R20):
+- **`atlas_lock_validator(action=start)`** lê o `state_path`, escolhe 1 arquivo do `files_changed` do boundary e emite um `challenge` `{ file, algo: "sha256" }`. O challenge vai ao validador irmão via `validator_recovery.challenge` (canal canônico) e é ecoado na resposta do start.
+- **O validador irmão** computa o sha256 dos bytes crus do arquivo e devolve em `challenge_response` no output (mesma proveniência do `dispatch_token`: vem do validador, nunca é preenchido pelo orquestrador).
+- **`atlas_lock_validator(action=complete)`** recomputa o hash do disco e compara. Divergência ou ausência de `challenge_response` quando um challenge foi emitido → `blocked` com `validator_status: "challenge_failed"`, **sem fechar o slot** (igual stale): o orquestrador re-despacha o mesmo validador, que lê o boundary e reenvia o hash. O hash esperado **nunca** é armazenado em estado legível — é recomputado on-demand, então o orquestrador não consegue copiá-lo.
+- **Re-dispatch bounded (fail-closed):** o re-despacho de `challenge_failed` tem teto por attempt (`VALIDATOR_CHALLENGE_MAX_FAILURES`). Esgotado, o slot fecha terminal com `validator_status: "challenge_exhausted"` (`cause: validator_proof_of_work_exhausted`) em vez de loopar — protege contra mismatch sistemático (ex.: validador resolvendo o path do challenge com CWD diferente do consumer root do MCP).
+- **Best-effort, não-quebrante:** boundary sem arquivo legível (ou `files_changed` vazio) → `challenge: null` → sem enforcement (compat com validações sem boundary materializado). Arquivo que some entre start e complete → `unverifiable`, não bloqueia.
+
+Escopo honesto (mantido de 0.7.1): proof-of-work é **atestação mecânica** de que o veredito tocou bytes reais do boundary — eleva o piso do atalho preguiçoso (afirmar `pass` sem ler código) e dá rastro de auditoria (`challenge_verified` no retorno). **Não** é prova de isolamento criptograficamente não-forjável: o MCP fala stdio com um único caller e não distingue orquestrador de subagente. A prova forte depende de identidade por-caller do host (camada 2 / S22).
+
+Skill enxugada (P2.3): o changelog embutido na SKILL do orquestrador foi reduzido às 4 versões recentes + ponteiro para este `CHANGELOG.md` (fonte canônica). Tabela de gates G1–G11 e contrato de execução intactos.
+
+Testes: 120 (era 111) — +9 cobrindo emissão de challenge, hash correto, hash errado/ausente (block sem fechar slot), saída do `shasum`, boundary sem arquivo, challenge re-emitido e enforçado no attempt 2 (fail→repair→retry), arquivo que some entre start e complete (`unverifiable`) e teto de re-dispatch (`challenge_exhausted`, fail-closed). `check-consistency` (guards de challenge_response no validador e no orquestrador) ok, `plugin validate --strict` ok.
+
+## 0.7.2 - 2026-06-15
+
+Tipo: **patch de confiabilidade** (correção de bug + cobertura de CI + doc). **Sem breaking**, **sem mudança de comportamento de pipeline**, `CAPABILITIES_SCHEMA_VERSION` segue **v5**. Origem: análise consistente do MCP/orquestrador/skills/build.
+
+Correções:
+- **Drift `ping().capabilities` × `toolsList()` (P0 — bug latente de contrato).** A lista de capabilities do `atlas_ping` era mantida à mão em paralelo ao dispatcher e à `toolsList()`, e já omitia `atlas_classify_input`: o orquestrador (Fase 0) aborta se uma capability exigida pelo modo não aparece no ping, então a divergência podia travar run válida. Agora `ping().capabilities` é **derivado de `toolsList().tools`** — fonte única, sem lista paralela. Guard cruzado novo em `server.test.js` (`ping` cobre exatamente a superfície de tools). (`server.js` `ping`.)
+
+Cobertura/CI:
+- **Smoke runtime em Windows/macOS.** Novo job `cross-os` no CI roda núcleo MCP + `smoke-hosts` + `conformance-matrix` em `windows-latest` e `macos-latest` (só Node puro; build bash/checksums seguem no job ubuntu). Fecha parte de T07/T08 da auditoria de maturidade (runtime MCP cross-OS não provado por CI).
+
+Documentação:
+- **Proveniência do `dispatch_token` no validator SKILL.** Nota cruzada com G4/R19: quem lê `validator_recovery` e ecoa `expected_dispatch_token` é o próprio validador irmão; o orquestrador nunca preenche o token por conta própria. Remove leitura ambígua da regra de cópia do token.
+- **`.gitattributes`.** Marca `hosts/`, `plugins/`, `.agents/`, `archive/`, `dist/` como `linguist-generated` (colapsa diffs no GitHub, sinaliza que são cópias geradas por `build/build-plugins.sh`).
+
+Limite conhecido (mantido de 0.7.1): R17/R19 não são prova de isolamento criptograficamente não-forjável — o MCP fala stdio com um único cliente e não distingue caller. Prova de isolamento mais forte segue para sprint futura (S22).
+
+Testes: 111 (era 110) — +1 guard cruzado ping/tools. `check-consistency` ok, `plugin validate --strict` ok.
+
 ## 0.7.1 - 2026-06-14
 
 Tipo: **patch de confiabilidade** (correção de bugs + endurecimento de skill). **Sem breaking**, **sem mudança de comportamento de pipeline**, `CAPABILITIES_SCHEMA_VERSION` segue **v5**. Origem: smoke S18 multi-host real (Claude Code, Codex, Cursor, opencode) — 4 de 5 hosts PASS em tarefas reais, com 3 bugs e 2 furos de contrato identificados pelos relatórios de execução.

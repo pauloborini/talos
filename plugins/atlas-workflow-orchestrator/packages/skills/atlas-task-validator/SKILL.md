@@ -21,6 +21,8 @@ Use `atlas_run_state` as the primary source for run metadata and gate state. The
 
 Before validation, derive `run_id` from `state_path`, call `atlas_run_state(action=get)`, and require an active `validator_recovery` whose `expected_state_path` matches the input. Copy `expected_dispatch_token` unchanged into the output. If correlation is unavailable, return `dispatch_token: null`, `verdict: "fail"`, and a P1 finding; never invent a token.
 
+> **Proveniência do token (G4/R19) — quem lê o recovery é o validador, não o orquestrador.** É **este** subagente irmão que lê `validator_recovery` e ecoa `expected_dispatch_token` no próprio output. O orquestrador **nunca** preenche o token do `atlas_lock_validator(complete)` lendo o recovery por conta própria: ele só pode submeter o token que **este output** devolveu. O `validator_recovery` serve ao orquestrador para *reconhecer/descartar* retornos stale (`stale_discarded: true`), nunca para *fabricar* o token de um validador que não rodou.
+
 ## Invocation Contract
 
 The subagent must receive only one base input: `state_path`.
@@ -104,6 +106,7 @@ Return strict JSON as the final output. Do not wrap it in Markdown and do not pr
 ```json
 {
   "dispatch_token": 1,
+  "challenge_response": "string (sha256 hex do challenge.file; null se sem challenge)",
   "verdict": "pass | fail | pass_with_observations",
   "findings": [
     {
@@ -130,6 +133,8 @@ Return strict JSON as the final output. Do not wrap it in Markdown and do not pr
 ```
 
 `dispatch_token` must equal `validator_recovery.expected_dispatch_token`. `findings`, `observations`, and `boundary_violations` must always be arrays. Use empty arrays when there are no items.
+
+**Proof-of-work (`challenge_response`).** If `validator_recovery.challenge` is not `null`, it carries `{ file, algo: "sha256" }` — a boundary file you must have read access to. Compute the sha256 of that file's raw bytes (`shasum -a 256 "<challenge.file>"`) and return the hex (first token) in `challenge_response`. If `challenge` is `null`, return `null`. Never fabricate the hash: the orchestrator recomputes it from disk and blocks the slice (`challenge_failed`) on mismatch. This is a *mechanical* attestation that the verdict touched real boundary bytes — it closes the laziest bypass (claiming `pass` with no read at all); it does **not** by itself prove you read and understood the code (hashing a file does not require loading its content). Reading the boundary remains your obligation. It is not a non-forgeable isolation proof either (the MCP shares one stdio caller). Challenge failures are bounded per attempt: past the cap the slot closes terminally (`challenge_exhausted`), which usually signals path resolution diverging from the consumer root.
 
 ---
 
