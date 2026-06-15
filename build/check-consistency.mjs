@@ -201,7 +201,7 @@ if (orchestratorSkill != null) {
       errors.push(`PREREQ prosa-regressão: SKILL do orquestrador não cita '${token}' (passo de report sustenta o fail-closed)`);
     }
   }
-  for (const token of ['dispatch_token', 'repair_run_id', 'repair_budget: 1']) {
+  for (const token of ['dispatch_token', 'repair_run_id', 'repair_budget: 1', 'challenge_response']) {
     if (!orchestratorSkill.includes(token)) {
       errors.push(`G4 prosa-regressão: SKILL do orquestrador não cita '${token}'`);
     }
@@ -211,6 +211,14 @@ if (orchestratorSkill != null) {
 const validatorAgent = read('agents/atlas-task-validator.md');
 if (validatorAgent != null && !/"dispatch_token"\s*:/.test(validatorAgent)) {
   errors.push('G4 contrato-regressão: output do atlas-task-validator não inclui dispatch_token');
+}
+// P1.1: o validador irmão DEVE devolver challenge_response (proof-of-work) e ler o
+// challenge do recovery. Sem isso, a slice bloqueia em challenge_failed em runtime.
+if (validatorAgent != null && !/"challenge_response"\s*:/.test(validatorAgent)) {
+  errors.push('G4 contrato-regressão: output do atlas-task-validator não inclui challenge_response (proof-of-work)');
+}
+if (validatorAgent != null && !/validator_recovery\.challenge|challenge\.file/.test(validatorAgent)) {
+  errors.push('G4 contrato-regressão: atlas-task-validator não lê o challenge de proof-of-work do recovery');
 }
 
 const findingsRepairSkill = read('packages/skills/atlas-findings-repair/SKILL.md');

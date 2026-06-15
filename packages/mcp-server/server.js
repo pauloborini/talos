@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
@@ -69,6 +70,13 @@ const WORKFLOW_CONFIG = {
 };
 
 const VALIDATOR_MAX_ATTEMPTS = 2;
+// P2-1: teto de falhas de proof-of-work POR attempt. challenge_failed não consome
+// attempt nem fecha o slot (re-despacha o mesmo validador), mas sem limite um
+// mismatch sistemático (ex.: validador resolve o path do challenge com CWD
+// diferente do consumer_root do MCP) loopa pra sempre. Após este teto de falhas
+// para o mesmo validator_run_id, o slot fecha terminal (fail-closed): a slice
+// bloqueia com causa explícita em vez de re-despachar indefinidamente.
+const VALIDATOR_CHALLENGE_MAX_FAILURES = 2;
 const VALIDATOR_PASSED_STATUSES = new Set(['passed', 'passed_with_observations']);
 
 function validatorRunId(runId, attempt, timestamp) {
@@ -605,18 +613,12 @@ function ping() {
     version: version.version,
     version_check: version,
     transport: 'stdio',
-    capabilities: [
-      'atlas_ping',
-      'atlas_capabilities',
-      'atlas_run_state',
-      'atlas_verify_artifact',
-      'atlas_scan_prd',
-      'atlas_verify_template_conformance',
-      'atlas_preflight',
-      'atlas_lock_dispatch',
-      'atlas_lock_validator',
-      'atlas_assert_after_plan',
-    ],
+    // Fonte única da superfície de tools: derivado de toolsList() para nunca
+    // divergir do dispatcher/schema. Lista manual paralela já omitiu
+    // atlas_classify_input no passado (drift silencioso) — o orquestrador
+    // (Fase 0) aborta se uma capability exigida pelo modo não aparece aqui,
+    // então a divergência travava run válida. Guard cruzado em server.test.js.
+    capabilities: toolsList().tools.map((tool) => tool.name),
     state_dir: RUN_DIR,
   };
 }
@@ -1011,6 +1013,9 @@ function deriveValidatorRecovery(state) {
     expected_state_path: typeof active.state_path === 'string' ? active.state_path : null,
     attempt: Number.isInteger(active.attempt) ? active.attempt : null,
     status: typeof cycle.status === 'string' ? cycle.status : null,
+    // P1.1: challenge de proof-of-work do slot ativo (null se não emitido). O
+    // validador irmão lê isto, computa sha256 do arquivo e devolve em challenge_response.
+    challenge: active.challenge && typeof active.challenge === 'object' ? active.challenge : null,
   };
 }
 
@@ -1903,6 +1908,64 @@ function lockDispatch(args = {}) {
   return result;
 }
 
+// Proof-of-work do validador irmão (P1.1 camada 1). Escopo HONESTO: não é prova
+// criptográfica de isolamento (o MCP fala stdio com um único caller e não distingue
+// orquestrador de subagente). É atestação mecânica de que o veredito tocou bytes
+// reais do boundary — eleva o piso do atalho preguiçoso (afirmar `pass` sem ler
+// código) e dá rastro de auditoria. Pegar 1 arquivo do `files_changed` do
+// `state_path`; o validador reporta o sha256 dele; o MCP RECOMPUTA do disco no
+// complete (nunca armazena o hash esperado em estado legível — senão o orquestrador
+// só copiaria). Best-effort: sem arquivo legível ⇒ challenge null ⇒ sem enforcement
+// (não quebra run válida). Seleção determinística por dispatch_token (reproduzível).
+function pickValidatorChallenge(statePathValue, args, dispatchToken) {
+  try {
+    const sliceState = JSON.parse(fs.readFileSync(resolveConsumerPath(statePathValue, args), 'utf8'));
+    const files = Array.isArray(sliceState.files_changed)
+      ? sliceState.files_changed.filter((f) => typeof f === 'string' && f.trim() !== '')
+      : [];
+    if (files.length === 0) return null;
+    const offset = ((dispatchToken % files.length) + files.length) % files.length;
+    for (let i = 0; i < files.length; i += 1) {
+      const rel = files[(offset + i) % files.length];
+      try {
+        const fabs = resolveConsumerPath(rel, args);
+        if (!fs.statSync(fabs).isFile()) continue;
+        fs.accessSync(fabs, fs.constants.R_OK);
+        return { file: rel, algo: 'sha256' };
+      } catch {
+        // arquivo do boundary inexistente/ilegível (ex.: deletado na slice) — tenta o próximo.
+      }
+    }
+    return null;
+  } catch {
+    // state_path ilegível aqui não bloqueia o start (o validador falha do lado dele
+    // se não conseguir ler o boundary); proof-of-work é aditivo.
+    return null;
+  }
+}
+
+// Verifica o challenge_response no complete recomputando o hash do disco.
+//   { ok: true }                         — sem challenge emitido OU hash confere
+//   { ok: true, unverifiable: true }     — arquivo sumiu no complete (não bloqueia)
+//   { ok: false, reason }                — resposta ausente ou hash divergente
+function verifyValidatorChallenge(challenge, response, args) {
+  if (!challenge || typeof challenge.file !== 'string') return { ok: true };
+  if (typeof response !== 'string' || response.trim() === '') {
+    return { ok: false, reason: 'challenge_response_ausente' };
+  }
+  let actual;
+  try {
+    actual = crypto.createHash('sha256')
+      .update(fs.readFileSync(resolveConsumerPath(challenge.file, args)))
+      .digest('hex');
+  } catch {
+    return { ok: true, unverifiable: true };
+  }
+  // Aceita hex puro ou saída de `shasum` (`<hash>  <arquivo>`): primeiro token.
+  const submitted = response.trim().toLowerCase().split(/\s+/)[0];
+  return submitted === actual ? { ok: true } : { ok: false, reason: 'challenge_hash_divergente' };
+}
+
 function validatorStart(args, context) {
   const runId = validateRunId(args.run_id);
   const statePathValue = requiredString(args, 'state_path');
@@ -1996,6 +2059,10 @@ function validatorStart(args, context) {
   // S04: token de dispatch monotônico — incrementa a cada dispatch aceito
   // (status passed). Nunca decrementado nem reusado dentro da slice.
   const dispatchToken = cycle.dispatch_token + 1;
+  // P1.1: challenge de proof-of-work amarrado a este attempt. null se o boundary
+  // não tem arquivo legível (best-effort, não bloqueia). Vai ao validador via
+  // validator_recovery.challenge (canal canônico) e também ecoa aqui pro log.
+  const challenge = pickValidatorChallenge(statePathValue, args, dispatchToken);
   return {
     gate: 'G4',
     action: 'start',
@@ -2006,6 +2073,7 @@ function validatorStart(args, context) {
     validator_run_id: activeValidatorRunId,
     validator_status: 'running',
     dispatch_token: dispatchToken,
+    challenge,
     next_action: 'await_validator_verdict',
     banner: renderBanner('validacao', { status: `running ${attempt}/${cycle.max_attempts}` }),
     validator_cycle: {
@@ -2018,6 +2086,7 @@ function validatorStart(args, context) {
         run_id: activeValidatorRunId,
         state_path: statePathValue,
         dispatch_token: dispatchToken,
+        challenge,
         started_at: timestamp,
       },
       last_state_path: statePathValue,
@@ -2045,6 +2114,7 @@ function validatorComplete(args, context) {
   // do validator_recovery lido pela folha fria e volta no output estruturado do
   // validator. Sem token não existe garantia anti-stale completa.
   const dispatchToken = optionalInteger(args, 'dispatch_token');
+  const challengeResponse = optionalString(args, 'challenge_response');
 
   if (!cycle.active) {
     // S10: slot já fechado. Distinguir retorno duplicado já aplicado (idempotente
@@ -2152,6 +2222,71 @@ function validatorComplete(args, context) {
     };
   }
 
+  // P1.1: proof-of-work. Só vale se o start emitiu challenge (cycle.active.challenge).
+  // Falha (resposta ausente/hash divergente) NÃO fecha o slot — igual stale: active é
+  // preservado (não retornamos validator_cycle), o orquestrador re-despacha o MESMO
+  // validador (mesmo attempt) que lê o boundary e reenvia o hash correto. Não consome
+  // attempt nem reabre terminal. `unverifiable` (arquivo sumiu no complete) não bloqueia.
+  const challengeCheck = verifyValidatorChallenge(cycle.active.challenge, challengeResponse, args);
+  if (!challengeCheck.ok) {
+    // P2-1: falhas de challenge são bounded por attempt. As anteriores ficam no
+    // history (patchValidatorResult registra cada challenge_failed). Esgotado o
+    // teto, o slot fecha terminal (fail-closed) em vez de re-despachar pra sempre.
+    const priorChallengeFailures = cycle.history.filter(
+      (event) =>
+        event.action === 'complete' &&
+        event.validator_status === 'challenge_failed' &&
+        event.validator_run_id === activeValidatorRunId,
+    ).length;
+    if (priorChallengeFailures >= VALIDATOR_CHALLENGE_MAX_FAILURES) {
+      return {
+        gate: 'G4',
+        action: 'complete',
+        status: 'blocked',
+        timestamp,
+        validator_attempt: cycle.active.attempt,
+        validator_run_id: activeValidatorRunId,
+        state_path: statePathValue,
+        validator_status: 'challenge_exhausted',
+        challenge_file: cycle.active.challenge.file,
+        error: `Proof-of-work do validador falhou ${priorChallengeFailures + 1}x (máximo=${VALIDATOR_CHALLENGE_MAX_FAILURES}) para ${cycle.active.challenge.file}; re-dispatch encerrado`,
+        cause: 'validator_proof_of_work_exhausted',
+        impact: 'validador_nao_comprovou_leitura_do_boundary_apos_teto_de_tentativas',
+        next_action: 'encerrar_com_blocked_e_investigar_resolucao_de_path_do_challenge_no_host',
+        banner: renderBanner('validacao', { status: 'blocked_challenge_exhausted' }),
+        validator_cycle: {
+          dispatch_token: cycle.dispatch_token,
+          status: 'blocked',
+          active: null,
+          last_state_path: statePathValue,
+          last_verdict: cycle.last_verdict,
+          findings_packet: cycle.findings_packet,
+          repair: cycle.repair,
+        },
+      };
+    }
+    return {
+      gate: 'G4',
+      action: 'complete',
+      status: 'blocked',
+      timestamp,
+      validator_attempt: cycle.active.attempt,
+      validator_run_id: activeValidatorRunId,
+      state_path: statePathValue,
+      validator_status: 'challenge_failed',
+      challenge_file: cycle.active.challenge.file,
+      challenge_failures: priorChallengeFailures + 1,
+      challenge_failures_max: VALIDATOR_CHALLENGE_MAX_FAILURES,
+      error: `Proof-of-work do validador falhou (${challengeCheck.reason}): o veredito não comprovou leitura de ${cycle.active.challenge.file}`,
+      cause: 'validator_proof_of_work_failed',
+      impact: 'sem_prova_de_leitura_do_boundary_o_veredito_pode_nao_ter_lido_o_codigo',
+      next_action: 'redespachar_o_mesmo_validador_irmao_que_le_o_boundary_e_reenvia_challenge_response',
+    };
+  }
+  const challengeVerified = !cycle.active.challenge
+    ? 'no_challenge'
+    : challengeCheck.unverifiable ? 'unverifiable' : 'verified';
+
   const normalizedVerdict = verdict === 'pass'
     ? 'passed'
     : verdict === 'pass_with_observations'
@@ -2168,6 +2303,7 @@ function validatorComplete(args, context) {
       validator_run_id: activeValidatorRunId,
       state_path: statePathValue,
       validator_status: normalizedVerdict,
+      challenge_verified: challengeVerified,
       next_action: 'complete_plan_execute',
       banner: renderBanner('validacao', { status: normalizedVerdict }),
       validator_cycle: {
@@ -2211,6 +2347,7 @@ function validatorComplete(args, context) {
       validator_run_id: activeValidatorRunId,
       state_path: statePathValue,
       validator_status: 'blocked_final_validator_failed',
+      challenge_verified: challengeVerified,
       error: `Segundo validator falhou; terceiro validator é proibido (máximo=${cycle.max_attempts})`,
       next_action: 'encerrar_com_blocked_final_validator_failed',
       banner: renderBanner('validacao', { status: 'blocked_final_validator_failed' }),
@@ -2242,6 +2379,7 @@ function validatorComplete(args, context) {
     validator_run_id: activeValidatorRunId,
     state_path: statePathValue,
     validator_status: 'repair_required',
+    challenge_verified: challengeVerified,
     next_action: 'start_findings_repair_lock',
     banner: renderBanner('validacao', { status: 'repair_required' }),
     validator_cycle: {
@@ -2751,7 +2889,7 @@ function toolsList() {
       },
       {
         name: 'atlas_lock_validator',
-        description: 'Gate G4/G8 sibling: enforça um validator por vez em todos os hosts, dispatch_token obrigatório no retorno, máximo de 2 attempts, repair obrigatório entre fail e retry e bloqueio explícito do terceiro validator.',
+        description: 'Gate G4/G8 sibling: enforça um validator por vez em todos os hosts, dispatch_token obrigatório no retorno, proof-of-work (challenge sha256 do boundary recomputado no complete), máximo de 2 attempts, repair obrigatório entre fail e retry e bloqueio explícito do terceiro validator.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
@@ -2764,6 +2902,7 @@ function toolsList() {
             validator_run_id: { type: 'string' },
             repair_run_id: { type: 'string' },
             dispatch_token: { type: 'integer' },
+            challenge_response: { type: 'string' },
             verdict: { type: 'string', enum: ['pass', 'pass_with_observations', 'fail'] },
             data: { type: 'object', additionalProperties: true },
             host: { type: 'string', enum: HOST_NAMES },
@@ -2929,4 +3068,6 @@ export {
   lockValidator,
   assertAfterPlan,
   runState,
+  ping,
+  toolsList,
 };

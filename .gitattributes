@@ -1,0 +1,9 @@
+# Artefatos GERADOS por build/build-plugins.sh — fonte canônica vive em
+# packages/ e agents/. Não edite as cópias abaixo à mão: rode o build e commite.
+# linguist-generated=true colapsa esses diffs no GitHub e os tira das estatísticas
+# de linguagem (o repo público é majoritariamente cópia de host).
+hosts/**            linguist-generated=true
+plugins/**          linguist-generated=true
+.agents/**          linguist-generated=true
+archive/**          linguist-generated=true
+dist/**             linguist-generated=true

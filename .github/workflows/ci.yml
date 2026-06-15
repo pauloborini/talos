@@ -54,3 +54,31 @@ jobs:
       - name: Checksums conferem
         shell: bash
         run: (cd dist && shasum -a 256 -c SHA256SUMS)
+
+  # Runtime MCP em Windows/macOS (fecha T07/T08 da auditoria de maturidade):
+  # boot + detecção + capabilities + preflight + FSM do validador rodam só por
+  # Node puro (sem build bash/shasum, que não são portáveis), sobre os catálogos
+  # já commitados. O build completo + checksums seguem no job `multihost` (ubuntu).
+  cross-os:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Testes unitários do núcleo MCP
+        run: node --test packages/mcp-server/server.test.js
+
+      - name: Smoke por host
+        run: node build/smoke-hosts.mjs
+
+      - name: Matriz de conformance multi-host
+        run: node build/conformance-matrix.mjs
