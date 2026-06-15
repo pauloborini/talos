@@ -220,9 +220,25 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `atlas-*` para o
 
 ---
 
-**Plugin version:** 0.7.0
+**Plugin version:** 0.8.0
 **Author:** Paulo Borini
-**Last updated:** 2026-06-11
+**Last updated:** 2026-06-15
+
+### Novidades v0.8.0 — proof-of-work do validador frio (Gate G4, R20)
+
+- `atlas_lock_validator(start)` emite um `challenge` (sha256 de um arquivo do boundary do `state_path`); o validador irmão lê via `validator_recovery.challenge`, computa o hash e devolve em `challenge_response`.
+- `atlas_lock_validator(complete)` recomputa o hash do disco e bloqueia (`challenge_failed`) em divergência/ausência, sem fechar o slot — re-despacho do mesmo validador. O re-dispatch é **bounded** por attempt: esgotado o teto, o slot fecha terminal (`challenge_exhausted`, fail-closed).
+- O hash esperado nunca é persistido em estado legível (recomputado on-demand). Best-effort: boundary sem arquivo legível → sem enforcement; arquivo ausente no complete → `unverifiable`, não bloqueia.
+- Escopo honesto: atestação **mecânica** de leitura do boundary, **não** prova de isolamento não-forjável. Schema `atlas_capabilities` v5 intacto.
+
+### Novidades v0.7.1 / v0.7.2 — confiabilidade
+
+- `ping().capabilities` derivado de `toolsList()` (fonte única — fim do drift que omitia `atlas_classify_input`); CI job `cross-os` (Windows/macOS); `.gitattributes` para artefatos gerados.
+- `atlas_run_state(upsert)` faz merge top-level (não derruba `dispatch.active`); `findActiveRunConflict` só bloqueia conflito de lock real; `atlas_verify_artifact` aceita `artifact_kind`; Gate G4 endurecido (R17 falha de dispatch = `blocked`; R19 proveniência do `dispatch_token`).
+
+### Novidades v0.7.0 — topologia sibling-only
+
+- Validação fria é sempre sub-agent irmão em todos os hosts: o executor escreve `state_path` e encerra; o orquestrador despacha `atlas-task-validator`. Gate JOIN no preflight, `dispatch_token` monotônico, máximo de 2 validators por contrato. `CAPABILITIES_SCHEMA_VERSION` v3 → v5 (BREAKING de contrato, sem mudança de comportamento).
 
 ### Novidades v0.6.2 — backlog mestre explícito
 
