@@ -32,6 +32,8 @@ import {
   lockValidator as lockValidatorCore,
   assertAfterPlan,
   runState,
+  ping,
+  toolsList,
 } from './server.js';
 
 function lockValidator(args) {
@@ -50,6 +52,17 @@ function lockValidator(args) {
   }
   return lockValidatorCore(args);
 }
+
+test('ping: capabilities cobre exatamente a superfície de tools (sem drift)', () => {
+  // Guard cruzado do P0: ping().capabilities é derivado de toolsList() — qualquer
+  // tool nova ou removida propaga sozinha. Este teste falha se alguém reintroduzir
+  // uma lista manual paralela que omita uma tool (regressão histórica:
+  // atlas_classify_input ficou fora do ping e podia abortar run válida).
+  const toolNames = toolsList().tools.map((tool) => tool.name).sort();
+  const capList = [...ping().capabilities].sort();
+  assert.deepEqual(capList, toolNames);
+  assert.ok(capList.includes('atlas_classify_input'), 'atlas_classify_input deve estar nas capabilities');
+});
 
 test('detectHost: arg host explícito tem prioridade máxima', () => {
   const r = detectHost({ host: 'codex' }, { CLAUDE_PLUGIN_ROOT: '/x' });

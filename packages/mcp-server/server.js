@@ -605,18 +605,12 @@ function ping() {
     version: version.version,
     version_check: version,
     transport: 'stdio',
-    capabilities: [
-      'atlas_ping',
-      'atlas_capabilities',
-      'atlas_run_state',
-      'atlas_verify_artifact',
-      'atlas_scan_prd',
-      'atlas_verify_template_conformance',
-      'atlas_preflight',
-      'atlas_lock_dispatch',
-      'atlas_lock_validator',
-      'atlas_assert_after_plan',
-    ],
+    // Fonte única da superfície de tools: derivado de toolsList() para nunca
+    // divergir do dispatcher/schema. Lista manual paralela já omitiu
+    // atlas_classify_input no passado (drift silencioso) — o orquestrador
+    // (Fase 0) aborta se uma capability exigida pelo modo não aparece aqui,
+    // então a divergência travava run válida. Guard cruzado em server.test.js.
+    capabilities: toolsList().tools.map((tool) => tool.name),
     state_dir: RUN_DIR,
   };
 }
@@ -2929,4 +2923,6 @@ export {
   lockValidator,
   assertAfterPlan,
   runState,
+  ping,
+  toolsList,
 };
