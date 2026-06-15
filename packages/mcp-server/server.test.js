@@ -2492,3 +2492,83 @@ test('proof-of-work: boundary sem arquivo legível não emite challenge nem exig
   assert.equal(done.status, 'passed', 'sem challenge não há enforcement (backward-compat)');
   assert.equal(done.challenge_verified, 'no_challenge');
 });
+
+test('proof-of-work: challenge é re-emitido e enforçado no attempt 2 (fail→repair→retry)', () => {
+  const { root, sliceRel } = setupValidatorRun('pow6', {
+    'src/a.js': 'export const a = 1;\n',
+    'src/b.js': 'export const b = 2;\n',
+  });
+  // attempt 1: fail com challenge correto → repair_required.
+  const start1 = lockValidator({ run_id: 'pow6', project_root: root, action: 'start', state_path: sliceRel });
+  assert.ok(start1.challenge, 'attempt 1 emite challenge');
+  const fail1 = lockValidator({
+    run_id: 'pow6', project_root: root, action: 'complete', state_path: sliceRel,
+    validator_run_id: start1.validator_run_id, dispatch_token: start1.dispatch_token,
+    challenge_response: sha256File(root, start1.challenge.file), verdict: 'fail',
+    data: { findings: [{ severity: 'P1', file: 'src/a.js', line: 1, msg: 'x' }] },
+  });
+  assert.equal(fail1.validator_status, 'repair_required');
+  assert.equal(fail1.challenge_verified, 'verified', 'fail também exige proof-of-work');
+
+  // repair completo → retry autorizado.
+  const rs = lockValidator({ run_id: 'pow6', project_root: root, action: 'repair_start', state_path: sliceRel });
+  lockValidator({ run_id: 'pow6', project_root: root, action: 'repair_complete', repair_run_id: rs.repair_run_id, state_path: sliceRel });
+
+  // attempt 2: NOVO challenge (novo dispatch_token), enforçado de novo.
+  const start2 = lockValidator({ run_id: 'pow6', project_root: root, action: 'start', state_path: sliceRel });
+  assert.equal(start2.validator_attempt, 2);
+  assert.ok(start2.challenge, 'attempt 2 re-emite challenge');
+  // hash errado no attempt 2 ainda bloqueia.
+  const bad2 = lockValidator({
+    run_id: 'pow6', project_root: root, action: 'complete', state_path: sliceRel,
+    validator_run_id: start2.validator_run_id, dispatch_token: start2.dispatch_token,
+    challenge_response: 'deadbeef', verdict: 'pass',
+  });
+  assert.equal(bad2.validator_status, 'challenge_failed');
+  // hash correto do challenge do attempt 2 fecha terminal.
+  const pass2 = lockValidator({
+    run_id: 'pow6', project_root: root, action: 'complete', state_path: sliceRel,
+    validator_run_id: start2.validator_run_id, dispatch_token: start2.dispatch_token,
+    challenge_response: sha256File(root, start2.challenge.file), verdict: 'pass',
+  });
+  assert.equal(pass2.status, 'passed');
+  assert.equal(pass2.challenge_verified, 'verified');
+});
+
+test('proof-of-work: arquivo do challenge some entre start e complete → unverifiable (não bloqueia)', () => {
+  const { root, sliceRel } = setupValidatorRun('pow7', { 'src/foo.js': 'export const x = 1;\n' });
+  const start = lockValidator({ run_id: 'pow7', project_root: root, action: 'start', state_path: sliceRel });
+  assert.ok(start.challenge);
+  // arquivo do boundary deletado depois do start (ex.: slice que removeu o arquivo).
+  fs.rmSync(path.join(root, start.challenge.file));
+  const done = lockValidator({
+    run_id: 'pow7', project_root: root, action: 'complete', state_path: sliceRel,
+    validator_run_id: start.validator_run_id, dispatch_token: start.dispatch_token,
+    challenge_response: 'qualquer-coisa', verdict: 'pass',
+  });
+  assert.equal(done.status, 'passed', 'arquivo ausente no complete não bloqueia run legítima');
+  assert.equal(done.challenge_verified, 'unverifiable');
+});
+
+test('proof-of-work: falhas de challenge são bounded — esgotado o teto, slot fecha terminal (challenge_exhausted)', () => {
+  const { root, sliceRel } = setupValidatorRun('pow8', { 'src/foo.js': 'export const x = 1;\n' });
+  const start = lockValidator({ run_id: 'pow8', project_root: root, action: 'start', state_path: sliceRel });
+  let last;
+  // Hash sempre errado: re-dispatch deve parar em algum momento (fail-closed),
+  // nunca loopar. Bound em poucas iterações independe do valor da constante.
+  for (let i = 0; i < 6; i += 1) {
+    last = lockValidator({
+      run_id: 'pow8', project_root: root, action: 'complete', state_path: sliceRel,
+      validator_run_id: start.validator_run_id, dispatch_token: start.dispatch_token,
+      challenge_response: 'deadbeef', verdict: 'pass',
+    });
+    if (last.validator_status === 'challenge_exhausted') break;
+    assert.equal(last.validator_status, 'challenge_failed', `iteração ${i} ainda em re-dispatch`);
+  }
+  assert.equal(last.validator_status, 'challenge_exhausted', 'o re-dispatch é bounded e termina');
+  assert.equal(last.cause, 'validator_proof_of_work_exhausted');
+  assert.equal(last.status, 'blocked');
+  // Slot fechado terminal: recovery não expõe mais validador ativo.
+  const rec = runState({ action: 'get', run_id: 'pow8', project_root: root }).validator_recovery;
+  assert.equal(rec, null, 'slot terminal fechado (sem active)');
+});

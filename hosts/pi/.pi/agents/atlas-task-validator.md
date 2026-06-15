@@ -44,13 +44,13 @@ Copie esse token sem alteração para `dispatch_token` no output. Se a correlaç
 
 ### Proof-of-work (challenge do boundary)
 
-Se `validator_recovery.challenge` não for `null`, ele traz `{ file, algo: "sha256" }` — um arquivo do boundary que você **deve** ter lido. Compute o hash dos bytes crus desse arquivo (relativo ao project root) e devolva em `challenge_response`:
+Se `validator_recovery.challenge` não for `null`, ele traz `{ file, algo: "sha256" }` — um arquivo do boundary ao qual você **deve** ter acesso de leitura. Compute o hash dos bytes crus desse arquivo (relativo ao project root) e devolva em `challenge_response`:
 
 ```bash
 shasum -a 256 "<challenge.file>"
 ```
 
-Coloque o hash hex (primeiro token da saída) em `challenge_response`. Se `challenge` for `null`, omita `challenge_response` ou devolva `null`. Não invente o hash: o orquestrador recomputa do disco e bloqueia a slice (`challenge_failed`) se divergir — fabricar o veredito sem ler o boundary é exatamente o que este passo barra. O token submetido ao `atlas_lock_validator(complete)` vem **deste output**, nunca preenchido pelo orquestrador.
+Coloque o hash hex (primeiro token da saída) em `challenge_response`. Se `challenge` for `null`, omita `challenge_response` ou devolva `null`. Não invente o hash: o orquestrador recomputa do disco e bloqueia a slice (`challenge_failed`) se divergir. Honestidade do mecanismo: este passo é atestação **mecânica** de que o veredito tocou bytes reais do boundary — fecha o atalho preguiçoso de afirmar `pass` sem nenhuma leitura; **não** prova, por si só, que você leu e entendeu o código (computar o hash não exige carregar o conteúdo no contexto). A leitura real do boundary continua sendo sua obrigação de validador. Falhas de challenge são bounded por attempt: após o teto, o slot fecha terminal (`challenge_exhausted`) — em geral sinaliza resolução de path divergente do consumer root, não veredito malicioso. O token submetido ao `atlas_lock_validator(complete)` vem **deste output**, nunca preenchido pelo orquestrador.
 
 ---
 

@@ -8,13 +8,14 @@ Proof-of-work do validador frio (Gate G4, R20):
 - **`atlas_lock_validator(action=start)`** lê o `state_path`, escolhe 1 arquivo do `files_changed` do boundary e emite um `challenge` `{ file, algo: "sha256" }`. O challenge vai ao validador irmão via `validator_recovery.challenge` (canal canônico) e é ecoado na resposta do start.
 - **O validador irmão** computa o sha256 dos bytes crus do arquivo e devolve em `challenge_response` no output (mesma proveniência do `dispatch_token`: vem do validador, nunca é preenchido pelo orquestrador).
 - **`atlas_lock_validator(action=complete)`** recomputa o hash do disco e compara. Divergência ou ausência de `challenge_response` quando um challenge foi emitido → `blocked` com `validator_status: "challenge_failed"`, **sem fechar o slot** (igual stale): o orquestrador re-despacha o mesmo validador, que lê o boundary e reenvia o hash. O hash esperado **nunca** é armazenado em estado legível — é recomputado on-demand, então o orquestrador não consegue copiá-lo.
+- **Re-dispatch bounded (fail-closed):** o re-despacho de `challenge_failed` tem teto por attempt (`VALIDATOR_CHALLENGE_MAX_FAILURES`). Esgotado, o slot fecha terminal com `validator_status: "challenge_exhausted"` (`cause: validator_proof_of_work_exhausted`) em vez de loopar — protege contra mismatch sistemático (ex.: validador resolvendo o path do challenge com CWD diferente do consumer root do MCP).
 - **Best-effort, não-quebrante:** boundary sem arquivo legível (ou `files_changed` vazio) → `challenge: null` → sem enforcement (compat com validações sem boundary materializado). Arquivo que some entre start e complete → `unverifiable`, não bloqueia.
 
 Escopo honesto (mantido de 0.7.1): proof-of-work é **atestação mecânica** de que o veredito tocou bytes reais do boundary — eleva o piso do atalho preguiçoso (afirmar `pass` sem ler código) e dá rastro de auditoria (`challenge_verified` no retorno). **Não** é prova de isolamento criptograficamente não-forjável: o MCP fala stdio com um único caller e não distingue orquestrador de subagente. A prova forte depende de identidade por-caller do host (camada 2 / S22).
 
 Skill enxugada (P2.3): o changelog embutido na SKILL do orquestrador foi reduzido às 4 versões recentes + ponteiro para este `CHANGELOG.md` (fonte canônica). Tabela de gates G1–G11 e contrato de execução intactos.
 
-Testes: 117 (era 111) — +6 cobrindo emissão de challenge, hash correto, hash errado/ausente (block sem fechar slot), saída do `shasum` e boundary sem arquivo. `check-consistency` (guards de challenge_response no validador e no orquestrador) ok, `plugin validate --strict` ok.
+Testes: 120 (era 111) — +9 cobrindo emissão de challenge, hash correto, hash errado/ausente (block sem fechar slot), saída do `shasum`, boundary sem arquivo, challenge re-emitido e enforçado no attempt 2 (fail→repair→retry), arquivo que some entre start e complete (`unverifiable`) e teto de re-dispatch (`challenge_exhausted`, fail-closed). `check-consistency` (guards de challenge_response no validador e no orquestrador) ok, `plugin validate --strict` ok.
 
 ## 0.7.2 - 2026-06-15
 

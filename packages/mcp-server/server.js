@@ -70,6 +70,13 @@ const WORKFLOW_CONFIG = {
 };
 
 const VALIDATOR_MAX_ATTEMPTS = 2;
+// P2-1: teto de falhas de proof-of-work POR attempt. challenge_failed não consome
+// attempt nem fecha o slot (re-despacha o mesmo validador), mas sem limite um
+// mismatch sistemático (ex.: validador resolve o path do challenge com CWD
+// diferente do consumer_root do MCP) loopa pra sempre. Após este teto de falhas
+// para o mesmo validator_run_id, o slot fecha terminal (fail-closed): a slice
+// bloqueia com causa explícita em vez de re-despachar indefinidamente.
+const VALIDATOR_CHALLENGE_MAX_FAILURES = 2;
 const VALIDATOR_PASSED_STATUSES = new Set(['passed', 'passed_with_observations']);
 
 function validatorRunId(runId, attempt, timestamp) {
@@ -2222,6 +2229,42 @@ function validatorComplete(args, context) {
   // attempt nem reabre terminal. `unverifiable` (arquivo sumiu no complete) não bloqueia.
   const challengeCheck = verifyValidatorChallenge(cycle.active.challenge, challengeResponse, args);
   if (!challengeCheck.ok) {
+    // P2-1: falhas de challenge são bounded por attempt. As anteriores ficam no
+    // history (patchValidatorResult registra cada challenge_failed). Esgotado o
+    // teto, o slot fecha terminal (fail-closed) em vez de re-despachar pra sempre.
+    const priorChallengeFailures = cycle.history.filter(
+      (event) =>
+        event.action === 'complete' &&
+        event.validator_status === 'challenge_failed' &&
+        event.validator_run_id === activeValidatorRunId,
+    ).length;
+    if (priorChallengeFailures >= VALIDATOR_CHALLENGE_MAX_FAILURES) {
+      return {
+        gate: 'G4',
+        action: 'complete',
+        status: 'blocked',
+        timestamp,
+        validator_attempt: cycle.active.attempt,
+        validator_run_id: activeValidatorRunId,
+        state_path: statePathValue,
+        validator_status: 'challenge_exhausted',
+        challenge_file: cycle.active.challenge.file,
+        error: `Proof-of-work do validador falhou ${priorChallengeFailures + 1}x (máximo=${VALIDATOR_CHALLENGE_MAX_FAILURES}) para ${cycle.active.challenge.file}; re-dispatch encerrado`,
+        cause: 'validator_proof_of_work_exhausted',
+        impact: 'validador_nao_comprovou_leitura_do_boundary_apos_teto_de_tentativas',
+        next_action: 'encerrar_com_blocked_e_investigar_resolucao_de_path_do_challenge_no_host',
+        banner: renderBanner('validacao', { status: 'blocked_challenge_exhausted' }),
+        validator_cycle: {
+          dispatch_token: cycle.dispatch_token,
+          status: 'blocked',
+          active: null,
+          last_state_path: statePathValue,
+          last_verdict: cycle.last_verdict,
+          findings_packet: cycle.findings_packet,
+          repair: cycle.repair,
+        },
+      };
+    }
     return {
       gate: 'G4',
       action: 'complete',
@@ -2232,6 +2275,8 @@ function validatorComplete(args, context) {
       state_path: statePathValue,
       validator_status: 'challenge_failed',
       challenge_file: cycle.active.challenge.file,
+      challenge_failures: priorChallengeFailures + 1,
+      challenge_failures_max: VALIDATOR_CHALLENGE_MAX_FAILURES,
       error: `Proof-of-work do validador falhou (${challengeCheck.reason}): o veredito não comprovou leitura de ${cycle.active.challenge.file}`,
       cause: 'validator_proof_of_work_failed',
       impact: 'sem_prova_de_leitura_do_boundary_o_veredito_pode_nao_ter_lido_o_codigo',
