@@ -183,7 +183,7 @@ const HOST_ADAPTERS = {
     subagent_dispatch: {
       mechanism: 'spawn_agent(agent_type)',
       example: 'spawn_agent(agent_type: "atlas-task-validator", items: [{ type: "text", text: "<state_path>" }])',
-      registration: '.codex/agents/<name>.toml (custom agent nativo; developer_instructions carrega o SKILL.md; atlas-task-validator pinado em model=gpt-5.4, model_reasoning_effort=high)',
+      registration: 'CODEX_HOME/agents/<name>.toml via `npx github:pauloborini/atlas-workflow init codex` (custom agent nativo; developer_instructions carrega o SKILL.md; atlas-task-validator pinado em model=gpt-5.4, model_reasoning_effort=high)',
     },
     validator_dispatch: {
       dispatcher: 'orchestrator',

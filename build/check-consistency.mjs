@@ -264,6 +264,26 @@ if (findingsRepairSkill != null) {
   }
 }
 
+// Codex custom agents não podem depender apenas do bundle do plugin: o instalador
+// precisa copiar os atlas-*.toml para CODEX_HOME/agents, que é o caminho nativo que
+// `spawn_agent(agent_type)` carrega. Regressão aqui volta ao erro `unknown agent_type`.
+const atlasInit = read('build/cli/atlas-init.mjs');
+if (atlasInit != null) {
+  for (const token of ['CODEX_HOME', "'.codex'", "'agents'", "['.toml']", 'copyAtlasAgents(srcAgents, agentsDir']) {
+    if (!atlasInit.includes(token)) {
+      errors.push(`Codex agent install-regressão: atlas-init.mjs não contém '${token}'`);
+    }
+  }
+}
+const smokeInstall = read('build/smoke-install.mjs');
+if (smokeInstall != null) {
+  for (const token of ['makeCodexMock', 'CODEX_HOME', 'agents/atlas-plan-execute.toml', 'model = "gpt-5.4"']) {
+    if (!smokeInstall.includes(token)) {
+      errors.push(`Codex smoke-regressão: smoke-install.mjs não cobre '${token}'`);
+    }
+  }
+}
+
 if (errors.length) {
   console.error('check-consistency: FALHOU');
   for (const e of errors) console.error(`  - ${e}`);

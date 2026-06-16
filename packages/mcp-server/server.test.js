@@ -139,7 +139,8 @@ test('capabilities: perfil codex usa subagent nativo, não $skill in-context', (
   const cap = capabilities({ host: 'codex' });
   assert.equal(cap.host, 'codex');
   assert.equal(cap.subagent_dispatch.mechanism, 'spawn_agent(agent_type)');
-  assert.match(cap.subagent_dispatch.registration, /\.codex\/agents/);
+  assert.match(cap.subagent_dispatch.registration, /CODEX_HOME\/agents/);
+  assert.match(cap.subagent_dispatch.registration, /init codex/);
   assert.doesNotMatch(cap.subagent_dispatch.example, /\$atlas/);
   assert.equal(cap.capabilities_flags.subagent_available, true);
   assert.equal(cap.validator_dispatch.dispatcher, 'orchestrator');
