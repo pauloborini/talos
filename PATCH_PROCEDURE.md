@@ -13,7 +13,9 @@ Nao declare pronto sem evidencia local. "Pronto" exige:
 - artefatos `.plugin` + `SHA256SUMS` validos;
 - pacote npm inspecionado;
 - working tree entendido;
-- release/tag somente com autorizacao explicita.
+- release e full-auto: bumpar `VERSION` na `main` publica npm + GitHub Release
+  sozinho (seca 9). Logo, so subir bump de `VERSION` na `main` com o patch
+  inteiro pronto e validado — o push e a propria autorizacao de publicar.
 
 `archive/` e `raycast/` nao entram no patch salvo pedido explicito.
 
@@ -60,7 +62,27 @@ mesma versao. Bump novo. Ex.: mudancas apos `0.8.1` => `0.8.2`.
 
 ## 4. Arquivos obrigatorios no bump
 
-Atualizar manualmente:
+Caminho automatico (preferido). Roda o bump determinístico, que sincroniza os
+arquivos com versao concreta, regenera bundles/catalogos e roda check-consistency:
+
+```bash
+rtk node build/bump-version.mjs <nova-versao>   # ex.: 0.8.3
+```
+
+Ele toca: `VERSION`, `package.json`, `packages/mcp-server/package.json`,
+`.claude-plugin/plugin.json`, `README.md`, `COMMANDS.md`,
+`packages/mcp-server/README.md` e a linha `**Plugin version:**` do
+`packages/orchestrator/README.md`. NAO toca `CHANGELOG.md`, `PATCH_PROCEDURE.md`
+nem a secao `### Novidades vX` do orchestrator README (prosa/exemplos historicos)
+— esses seguem manuais.
+
+Atualizar manualmente (sempre):
+
+- `CHANGELOG.md` (entrada da nova versao — secao 5);
+- `packages/orchestrator/README.md` (secao `### Novidades vX` + `Last updated`);
+- `PATCH_PROCEDURE.md` quando o procedimento mudar.
+
+Se rodar o bump a mao em vez do script, atualizar:
 
 - `VERSION`
 - `package.json`
@@ -68,8 +90,6 @@ Atualizar manualmente:
 - `.claude-plugin/plugin.json`
 - `README.md`
 - `COMMANDS.md`
-- `CHANGELOG.md`
-- `PATCH_PROCEDURE.md` quando o procedimento mudar
 
 Atualizar quando aplicavel:
 
@@ -215,26 +235,42 @@ CI normal roda em push/PR:
 - checksums;
 - runtime MCP em Windows/macOS.
 
-Release so por tag:
+Release e FULL AUTO. O caminho primario e empurrar o bump de `VERSION` para a
+`main` — isso, por si so, publica npm + GitHub Release. NAO precisa criar tag a
+mao; a action cria a tag `vX.Y.Z`. Logo: subir um `VERSION` novo na `main` E o
+ato de autorizar a publicacao publica. Nao bumpar `VERSION` na `main` sem o
+CHANGELOG da versao pronto (a release falha-fecha se faltar a entrada).
 
 ```bash
-rtk git tag -a vX.Y.Z -m "vX.Y.Z"
-rtk git push origin <branch>
-rtk git push origin vX.Y.Z
+# fluxo full-auto: bump na main publica sozinho
+rtk node build/bump-version.mjs X.Y.Z
+# (editar CHANGELOG + Novidades, revisar, commitar)
+rtk git push origin main          # => Release dispara: tag + npm + GitHub release
 ```
 
-So criar/push tag quando o usuario autorizar explicitamente.
+Override manual por tag (hotfix fora da main / re-release) continua valendo:
+
+```bash
+rtk git tag -a vX.Y.Z -m "vX.Y.Z" && rtk git push origin vX.Y.Z
+```
+
+Mudancas so em `.github/`, `build/` ou `PATCH_PROCEDURE.md` (fora do artefato
+distribuido) podem ir pra `main` SEM bumpar `VERSION` — a release nao dispara
+(filtro `paths: VERSION`), e o novo fluxo so vale a partir do proximo bump real.
 
 O workflow `.github/workflows/release.yml` deve:
 
-1. validar `GITHUB_REF_NAME` (`vX.Y.Z`) contra `VERSION`;
-2. rodar build;
-3. extrair notas do `CHANGELOG.md` aceitando cabecalho `## X.Y.Z` ou `## vX.Y.Z`;
-4. validar `.plugin` e checksums;
-5. publicar npm com `NPM_TOKEN` + provenance;
-6. publicar GitHub Release com 4 `.plugin` + `SHA256SUMS`.
+1. job `decide`: derivar a versao (da tag, ou de `VERSION` no push da main) e
+   pular se a tag `vX.Y.Z` ja existe; guard `VERSION` == `package.json.version`;
+2. job `publish` (so se `decide` liberar): build + check-consistency;
+3. guards de qualidade (testes MCP + smoke-hosts + conformance) antes de publicar;
+4. extrair notas do `CHANGELOG.md` aceitando cabecalho `## X.Y.Z` ou `## vX.Y.Z`
+   (falha-fecha se ausente);
+5. validar `.plugin` e checksums;
+6. publicar npm com `NPM_TOKEN` + provenance (idempotente);
+7. publicar GitHub Release com 4 `.plugin` + `SHA256SUMS` (cria a tag se ausente).
 
-Depois da tag, verificar:
+Depois do push/tag, verificar:
 
 ```bash
 rtk gh run list --workflow release.yml --limit 5
