@@ -1,0 +1,59 @@
+# O CLI npm (npx atlas-workflow init <host>) só precisa do bin + catálogos
+# que ele copia para o host alvo (hosts/<host>/ + plugins/.../.codex/agents/).
+# Tudo o que serve à distribuição primária (marketplace-from-source e .plugin
+# artifacts) fica de fora pra manter o tarball pequeno e sem ruído.
+
+# --- artefatos locais ---
+dist/
+.build-stage/
+node_modules/
+.DS_Store
+
+# --- estado local do pipeline (run artifacts) + config local do Claude ---
+.atlas/
+.claude/settings.local.json
+
+# --- catálogo marketplace / distribuição primária (não usado pelo CLI npm) ---
+archive/
+raycast/
+reports/
+.app-vault/
+.claude-plugin/
+.agents/
+plugin-manifests/
+hooks/
+
+# --- source canônico (o CLI npm usa hosts/ e plugins/, não a cópia raiz) ---
+# O `/` ancora na raiz: hosts/<host>/atlas/packages/ e plugins/.../packages/
+# SÃO cópias do catálogo e precisam entrar no tarball (server.js é referenciado
+# pelos .mcp.json/opencode.json relativos instalados pelo CLI).
+/packages/
+
+# --- CI ---
+.github/
+
+# --- build scripts de manutenção (só o bin vai pro npm) ---
+build/build-plugins.sh
+build/check-consistency.mjs
+build/conformance-matrix.mjs
+build/gen-host-agent.mjs
+build/install-host.sh
+build/smoke-hosts.mjs
+build/smoke-install.mjs
+build/test-all.sh
+build/README.md
+
+# --- docs de mantenedor (README é exibido pelo npm; os outros não) ---
+AGENTS.md
+CLAUDE.md
+CHANGELOG.md
+COMMANDS.md
+PATCH_PROCEDURE.md
+
+# --- catálogos top-level de agents/ (o CLI usa hosts/<host>/.opencode/agents
+#     e hosts/<host>/.pi/agents, que ficam dentro de hosts/) ---
+/agents/
+
+# --- git ---
+.git/
+.gitattributes
