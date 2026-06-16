@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.8.2 - 2026-06-16
+
+Tipo: **packaging + docs + tooling**. **Sem mudança de schema** (`CAPABILITIES_SCHEMA_VERSION` segue **v5**) e **sem mudança de contrato runtime do MCP**.
+
+Resumo: fecha o ciclo de release público da linha 0.8.x: bump correto pós-0.8.1, publicação npm preparada, CI de release mais seguro e documentação operacional de bump/release para IA.
+
+Mudanças:
+- **Bump para 0.8.2.** `VERSION`, `package.json`, `packages/mcp-server/package.json`, README, comandos e manifests/catálogos gerados passam a apontar para `0.8.2`.
+- **Release npm.** `.npmignore` mantém o tarball pequeno e inclui só o instalador, `hosts/` e `plugins/` necessários para `npx`/`npm exec`; o workflow de release publica `atlas-workflow` com provenance e pula publish se a versão já existir.
+- **CI de release endurecido.** `release.yml` valida tag `vX.Y.Z` contra `VERSION`, extrai release notes de `CHANGELOG.md` aceitando cabeçalho `## X.Y.Z` ou `## vX.Y.Z`, confere `package.json.version` antes de publicar e mantém assets `.plugin` + `SHA256SUMS` na GitHub Release.
+- **Procedimento de bump para IA.** `PATCH_PROCEDURE.md` foi atualizado com passo a passo completo: preflight, classificação, arquivos obrigatórios, regeneração, validação local, validação npm, tag/push e verificação pós-release.
+- **Doc drift corrigido.** `packages/orchestrator/README.md` e cópias empacotadas deixam de reportar `Plugin version: 0.8.0`.
+
+Impacto:
+- Instalação via `npx github:pauloborini/atlas-workflow init <host>` continua igual.
+- Após tag `v0.8.2`, o release workflow deve publicar GitHub Release e pacote npm `atlas-workflow@0.8.2`.
+
+Arquivos/artefatos:
+- `VERSION`, `package.json`, `packages/mcp-server/package.json`
+- `README.md`, `COMMANDS.md`, `PATCH_PROCEDURE.md`, `CHANGELOG.md`
+- `.github/workflows/release.yml`, `.npmignore`
+- `packages/orchestrator/README.md`
+- `plugins/atlas-workflow-orchestrator/**`, `hosts/opencode/**`, `hosts/pi/**`
+- `dist/atlas-workflow-{claude,codex,opencode,pi}.plugin`, `dist/SHA256SUMS`
+
+Validação:
+- `build/build-plugins.sh`
+- `node build/check-consistency.mjs`
+- `node --test packages/mcp-server/server.test.js`
+- `node build/smoke-hosts.mjs`
+- `node build/conformance-matrix.mjs`
+- `(cd dist && shasum -a 256 -c SHA256SUMS)`
+- `npm pack --dry-run --json`
+- `npm exec --yes --package /tmp/atlas-npm-pack/atlas-workflow-0.8.2.tgz -- atlas-workflow --help`
+- `npm exec --yes --package /tmp/atlas-npm-pack/atlas-workflow-0.8.2.tgz -- atlas-workflow init opencode --dry-run --dir /tmp/atlas-opencode-target`
+- `npm exec --yes --package /tmp/atlas-npm-pack/atlas-workflow-0.8.2.tgz -- atlas-workflow init codex --dry-run`
+
 ## 0.8.1 - 2026-06-15
 
 Tipo: **patch de confiabilidade de contrato** (só SKILL do orquestrador + command `/workflow`). **Sem código MCP**, **sem mudança de schema** (`CAPABILITIES_SCHEMA_VERSION` segue **v5**), **sem novos testes** (mudança documental/contratual). Origem: relato de **pausa indevida** no pipeline — o orquestrador parava pra pedir confirmação ("Quer que eu gere o PRD?", "Modo Discussão — sem alterar código") que o contrato não exige; em hosts com modelo diferente (ex.: Cursor) o mesmo plugin não parava. Causa-raiz: o SKILL definia **onde parar** (gates) mas nunca o default **"não parar"**, e um modelo de raciocínio alto preenchia o silêncio com confirmação educada.

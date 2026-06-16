@@ -1,154 +1,103 @@
-# Procedimento de Patch
+# Procedimento de Patch, Bump e Release
 
-Use este procedimento em todo patch que altera o plugin, seus manifests, documentacao operacional ou artefato empacotado da linha atual.
+Procedimento obrigatorio para qualquer IA/agente que altere este repo. Objetivo:
+manter `main` instalavel, bundles sincronizados, npm publicavel e CI confiavel.
 
-## Objetivo
+## 0. Regra principal
 
-Garantir que versionamento, changelog, manifests por host, pacotes `.plugin`, checksums e validacoes fiquem sempre sincronizados e rastreaveis.
+Nao declare pronto sem evidencia local. "Pronto" exige:
 
-## Classificacao do patch
+- versoes sincronizadas;
+- changelog atualizado;
+- catologos gerados (`plugins/`, `hosts/`);
+- artefatos `.plugin` + `SHA256SUMS` validos;
+- pacote npm inspecionado;
+- working tree entendido;
+- release/tag somente com autorizacao explicita.
 
-Antes de editar, classifique:
+`archive/` e `raycast/` nao entram no patch salvo pedido explicito.
 
-- `runtime`: muda contrato da skill, comando, config, roteamento, gates, fluxo de sub-agents ou comportamento esperado.
-- `packaging`: muda manifests, marketplace, estrutura do plugin ou pacote `.plugin`.
-- `docs`: muda README, procedimento, exemplos ou instrucoes sem alterar comportamento do plugin.
-- `tooling`: muda atalhos/snippets/scripts auxiliares.
+## 1. Preflight obrigatorio
 
-Se o patch for `runtime` ou `packaging`, bump de versao do plugin e changelog sao obrigatorios.
+Antes de editar:
 
-Se o patch for `docs` ou `tooling`, changelog raiz e obrigatorio; bump do plugin so e obrigatorio se o artefato distribuido mudar.
+```bash
+rtk git status --short --branch
+rtk git log --oneline -8
+rtk rg -n "0\\.8\\.|Plugin version|version|npm|release|CI|bump" VERSION package.json packages/mcp-server/package.json README.md COMMANDS.md CHANGELOG.md PATCH_PROCEDURE.md .github build packages/orchestrator .claude-plugin plugin-manifests
+```
 
-## Pontos obrigatorios ao subir versao do plugin
+Se houver mudancas locais que voce nao fez, preserve. Nao reverta. Se afetarem o
+patch, leia e incorpore.
 
-Atualizar todos:
+## 2. Classifique o patch
 
-- `VERSION`: semver publico unico.
-- `README.md`: versao atual, artefatos, instalacao e resultado esperado.
-- `plugin-manifests/claude/plugin.json`: manter `__VERSION__` injetavel pelo build.
-- `plugin-manifests/codex/plugin.json`: manter `__VERSION__` injetavel pelo build.
-- `packages/orchestrator/README.md`: atualizar se o contrato do orquestrador mudar.
-- `packages/orchestrator/skills/atlas-workflow-orchestrator/SKILL.md`: atualizar banner/changelog se o runtime mudar.
-- `packages/orchestrator/commands/workflow.md`: atualizar se o resumo dos gates/contrato mudar.
-- `CHANGELOG.md`: entrada do patch, com tipo, impacto, arquivos afetados e validacoes.
-- `dist/atlas-workflow-{claude,codex,opencode,pi}.plugin` e `dist/SHA256SUMS`: regenerar via `build/build-plugins.sh`.
+- `runtime`: muda skill, comando, MCP, gates, roteamento, sub-agents ou comportamento.
+- `packaging`: muda manifest, marketplace, estrutura de bundle, npm, `.plugin`, release.
+- `docs`: muda docs sem alterar comportamento distribuido.
+- `tooling`: muda scripts auxiliares, CI ou validadores.
 
-Atualizar se tocados:
+Bump obrigatorio quando:
 
-- `packages/orchestrator/atlas_workflows_config.md`.
-- `packages/orchestrator/defaults/**`.
-- `packages/orchestrator/references/**`.
-- `.github/workflows/release.yml`.
-- `raycast/README.md`.
-- `raycast/atlas-workflow-snippets.json`.
+- `runtime` ou `packaging`;
+- docs/tooling entram no artefato distribuido (`README`, `packages/orchestrator/**`,
+  skills, templates, manifests, `build/cli/**`, `.npmignore`, `.github/release`);
+- CI/release/npm muda e o usuario quer liberar nova versao.
 
-## Regra de changelog
+Patch somente de doc interna pode nao bumpar, mas precisa changelog se afetar
+procedimento operacional.
 
-Todo patch precisa registrar:
+## 3. Escolha da versao
 
-- versao ou identificador do patch;
-- data local;
-- tipo (`runtime`, `packaging`, `docs`, `tooling`);
-- resumo curto;
-- mudancas objetivas;
-- impacto no workflow;
-- arquivos/artefatos atualizados;
-- validacoes executadas.
+Use SemVer:
 
-Para patches `runtime`, registrar o mesmo resumo tambem no changelog da `packages/orchestrator/skills/atlas-workflow-orchestrator/SKILL.md`.
+- patch (`X.Y.Z+1`): fix, confiabilidade, docs distribuidas, CI/release, npm.
+- minor (`X.Y+1.0`): feature aditiva ou breaking pre-1.0 controlado.
+- major: reservado para `1.0+`.
 
-Para patches `packaging`, registrar tambem no README do plugin.
+Se ja existem mudancas apos a versao atual publicada/planejada, nao reutilize a
+mesma versao. Bump novo. Ex.: mudancas apos `0.8.1` => `0.8.2`.
 
-## Regra de sincronizacao
+## 4. Arquivos obrigatorios no bump
 
-`packages/` e a raiz do repo sao a fonte unica da linha atual. `archive/v0.1.10/` e rollback historico e nao deve ser sincronizado em patches atuais.
+Atualizar manualmente:
 
-Os manifests sao intencionalmente diferentes por host e recebem a versao por injecao no build:
+- `VERSION`
+- `package.json`
+- `packages/mcp-server/package.json`
+- `.claude-plugin/plugin.json`
+- `README.md`
+- `COMMANDS.md`
+- `CHANGELOG.md`
+- `PATCH_PROCEDURE.md` quando o procedimento mudar
+
+Atualizar quando aplicavel:
+
+- `packages/orchestrator/README.md`
+- `packages/orchestrator/skills/atlas-workflow-orchestrator/SKILL.md`
+- `packages/orchestrator/commands/workflow.md`
+- `packages/orchestrator/references/**`
+- `packages/templates/**`
+- `.github/workflows/ci.yml`
+- `.github/workflows/release.yml`
+- `.npmignore`
+- `build/**`
+
+Nao trocar `__VERSION__` em:
 
 - `plugin-manifests/claude/plugin.json`
 - `plugin-manifests/codex/plugin.json`
 
-O manifest de marketplace-from-source (instalacao via GitHub publico) tem versao **concreta**, lida crua pelos hosts sem build:
+Esses manifests recebem versao por injecao em `build/build-plugins.sh`.
 
-- `.claude-plugin/marketplace.json` (catalogo Claude Code / Cursor)
-- `.claude-plugin/plugin.json` (`version` deve casar com `VERSION`)
-- `.agents/plugins/marketplace.json` (catalogo Codex)
-- `plugins/atlas-workflow-orchestrator/` (bundle Codex gerado pelo build; commitar junto com bump de versao)
-- `plugins/atlas-workflow-orchestrator/.codex-plugin/plugin.json` (`version` deve casar com `VERSION`)
+## 5. Changelog
 
-O guard `build/check-consistency.mjs` falha em drift de versao nos manifests from-source.
-
-Ao bumpar `VERSION`, atualizar `version` em `.claude-plugin/plugin.json` e regenerar `plugins/atlas-workflow-orchestrator/` via `build/build-plugins.sh`.
-
-## Regra de pacote
-
-Se qualquer arquivo em `packages/`, `plugin-manifests/`, `build/`, `hooks/`, docs de instalacao/release ou contrato empacotado mudar, regenerar:
-
-```bash
-bash build/build-plugins.sh
-```
-
-Incluir no commit o diretorio `plugins/atlas-workflow-orchestrator/` (marketplace Codex from-source no GitHub).
-Incluir tambem `hosts/opencode/` e `hosts/pi/` quando o build sincronizar catalogos desses hosts.
-
-Depois validar:
-
-```bash
-(cd dist && shasum -a 256 -c SHA256SUMS)
-unzip -t dist/atlas-workflow-claude.plugin
-unzip -t dist/atlas-workflow-codex.plugin
-unzip -t dist/atlas-workflow-opencode.plugin
-unzip -t dist/atlas-workflow-pi.plugin
-unzip -p dist/atlas-workflow-claude.plugin .claude-plugin/plugin.json
-unzip -p dist/atlas-workflow-codex.plugin .codex-plugin/plugin.json
-```
-
-Release operacional:
-
-1. Fechar PR/commit com build e checksums atualizados.
-2. Criar tag anotada `vX.Y.Z` apenas quando release externa estiver autorizada.
-3. Push da tag aciona `.github/workflows/release.yml`.
-4. Conferir que os assets publicados sao `atlas-workflow-claude.plugin`, `atlas-workflow-codex.plugin`, `atlas-workflow-opencode.plugin`, `atlas-workflow-pi.plugin` e `SHA256SUMS`.
-5. Conferir checksum dos assets baixados contra `SHA256SUMS`.
-
-## Checklist de validacao
-
-Rodar no minimo:
-
-```bash
-bash build/build-plugins.sh
-node build/check-consistency.mjs
-node --test packages/mcp-server/server.test.js
-(cd dist && shasum -a 256 -c SHA256SUMS)
-unzip -t dist/atlas-workflow-claude.plugin
-unzip -t dist/atlas-workflow-codex.plugin
-unzip -t dist/atlas-workflow-opencode.plugin
-unzip -t dist/atlas-workflow-pi.plugin
-unzip -p dist/atlas-workflow-claude.plugin .claude-plugin/plugin.json
-unzip -p dist/atlas-workflow-codex.plugin .codex-plugin/plugin.json
-```
-
-Se o CLI local oferecer validação de plugin, rodar também:
-
-```bash
-codex plugin validate ./ --strict
-```
-
-Se o subcomando `validate` não existir no CLI local, registrar a indisponibilidade no changelog/relatório do patch e manter as validações acima como fallback obrigatório.
-
-Rodar buscas direcionadas conforme o patch. Exemplos:
-
-```bash
-rg -n "vX.Y.Z|version|0\\.2\\." .
-rg -n "standalone|marketplace|Cursor|checksum|SHA256SUMS" README.md PATCH_PROCEDURE.md CHANGELOG.md
-```
-
-## Template de entrada no changelog
+Adicionar entrada no topo:
 
 ```md
-## vX.Y.Z - YYYY-MM-DD
+## X.Y.Z - YYYY-MM-DD
 
-Tipo: runtime|packaging|docs|tooling
+Tipo: **runtime|packaging|docs|tooling**. **Sem/Com breaking**. Schema MCP: ...
 
 Resumo: ...
 
@@ -165,14 +114,159 @@ Validacao:
 - ...
 ```
 
-## Stop conditions
+Para `runtime`, tambem atualizar o changelog resumido no fim de
+`packages/orchestrator/skills/atlas-workflow-orchestrator/SKILL.md`.
+
+Para `packaging`/npm/release, documentar se a publicacao depende de tag
+`vX.Y.Z` e de `NPM_TOKEN`.
+
+## 6. Regeneracao obrigatoria
+
+Depois de qualquer bump ou mudanca em `packages/`, `plugin-manifests/`, `build/`,
+`hooks/`, `README`, `COMMANDS`, `PATCH_PROCEDURE`, `.npmignore` ou `.github`:
+
+```bash
+rtk build/build-plugins.sh
+```
+
+O build deve regenerar:
+
+- `dist/atlas-workflow-claude.plugin`
+- `dist/atlas-workflow-codex.plugin`
+- `dist/atlas-workflow-opencode.plugin`
+- `dist/atlas-workflow-pi.plugin`
+- `dist/SHA256SUMS`
+- `plugins/atlas-workflow-orchestrator/**`
+- `hosts/opencode/**`
+- `hosts/pi/**`
+
+Esses diretorios gerados entram no commit quando mudarem.
+
+## 7. Validacao local obrigatoria
+
+Rodar, nesta ordem:
+
+```bash
+rtk node build/check-consistency.mjs
+rtk node --test packages/mcp-server/server.test.js
+rtk node build/smoke-hosts.mjs
+rtk node build/conformance-matrix.mjs
+rtk shasum -a 256 -c SHA256SUMS   # dentro de dist/
+```
+
+Validar zips:
+
+```bash
+rtk unzip -t dist/atlas-workflow-claude.plugin
+rtk unzip -t dist/atlas-workflow-codex.plugin
+rtk unzip -t dist/atlas-workflow-opencode.plugin
+rtk unzip -t dist/atlas-workflow-pi.plugin
+```
+
+Inspecionar manifests gerados:
+
+```bash
+rtk unzip -p dist/atlas-workflow-claude.plugin .claude-plugin/plugin.json
+rtk unzip -p dist/atlas-workflow-codex.plugin .codex-plugin/plugin.json
+rtk rg -n "\"version\": \"X.Y.Z\"|Plugin version:\\*\\* X.Y.Z|version: X.Y.Z|vX.Y.Z|X.Y.Z" VERSION package.json packages/mcp-server/package.json README.md COMMANDS.md CHANGELOG.md packages/orchestrator plugins hosts .claude-plugin
+```
+
+Se existir no host local:
+
+```bash
+rtk codex plugin validate ./ --strict
+rtk claude plugin validate ./ --strict
+```
+
+Se algum subcomando nao existir, registrar no relatorio final. Nao inventar PASS.
+
+## 8. Validacao npm obrigatoria
+
+Usar cache temporario para evitar cache local root-owned:
+
+```bash
+rtk env npm_config_cache=/tmp/atlas-npm-cache npm pack --dry-run --json
+rtk mkdir -p /tmp/atlas-npm-pack
+rtk env npm_config_cache=/tmp/atlas-npm-cache npm pack --pack-destination /tmp/atlas-npm-pack
+rtk env npm_config_cache=/tmp/atlas-npm-cache npm exec --yes --package /tmp/atlas-npm-pack/atlas-workflow-X.Y.Z.tgz -- atlas-workflow --help
+rtk env npm_config_cache=/tmp/atlas-npm-cache npm exec --yes --package /tmp/atlas-npm-pack/atlas-workflow-X.Y.Z.tgz -- atlas-workflow init opencode --dry-run --dir /tmp/atlas-opencode-target
+rtk env npm_config_cache=/tmp/atlas-npm-cache npm exec --yes --package /tmp/atlas-npm-pack/atlas-workflow-X.Y.Z.tgz -- atlas-workflow init codex --dry-run
+```
+
+Conferir registry antes de release:
+
+```bash
+rtk env npm_config_cache=/tmp/atlas-npm-cache npm view atlas-workflow version
+rtk env npm_config_cache=/tmp/atlas-npm-cache npm view atlas-workflow@X.Y.Z version
+```
+
+`E404` para pacote novo e aceitavel antes da primeira publicacao. Versao existente
+igual a `X.Y.Z` significa que `release.yml` deve pular publish npm por idempotencia.
+
+## 9. CI e release externo
+
+CI normal roda em push/PR:
+
+- `build/build-plugins.sh`
+- catologos from-source sem diff/untracked;
+- testes MCP;
+- smoke-hosts;
+- conformance;
+- checksums;
+- runtime MCP em Windows/macOS.
+
+Release so por tag:
+
+```bash
+rtk git tag -a vX.Y.Z -m "vX.Y.Z"
+rtk git push origin <branch>
+rtk git push origin vX.Y.Z
+```
+
+So criar/push tag quando o usuario autorizar explicitamente.
+
+O workflow `.github/workflows/release.yml` deve:
+
+1. validar `GITHUB_REF_NAME` (`vX.Y.Z`) contra `VERSION`;
+2. rodar build;
+3. extrair notas do `CHANGELOG.md` aceitando cabecalho `## X.Y.Z` ou `## vX.Y.Z`;
+4. validar `.plugin` e checksums;
+5. publicar npm com `NPM_TOKEN` + provenance;
+6. publicar GitHub Release com 4 `.plugin` + `SHA256SUMS`.
+
+Depois da tag, verificar:
+
+```bash
+rtk gh run list --workflow release.yml --limit 5
+rtk env npm_config_cache=/tmp/atlas-npm-cache npm view atlas-workflow@X.Y.Z version
+```
+
+Se `gh` nao estiver autenticado, reportar blocker externo.
+
+## 10. Relatorio final esperado
+
+Responder com:
+
+- versao final;
+- arquivos principais alterados;
+- validacoes executadas e resultado;
+- status npm/registry;
+- se tag/release foi ou nao criada;
+- blockers externos, se houver.
+
+## 11. Stop conditions
 
 Pare e corrija antes de finalizar se:
 
-- `VERSION` divergir da tag de release;
-- versao injetada divergir entre manifests gerados;
-- checksums ausentes ou invalidos;
-- artefato Claude/Cursor, Codex, opencode ou pi ausente;
-- changelog nao tiver entrada do patch;
-- pacote `.plugin` estiver desatualizado depois de mudanca no bundle;
-- release externa for necessaria sem autorizacao explicita para tag/push/publicacao.
+- `VERSION`, `package.json`, `packages/mcp-server/package.json` ou manifests concretos divergem;
+- `README`/`COMMANDS` apontam versao antiga;
+- `Plugin version` em `packages/orchestrator/README.md` ou bundles aponta versao antiga;
+- `build/check-consistency.mjs` falha;
+- teste MCP, smoke ou conformance falha;
+- checksum falha;
+- `.plugin` ausente ou zip invalido;
+- `npm pack` nao inclui `build/cli/atlas-init.mjs`, `hosts/` e `plugins/`;
+- `npm exec` do tarball nao roda o bin;
+- changelog nao tem entrada da versao;
+- release externa foi pedida mas tag/push/publicacao nao foram autorizados;
+- `main` ficaria nao instalavel.

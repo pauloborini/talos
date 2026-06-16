@@ -39,9 +39,9 @@ jobs:
         run: |
           set -euo pipefail
           version="$(tr -d '[:space:]' < VERSION)"
-          awk -v version="v${version}" '
-            $0 ~ "^## " version " - " { capture=1 }
-            capture && /^## / && $0 !~ "^## " version " - " { exit }
+          awk -v plain="${version}" -v tagged="v${version}" '
+            $0 ~ "^## (" plain "|" tagged ") - " { capture=1 }
+            capture && /^## / && $0 !~ "^## (" plain "|" tagged ") - " { exit }
             capture { print }
           ' CHANGELOG.md > dist/RELEASE_NOTES.md
           test -s dist/RELEASE_NOTES.md

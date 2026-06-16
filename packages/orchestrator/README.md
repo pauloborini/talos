@@ -220,9 +220,15 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `atlas-*` para o
 
 ---
 
-**Plugin version:** 0.8.0
+**Plugin version:** 0.8.2
 **Author:** Paulo Borini
 **Last updated:** 2026-06-15
+
+### Novidades v0.8.2 — release/npm e procedimento de bump
+
+- Pacote npm `atlas-workflow` validado como instalador multi-host (`npm pack`, `npm exec` do tarball e `.npmignore` restritivo).
+- CI de release publica npm com provenance e GitHub Release somente por tag `vX.Y.Z`, com guard de tag = `VERSION` = `package.json.version`.
+- Procedimento de patch/bump documenta o fluxo completo para IA: classificar mudança, atualizar versões, regenerar catálogos, validar CI local, checar pacote npm, taguear e verificar publicação.
 
 ### Novidades v0.8.0 — proof-of-work do validador frio (Gate G4, R20)
 
