@@ -204,6 +204,7 @@ Destaques:
 - **MCP renumera os âncoras do scan** (`PRD_PATTERNS`/`SECTION_HEADING`/`SECTION_LABELS`/`REQUIRED_PRD_SECTIONS`): objetivo→§1, escopo→§2, decisões→§3, fluxos→§4, contrato→§5; conformância exige §1–§6 + 4 grupos de aceite + ≥1 checkbox + status.
 - **Cross-refs remapeados** em `atlas-plan-handoff`, `atlas-task-validator`, `atlas-plan-execute` (+`plan-contract.md`), `atlas-prd-interview`, orquestrador (scan), `BOUNDARY_PRD_PLAN.md`, `PLAN_TEMPLATE.md`: `PRD §5→§3`, `§8–10→§4–6`, `§9→§5`, `§13→§7`.
 - **Disciplina do executor + validador** (do mesmo ciclo de trabalho): `pass`/`pass_with_observations` estritamente terminais (só `fail` reabre o loop); dispatch do validador é blocking — gates locais antes, espera ociosa depois.
+- **Rigor determinístico do `atlas-task-validator`:** severidade alinhada com `atlas-slice-review` (`P0/P1/P2/P3`) e regra mecânica de veredito (`P0/P1 => fail`, `P2 => pass_with_observations`, `P3 => pass`). Fecha falso-verde em que o modelo podia devolver `pass` com finding bloqueante no array.
 
 Migração: **corte limpo, sem período de tolerância.** PRDs antigos precisam ser reescritos no modelo novo (este CHANGELOG + `PRD_TEMPLATE.md` são o guia). Conformance: 54 testes verdes; `check-consistency`, build dos 4 bundles e `plugin validate --strict` verdes.
 

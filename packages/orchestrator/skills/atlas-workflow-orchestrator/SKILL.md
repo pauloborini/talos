@@ -286,7 +286,7 @@ Status:
   ✅ Plano generated [MCP: atlas_verify_artifact + atlas_verify_template_conformance]
   ✅ Dispatch plan_execute: passed [MCP: atlas_lock_dispatch / G7+G8]
   ✅ After plan: passed [MCP: atlas_assert_after_plan / G11]
-  ✅ Validador frio: P1=0 P2=1 P3=2 [executor + task-validator]
+  ✅ Validador frio: P0=0 P1=0 P2=1 P3=2 [executor + task-validator]
   ⏭️  Slice review: not applicable [MCP source: mode/flag]
   ✅ Guarantee level: full_pipeline [MCP: atlas_preflight / D12]
 

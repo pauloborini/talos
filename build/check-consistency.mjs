@@ -38,8 +38,8 @@ function verdictBlock(text, label) {
 // pode legitimamente variar de idioma entre o agente Claude e o SKILL.md).
 function severitySet(text, label) {
   if (text == null) return null;
-  const codes = new Set([...text.matchAll(/`(P[123])`/g)].map(m => m[1]));
-  const missing = ['P1', 'P2', 'P3'].filter(c => !codes.has(c));
+  const codes = new Set([...text.matchAll(/`(P[0-3])`/g)].map(m => m[1]));
+  const missing = ['P0', 'P1', 'P2', 'P3'].filter(c => !codes.has(c));
   if (missing.length) { errors.push(`${label}: Severity Model sem ${missing.join('/')}`); return null; }
   return [...codes].sort().join(',');
 }
