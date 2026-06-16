@@ -105,18 +105,14 @@ test('capabilities: schema_version atual e campos do contrato v5', () => {
   assert.deepEqual(cap.known_hosts, HOST_NAMES);
 });
 
-test('capabilities: validator_dispatch de todos os hosts expõe exatamente { dispatcher, join } (sibling-only, sem campos de topologia legada)', () => {
+test('capabilities: validator_dispatch de todos os hosts expõe dispatcher/join; Codex adiciona contrato explícito do validator', () => {
   for (const host of HOST_NAMES) {
     const cap = capabilities({ host });
-    // Guard de forma: o contrato sibling-only tem APENAS estas duas chaves.
-    // Provar o conjunto exato garante que quaisquer campos de topologia legada
-    // (dispatcher por executor, flags de subagente-do-executor, loop de reparo
-    // embutido) sumiram do contrato sem precisar nomeá-los.
-    assert.deepEqual(
-      Object.keys(cap.validator_dispatch).sort(),
-      ['dispatcher', 'join'],
-      `host ${host}: validator_dispatch deve ter exatamente { dispatcher, join }`,
-    );
+    // Guard de forma: sibling-only exige dispatcher/join em todos os hosts.
+    // Codex adiciona metadados explícitos do custom agent; consumidores devem
+    // ignorar campos aditivos fora do mínimo portável.
+    assert.ok('dispatcher' in cap.validator_dispatch, `host ${host}: dispatcher ausente`);
+    assert.ok('join' in cap.validator_dispatch, `host ${host}: join ausente`);
     assert.equal(cap.validator_dispatch.dispatcher, 'orchestrator', `host ${host}`);
   }
 });
@@ -147,7 +143,9 @@ test('capabilities: perfil codex usa subagent nativo, não $skill in-context', (
   assert.doesNotMatch(cap.subagent_dispatch.example, /\$atlas/);
   assert.equal(cap.capabilities_flags.subagent_available, true);
   assert.equal(cap.validator_dispatch.dispatcher, 'orchestrator');
-  assert.deepEqual(Object.keys(cap.validator_dispatch).sort(), ['dispatcher', 'join']);
+  assert.equal(cap.validator_dispatch.required_agent_type, 'atlas-task-validator');
+  assert.equal(cap.validator_dispatch.required_codex_model, 'gpt-5.4');
+  assert.equal(cap.validator_dispatch.required_codex_model_reasoning_effort, 'high');
 });
 
 test('checkPrerequisites: opencode qualificado passa', () => {

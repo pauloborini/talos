@@ -183,14 +183,17 @@ const HOST_ADAPTERS = {
     subagent_dispatch: {
       mechanism: 'spawn_agent(agent_type)',
       example: 'spawn_agent(agent_type: "atlas-task-validator", items: [{ type: "text", text: "<state_path>" }])',
-      registration: '.codex/agents/<name>.toml (custom agent nativo; developer_instructions carrega o SKILL.md)',
+      registration: '.codex/agents/<name>.toml (custom agent nativo; developer_instructions carrega o SKILL.md; atlas-task-validator pinado em model=gpt-5.4, model_reasoning_effort=high)',
     },
     validator_dispatch: {
       dispatcher: 'orchestrator',
+      required_agent_type: 'atlas-task-validator',
+      required_codex_model: 'gpt-5.4',
+      required_codex_model_reasoning_effort: 'high',
       join: {
         sync: 'self_evident',
         confidence: 'confirmed',
-        mechanism: 'spawn_agent bloqueante; retorno via state_path + veredito',
+        mechanism: 'spawn_agent bloqueante; retorno via state_path + veredito; no Codex deve usar explicitamente agent_type="atlas-task-validator"',
       },
     },
     todo_tool: 'tasks',
