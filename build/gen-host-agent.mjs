@@ -58,6 +58,16 @@ const PI_TOOLS = {
   'atlas-direct-execute': 'read, write, edit, grep, find, ls, bash',
 };
 
+// Codex custom agents can pin model/runtime knobs per agent. Only the cold
+// validator is pinned here: the user-facing contract is higher reasoning for
+// validation, without changing executor/review defaults.
+const CODEX_AGENT_OVERRIDES = {
+  'atlas-task-validator': {
+    model: 'gpt-5.4',
+    model_reasoning_effort: 'high',
+  },
+};
+
 let header;
 if (host === 'opencode') {
   // opencode: .opencode/agents/<name>.md — frontmatter description + mode: subagent.
@@ -71,9 +81,11 @@ if (host === 'opencode') {
 } else if (host === 'codex') {
   // Codex: .codex/agents/<name>.toml custom agents. Keep the canonical shim body
   // as developer_instructions; Codex loads custom agents as spawned sessions.
+  const overrides = CODEX_AGENT_OVERRIDES[name] || {};
   const lines = [
     `name = ${JSON.stringify(name)}`,
     `description = ${JSON.stringify(description)}`,
+    ...Object.entries(overrides).map(([key, value]) => `${key} = ${JSON.stringify(value)}`),
     `developer_instructions = ${JSON.stringify(body.trim())}`,
   ];
   header = lines.join('\n');
