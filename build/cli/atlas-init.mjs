@@ -2,11 +2,13 @@
 // Atlas Workflow — instalador unificado por host.
 //   npx github:pauloborini/atlas-workflow init <host> [dir] [flags]
 //
-// Hosts: claudecode|cursor (via `claude plugin`), codex (via `codex plugin`),
+// Hosts: claudecode|cursor (via `claude plugin`), codex (via `codex plugin` +
+//        custom agents globais),
 //        opencode (config + .opencode/), pi (config + .pi/agents/).
 // Sem dependências externas (Node puro). Roda direto do checkout do repo (npx-from-GitHub).
 //
-// claude/codex: orquestra o instalador NATIVO da CLI (marketplace from-source no GitHub).
+// claude: orquestra o instalador NATIVO da CLI (marketplace from-source no GitHub).
+// codex: orquestra o instalador nativo + copia custom agents para CODEX_HOME/agents.
 // opencode/pi: coloca o catálogo from-source committed (hosts/<host>/) no diretório alvo.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -66,18 +68,18 @@ function rmAtlasSkillsQuiet(skillsDir, opts) {
 
 // Remove todos os agentes Atlas despachados (validator + executores + review), não só
 // o validator — senão upgrade deixa órfãos e install global só copia o validator.
-function rmAtlasAgentsQuiet(agentsDir, opts) {
+function rmAtlasAgentsQuiet(agentsDir, opts, exts = ['.md']) {
   if (!fs.existsSync(agentsDir)) return;
   for (const name of fs.readdirSync(agentsDir)) {
-    if (name.startsWith('atlas-') && name.endsWith('.md')) rmPath(path.join(agentsDir, name), opts);
+    if (name.startsWith('atlas-') && exts.some((ext) => name.endsWith(ext))) rmPath(path.join(agentsDir, name), opts);
   }
 }
 
 // Copia todos os agentes atlas-*.md de srcDir para destDir (install global flatten).
-function copyAtlasAgents(srcDir, destDir) {
+function copyAtlasAgents(srcDir, destDir, exts = ['.md']) {
   fs.mkdirSync(destDir, { recursive: true });
   for (const name of fs.readdirSync(srcDir)) {
-    if (name.startsWith('atlas-') && name.endsWith('.md')) {
+    if (name.startsWith('atlas-') && exts.some((ext) => name.endsWith(ext))) {
       fs.copyFileSync(path.join(srcDir, name), path.join(destDir, name));
     }
   }
@@ -246,7 +248,17 @@ function installCodex(opts) {
   log(`instalando Atlas (codex) via marketplace from-source @ ${REPO_SLUG}`);
   if (run('codex', ['plugin', 'marketplace', 'add', REPO_SLUG], opts)) fail('falha no `codex plugin marketplace add`');
   if (run('codex', ['plugin', 'add', PLUGIN_ID], opts)) fail('falha no `codex plugin add`');
-  log('ok — Codex instalado (skills + subagente + MCP).');
+  const codexHome = process.env.CODEX_HOME?.trim() || path.join(homedir(), '.codex');
+  const agentsDir = path.join(codexHome, 'agents');
+  const srcAgents = path.join(ROOT, 'plugins/atlas-workflow-orchestrator/.codex/agents');
+  if (!fs.existsSync(srcAgents)) fail('agentes Codex ausentes no catálogo: plugins/atlas-workflow-orchestrator/.codex/agents (rode build/build-plugins.sh)');
+  if (opts.dryRun) {
+    log(`  [dry-run] copiaria custom agents Codex → ${agentsDir}`);
+  } else {
+    rmAtlasAgentsQuiet(agentsDir, opts, ['.toml']);
+    copyAtlasAgents(srcAgents, agentsDir, ['.toml']);
+  }
+  log(`ok — Codex instalado (skills + MCP + custom agents em ${agentsDir}).`);
 }
 
 function installOpencode(targetDir, opts) {
@@ -442,13 +454,15 @@ function uninstallCodex(opts) {
   log('removendo Atlas (codex)');
   run('codex', ['plugin', 'remove', PLUGIN_ID], opts);
   run('codex', ['plugin', 'marketplace', 'remove', 'atlas-workflow'], opts);
+  const codexHome = process.env.CODEX_HOME?.trim() || path.join(homedir(), '.codex');
+  rmAtlasAgentsQuiet(path.join(codexHome, 'agents'), opts, ['.toml']);
   log('ok — removido do Codex.');
 }
 
 function uninstallOpencode(targetDir, opts) {
   log(`removendo Atlas (opencode) de ${targetDir}`);
   rmIfExists(path.join(targetDir, '.opencode/atlas'), opts);
-  rmIfExists(path.join(targetDir, '.opencode/agents/atlas-task-validator.md'), opts);
+  rmAtlasAgentsQuiet(path.join(targetDir, '.opencode/agents'), opts);
   rmAtlasSkills(path.join(targetDir, '.opencode/skills'), opts);
   dropMcpKey(path.join(targetDir, 'opencode.json'), 'mcp', 'atlas-workflow', opts);
   log('ok — artefatos do Atlas removidos (config/skills do usuário preservados).');
@@ -457,7 +471,7 @@ function uninstallOpencode(targetDir, opts) {
 function uninstallPi(targetDir, opts) {
   log(`removendo Atlas (pi) de ${targetDir}`);
   rmIfExists(path.join(targetDir, 'atlas'), opts);
-  rmIfExists(path.join(targetDir, '.pi/agents/atlas-task-validator.md'), opts);
+  rmAtlasAgentsQuiet(path.join(targetDir, '.pi/agents'), opts);
   rmAtlasSkills(path.join(targetDir, 'skills'), opts);
   dropMcpKey(path.join(targetDir, '.mcp.json'), 'mcpServers', 'atlas-workflow', opts);
   log('ok — artefatos do Atlas removidos. As deps pi-mcp-adapter/pi-subagents ficam (uso geral);');
@@ -468,7 +482,7 @@ function uninstallOpencodeGlobal(opts) {
   const root = opencodeGlobalRoot();
   log(`removendo Atlas (opencode) GLOBAL de ${root}`);
   rmIfExists(path.join(root, 'atlas'), opts);
-  rmIfExists(path.join(root, 'agents/atlas-task-validator.md'), opts);
+  rmAtlasAgentsQuiet(path.join(root, 'agents'), opts);
   rmAtlasSkills(path.join(root, 'skills'), opts);
   dropMcpKey(opencodeWritableConfigFile(root), 'mcp', 'atlas-workflow', opts);
   log('ok — artefatos globais do Atlas removidos (config/skills do usuário preservados).');
@@ -478,7 +492,7 @@ function uninstallPiGlobal(opts) {
   const agentDir = piAgentDir();
   log(`removendo Atlas (pi) GLOBAL de ${agentDir}`);
   rmIfExists(path.join(agentDir, 'atlas'), opts);
-  rmIfExists(path.join(piGlobalAgentsDir(), 'atlas-task-validator.md'), opts);
+  rmAtlasAgentsQuiet(piGlobalAgentsDir(), opts);
   rmAtlasSkills(path.join(agentDir, 'skills'), opts);
   dropMcpKey(path.join(agentDir, 'mcp.json'), 'mcpServers', 'atlas-workflow', opts);
   log('ok — artefatos globais do Atlas removidos. As deps pi-mcp-adapter/pi-subagents ficam (uso geral).');
@@ -493,7 +507,7 @@ uso:
 
 hosts:
   claudecode | cursor   via \`claude plugin\` (marketplace from-source; já global)
-  codex                 via \`codex plugin\` (marketplace from-source; já global)
+  codex                 via \`codex plugin\` + custom agents em CODEX_HOME/agents
   opencode              por-projeto: .opencode/ + opencode.json no [dir]
                         --global: ~/.config/opencode/ (vale em todos os projetos)
   pi                    por-projeto: .mcp.json + .pi/agents/ no [dir] + deps

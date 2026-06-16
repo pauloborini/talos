@@ -12,9 +12,8 @@ Instalador único via **npx-from-GitHub** (não precisa clonar o repo).
 claude plugin marketplace update atlas-workflow
 claude plugin update atlas-workflow-orchestrator@atlas-workflow
 
-# Codex — refresh do snapshot GitHub + reinstalar plugin (não existe `plugin update`)
-codex plugin marketplace upgrade atlas-workflow
-codex plugin add atlas-workflow-orchestrator@atlas-workflow
+# Codex — recomendado: reinstala plugin + custom agents em CODEX_HOME/agents
+npx github:pauloborini/atlas-workflow init codex
 
 # opencode / pi — reinstalar pega runtime novo (mesmo comando do init)
 npx github:pauloborini/atlas-workflow init opencode --global
@@ -106,9 +105,8 @@ Abra a CLI no host e chame as tools:
 claude plugin marketplace add pauloborini/atlas-workflow
 claude plugin install atlas-workflow-orchestrator@atlas-workflow
 
-# Codex
-codex plugin marketplace add pauloborini/atlas-workflow
-codex plugin add atlas-workflow-orchestrator@atlas-workflow
+# Codex (garante agent_type atlas-* para spawn_agent)
+npx github:pauloborini/atlas-workflow init codex
 ```
 
 Atualizar (claude/codex):
@@ -118,9 +116,8 @@ Atualizar (claude/codex):
 claude plugin marketplace update atlas-workflow
 claude plugin update atlas-workflow-orchestrator@atlas-workflow
 
-# Codex (upgrade + add — não há `plugin update`)
-codex plugin marketplace upgrade atlas-workflow
-codex plugin add atlas-workflow-orchestrator@atlas-workflow
+# Codex (reinstala plugin + custom agents)
+npx github:pauloborini/atlas-workflow init codex
 ```
 
 Alternativa equivalente para qualquer host com npx: `npx github:pauloborini/atlas-workflow init <host>`.

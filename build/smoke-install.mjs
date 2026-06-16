@@ -56,6 +56,43 @@ esac
   return { PATH: `${bin}${path.delimiter}${process.env.PATH}`, PI_MOCK_STATE: state };
 }
 
+function makeCodexMock() {
+  const bin = path.join(TMP, `bin-codex-${Math.random().toString(16).slice(2)}`);
+  fs.mkdirSync(bin, { recursive: true });
+  const logFile = path.join(bin, 'codex-calls.txt');
+  const script = path.join(bin, 'codex');
+  fs.writeFileSync(script, `#!/usr/bin/env sh
+set -eu
+echo "$*" >> "${logFile}"
+case "$1 $2" in
+  "plugin marketplace"|"plugin add"|"plugin remove") exit 0 ;;
+  *) exit 2 ;;
+esac
+`);
+  fs.chmodSync(script, 0o755);
+  return { PATH: `${bin}${path.delimiter}${process.env.PATH}`, CODEX_MOCK_LOG: logFile };
+}
+
+// codex: plugin install não basta para garantir agent_type; init também copia os
+// custom agents Atlas para CODEX_HOME/agents, que é o caminho nativo do Codex.
+{
+  const codexHome = path.join(TMP, 'codex-home');
+  const env = { ...makeCodexMock(), CODEX_HOME: codexHome };
+  const r = run(['init', 'codex'], env);
+  assert(r.status === 0, `codex init falhou: ${r.stderr || r.stdout}`);
+  assert(exists(path.join(codexHome, 'agents/atlas-task-validator.toml')), 'codex não instalou atlas-task-validator.toml em CODEX_HOME/agents');
+  assert(exists(path.join(codexHome, 'agents/atlas-plan-execute.toml')), 'codex não instalou atlas-plan-execute.toml em CODEX_HOME/agents');
+  assert(exists(path.join(codexHome, 'agents/atlas-findings-repair.toml')), 'codex não instalou atlas-findings-repair.toml em CODEX_HOME/agents');
+  const validator = fs.readFileSync(path.join(codexHome, 'agents/atlas-task-validator.toml'), 'utf8');
+  assert(validator.includes('name = "atlas-task-validator"'), 'codex validator sem name correto');
+  assert(validator.includes('model = "gpt-5.4"'), 'codex validator sem model pinado');
+  assert(validator.includes('model_reasoning_effort = "high"'), 'codex validator sem reasoning pinado');
+  const u = run(['uninstall', 'codex'], env);
+  assert(u.status === 0, `codex uninstall falhou: ${u.stderr || u.stdout}`);
+  assert(!exists(path.join(codexHome, 'agents/atlas-task-validator.toml')), 'codex uninstall manteve validator');
+  assert(!exists(path.join(codexHome, 'agents/atlas-plan-execute.toml')), 'codex uninstall manteve executor');
+}
+
 // opencode local: update remove stale Atlas e preserva config/skills do usuário.
 {
   const dir = path.join(TMP, 'opencode-local');
@@ -78,6 +115,7 @@ esac
   assert(exists(path.join(dir, '.opencode/agents/atlas-slice-review.md')), 'opencode local não instalou agente atlas-slice-review');
   const u = run(['uninstall', 'opencode', '--dir', dir]);
   assert(u.status === 0, `opencode local uninstall falhou: ${u.stderr || u.stdout}`);
+  assert(!exists(path.join(dir, '.opencode/agents/atlas-plan-execute.md')), 'opencode uninstall manteve agente executor');
   assert(exists(path.join(dir, '.opencode/skills/user-skill')), 'opencode uninstall removeu skill do usuário');
   assert(json(path.join(dir, 'opencode.json')).mcp.other, 'opencode uninstall perdeu mcp do usuário');
 }
@@ -154,6 +192,7 @@ esac
   const u = run(['uninstall', 'pi', '--global'], env);
   assert(u.status === 0, `pi global uninstall falhou: ${u.stderr || u.stdout}`);
   assert(!exists(path.join(agentDir, 'atlas')), 'pi global uninstall manteve runtime');
+  assert(!exists(path.join(agentDir, 'agents/atlas-plan-execute.md')), 'pi global uninstall manteve agente executor');
 }
 
 // Parser de flags.

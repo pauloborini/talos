@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write   # habilita --provenance no npm publish (linka release ↔ pacote)
 
 jobs:
   build-release:
@@ -14,6 +15,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
 
       - name: Validate tag matches VERSION
         shell: bash
@@ -49,6 +56,35 @@ jobs:
           done
           test -f dist/SHA256SUMS
           (cd dist && shasum -a 256 -c SHA256SUMS)
+
+      - name: Publish to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Lê name + version do package.json canônico (fonte única = VERSION).
+          eval "$(node -e "const p=require('./package.json'); process.stdout.write(\`name=\${JSON.stringify(p.name)}\nversion=\${JSON.stringify(p.version)}\nprivate=\${JSON.stringify(!!p.private)}\n\`);")"
+          if [ "$private" = "true" ]; then
+            echo "::error::package.json tem private:true; recusando publicar." >&2
+            exit 1
+          fi
+          # Garante que a versão a publicar é a mesma da tag (defesa em profundidade
+          # — o step 'Validate tag matches VERSION' já checa VERSION, mas o npm
+          # publica do package.json, então amarramos os dois).
+          tag_version="${GITHUB_REF_NAME#v}"
+          if [ "$version" != "$tag_version" ]; then
+            echo "::error::package.json version ($version) difere da tag ($tag_version)." >&2
+            exit 1
+          fi
+          # Idempotência: se a versão já está publicada (re-run após falha parcial
+          # no GH release), pula. npm publish rejeita re-publish de mesma versão.
+          existing="$(npm view "${name}@${version}" version 2>/dev/null || true)"
+          if [ "$existing" = "$version" ]; then
+            echo "::notice::${name}@${version} já publicado; pulando npm publish."
+          else
+            npm publish --provenance --access public
+          fi
 
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
