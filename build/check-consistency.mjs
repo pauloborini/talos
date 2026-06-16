@@ -25,6 +25,12 @@ function agentText(rel) {
   try { return JSON.parse(m[1]); } catch { errors.push(`${rel}: developer_instructions inválido`); return text; }
 }
 
+function tomlStringValue(text, key) {
+  const m = text.match(new RegExp(`^${key}\\s*=\\s*(".*")$`, 'm'));
+  if (!m) return null;
+  try { return JSON.parse(m[1]); } catch { return null; }
+}
+
 // Extrai o bloco ```json que contém "verdict", normalizado (sem espaços).
 function verdictBlock(text, label) {
   if (text == null) return null;
@@ -38,8 +44,8 @@ function verdictBlock(text, label) {
 // pode legitimamente variar de idioma entre o agente Claude e o SKILL.md).
 function severitySet(text, label) {
   if (text == null) return null;
-  const codes = new Set([...text.matchAll(/`(P[123])`/g)].map(m => m[1]));
-  const missing = ['P1', 'P2', 'P3'].filter(c => !codes.has(c));
+  const codes = new Set([...text.matchAll(/`(P[0-3])`/g)].map(m => m[1]));
+  const missing = ['P0', 'P1', 'P2', 'P3'].filter(c => !codes.has(c));
   if (missing.length) { errors.push(`${label}: Severity Model sem ${missing.join('/')}`); return null; }
   return [...codes].sort().join(',');
 }
@@ -111,6 +117,34 @@ for (const rel of [
   const hostVerdict = verdictBlock(hostAgent, rel);
   if (aVerdict && hostVerdict && aVerdict !== hostVerdict) {
     errors.push(`M3 drift: veredito de ${rel} difere do canônico agents/atlas-task-validator.md (rode build/build-plugins.sh)`);
+  }
+}
+
+// Codex validator precisa ser custom agent explícito e pinado. Sem isso, o host
+// pode cair em agent default/skill in-context, quebrando a validação fria G4.
+const codexValidatorRel = 'plugins/atlas-workflow-orchestrator/.codex/agents/atlas-task-validator.toml';
+const codexValidatorRaw = read(codexValidatorRel);
+if (codexValidatorRaw != null) {
+  const expected = {
+    name: 'atlas-task-validator',
+    model: 'gpt-5.4',
+    model_reasoning_effort: 'high',
+  };
+  for (const [key, want] of Object.entries(expected)) {
+    const got = tomlStringValue(codexValidatorRaw, key);
+    if (got !== want) {
+      errors.push(`Codex validator config: ${codexValidatorRel} ${key} (${got ?? 'ausente'}) != ${want}`);
+    }
+  }
+}
+for (const rel of [
+  'agents/atlas-task-validator.md',
+  'hosts/opencode/.opencode/agents/atlas-task-validator.md',
+  'hosts/pi/.pi/agents/atlas-task-validator.md',
+]) {
+  const raw = read(rel);
+  if (raw != null && /gpt-5\.4|model_reasoning_effort/.test(raw)) {
+    errors.push(`Codex-only model pin vazou para host não-Codex: ${rel}`);
   }
 }
 

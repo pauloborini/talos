@@ -1,9 +1,9 @@
 ---
 name: atlas-task-validator
-description: Validador frio de slice executada por atlas-plan-execute ou atlas-direct-execute. Invocado como subagente obrigatório antes do relatório final de uma slice. Recebe apenas state_path, lê o boundary da slice e o plano, compara código real vs contrato e retorna findings P1/P2/P3 estruturados com veredito JSON determinístico. Não corrige código. Não propõe diff.
+description: Validador frio de slice executada por atlas-plan-execute ou atlas-direct-execute. Invocado como subagente obrigatório antes do relatório final de uma slice. Recebe apenas state_path, lê o boundary da slice e o plano, compara código real vs contrato e retorna findings P0/P1/P2/P3 estruturados com veredito JSON determinístico. Não corrige código. Não propõe diff.
 tools: Read, Grep, Glob, Bash
 model: sonnet
-effort: medium
+effort: high
 ---
 
 # Atlas Task Validator
@@ -90,7 +90,7 @@ Retorne JSON estrito como output final. Não envolva em Markdown e não anteceda
   "challenge_response": "string (sha256 hex do challenge.file; null se sem challenge)",
   "verdict": "pass | fail | pass_with_observations",
   "findings": [
-    { "severity": "P1|P2|P3", "file": "string", "line": 0, "msg": "string" }
+    { "severity": "P0|P1|P2|P3", "file": "string", "line": 0, "msg": "string" }
   ],
   "observations": [
     { "file": "string", "line": 0, "msg": "string" }
@@ -105,6 +105,19 @@ Retorne JSON estrito como output final. Não envolva em Markdown e não anteceda
 
 ## Severity Model
 
-* `P1`: fluxo primário quebrado, violação de invariante crítico da Section 2, id/contexto obrigatório inválido, proteção server-side ausente em mutação sensível.
+Escala alinhada com `atlas-slice-review` (`P0/P1/P2/P3`).
+
+* `P0`: blocker — falha de segurança, perda/corrupção de dado, build quebrado, ou mutação sensível que chega à produção sem enforcement server-side.
+* `P1`: fluxo primário quebrado, violação de invariante crítico da Section 2, id/contexto obrigatório inválido.
 * `P2`: gap de cenário, vazamento de state lifecycle, mitigação ausente em caminho de falha relevante.
 * `P3`: inconsistência de baixo risco, item de limpeza.
+
+## Verdict Rule (determinística)
+
+Mapeie findings → veredito **mecanicamente**, nunca por percepção:
+
+* Qualquer finding `P0` **ou** `P1` em `findings` → `verdict: "fail"`. Sem exceção.
+* Sem `P0`/`P1`, mas um ou mais `P2` → `verdict: "pass_with_observations"`.
+* Só `P3` (ou zero findings) → `verdict: "pass"`.
+
+`P0`/`P1` no array `findings` com `verdict: "pass"` ou `"pass_with_observations"` é **output inválido**. Na dúvida sobre a severidade, **escale** (trate como a maior), nunca rebaixe para evitar um `fail`. Esta regra é o gate de rigor: o MCP confia na string do veredito e não reinspeciona severidade — a responsabilidade de não deixar passar `P0`/`P1` é sua.

@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.8.1 - 2026-06-15
+
+Tipo: **patch de confiabilidade de contrato** (só SKILL do orquestrador + command `/workflow`). **Sem código MCP**, **sem mudança de schema** (`CAPABILITIES_SCHEMA_VERSION` segue **v5**), **sem novos testes** (mudança documental/contratual). Origem: relato de **pausa indevida** no pipeline — o orquestrador parava pra pedir confirmação ("Quer que eu gere o PRD?", "Modo Discussão — sem alterar código") que o contrato não exige; em hosts com modelo diferente (ex.: Cursor) o mesmo plugin não parava. Causa-raiz: o SKILL definia **onde parar** (gates) mas nunca o default **"não parar"**, e um modelo de raciocínio alto preenchia o silêncio com confirmação educada.
+
+Contrato (SKILL `atlas-workflow-orchestrator`):
+- **Nova seção "Princípio de continuação automática (não-parada)".** Pipeline é **fire-and-continue**: uma vez iniciado, avança fase a fase sem pedir permissão entre gates. A única parada é **gate duro `blocked`** (PREREQ/DEP/G1–G11/TC) ou **blockage de ambiente real** (MCP morto, sub-agent não despachável, lock conflict, artefato corrompido). Proíbe explicitamente: confirmação discricionária ("posso seguir?", "continuo?", "quer que eu gere?"), inventar modo fora do contrato (**"Modo Discussão"/"modo análise"/"dry-run" não existem**), e parar por decisão em aberto. PRD ausente em `full`/`direct` **gera automático**. Pós-entrevista **retoma** plano→execução sem nova confirmação.
+- **"Decisão em aberto ≠ parada" (reescreve "Lógica de decisão").** Decisão pendente de **qualquer fonte** (scan de PRD, entrevista, `PERGUNTAS_EM_ABERTO.md`, doc de discussão/decisões `DISCUSSAO_*.md`, ou o próprio backlog) **não bloqueia**: dispara `atlas-prd-interview`, propaga ao PRD/plano/DEC/registro de origem e **continua**. **Sequência travada:** em `full`/`direct`, se não há PRD, gera o PRD draft **primeiro** (entrevista é PRD-scoped, roda **sobre** o PRD — detectar decisão não antecipa nem pula a geração). Removido o menu "A) resolver / B) seguir com TBD / C) adiar" e o "responda só: seguir com recomendação ou D=..." como pontos de parada — default é gerar PRD, resolver via entrevista e seguir; adiar só por pedido explícito do usuário. Origem do refino: repro real em 0.8.0 (Codex full backlog-item S40) parou com menu de decisões `DISCUSSAO_ENDPOINT_JORNADA.md` sem puxar a entrevista.
+- **`PERGUNTAS_EM_ABERTO.md` deixou de ser parada.** Q- aberta relacionada à sprint **não é blockage** — vira entrevista + propagação + continuação (antes: "informa ao usuário e para/aguarda decisão").
+- **Novo Gate DEP** (tabela de gates duros + check na Fase 0): se o input é `backlog-item` e uma `Dependência` declarada não está `done` no backlog/registro de origem, **hard-fail determinístico** em `ready` (`unmet_dependencies`, causa, `next_action`) — sem pergunta, sem improviso. Distinto de decisão em aberto (que não bloqueia).
+
+Command `/workflow`: reforça fire-and-continue e proíbe "Modo Discussão"/pedido de permissão; aponta para "Princípio de continuação automática".
+
+Sincronização: edição no canônico `packages/orchestrator/{skills,commands}`; `build/build-plugins.sh` regenera `plugins/atlas-workflow-orchestrator/`, `hosts/opencode/` e `hosts/pi/`. `check-consistency` ok, `plugin validate --strict` ok.
+
 ## 0.8.0 - 2026-06-15
 
 Tipo: **feature de determinismo** (novo mecanismo de gate). **Sem breaking de contrato `atlas_capabilities`** (`CAPABILITIES_SCHEMA_VERSION` segue **v5**); adiciona enforcement novo ao Gate G4. Origem: P1.1 camada 1 do relatório de melhorias.
@@ -190,6 +204,7 @@ Destaques:
 - **MCP renumera os âncoras do scan** (`PRD_PATTERNS`/`SECTION_HEADING`/`SECTION_LABELS`/`REQUIRED_PRD_SECTIONS`): objetivo→§1, escopo→§2, decisões→§3, fluxos→§4, contrato→§5; conformância exige §1–§6 + 4 grupos de aceite + ≥1 checkbox + status.
 - **Cross-refs remapeados** em `atlas-plan-handoff`, `atlas-task-validator`, `atlas-plan-execute` (+`plan-contract.md`), `atlas-prd-interview`, orquestrador (scan), `BOUNDARY_PRD_PLAN.md`, `PLAN_TEMPLATE.md`: `PRD §5→§3`, `§8–10→§4–6`, `§9→§5`, `§13→§7`.
 - **Disciplina do executor + validador** (do mesmo ciclo de trabalho): `pass`/`pass_with_observations` estritamente terminais (só `fail` reabre o loop); dispatch do validador é blocking — gates locais antes, espera ociosa depois.
+- **Rigor determinístico do `atlas-task-validator`:** severidade alinhada com `atlas-slice-review` (`P0/P1/P2/P3`) e regra mecânica de veredito (`P0/P1 => fail`, `P2 => pass_with_observations`, `P3 => pass`). Fecha falso-verde em que o modelo podia devolver `pass` com finding bloqueante no array.
 
 Migração: **corte limpo, sem período de tolerância.** PRDs antigos precisam ser reescritos no modelo novo (este CHANGELOG + `PRD_TEMPLATE.md` são o guia). Conformance: 54 testes verdes; `check-consistency`, build dos 4 bundles e `plugin validate --strict` verdes.
 
