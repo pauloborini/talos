@@ -33,7 +33,8 @@ npx github:pauloborini/atlas-workflow init opencode --global
 npx github:pauloborini/atlas-workflow init pi --global --yes  # --yes auto-instala as 2 deps
 ```
 
-- **claudecode/cursor** e **codex**: o instalador roda o `marketplace add` + `install`/`add` nativos da CLI por você. Já são globais por natureza (registro da CLI vale em todos os projetos).
+- **claudecode/cursor**: o instalador roda o `marketplace add` + `install` nativos da CLI por você. Já são globais por natureza.
+- **codex**: o instalador roda `marketplace add` + `plugin add` e também copia os custom agents Atlas para `CODEX_HOME/agents` (`~/.codex/agents` se `CODEX_HOME` não estiver definido). Este é o caminho garantido para `spawn_agent(agent_type: "atlas-*")`.
 - **opencode**: com `--global`, instala globalmente em `~/.config/opencode/` (o MCP é registrado com caminho absoluto, funcionando em todos os projetos).
 - **pi**: com `--global`, instala globalmente em `~/.pi/agent/` (honra `PI_CODING_AGENT_DIR`), registra o MCP em `mcp.json` global e checa/instala as deps `pi-mcp-adapter` + `pi-subagents`.
 
@@ -67,9 +68,10 @@ claude plugin install atlas-workflow-orchestrator@atlas-workflow
 ### Codex App
 
 ```bash
-codex plugin marketplace add pauloborini/atlas-workflow
-codex plugin add atlas-workflow-orchestrator@atlas-workflow
+npx github:pauloborini/atlas-workflow init codex
 ```
+
+Evite instalar Codex só com `codex plugin add`: o plugin expõe skills/MCP, mas custom agents podem não ser registrados como `agent_type` pelo host. O `init codex` instala ambos.
 
 > Para instruções de instalação manual e de baixo nível em hosts como **opencode** e **pi cli**, consulte o **[COMMANDS.md](COMMANDS.md)**.
 
