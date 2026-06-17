@@ -234,15 +234,7 @@ Entrada: um **`PLAN_*.md` pronto**. Artefatos esperados: (plano já existe) → 
 
 ## Validação automática de PRD
 
-O scan é **determinístico**. Marca ambiguidade quando uma seção contém qualquer padrão abaixo (lista canônica embutida no MCP):
-
-- **§1 Contexto e objetivo:** `TBD`, `a confirmar`, `talvez`, `não definido`
-- **§2 Escopo:** `pode ser`, `depende de`, `ainda não`, `incompleto`
-- **§3 Decisões:** vazio/conteúdo mínimo, `vago`
-- **§4 Fluxos e cenários UX:** `a definir`, `gap`, `depende de`
-- **§5 Contrato funcional e invariantes:** `ainda não definido`, `mock apenas`, `a confirmar`
-
-Antes de contar bloqueantes, aplicar exclusões estreitas do config (`exclude_if_line_contains`, hoje `depende de plano`) para frases de sucesso/resultado que descrevem dependência operacional já planejada. Não usar julgamento livre: a exclusão precisa estar no config e ser logada.
+O scan é **determinístico** e roda **dentro do MCP** (`atlas_scan_prd`): a lista canônica de padrões §1-§5 e as exclusões de config (`exclude_if_line_contains`) são embutidas e mantidas no servidor — o orquestrador **não** reaplica padrões por conta própria, só consome o resultado. Não usar julgamento livre.
 
 **Threshold = 1.** Se ≥ 1 padrão bloqueante → o orquestrador invoca `atlas-prd-interview` no fio principal. **Gate G5:** se 0 padrões bloqueantes, registrar `Ambiguity scan: 0 padrões bloqueantes — entrevista pulada` no output. Não há decisão subjetiva de "tenho certeza, pulo".
 

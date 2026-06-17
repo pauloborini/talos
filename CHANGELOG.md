@@ -12,6 +12,10 @@ Mudanças:
 - **Contrato dos executores endurecido.** `atlas-plan-execute` e `atlas-direct-execute` agora devem emitir checkpoint antes de discovery/preflight interno longo; se MCP/checkpoint não for possível, retornam `blocked` em vez de ficar vivos sem progresso.
 - **Contrato do orquestrador endurecido.** `atlas-workflow-orchestrator` documenta G12: sem retorno/progresso do sub-agent, consultar `status`; `stalled` nunca conta como execução em andamento nem permite `completed`.
 
+Eficiência de token (sem mudança de contrato/determinismo):
+- **Respostas MCP compactas.** `toolResult()` serializa com `JSON.stringify(value)` (sem `null, 2`). O consumidor é o LLM orquestrador, que parseia igual — pretty-print só gastava ~15% de tokens por resposta aninhada, em ~10-13 chamadas/run. Mesmos campos/valores. 125 testes intactos.
+- **SKILL do orquestrador enxuto (−16%, 6441→5421 palavras).** Só prosa redundante: changelog embutido removido (CHANGELOG.md é canônico); regra de mutação-de-código/host-dispatch/decisão-em-aberto deduplicada (afirmada 1× + ponteiro, não 3-4×); bloco execução+validação fatorado num passo `[EXEC]` referenciado por `full`/`direct`/`execute` em vez de repetido verbatim; lista de padrões de ambiguidade §1-§5 apontada ao MCP (`atlas_scan_prd` aplica, orquestrador só consome). Tabela de gates, schema v5, banners e fluxos de decisão intactos; guards de prosa (`host_capabilities`/`atlas_preflight`/`dispatch_token`/`repair_run_id`/`repair_budget: 1`/`challenge_response`) preservados.
+
 Impacto:
 - Pipeline `full/direct/execute` mantém topologia sibling-only e schema v5.
 - Hosts/callers antigos que só usam `start`/`complete` continuam compatíveis.

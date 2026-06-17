@@ -3018,11 +3018,14 @@ function assertAfterPlan(args = {}) {
 }
 
 function toolResult(value) {
+  // JSON compacto (sem indentação): o consumidor é o LLM orquestrador, que parseia
+  // igual com ou sem whitespace. Pretty-print só gastava tokens em toda resposta MCP
+  // (~10-13 por run). Mesmos campos/valores — zero impacto em determinismo/contrato.
   return {
     content: [
       {
         type: 'text',
-        text: JSON.stringify(value, null, 2),
+        text: JSON.stringify(value),
       },
     ],
   };
