@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.8.3 - 2026-06-16
+
+Tipo: **patch de confiabilidade runtime**. **Sem mudança de schema** (`CAPABILITIES_SCHEMA_VERSION` segue **v5**). Origem: post-mortem de travamento repetido em `plan_execute` (`atlas-plan-execute` despachado, sem `state_path`, sem progresso material e sem erro terminal), mesmo padrão já observado em S30/S32.
+
+Mudanças:
+- **Gate G12 — liveness do executor.** `atlas_lock_dispatch(action=start, phase=plan_execute)` passa a criar estado de liveness com deadline de bootstrap. O executor precisa emitir checkpoints via `atlas_lock_dispatch(action=checkpoint, phase=plan_execute, event=...)`.
+- **Checkpoints materiais.** Eventos aceitos: `executor_started`, `skill_loaded`, `plan_loaded`, `handoff_accepted`, `task_started`, `first_write`, `state_path_created`.
+- **Detecção de stall.** `atlas_lock_dispatch(action=status, phase=plan_execute)` transforma bootstrap vencido sem checkpoint em `blocked` com `cause: executor_bootstrap_timeout`; checkpoint antigo sem progresso novo vira `executor_progress_timeout`. Em ambos os casos persiste `executor_liveness.status = stalled`, libera o lock e aponta `next_action: retry_plan_execute`.
+- **Checkpoint final enforçado.** `state_path_created` exige `state_path` legível/parseável. `atlas_lock_validator(start)` bloqueia em G12 se o executor não tiver emitido `state_path_created` para exatamente o mesmo `state_path`.
+- **Contrato dos executores endurecido.** `atlas-plan-execute` e `atlas-direct-execute` agora devem emitir checkpoint antes de discovery/preflight interno longo; se MCP/checkpoint não for possível, retornam `blocked` em vez de ficar vivos sem progresso.
+- **Contrato do orquestrador endurecido.** `atlas-workflow-orchestrator` documenta G12: sem retorno/progresso do sub-agent, consultar `status`; `stalled` nunca conta como execução em andamento nem permite `completed`.
+
+Impacto:
+- Pipeline `full/direct/execute` mantém topologia sibling-only e schema v5.
+- Hosts/callers antigos que só usam `start`/`complete` continuam compatíveis.
+- Falha "executor spawned but not making progress" deixa de ser limbo silencioso e vira estado determinístico/retryável.
+
+Arquivos/artefatos:
+- `packages/mcp-server/server.js`
+- `packages/mcp-server/server.test.js`
+- `packages/skills/atlas-plan-execute/SKILL.md`
+- `packages/skills/atlas-direct-execute/SKILL.md`
+- `packages/orchestrator/skills/atlas-workflow-orchestrator/SKILL.md`
+- `VERSION`, manifests, catálogos `plugins/`, `hosts/opencode/`, `hosts/pi/`, `dist/`
+
+Validação:
+- `node --test packages/mcp-server/server.test.js` (125 testes)
+- `node build/bump-version.mjs 0.8.3` (inclui `build/build-plugins.sh` + `node build/check-consistency.mjs`)
+
 ## 0.8.2 - 2026-06-16
 
 Tipo: **packaging + docs + tooling**. **Sem mudança de schema** (`CAPABILITIES_SCHEMA_VERSION` segue **v5**) e **sem mudança de contrato runtime do MCP**.

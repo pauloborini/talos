@@ -43,6 +43,29 @@ Execute directly from a PRD/spec/task while preserving execution quality: explic
 
 This is not planless execution. Replace the visible markdown plan with a compact operational contract held in the current turn and passed to validation.
 
+## Executor liveness checkpoints
+
+Depois de carregar esta skill e antes de qualquer discovery longo, emita um checkpoint MCP:
+
+```json
+atlas_lock_dispatch({
+  "action": "checkpoint",
+  "phase": "plan_execute",
+  "event": "executor_started"
+})
+```
+
+Em seguida, emita checkpoints materiais conforme avança:
+
+- `skill_loaded` — skill carregada e contrato reconhecido.
+- `plan_loaded` — PRD/spec/task de entrada lido.
+- `handoff_accepted` — boundary, obligations, `state_path` alvo e contrato direto aceitos.
+- `task_started` — primeira task começou.
+- `first_write` — primeira mutação de workspace feita.
+- `state_path_created` — state file escrito antes de devolver `validator_handoff_required`.
+
+Se não conseguir emitir checkpoint por MCP, retorne `blocked`: liveness não é comprovável. Sem `state_path_created` com o mesmo `state_path`, `atlas_lock_validator(start)` bloqueia em G12 e o orquestrador não pode despachar o validador frio.
+
 ## Use Criteria
 
 Use when all are true:
@@ -72,6 +95,8 @@ Ask at most 1-3 blocking questions only when a reasonable assumption could chang
 
 ### 1. Load inputs
 
+First, emit `executor_started`, then `skill_loaded`, before doing any long scan.
+
 Read the user-provided PRD/spec/task and any directly referenced files needed to resolve scope. If the input names repo artifacts, verify those artifacts exist before editing.
 
 Extract only execution-relevant items:
@@ -88,6 +113,8 @@ Extract only execution-relevant items:
 - likely files/modules
 
 If the PRD references another PRD or code contract as dependency, inspect enough to confirm the dependency shape and required bridge. Do not satisfy a dependency by creating parallel synthetic contracts unless the PRD explicitly allows it.
+
+After the input is loaded, emit `plan_loaded`. After validating the execution boundary, obligations, and `state_path` target, emit `handoff_accepted`.
 
 ### 2. Build Compact Execution Contract
 
@@ -154,6 +181,8 @@ For each task, keep a tiny task contract:
 
 Do not widen scope for opportunistic cleanup.
 
+Before the first concrete task, emit `task_started`. After the first workspace mutation, emit `first_write`.
+
 ### 4. Gate each task
 
 Run focused checks appropriate to the diff:
@@ -179,6 +208,8 @@ After tasks and local gates pass, write `.atlas/state/<run_id>/<slice>.json` fol
 For direct execution, the state file is still the only validator input. Use the user-provided PRD/spec path as `plan_path` when no handoff plan exists, and include direct-contract anchors in `boundary_refs` such as `direct.O1`, `direct.invariant.permissions`, or `direct.risk.partial_failure`.
 
 The state file is the only validator input. Validation is always **sibling**, on every host: this executor **never** dispatches `atlas-task-validator` itself and never validates its own work in the same context. After tasks and local gates pass and the state file is written, this executor **stops mutation** and returns `validator_handoff_required` with the `state_path`. The orchestrator then dispatches `atlas-task-validator` as the next isolated sibling phase, locks it via `atlas_lock_validator`, and — if the verdict is `fail` — dispatches `atlas-findings-repair` (not this executor) before the **2nd and last** validator.
+
+After writing the state file and before returning, emit `state_path_created` with the same `state_path`.
 
 Do not paste the compact contract, diff, obligation ledger, local checks, or closure analysis packet into the state file's handoff. Those belong in the state file and referenced artifacts.
 

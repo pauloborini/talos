@@ -22,6 +22,29 @@ Operate as a bounded state machine:
 
 Use `atlas_run_state` as the primary source of run state. Do not read or write run ledger files directly. If the MCP is unavailable, report the gate as unprovable and abort instead of continuing with a silent file fallback.
 
+## Executor liveness checkpoints
+
+Depois de carregar esta skill e antes de qualquer discovery longo, emita um checkpoint MCP:
+
+```json
+atlas_lock_dispatch({
+  "action": "checkpoint",
+  "phase": "plan_execute",
+  "event": "executor_started"
+})
+```
+
+Em seguida, emita checkpoints materiais conforme avança:
+
+- `skill_loaded` — skill carregada e contrato reconhecido.
+- `plan_loaded` — plano/PRD de entrada lido.
+- `handoff_accepted` — `plan_path`, `state_path` alvo, boundary e tasks aceitos.
+- `task_started` — primeira task começou.
+- `first_write` — primeira mutação de workspace feita.
+- `state_path_created` — state file escrito antes de devolver `validator_handoff_required`.
+
+Se não conseguir emitir checkpoint por MCP, retorne `blocked`: liveness não é comprovável. Não fique em discovery/preflight interno sem checkpoint. O orquestrador trata ausência de checkpoint como `stalled` via Gate G12.
+
 ## Plan path resolution
 
 Resolve plan paths in this order:
@@ -55,6 +78,8 @@ Esta skill aceita entrada pelo modo `execute` do orquestrador: um `PLAN_*.md` pr
 ## Required Workflow
 
 ### 1. Load the plan as an execution contract
+First, emit `executor_started`, then `skill_loaded`, before doing any long scan.
+
 Read the `atlas-plan-handoff` artifact. Extract at minimum:
 * **Execution metadata**: Prefix, mode, and validator options.
 * **Executive translation and PRD links** (from Section 1 — include path to PRD; cite `PRD §3` D* IDs, do not paste the full D* table).
@@ -72,11 +97,15 @@ If optional Section 9 (open questions / real blockers — **not** PRD §7 Apênd
 
 When Section 8 checklist is thin, read **PRD §4–6** from the PRD path in the plan header for business acceptance.
 
+After the plan is loaded, emit `plan_loaded`. After validating the execution boundary and `state_path` target, emit `handoff_accepted`.
+
 ### 2. Create a task-scoped execution contract
 Before editing code, write a short task contract for the current task only (objective, files, invariants, local checks, and repair budget).
 
 ### 3. Implement in the smallest coherent slice
 Do not implement the entire feature before validating anything. Prefer one task at a time. Follow closed decisions from the plan.
+
+Before the first concrete task, emit `task_started`. After the first workspace mutation, emit `first_write`.
 
 ### 4. Run a focused quality gate after each task slice
 Run only the checks that are relevant to the current diff and task risks (linter, analyze of the affected package, or tests).
@@ -112,6 +141,9 @@ Create `.atlas/state/<run_id>/<slice>.json` following `packages/templates/STATE_
 ```
 
 Validation is always **sibling**, on every host. The validator is registered as a real subagent on every host, but this executor **never** dispatches it and never validates its own work. After tasks and local gates pass and the state file is written, this executor **stops mutation** and returns `validator_handoff_required` with the `state_path`. The orchestrator dispatches `atlas-task-validator` as the next isolated sibling phase, locks it via `atlas_lock_validator`, and — if the verdict is `fail` — dispatches `atlas-findings-repair` (not this executor) before the **2nd and last** validator.
+
+After writing the state file and before returning, emit `state_path_created` with the same `state_path`.
+Without this exact checkpoint, `atlas_lock_validator(start)` blocks in G12 and the orchestrator cannot dispatch the cold validator.
 
 The only handoff input is `state_path`. Do not paste the contract, diff, or task list inline. The validator reads everything it needs from the state file and the plan it points to. (`atlas_capabilities` is the runtime source of truth for the dispatch mechanism the orchestrator uses — see `references/host-adapters.md`.)
 

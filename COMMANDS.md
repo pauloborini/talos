@@ -18,9 +18,10 @@ npx github:pauloborini/atlas-workflow init codex
 # opencode / pi — reinstalar pega runtime novo (mesmo comando do init)
 npx github:pauloborini/atlas-workflow init opencode --global
 npx github:pauloborini/atlas-workflow init pi --global --yes
+
 ```
 
-Smoke pós-update: `atlas_ping` → `version: 0.8.2`; `atlas_capabilities` → `schema_version: 5` (sibling-only).
+Smoke pós-update: `atlas_ping` → `version: 0.8.3`; `atlas_capabilities` → `schema_version: 5` (sibling-only).
 
 ---
 

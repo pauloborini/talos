@@ -220,9 +220,16 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `atlas-*` para o
 
 ---
 
-**Plugin version:** 0.8.2
+**Plugin version:** 0.8.3
 **Author:** Paulo Borini
-**Last updated:** 2026-06-15
+**Last updated:** 2026-06-16
+
+### Novidades v0.8.3 — liveness do executor (Gate G12)
+
+- `plan_execute` agora tem liveness explícito: `atlas_lock_dispatch(start)` cria deadline de bootstrap e o executor precisa emitir checkpoints materiais.
+- `atlas-plan-execute` deve reportar `executor_started`, `skill_loaded`, `plan_loaded`, `handoff_accepted`, `task_started`, `first_write` e `state_path_created` conforme avança.
+- Se o sub-agent não retornar/progredir, o orquestrador consulta `atlas_lock_dispatch(status)`; bootstrap vencido vira `executor_bootstrap_timeout`, checkpoint antigo sem avanço vira `executor_progress_timeout`; ambos persistem `stalled`, liberam retry e não podem ser tratados como execução em andamento.
+- `atlas_lock_validator(start)` só abre o validator depois de `state_path_created` para o mesmo `state_path`; checkpoint final sem arquivo legível é bloqueado.
 
 ### Novidades v0.8.2 — release/npm e procedimento de bump
 
