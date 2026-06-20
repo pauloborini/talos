@@ -40,6 +40,26 @@ const edits = [
   ['packages/mcp-server/README.md', (t) => replaceAll(t, esc, next, 'mcp-server/README.md')],
   // Orchestrator README tem "Novidades vX" (histórico) — só a linha Plugin version.
   ['packages/orchestrator/README.md', (t) => replaceOnce(t, `**Plugin version:** ${current}`, `**Plugin version:** ${next}`, 'orchestrator/README.md (Plugin version)')],
+
+  // --- Codex plugin bundle ---
+  ['plugins/atlas-workflow-orchestrator/.codex-plugin/plugin.json', (t) => replaceOnce(t, `"version": "${current}"`, `"version": "${next}"`, 'codex-plugin/plugin.json')],
+  ['plugins/atlas-workflow-orchestrator/packages/mcp-server/package.json', (t) => replaceOnce(t, `"version": "${current}"`, `"version": "${next}"`, 'plugins mcp-server/package.json')],
+  ['plugins/atlas-workflow-orchestrator/packages/mcp-server/README.md', (t) => replaceAll(t, esc, next, 'plugins mcp-server/README.md')],
+  ['plugins/atlas-workflow-orchestrator/orchestrator/README.md', (t) => replaceOnce(t, `**Plugin version:** ${current}`, `**Plugin version:** ${next}`, 'plugins orchestrator/README.md (Plugin version)')],
+
+  // --- Host: Pi ---
+  ['hosts/pi/atlas/packages/mcp-server/package.json', (t) => replaceOnce(t, `"version": "${current}"`, `"version": "${next}"`, 'hosts/pi mcp-server/package.json')],
+  ['hosts/pi/atlas/packages/mcp-server/README.md', (t) => replaceAll(t, esc, next, 'hosts/pi mcp-server/README.md')],
+  ['hosts/pi/atlas/orchestrator/README.md', (t) => replaceOnce(t, `**Plugin version:** ${current}`, `**Plugin version:** ${next}`, 'hosts/pi orchestrator/README.md (Plugin version)')],
+
+  // --- Host: OpenCode ---
+  ['hosts/opencode/.opencode/atlas/packages/mcp-server/package.json', (t) => replaceOnce(t, `"version": "${current}"`, `"version": "${next}"`, 'hosts/opencode mcp-server/package.json')],
+  ['hosts/opencode/.opencode/atlas/packages/mcp-server/README.md', (t) => replaceAll(t, esc, next, 'hosts/opencode mcp-server/README.md')],
+  ['hosts/opencode/.opencode/atlas/orchestrator/README.md', (t) => replaceOnce(t, `**Plugin version:** ${current}`, `**Plugin version:** ${next}`, 'hosts/opencode orchestrator/README.md (Plugin version)')],
+
+  // --- Docs com versão inline ---
+  ['CLAUDE.md', (t) => replaceOnce(t, `Versão: \`${current}\``, `Versão: \`${next}\``, 'CLAUDE.md')],
+  ['AGENTS.md', (t) => replaceOnce(t, `Versão: \`${current}\``, `Versão: \`${next}\``, 'AGENTS.md')],
 ];
 
 function replaceOnce(text, from, to, label) {
