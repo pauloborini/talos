@@ -31,6 +31,9 @@ const esc = current.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // [arquivo, transform]. transform recebe o conteúdo e devolve o novo.
 const edits = [
   ['VERSION', () => `${next}\n`],
+  ['plugins/atlas-workflow-orchestrator/VERSION', () => `${next}\n`],
+  ['hosts/pi/atlas/VERSION', () => `${next}\n`],
+  ['hosts/opencode/.opencode/atlas/VERSION', () => `${next}\n`],
   ['package.json', (t) => replaceOnce(t, `"version": "${current}"`, `"version": "${next}"`, 'package.json')],
   ['packages/mcp-server/package.json', (t) => replaceOnce(t, `"version": "${current}"`, `"version": "${next}"`, 'mcp-server/package.json')],
   ['.claude-plugin/plugin.json', (t) => replaceOnce(t, `"version": "${current}"`, `"version": "${next}"`, '.claude-plugin/plugin.json')],
