@@ -239,6 +239,8 @@ function installClaude(opts) {
   if (!which('claude')) fail('CLI `claude` não encontrada no PATH. Instale o Claude Code primeiro.');
   log(`instalando Atlas (claude/cursor) via marketplace from-source @ ${REPO_SLUG}`);
   if (run('claude', ['plugin', 'marketplace', 'add', REPO_SLUG], opts)) fail('falha no `claude plugin marketplace add`');
+  // Atualiza snapshot do marketplace (add é idempotente mas não faz pull de commits novos).
+  run('claude', ['plugin', 'marketplace', 'update'], opts);
   if (run('claude', ['plugin', 'install', PLUGIN_ID], opts)) fail('falha no `claude plugin install`');
   log('ok — Claude Code/Cursor instalados (skills + subagente + MCP + hooks).');
 }
@@ -247,6 +249,8 @@ function installCodex(opts) {
   if (!which('codex')) fail('CLI `codex` não encontrada no PATH. Instale o Codex primeiro.');
   log(`instalando Atlas (codex) via marketplace from-source @ ${REPO_SLUG}`);
   if (run('codex', ['plugin', 'marketplace', 'add', REPO_SLUG], opts)) fail('falha no `codex plugin marketplace add`');
+  // Atualiza snapshot do marketplace (add é idempotente mas não faz pull de commits novos).
+  run('codex', ['plugin', 'marketplace', 'upgrade'], opts);
   if (run('codex', ['plugin', 'add', PLUGIN_ID], opts)) fail('falha no `codex plugin add`');
   const codexHome = process.env.CODEX_HOME?.trim() || path.join(homedir(), '.codex');
   const agentsDir = path.join(codexHome, 'agents');

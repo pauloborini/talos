@@ -65,10 +65,26 @@ execFileSync('bash', [path.join(ROOT, 'build', 'build-plugins.sh')], { cwd: ROOT
 console.log(`Rodando check-consistency…`);
 execFileSync('node', [path.join(ROOT, 'build', 'check-consistency.mjs')], { cwd: ROOT, stdio: 'inherit' });
 
+// Criar tag git local (marketplace resolve por tag, não por HEAD).
+// Tag só é criada — push fica pro passo manual junto com o commit.
+// CI Release é idempotente: se tag já existe, pula criação.
+const tag = `v${next}`;
+try {
+  execFileSync('git', ['tag', tag], { cwd: ROOT, stdio: 'pipe' });
+  console.log(`\n  tag   ${tag} (local — push com: git push origin ${tag})`);
+} catch (e) {
+  if (e.stderr?.toString().includes('already exists')) {
+    console.log(`\n  tag   ${tag} já existe (ok)`);
+  } else {
+    throw e;
+  }
+}
+
 console.log(`\nbump-version: ${current} -> ${next} OK.
 
 Passos narrativos manuais (não automatizáveis):
   1. CHANGELOG.md — adicionar entrada "## ${next} - YYYY-MM-DD".
   2. packages/orchestrator/README.md — adicionar seção "### Novidades v${next}" e "Last updated".
-  3. Revisar 'git status', commitar e dar push na main.
-     => VERSION novo na main dispara Release (tag + npm + GitHub release) sozinho.`);
+  3. Revisar 'git status', commitar e dar push na main (incluir tag):
+       git push origin main v${next}
+     => CI Release detecta tag existente e publica sem re-criar.`);
