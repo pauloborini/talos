@@ -21,7 +21,7 @@ npx github:pauloborini/atlas-workflow init pi --global --yes
 
 ```
 
-Smoke pós-update: `atlas_ping` → `version: 0.8.4`; `atlas_capabilities` → `schema_version: 5` (sibling-only).
+Smoke pós-update: `atlas_ping` → `version: 0.8.5`; `atlas_capabilities` → `schema_version: 5` (sibling-only).
 
 ---
 
@@ -48,7 +48,7 @@ npx github:pauloborini/atlas-workflow init pi --yes
 
 ```bash
 # Claude Code / Cursor / Codex (sempre globais)
-npx github:pauloborini/atlas-workflow uninstall claudecode    # ou cursor
+npx github:pauloborini/atlas-workflow uninstall claudecode   
 npx github:pauloborini/atlas-workflow uninstall codex
 
 # opencode / pi — desinstalação global (recomendado)
