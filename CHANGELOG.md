@@ -1,5 +1,75 @@
 # Changelog
 
+## 0.8.3 - 2026-06-16
+
+Tipo: **patch de confiabilidade runtime**. **Sem mudança de schema** (`CAPABILITIES_SCHEMA_VERSION` segue **v5**). Origem: post-mortem de travamento repetido em `plan_execute` (`atlas-plan-execute` despachado, sem `state_path`, sem progresso material e sem erro terminal), mesmo padrão já observado em S30/S32.
+
+Mudanças:
+- **Gate G12 — liveness do executor.** `atlas_lock_dispatch(action=start, phase=plan_execute)` passa a criar estado de liveness com deadline de bootstrap. O executor precisa emitir checkpoints via `atlas_lock_dispatch(action=checkpoint, phase=plan_execute, event=...)`.
+- **Checkpoints materiais.** Eventos aceitos: `executor_started`, `skill_loaded`, `plan_loaded`, `handoff_accepted`, `task_started`, `first_write`, `state_path_created`.
+- **Detecção de stall.** `atlas_lock_dispatch(action=status, phase=plan_execute)` transforma bootstrap vencido sem checkpoint em `blocked` com `cause: executor_bootstrap_timeout`; checkpoint antigo sem progresso novo vira `executor_progress_timeout`. Em ambos os casos persiste `executor_liveness.status = stalled`, libera o lock e aponta `next_action: retry_plan_execute`.
+- **Checkpoint final enforçado.** `state_path_created` exige `state_path` legível/parseável. `atlas_lock_validator(start)` bloqueia em G12 se o executor não tiver emitido `state_path_created` para exatamente o mesmo `state_path`.
+- **Contrato dos executores endurecido.** `atlas-plan-execute` e `atlas-direct-execute` agora devem emitir checkpoint antes de discovery/preflight interno longo; se MCP/checkpoint não for possível, retornam `blocked` em vez de ficar vivos sem progresso.
+- **Contrato do orquestrador endurecido.** `atlas-workflow-orchestrator` documenta G12: sem retorno/progresso do sub-agent, consultar `status`; `stalled` nunca conta como execução em andamento nem permite `completed`.
+
+Eficiência de token (sem mudança de contrato/determinismo):
+- **Respostas MCP compactas.** `toolResult()` serializa com `JSON.stringify(value)` (sem `null, 2`). O consumidor é o LLM orquestrador, que parseia igual — pretty-print só gastava ~15% de tokens por resposta aninhada, em ~10-13 chamadas/run. Mesmos campos/valores. 125 testes intactos.
+- **SKILL do orquestrador enxuto (−16%, 6441→5421 palavras).** Só prosa redundante: changelog embutido removido (CHANGELOG.md é canônico); regra de mutação-de-código/host-dispatch/decisão-em-aberto deduplicada (afirmada 1× + ponteiro, não 3-4×); bloco execução+validação fatorado num passo `[EXEC]` referenciado por `full`/`direct`/`execute` em vez de repetido verbatim; lista de padrões de ambiguidade §1-§5 apontada ao MCP (`atlas_scan_prd` aplica, orquestrador só consome). Tabela de gates, schema v5, banners e fluxos de decisão intactos; guards de prosa (`host_capabilities`/`atlas_preflight`/`dispatch_token`/`repair_run_id`/`repair_budget: 1`/`challenge_response`) preservados.
+
+Impacto:
+- Pipeline `full/direct/execute` mantém topologia sibling-only e schema v5.
+- Hosts/callers antigos que só usam `start`/`complete` continuam compatíveis.
+- Falha "executor spawned but not making progress" deixa de ser limbo silencioso e vira estado determinístico/retryável.
+
+Arquivos/artefatos:
+- `packages/mcp-server/server.js`
+- `packages/mcp-server/server.test.js`
+- `packages/skills/atlas-plan-execute/SKILL.md`
+- `packages/skills/atlas-direct-execute/SKILL.md`
+- `packages/orchestrator/skills/atlas-workflow-orchestrator/SKILL.md`
+- `VERSION`, manifests, catálogos `plugins/`, `hosts/opencode/`, `hosts/pi/`, `dist/`
+
+Validação:
+- `node --test packages/mcp-server/server.test.js` (125 testes)
+- `node build/bump-version.mjs 0.8.3` (inclui `build/build-plugins.sh` + `node build/check-consistency.mjs`)
+
+## 0.8.2 - 2026-06-16
+
+Tipo: **packaging + docs + tooling**. **Sem mudança de schema** (`CAPABILITIES_SCHEMA_VERSION` segue **v5**) e **sem mudança de contrato runtime do MCP**.
+
+Resumo: fecha o ciclo de release público da linha 0.8.x: bump correto pós-0.8.1, publicação npm preparada, CI de release mais seguro e documentação operacional de bump/release para IA.
+
+Mudanças:
+- **Bump para 0.8.2.** `VERSION`, `package.json`, `packages/mcp-server/package.json`, README, comandos e manifests/catálogos gerados passam a apontar para `0.8.2`.
+- **Release npm.** `.npmignore` mantém o tarball pequeno e inclui só o instalador, `hosts/` e `plugins/` necessários para `npx`/`npm exec`; o workflow de release publica `atlas-workflow` com provenance e pula publish se a versão já existir.
+- **CI de release endurecido.** `release.yml` valida tag `vX.Y.Z` contra `VERSION`, extrai release notes de `CHANGELOG.md` aceitando cabeçalho `## X.Y.Z` ou `## vX.Y.Z`, confere `package.json.version` antes de publicar e mantém assets `.plugin` + `SHA256SUMS` na GitHub Release.
+- **Procedimento de bump para IA.** `PATCH_PROCEDURE.md` foi atualizado com passo a passo completo: preflight, classificação, arquivos obrigatórios, regeneração, validação local, validação npm, tag/push e verificação pós-release.
+- **Doc drift corrigido.** `packages/orchestrator/README.md` e cópias empacotadas deixam de reportar `Plugin version: 0.8.0`.
+
+Impacto:
+- Instalação via `npx github:pauloborini/atlas-workflow init <host>` continua igual.
+- Após tag `v0.8.2`, o release workflow deve publicar GitHub Release e pacote npm `atlas-workflow@0.8.2`.
+
+Arquivos/artefatos:
+- `VERSION`, `package.json`, `packages/mcp-server/package.json`
+- `README.md`, `COMMANDS.md`, `PATCH_PROCEDURE.md`, `CHANGELOG.md`
+- `.github/workflows/release.yml`, `.npmignore`
+- `packages/orchestrator/README.md`
+- `plugins/atlas-workflow-orchestrator/**`, `hosts/opencode/**`, `hosts/pi/**`
+- `dist/atlas-workflow-{claude,codex,opencode,pi}.plugin`, `dist/SHA256SUMS`
+
+Validação:
+- `build/build-plugins.sh`
+- `node build/check-consistency.mjs`
+- `node --test packages/mcp-server/server.test.js`
+- `node build/smoke-hosts.mjs`
+- `node build/conformance-matrix.mjs`
+- `(cd dist && shasum -a 256 -c SHA256SUMS)`
+- `npm pack --dry-run --json`
+- `npm exec --yes --package /tmp/atlas-npm-pack/atlas-workflow-0.8.2.tgz -- atlas-workflow --help`
+- `npm exec --yes --package /tmp/atlas-npm-pack/atlas-workflow-0.8.2.tgz -- atlas-workflow init opencode --dry-run --dir /tmp/atlas-opencode-target`
+- `npm exec --yes --package /tmp/atlas-npm-pack/atlas-workflow-0.8.2.tgz -- atlas-workflow init codex --dry-run`
+
 ## 0.8.1 - 2026-06-15
 
 Tipo: **patch de confiabilidade de contrato** (só SKILL do orquestrador + command `/workflow`). **Sem código MCP**, **sem mudança de schema** (`CAPABILITIES_SCHEMA_VERSION` segue **v5**), **sem novos testes** (mudança documental/contratual). Origem: relato de **pausa indevida** no pipeline — o orquestrador parava pra pedir confirmação ("Quer que eu gere o PRD?", "Modo Discussão — sem alterar código") que o contrato não exige; em hosts com modelo diferente (ex.: Cursor) o mesmo plugin não parava. Causa-raiz: o SKILL definia **onde parar** (gates) mas nunca o default **"não parar"**, e um modelo de raciocínio alto preenchia o silêncio com confirmação educada.

@@ -38,6 +38,35 @@ import {
 } from './server.js';
 
 function lockValidator(args) {
+  if (args.action === 'start' && args.state_path) {
+    try {
+      const abs = path.resolve(args.project_root, args.state_path);
+      fs.mkdirSync(path.dirname(abs), { recursive: true });
+      if (!fs.existsSync(abs)) {
+        fs.writeFileSync(abs, JSON.stringify({
+          run_id: args.run_id,
+          slice: 'test',
+          tasks: [],
+          files_changed: [],
+          diff_stat: '0 files',
+          plan_path: '.atlas/plans/test.md',
+          boundary_refs: [],
+          executed_at: new Date().toISOString(),
+          executor_skill: 'atlas-plan-execute',
+        }, null, 2));
+      }
+      lockDispatch({
+        run_id: args.run_id,
+        project_root: args.project_root,
+        action: 'checkpoint',
+        phase: 'plan_execute',
+        event: 'state_path_created',
+        state_path: args.state_path,
+      });
+    } catch {
+      // Testes de hard-fail devem alcançar o runtime original.
+    }
+  }
   if (args.action === 'complete' && args.dispatch_token === undefined) {
     try {
       const state = runState({
@@ -727,6 +756,180 @@ test('atlas_lock_dispatch: start plan_execute em execute → banner exec não-va
   const r = lockDispatch({ run_id: 'rld', project_root: root, action: 'start', phase: 'plan_execute' });
   assert.equal(r.status, 'passed');
   assert.match(r.banner, /^▸ atlas: exec · slice \d+\/\d+$/);
+});
+
+test('atlas_lock_dispatch: plan_execute cria liveness G12 no start e aceita checkpoint', () => {
+  const root = tmpRoot();
+  preflight({
+    run_id: 'g12live', project_root: root, mode: 'execute',
+    host: 'codex', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+
+  const start = lockDispatch({ run_id: 'g12live', project_root: root, action: 'start', phase: 'plan_execute' });
+  assert.equal(start.status, 'passed');
+
+  let state = readRunJson(root, 'g12live');
+  assert.equal(state.data.dispatch.active.phase, 'plan_execute');
+  assert.equal(state.data.dispatch.active.liveness.status, 'spawned');
+  assert.equal(state.data.dispatch.active.liveness.required_first_checkpoint, 'executor_started');
+
+  const checkpoint = lockDispatch({
+    run_id: 'g12live',
+    project_root: root,
+    action: 'checkpoint',
+    phase: 'plan_execute',
+    event: 'executor_started',
+    plan_path: '.atlas/plans/PLAN_S41.md',
+  });
+  assert.equal(checkpoint.status, 'passed');
+  assert.equal(checkpoint.executor_liveness, 'booting');
+
+  state = readRunJson(root, 'g12live');
+  assert.equal(state.data.dispatch.active.liveness.last_checkpoint, 'executor_started');
+  assert.equal(state.data.dispatch.active.liveness.checkpoints[0].plan_path, '.atlas/plans/PLAN_S41.md');
+});
+
+test('atlas_lock_dispatch: status marca bootstrap sem checkpoint como stalled e libera retry', () => {
+  const root = tmpRoot();
+  preflight({
+    run_id: 'g12stall', project_root: root, mode: 'execute',
+    host: 'codex', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: 'g12stall', project_root: root, action: 'start', phase: 'plan_execute' });
+
+  const runFile = path.join(root, '.atlas', 'state', 'g12stall', 'run.json');
+  const raw = JSON.parse(fs.readFileSync(runFile, 'utf8'));
+  raw.data.dispatch.active.started_at = '2000-01-01T00:00:00.000Z';
+  raw.data.dispatch.active.liveness.bootstrap_deadline_at = '2000-01-01T00:02:00.000Z';
+  fs.writeFileSync(runFile, JSON.stringify(raw, null, 2));
+
+  const status = lockDispatch({ run_id: 'g12stall', project_root: root, action: 'status', phase: 'plan_execute' });
+  assert.equal(status.status, 'blocked');
+  assert.equal(status.cause, 'executor_bootstrap_timeout');
+  assert.equal(status.next_action, 'retry_plan_execute');
+
+  const state = readRunJson(root, 'g12stall');
+  assert.equal(state.data.dispatch.active, null);
+  assert.equal(state.data.dispatch.executor_liveness.status, 'stalled');
+  assert.equal(state.data.dispatch.next_phase, 'plan_execute');
+
+  const retry = lockDispatch({ run_id: 'g12stall', project_root: root, action: 'start', phase: 'plan_execute' });
+  assert.equal(retry.status, 'passed');
+  assert.equal(readRunJson(root, 'g12stall').data.dispatch.active.phase, 'plan_execute');
+});
+
+test('atlas_lock_dispatch: status marca checkpoint antigo sem progresso como stalled', () => {
+  const root = tmpRoot();
+  preflight({
+    run_id: 'g12progress', project_root: root, mode: 'execute',
+    host: 'codex', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: 'g12progress', project_root: root, action: 'start', phase: 'plan_execute' });
+  lockDispatch({
+    run_id: 'g12progress',
+    project_root: root,
+    action: 'checkpoint',
+    phase: 'plan_execute',
+    event: 'plan_loaded',
+  });
+
+  const runFile = path.join(root, '.atlas', 'state', 'g12progress', 'run.json');
+  const raw = JSON.parse(fs.readFileSync(runFile, 'utf8'));
+  raw.data.dispatch.active.liveness.last_progress_at = '2000-01-01T00:00:00.000Z';
+  raw.data.dispatch.active.liveness.next_progress_deadline_at = '2000-01-01T00:05:00.000Z';
+  fs.writeFileSync(runFile, JSON.stringify(raw, null, 2));
+
+  const status = lockDispatch({ run_id: 'g12progress', project_root: root, action: 'status', phase: 'plan_execute' });
+  assert.equal(status.status, 'blocked');
+  assert.equal(status.cause, 'executor_progress_timeout');
+  assert.equal(status.next_action, 'retry_plan_execute');
+  assert.equal(readRunJson(root, 'g12progress').data.dispatch.executor_liveness.status, 'stalled');
+});
+
+test('atlas_lock_dispatch: state_path_created exige state_path legível', () => {
+  const root = tmpRoot();
+  preflight({
+    run_id: 'g12path', project_root: root, mode: 'execute',
+    host: 'codex', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: 'g12path', project_root: root, action: 'start', phase: 'plan_execute' });
+
+  const missing = lockDispatch({
+    run_id: 'g12path',
+    project_root: root,
+    action: 'checkpoint',
+    phase: 'plan_execute',
+    event: 'state_path_created',
+  });
+  assert.equal(missing.status, 'blocked');
+  assert.equal(missing.next_action, 'emitir_state_path_created_com_state_path');
+
+  const unreadable = lockDispatch({
+    run_id: 'g12path',
+    project_root: root,
+    action: 'checkpoint',
+    phase: 'plan_execute',
+    event: 'state_path_created',
+    state_path: '.atlas/state/g12path/slice.json',
+  });
+  assert.equal(unreadable.status, 'blocked');
+  assert.equal(unreadable.next_action, 'corrigir_state_path_antes_do_handoff');
+});
+
+test('atlas_lock_validator: G12 bloqueia start sem state_path_created correspondente', () => {
+  const root = tmpRoot();
+  preflight({
+    run_id: 'g12validator', project_root: root, mode: 'execute',
+    host: 'codex', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: 'g12validator', project_root: root, action: 'start', phase: 'plan_execute' });
+
+  const stateRel = '.atlas/state/g12validator/slice.json';
+  const abs = path.join(root, stateRel);
+  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  fs.writeFileSync(abs, JSON.stringify({ files_changed: [] }, null, 2));
+
+  const beforeCheckpoint = lockValidatorCore({
+    run_id: 'g12validator',
+    project_root: root,
+    action: 'start',
+    state_path: stateRel,
+  });
+  assert.equal(beforeCheckpoint.status, 'blocked');
+  assert.equal(beforeCheckpoint.gate, 'G12');
+  assert.equal(beforeCheckpoint.next_action, 'aguardar_state_path_created_antes_do_validator');
+
+  const otherRel = '.atlas/state/g12validator/other.json';
+  const otherAbs = path.join(root, otherRel);
+  fs.writeFileSync(otherAbs, JSON.stringify({ files_changed: [] }, null, 2));
+  const checkpoint = lockDispatch({
+    run_id: 'g12validator',
+    project_root: root,
+    action: 'checkpoint',
+    phase: 'plan_execute',
+    event: 'state_path_created',
+    state_path: otherRel,
+  });
+  assert.equal(checkpoint.status, 'passed');
+
+  const mismatch = lockValidatorCore({
+    run_id: 'g12validator',
+    project_root: root,
+    action: 'start',
+    state_path: stateRel,
+  });
+  assert.equal(mismatch.status, 'blocked');
+  assert.equal(mismatch.gate, 'G12');
+  assert.equal(mismatch.last_state_path, otherRel);
+
+  const ok = lockValidatorCore({
+    run_id: 'g12validator',
+    project_root: root,
+    action: 'start',
+    state_path: otherRel,
+  });
+  assert.equal(ok.status, 'passed');
+  assert.equal(ok.validator_status, 'running');
 });
 
 test('atlas_lock_dispatch: plan_execute aceita passed_with_observations como terminal aprovado', () => {

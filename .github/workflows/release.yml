@@ -1,17 +1,71 @@
 name: Release
 
+# Dispara em dois caminhos, ambos resultando em publish npm + GitHub Release:
+#   1. Full auto: push na `main` (caminho primário — o job `decide` publica
+#      quando a VERSION atual ainda não tem tag `vX.Y.Z`; pushes sem bump têm a
+#      tag já existente e são pulados, então rodar em todo push é seguro e barato).
+#   2. Manual/override: push de tag `vX.Y.Z` (re-release, hotfix fora da main).
+# A tag `vX.Y.Z` é criada pela própria action de release no caminho 1 (não exige
+# PAT). Tag criada via GITHUB_TOKEN não re-dispara o workflow (sem loop); mesmo
+# que disparasse, o job `decide` detecta a tag existente e pula.
+# Sem filtro `paths` de propósito: combinar `paths` com `tags` no mesmo push tem
+# semântica ambígua no GitHub Actions e pode engolir o push de tag manual.
 on:
   push:
-    tags:
-      - "v*"
+    branches: [main]
+    tags: ["v*"]
 
 permissions:
   contents: write
-  id-token: write   # habilita --provenance no npm publish (linka release ↔ pacote)
+  id-token: write   # habilita --provenance no npm publish (linka release <-> pacote)
 
 jobs:
-  build-release:
+  decide:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ctx.outputs.version }}
+      release: ${{ steps.ctx.outputs.release }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # precisa do histórico de tags para detectar release já feito
+
+      - name: Determinar versão e se deve publicar
+        id: ctx
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            # Caminho 2: tag empurrada manualmente.
+            version="${GITHUB_REF_NAME#v}"
+            release=true
+          else
+            # Caminho 1: push na main com VERSION alterado.
+            version="$(tr -d '[:space:]' < VERSION)"
+            if git rev-parse "v${version}" >/dev/null 2>&1; then
+              echo "::notice::v${version} já existe como tag; já publicado. Pulando."
+              release=false
+            else
+              release=true
+            fi
+          fi
+          # Guard de sincronia: package.json é o que o npm publica; tem que casar
+          # com VERSION/tag antes de qualquer publicação.
+          pkg="$(node -p "require('./package.json').version")"
+          if [[ "${version}" != "${pkg}" ]]; then
+            echo "::error::VERSION/tag (${version}) difere de package.json (${pkg}). Rode build/bump-version.mjs." >&2
+            exit 1
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "release=${release}" >> "$GITHUB_OUTPUT"
+
+  publish:
+    needs: decide
+    if: needs.decide.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.decide.outputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -22,31 +76,39 @@ jobs:
           node-version: "20"
           registry-url: "https://registry.npmjs.org"
 
-      - name: Validate tag matches VERSION
-        shell: bash
-        run: |
-          set -euo pipefail
-          version="$(tr -d '[:space:]' < VERSION)"
-          tag="${GITHUB_REF_NAME#v}"
-          test "$version" = "$tag"
-
-      - name: Build plugins
+      - name: Build plugins (roda check-consistency no fim)
         shell: bash
         run: build/build-plugins.sh
 
-      - name: Extract release notes
+      # Guards de qualidade antes de publicar (full-auto: main quebrada nunca
+      # publica). Espelham o job multihost do ci.yml.
+      - name: Testes unitários do núcleo MCP
+        shell: bash
+        run: node --test packages/mcp-server/server.test.js
+
+      - name: Smoke por host
+        shell: bash
+        run: node build/smoke-hosts.mjs
+
+      - name: Matriz de conformance multi-host
+        shell: bash
+        run: node build/conformance-matrix.mjs
+
+      - name: Extrair notas de release do CHANGELOG
         shell: bash
         run: |
           set -euo pipefail
-          version="$(tr -d '[:space:]' < VERSION)"
-          awk -v version="v${version}" '
-            $0 ~ "^## " version " - " { capture=1 }
-            capture && /^## / && $0 !~ "^## " version " - " { exit }
+          awk -v plain="${VERSION}" -v tagged="v${VERSION}" '
+            $0 ~ "^## (" plain "|" tagged ") - " { capture=1 }
+            capture && /^## / && $0 !~ "^## (" plain "|" tagged ") - " { exit }
             capture { print }
           ' CHANGELOG.md > dist/RELEASE_NOTES.md
-          test -s dist/RELEASE_NOTES.md
+          if [ ! -s dist/RELEASE_NOTES.md ]; then
+            echo "::error::CHANGELOG.md não tem entrada para ${VERSION}. Adicione antes de bumpar VERSION na main." >&2
+            exit 1
+          fi
 
-      - name: Verify artifacts
+      - name: Verificar artefatos
         shell: bash
         run: |
           set -euo pipefail
@@ -57,28 +119,22 @@ jobs:
           test -f dist/SHA256SUMS
           (cd dist && shasum -a 256 -c SHA256SUMS)
 
-      - name: Publish to npm
+      - name: Publicar no npm
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
-          # Lê name + version do package.json canônico (fonte única = VERSION).
           eval "$(node -e "const p=require('./package.json'); process.stdout.write(\`name=\${JSON.stringify(p.name)}\nversion=\${JSON.stringify(p.version)}\nprivate=\${JSON.stringify(!!p.private)}\n\`);")"
           if [ "$private" = "true" ]; then
             echo "::error::package.json tem private:true; recusando publicar." >&2
             exit 1
           fi
-          # Garante que a versão a publicar é a mesma da tag (defesa em profundidade
-          # — o step 'Validate tag matches VERSION' já checa VERSION, mas o npm
-          # publica do package.json, então amarramos os dois).
-          tag_version="${GITHUB_REF_NAME#v}"
-          if [ "$version" != "$tag_version" ]; then
-            echo "::error::package.json version ($version) difere da tag ($tag_version)." >&2
+          if [ "$version" != "$VERSION" ]; then
+            echo "::error::package.json version ($version) difere da versão a publicar ($VERSION)." >&2
             exit 1
           fi
-          # Idempotência: se a versão já está publicada (re-run após falha parcial
-          # no GH release), pula. npm publish rejeita re-publish de mesma versão.
+          # Idempotência: versão já publicada (re-run após falha parcial) => pula.
           existing="$(npm view "${name}@${version}" version 2>/dev/null || true)"
           if [ "$existing" = "$version" ]; then
             echo "::notice::${name}@${version} já publicado; pulando npm publish."
@@ -86,9 +142,10 @@ jobs:
             npm publish --provenance --access public
           fi
 
-      - name: Publish GitHub release
+      - name: Publicar GitHub Release (cria a tag se ausente)
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: v${{ env.VERSION }}
           body_path: dist/RELEASE_NOTES.md
           files: |
             dist/atlas-workflow-claude.plugin

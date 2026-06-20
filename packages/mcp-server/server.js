@@ -78,6 +78,17 @@ const VALIDATOR_MAX_ATTEMPTS = 2;
 // bloqueia com causa explícita em vez de re-despachar indefinidamente.
 const VALIDATOR_CHALLENGE_MAX_FAILURES = 2;
 const VALIDATOR_PASSED_STATUSES = new Set(['passed', 'passed_with_observations']);
+const EXECUTOR_BOOTSTRAP_TIMEOUT_MS = 120_000;
+const EXECUTOR_PROGRESS_TIMEOUT_MS = 300_000;
+const EXECUTOR_CHECKPOINT_EVENTS = new Set([
+  'executor_started',
+  'skill_loaded',
+  'plan_loaded',
+  'handoff_accepted',
+  'task_started',
+  'first_write',
+  'state_path_created',
+]);
 
 function validatorRunId(runId, attempt, timestamp) {
   return `${runId}:validator:${attempt}:${timestamp}`;
@@ -584,6 +595,11 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function isoPlusMs(iso, ms) {
+  const base = Date.parse(iso);
+  return new Date((Number.isFinite(base) ? base : Date.now()) + ms).toISOString();
+}
+
 function redact(value) {
   if (Array.isArray(value)) return value.map(redact);
   if (!value || typeof value !== 'object') return value;
@@ -882,6 +898,7 @@ function patchDispatchResult(runId, result, args = {}) {
       timestamp: result.timestamp,
       phase: result.phase ?? null,
       action: result.action ?? null,
+      event: result.event ?? null,
       status: result.status,
       next_action: result.next_action ?? null,
       error: result.error ?? null,
@@ -1693,6 +1710,27 @@ function expectedNextPhase(routing, dispatch) {
   return 'prd_interview';
 }
 
+function initialExecutorLiveness(timestamp) {
+  return {
+    status: 'spawned',
+    bootstrap_timeout_ms: EXECUTOR_BOOTSTRAP_TIMEOUT_MS,
+    progress_timeout_ms: EXECUTOR_PROGRESS_TIMEOUT_MS,
+    bootstrap_deadline_at: isoPlusMs(timestamp, EXECUTOR_BOOTSTRAP_TIMEOUT_MS),
+    next_progress_deadline_at: null,
+    required_first_checkpoint: 'executor_started',
+    last_checkpoint: null,
+    last_progress_at: null,
+    checkpoints: [],
+  };
+}
+
+function checkpointStatus(event) {
+  if (event === 'state_path_created') return 'handoff_ready';
+  if (event === 'task_started' || event === 'first_write') return 'executing';
+  if (event === 'plan_loaded' || event === 'handoff_accepted') return 'ready';
+  return 'booting';
+}
+
 function startDispatch(args, context) {
   const phase = requiredString(args, 'phase');
   if (Object.prototype.hasOwnProperty.call(args, LEGACY_ROUTE_KEY)) {
@@ -1752,9 +1790,227 @@ function startDispatch(args, context) {
     current_phase: phase,
     expected_phase: expected,
     dispatch: {
-      active: { phase, started_at: timestamp },
+      active: {
+        phase,
+        started_at: timestamp,
+        ...(phase === 'plan_execute' ? { liveness: initialExecutorLiveness(timestamp) } : {}),
+      },
       previous_phase: context.dispatch.previous_phase ?? null,
       next_phase: null,
+      next_action: `complete_${phase}`,
+    },
+    next_action: `complete_${phase}`,
+  };
+}
+
+function checkpointDispatch(args, context) {
+  const phase = requiredString(args, 'phase');
+  const event = requiredString(args, 'event');
+  const timestamp = nowIso();
+  const active = context.dispatch.active;
+
+  if (phase !== 'plan_execute') {
+    return {
+      gate: 'G12',
+      action: 'checkpoint',
+      phase,
+      event,
+      status: 'blocked',
+      timestamp,
+      error: 'Checkpoint de liveness só se aplica a plan_execute',
+      current_phase: active?.phase ?? null,
+      expected_phase: 'plan_execute',
+      next_action: 'corrigir_fase_do_checkpoint',
+    };
+  }
+  if (!active || active.phase !== phase) {
+    return {
+      gate: 'G12',
+      action: 'checkpoint',
+      phase,
+      event,
+      status: 'blocked',
+      timestamp,
+      error: `Checkpoint fora de ordem: fase ativa ${active?.phase ?? 'nenhuma'}, recebido ${phase}`,
+      current_phase: active?.phase ?? null,
+      expected_phase: active?.phase ?? expectedNextPhase(context.routing, context.dispatch),
+      next_action: active ? `checkpoint_${active.phase}` : `dispatch_${expectedNextPhase(context.routing, context.dispatch)}`,
+    };
+  }
+  if (!EXECUTOR_CHECKPOINT_EVENTS.has(event)) {
+    return {
+      gate: 'G12',
+      action: 'checkpoint',
+      phase,
+      event,
+      status: 'blocked',
+      timestamp,
+      error: `Checkpoint desconhecido: ${event}`,
+      current_phase: phase,
+      expected_phase: phase,
+      next_action: 'emitir_checkpoint_executor_valido',
+    };
+  }
+
+  const planPath = optionalString(args, 'plan_path');
+  const statePathValue = optionalString(args, 'state_path');
+  const detail = optionalString(args, 'detail');
+  if (event === 'state_path_created') {
+    if (!statePathValue || statePathValue.trim() === '') {
+      return {
+        gate: 'G12',
+        action: 'checkpoint',
+        phase,
+        event,
+        status: 'blocked',
+        timestamp,
+        error: 'state_path obrigatório para checkpoint state_path_created',
+        current_phase: phase,
+        expected_phase: phase,
+        next_action: 'emitir_state_path_created_com_state_path',
+      };
+    }
+    try {
+      JSON.parse(fs.readFileSync(resolveConsumerPath(statePathValue, args), 'utf8'));
+    } catch (error) {
+      return {
+        gate: 'G12',
+        action: 'checkpoint',
+        phase,
+        event,
+        status: 'blocked',
+        timestamp,
+        error: `state_path inválido ou ilegível para checkpoint state_path_created: ${error.message}`,
+        current_phase: phase,
+        expected_phase: phase,
+        next_action: 'corrigir_state_path_antes_do_handoff',
+      };
+    }
+  }
+  const liveness = active.liveness && typeof active.liveness === 'object'
+    ? active.liveness
+    : initialExecutorLiveness(active.started_at ?? timestamp);
+  const checkpoint = {
+    event,
+    timestamp,
+    ...(planPath ? { plan_path: planPath } : {}),
+    ...(statePathValue ? { state_path: statePathValue } : {}),
+    ...(detail ? { detail } : {}),
+  };
+  const nextLiveness = {
+    ...liveness,
+    status: checkpointStatus(event),
+    last_checkpoint: event,
+    last_progress_at: timestamp,
+    next_progress_deadline_at: isoPlusMs(timestamp, EXECUTOR_PROGRESS_TIMEOUT_MS),
+    checkpoints: [
+      ...(Array.isArray(liveness.checkpoints) ? liveness.checkpoints : []),
+      checkpoint,
+    ],
+  };
+
+  return {
+    gate: 'G12',
+    action: 'checkpoint',
+    phase,
+    event,
+    status: 'passed',
+    timestamp,
+    executor_liveness: nextLiveness.status,
+    current_phase: phase,
+    expected_phase: phase,
+    dispatch: {
+      active: {
+        ...active,
+        liveness: nextLiveness,
+      },
+      executor_liveness: nextLiveness,
+      next_action: `complete_${phase}`,
+    },
+    next_action: `continue_${phase}`,
+  };
+}
+
+function statusDispatch(args, context) {
+  const phase = requiredString(args, 'phase');
+  const timestamp = nowIso();
+  const active = context.dispatch.active;
+
+  if (!active || active.phase !== phase) {
+    return {
+      gate: 'G12',
+      action: 'status',
+      phase,
+      status: 'blocked',
+      timestamp,
+      error: `Status fora de ordem: fase ativa ${active?.phase ?? 'nenhuma'}, recebido ${phase}`,
+      current_phase: active?.phase ?? null,
+      expected_phase: active?.phase ?? expectedNextPhase(context.routing, context.dispatch),
+      next_action: active ? `status_${active.phase}` : `dispatch_${expectedNextPhase(context.routing, context.dispatch)}`,
+    };
+  }
+
+  const liveness = active.liveness && typeof active.liveness === 'object'
+    ? active.liveness
+    : (phase === 'plan_execute' ? initialExecutorLiveness(active.started_at ?? timestamp) : null);
+  const checkpoints = Array.isArray(liveness?.checkpoints) ? liveness.checkpoints : [];
+  const deadline = Date.parse(liveness?.bootstrap_deadline_at ?? '');
+  const now = Date.parse(timestamp);
+  const bootstrapExpired = phase === 'plan_execute'
+    && checkpoints.length === 0
+    && Number.isFinite(deadline)
+    && Number.isFinite(now)
+    && now > deadline;
+  const progressDeadline = Date.parse(liveness?.next_progress_deadline_at ?? '');
+  const progressExpired = phase === 'plan_execute'
+    && checkpoints.length > 0
+    && Number.isFinite(progressDeadline)
+    && Number.isFinite(now)
+    && now > progressDeadline;
+
+  if (bootstrapExpired || progressExpired) {
+    const cause = bootstrapExpired ? 'executor_bootstrap_timeout' : 'executor_progress_timeout';
+    const stalledLiveness = {
+      ...liveness,
+      status: 'stalled',
+      stalled_at: timestamp,
+      cause,
+    };
+    return {
+      gate: 'G12',
+      action: 'status',
+      phase,
+      status: 'blocked',
+      timestamp,
+      cause,
+      error: bootstrapExpired
+        ? `Executor sem checkpoint até ${liveness.bootstrap_deadline_at}`
+        : `Executor sem progresso desde ${liveness.last_progress_at}`,
+      current_phase: phase,
+      expected_phase: phase,
+      dispatch: {
+        active: null,
+        previous_phase: phase,
+        next_phase: phase,
+        next_action: `retry_${phase}`,
+        executor_liveness: stalledLiveness,
+      },
+      next_action: `retry_${phase}`,
+    };
+  }
+
+  return {
+    gate: 'G12',
+    action: 'status',
+    phase,
+    status: 'passed',
+    timestamp,
+    executor_liveness: liveness?.status ?? 'not_tracked',
+    current_phase: phase,
+    expected_phase: phase,
+    dispatch: {
+      active: liveness ? { ...active, liveness } : active,
+      executor_liveness: liveness,
       next_action: `complete_${phase}`,
     },
     next_action: `complete_${phase}`,
@@ -1896,13 +2152,15 @@ function lockDispatch(args = {}) {
     throw rpcError(-32602, `unknown_property: ${LEGACY_ROUTE_KEY}`);
   }
   const action = args.action ?? 'start';
-  if (!['start', 'complete', 'abort'].includes(action)) {
+  if (!['start', 'checkpoint', 'status', 'complete', 'abort'].includes(action)) {
     throw rpcError(-32602, `Ação inválida para atlas_lock_dispatch: ${action}`);
   }
 
   const context = getDispatchState(runId, args);
   const result =
     action === 'start' ? startDispatch(args, context) :
+    action === 'checkpoint' ? checkpointDispatch(args, context) :
+    action === 'status' ? statusDispatch(args, context) :
     action === 'complete' ? completeDispatch(args, context) :
     abortDispatch(args, context);
 
@@ -1984,6 +2242,33 @@ function validatorStart(args, context) {
       error: 'Validator só pode iniciar com plan_execute ativo',
       current_phase: context.dispatch.active?.phase ?? null,
       next_action: 'manter_plan_execute_ativo_antes_da_validacao',
+    };
+  }
+
+  const liveness = context.dispatch.active.liveness && typeof context.dispatch.active.liveness === 'object'
+    ? context.dispatch.active.liveness
+    : null;
+  const checkpoints = Array.isArray(liveness?.checkpoints) ? liveness.checkpoints : [];
+  const lastCheckpoint = checkpoints.at(-1);
+  if (
+    liveness?.status !== 'handoff_ready'
+    || liveness.last_checkpoint !== 'state_path_created'
+    || lastCheckpoint?.event !== 'state_path_created'
+    || lastCheckpoint?.state_path !== statePathValue
+  ) {
+    return {
+      gate: 'G12',
+      action: 'start',
+      status: 'blocked',
+      timestamp,
+      error: 'Validator bloqueado: executor não comprovou state_path_created para este state_path',
+      current_phase: 'plan_execute',
+      executor_liveness: liveness?.status ?? 'not_tracked',
+      expected_checkpoint: 'state_path_created',
+      state_path: statePathValue,
+      last_checkpoint: liveness?.last_checkpoint ?? null,
+      last_state_path: lastCheckpoint?.state_path ?? null,
+      next_action: 'aguardar_state_path_created_antes_do_validator',
     };
   }
 
@@ -2733,11 +3018,14 @@ function assertAfterPlan(args = {}) {
 }
 
 function toolResult(value) {
+  // JSON compacto (sem indentação): o consumidor é o LLM orquestrador, que parseia
+  // igual com ou sem whitespace. Pretty-print só gastava tokens em toda resposta MCP
+  // (~10-13 por run). Mesmos campos/valores — zero impacto em determinismo/contrato.
   return {
     content: [
       {
         type: 'text',
-        text: JSON.stringify(value, null, 2),
+        text: JSON.stringify(value),
       },
     ],
   };
@@ -2876,7 +3164,7 @@ function toolsList() {
       },
       {
         name: 'atlas_lock_dispatch',
-        description: 'Gates G7/G8: controla fase ativa, transições de dispatch, validator antes de review e concorrência 1.',
+        description: 'Gates G7/G8/G12: controla fase ativa, checkpoints de liveness do executor, transições de dispatch, validator antes de review e concorrência 1.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
@@ -2884,8 +3172,16 @@ function toolsList() {
           properties: {
             run_id: { type: 'string', minLength: 1 },
             project_root: { type: 'string', minLength: 1 },
-            action: { type: 'string', enum: ['start', 'complete', 'abort'], default: 'start' },
+            action: { type: 'string', enum: ['start', 'checkpoint', 'status', 'complete', 'abort'], default: 'start' },
             phase: { type: 'string', enum: ['plan_handoff', 'plan_execute', 'slice_review'] },
+            event: {
+              type: 'string',
+              enum: [...EXECUTOR_CHECKPOINT_EVENTS],
+              description: 'Checkpoint G12 emitido pelo executor durante plan_execute.',
+            },
+            plan_path: { type: 'string' },
+            state_path: { type: 'string' },
+            detail: { type: 'string' },
             validator_status: { type: 'string' },
           },
         },
