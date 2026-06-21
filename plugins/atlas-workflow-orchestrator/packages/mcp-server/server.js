@@ -266,6 +266,25 @@ const HOST_ADAPTERS = {
     // Fail-closed — só passam se o caller reportar disponibilidade real (não otimismo do perfil).
     prereq_policy: 'must_report',
   },
+  antigravity: {
+    label: 'Antigravity',
+    subagent_dispatch: {
+      mechanism: 'define_subagent(name, system_prompt) + invoke_subagent(Subagents)',
+      example: 'define_subagent(name: "atlas-task-validator", system_prompt: "<SKILL_MD>") e invoke_subagent(Subagents: [{TypeName: "atlas-task-validator", Role: "Validator", Prompt: "<state_path>"}])',
+      registration: 'Mapeamento de skills e agents via define_subagent dinâmico',
+    },
+    validator_dispatch: {
+      dispatcher: 'orchestrator',
+      join: {
+        sync: 'self_evident',
+        confidence: 'high',
+        mechanism: 'invoke_subagent bloqueante por design do host',
+      },
+    },
+    todo_tool: null,
+    hooks: { supported: false, mechanism: null },
+    capabilities_flags: { subagent_available: true, mcp_available: true, todo_available: false },
+  },
   generic: {
     label: 'Host genérico',
     subagent_dispatch: {
@@ -523,7 +542,15 @@ function parseWorkflowConfig() {
 
 function consumerRoot(args = {}) {
   const explicitRoot = optionalString(args, 'project_root');
-  return path.resolve(explicitRoot && explicitRoot.trim() !== '' ? explicitRoot : process.cwd());
+  if (explicitRoot && explicitRoot.trim() !== '') {
+    return path.resolve(explicitRoot);
+  }
+  const cwd = process.cwd();
+  if (cwd === '/' || cwd === '/var/folders') {
+    const home = process.env.HOME || process.env.USERPROFILE;
+    if (home) return path.resolve(home);
+  }
+  return path.resolve(cwd);
 }
 
 function runRoot(args = {}) {
@@ -613,8 +640,12 @@ function redact(value) {
 }
 
 function logCall(entry, args = {}) {
-  const line = JSON.stringify({ timestamp: nowIso(), ...entry }) + '\n';
-  fs.appendFileSync(path.join(ensureRunDir(args), 'mcp.log'), line, { mode: 0o600 });
+  try {
+    const line = JSON.stringify({ timestamp: nowIso(), ...entry }) + '\n';
+    fs.appendFileSync(path.join(ensureRunDir(args), 'mcp.log'), line, { mode: 0o600 });
+  } catch (error) {
+    // Ignora silenciosamente falhas de gravação de log (ex: diretório somente-leitura)
+  }
 }
 
 function rpcError(code, message, data) {
@@ -3323,9 +3354,9 @@ function startStdioLoop() {
           send({
             id: message.id,
             error: {
-              code: error.code ?? -32000,
+              code: Number.isInteger(error.code) ? error.code : -32603,
               message: error.message,
-              data: error.data,
+              data: error.data || { original_code: error.code },
             },
           });
         }

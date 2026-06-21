@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.9.0 - 2026-06-21
+
+Tipo: **minor aditivo** — novo host **Antigravity (Gemini)**, sexto host suportado. **Sem breaking** (`CAPABILITIES_SCHEMA_VERSION` segue **v5**); comportamento dos hosts existentes preservado.
+
+Mudanças:
+- **Novo adapter `antigravity`** em `HOST_ADAPTERS` (`packages/mcp-server/server.js`, replicado nas 4 cópias de bundle). Subagente nativo via `define_subagent(name, system_prompt)` + `invoke_subagent(Subagents)`; `validator_dispatch.join.sync = self_evident` (`invoke_subagent` bloqueante por design do host); MCP nativo; sem todo nativo. `prereq_policy` default `self_evident` — host nativo, não exige `host_capabilities` (igual claude/codex/opencode).
+- **Detecção** via `ATLAS_HOST=antigravity` (injetado no `mcp_config.json` pelo instalador) ou `arg host`. Mesmo padrão de injeção de opencode/pi; sem file-detection.
+- **Instalador** (`build/cli/atlas-init.mjs`): `installAntigravity`/`uninstallAntigravity` instalam globalmente em `~/.gemini/config/` (plugin em `plugins/atlas-workflow-orchestrator/` + merge do MCP em `mcp_config.json`). Aliases `antigravity`/`gemini`/`antigravitycode`. `--global` é no-op (já global por natureza).
+- **Robustez de runtime** (beneficia Antigravity, sem regredir os demais): (1) `cwd` igual a `/` ou `/var/folders` sem root explícito cai para `$HOME`; (2) gravação do `mcp.log` em `try/catch` (tolera diretório somente-leitura); (3) código de erro JSON-RPC sanitizado para inteiro (`Number.isInteger(code) ? code : -32603`, `original_code` preservado em `data`) — conformidade com clients estritos.
+- **Docs**: `host-adapters.md` (matriz de adapters, 5 cópias), `README.md`, `COMMANDS.md` atualizados com o sexto host. Correção: Antigravity não gera artefato `.plugin` (instalação from-source por cópia direta).
+- **Testes**: 4 testes novos cobrindo detecção, perfil de capabilities, prereq self_evident e presença em `HOST_NAMES` (`packages/mcp-server/server.test.js`).
+
 ## 0.8.3 - 2026-06-16
 
 Tipo: **patch de confiabilidade runtime**. **Sem mudança de schema** (`CAPABILITIES_SCHEMA_VERSION` segue **v5**). Origem: post-mortem de travamento repetido em `plan_execute` (`atlas-plan-execute` despachado, sem `state_path`, sem progresso material e sem erro terminal), mesmo padrão já observado em S30/S32.
