@@ -220,7 +220,7 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `atlas-*` para o
 
 ---
 
-**Plugin version:** 0.9.0
+**Plugin version:** 0.9.1
 **Author:** Paulo Borini
 **Last updated:** 2026-06-16
 
