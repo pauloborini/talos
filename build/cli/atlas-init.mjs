@@ -435,29 +435,27 @@ function installAntigravity(opts) {
     log(`  [dry-run] mesclaria mcpServers.atlas-workflow em ${mcpFile} (args absoluto)`);
   } else {
     fs.mkdirSync(pluginDir, { recursive: true });
-    
+
+    // Fonte: bundle shipado `plugins/atlas-workflow-orchestrator/`. A cópia raiz
+    // `/packages/` NÃO entra no tarball npm (ver .npmignore) — usá-la quebra o
+    // install via npx-from-GitHub (ENOENT). O bundle já traz skills/ completo
+    // (inclui a skill atlas-workflow-orchestrator) + packages/mcp-server.
+    const SRC = path.join(ROOT, 'plugins/atlas-workflow-orchestrator');
+
     // Limpeza de instalações anteriores controladas por nós
     const skillsDir = path.join(pluginDir, 'skills');
     const packagesDir = path.join(pluginDir, 'packages');
     rmPath(skillsDir, opts);
     rmPath(packagesDir, opts);
 
-    // Copia as skills
-    fs.mkdirSync(skillsDir, { recursive: true });
-    fs.cpSync(path.join(ROOT, 'packages/skills'), skillsDir, { recursive: true });
-    
-    // Copia a orquestradora
-    fs.cpSync(
-      path.join(ROOT, 'packages/orchestrator/skills/atlas-workflow-orchestrator'),
-      path.join(skillsDir, 'atlas-workflow-orchestrator'),
-      { recursive: true }
-    );
+    // Copia as skills (inclui a orquestradora atlas-workflow-orchestrator)
+    fs.cpSync(path.join(SRC, 'skills'), skillsDir, { recursive: true });
 
     // Copia o mcp-server
     fs.mkdirSync(path.join(packagesDir, 'mcp-server'), { recursive: true });
-    fs.cpSync(path.join(ROOT, 'packages/mcp-server'), path.join(packagesDir, 'mcp-server'), { recursive: true });
-    
-    // Remove testes do mcp-server no bundle
+    fs.cpSync(path.join(SRC, 'packages/mcp-server'), path.join(packagesDir, 'mcp-server'), { recursive: true });
+
+    // Remove testes do mcp-server no bundle (defensivo; bundle shipado já não os traz)
     fs.rmSync(path.join(packagesDir, 'mcp-server', 'server.test.js'), { force: true });
 
     // Cria o plugin.json

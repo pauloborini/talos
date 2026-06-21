@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.1 - 2026-06-21
+
+Tipo: **patch de distribuição** (sem mudança de schema/runtime; `CAPABILITIES_SCHEMA_VERSION` segue **v5**). Corrige o instalador do host Antigravity introduzido em 0.9.0.
+
+Mudanças:
+- **Fix — `init antigravity` via npx-from-GitHub** (`build/cli/atlas-init.mjs`). O instalador copiava skills e mcp-server de `ROOT/packages/` (`packages/skills`, `packages/orchestrator/...`, `packages/mcp-server`), mas `/packages/` é excluído do tarball npm por `.npmignore` — então `npx github:pauloborini/atlas-workflow init antigravity` abortava com `ENOENT` em `packages/skills`. Passa a copiar do bundle shipado `plugins/atlas-workflow-orchestrator/` (`skills/` já inclui a skill `atlas-workflow-orchestrator`; `packages/mcp-server/`), mesmo padrão de fonte dos demais hosts. Bug não pegava em testes locais porque o checkout do repo tem `/packages/`; só o caminho de instalação real (npx) era afetado.
+
 ## 0.9.0 - 2026-06-21
 
 Tipo: **minor aditivo** — novo host **Antigravity (Gemini)**, sexto host suportado. **Sem breaking** (`CAPABILITIES_SCHEMA_VERSION` segue **v5**); comportamento dos hosts existentes preservado.

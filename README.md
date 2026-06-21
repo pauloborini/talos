@@ -1,8 +1,8 @@
 # Atlas Workflow
 
-Plugin **Atlas Workflow Orchestrator** v0.9.0 — pipeline determinístico (PRD → plano → execução → validação) com skills `atlas-*`, templates e MCP. Um pacote, seis hosts: **Claude Code**, **Cursor**, **Codex App**, **Antigravity (Gemini)**, **OpenCode** e **Pi CLI**.
+Plugin **Atlas Workflow Orchestrator** v0.9.1 — pipeline determinístico (PRD → plano → execução → validação) com skills `atlas-*`, templates e MCP. Um pacote, seis hosts: **Claude Code**, **Cursor**, **Codex App**, **Antigravity (Gemini)**, **OpenCode** e **Pi CLI**.
 
-**Versão:** [`VERSION`](VERSION) (`0.9.0`) · **Repo:** https://github.com/pauloborini/atlas-workflow
+**Versão:** [`VERSION`](VERSION) (`0.9.1`) · **Repo:** https://github.com/pauloborini/atlas-workflow
 
 ## Hosts
 
