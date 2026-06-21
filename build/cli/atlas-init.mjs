@@ -31,6 +31,7 @@ const HOST_ALIASES = {
   codex: 'codex',
   opencode: 'opencode',
   pi: 'pi',
+  antigravity: 'antigravity', gemini: 'antigravity', antigravitycode: 'antigravity',
 };
 
 function log(msg) { process.stdout.write(`${msg}\n`); }
@@ -410,6 +411,65 @@ function installPiGlobal(opts) {
   log('próximo: abra `pi` em qualquer pasta  → atlas_ping (host=pi) + atlas_capabilities.');
 }
 
+function installAntigravity(opts) {
+  const geminiConfig = path.join(homedir(), '.gemini', 'config');
+  const pluginDir = path.join(geminiConfig, 'plugins', 'atlas-workflow-orchestrator');
+  const mcpFile = path.join(geminiConfig, 'mcp_config.json');
+  const absServer = path.join(pluginDir, 'packages', 'mcp-server', 'server.js');
+
+  log(`instalando Atlas (antigravity v${VERSION}) GLOBAL em ${pluginDir}`);
+  assertConfigParseable(mcpFile);
+
+  const entry = {
+    command: process.execPath,
+    args: [absServer],
+    env: {
+      ATLAS_HOST: 'antigravity'
+    }
+  };
+
+  if (opts.dryRun) {
+    log(`  [dry-run] criaria pasta do plugin → ${pluginDir}`);
+    log(`  [dry-run] copiaria skills e mcp-server para a pasta do plugin`);
+    log(`  [dry-run] criaria plugin.json na raiz do plugin`);
+    log(`  [dry-run] mesclaria mcpServers.atlas-workflow em ${mcpFile} (args absoluto)`);
+  } else {
+    fs.mkdirSync(pluginDir, { recursive: true });
+    
+    // Limpeza de instalações anteriores controladas por nós
+    const skillsDir = path.join(pluginDir, 'skills');
+    const packagesDir = path.join(pluginDir, 'packages');
+    rmPath(skillsDir, opts);
+    rmPath(packagesDir, opts);
+
+    // Copia as skills
+    fs.mkdirSync(skillsDir, { recursive: true });
+    fs.cpSync(path.join(ROOT, 'packages/skills'), skillsDir, { recursive: true });
+    
+    // Copia a orquestradora
+    fs.cpSync(
+      path.join(ROOT, 'packages/orchestrator/skills/atlas-workflow-orchestrator'),
+      path.join(skillsDir, 'atlas-workflow-orchestrator'),
+      { recursive: true }
+    );
+
+    // Copia o mcp-server
+    fs.mkdirSync(path.join(packagesDir, 'mcp-server'), { recursive: true });
+    fs.cpSync(path.join(ROOT, 'packages/mcp-server'), path.join(packagesDir, 'mcp-server'), { recursive: true });
+    
+    // Remove testes do mcp-server no bundle
+    fs.rmSync(path.join(packagesDir, 'mcp-server', 'server.test.js'), { force: true });
+
+    // Cria o plugin.json
+    const pluginJson = { name: 'atlas-workflow-orchestrator' };
+    fs.writeFileSync(path.join(pluginDir, 'plugin.json'), JSON.stringify(pluginJson, null, 2) + '\n');
+
+    // Mescla o MCP
+    mergeServerInto(mcpFile, 'mcpServers', 'atlas-workflow', entry);
+    log('ok — Antigravity GLOBAL instalado (skills + MCP server).');
+  }
+}
+
 // --- uninstall ---------------------------------------------------------------
 
 function rmIfExists(p, { dryRun }) {
@@ -502,6 +562,17 @@ function uninstallPiGlobal(opts) {
   log('ok — artefatos globais do Atlas removidos. As deps pi-mcp-adapter/pi-subagents ficam (uso geral).');
 }
 
+function uninstallAntigravity(opts) {
+  const geminiConfig = path.join(homedir(), '.gemini', 'config');
+  const pluginDir = path.join(geminiConfig, 'plugins', 'atlas-workflow-orchestrator');
+  const mcpFile = path.join(geminiConfig, 'mcp_config.json');
+
+  log(`removendo Atlas (antigravity) GLOBAL de ${pluginDir}`);
+  rmIfExists(pluginDir, opts);
+  dropMcpKey(mcpFile, 'mcpServers', 'atlas-workflow', opts);
+  log('ok — artefatos globais do Atlas para Antigravity removidos.');
+}
+
 function usage() {
   log(`atlas-workflow v${VERSION} — instalador multi-host
 
@@ -512,6 +583,7 @@ uso:
 hosts:
   claudecode | cursor   via \`claude plugin\` (marketplace from-source; já global)
   codex                 via \`codex plugin\` + custom agents em CODEX_HOME/agents
+  antigravity           via plugin nativo em ~/.gemini/config/ (já global)
   opencode              por-projeto: .opencode/ + opencode.json no [dir]
                         --global: ~/.config/opencode/ (vale em todos os projetos)
   pi                    por-projeto: .mcp.json + .pi/agents/ no [dir] + deps
@@ -519,13 +591,14 @@ hosts:
 
 flags:
   --dir <d>    diretório alvo (opencode/pi por-projeto); default: diretório atual
-  --global,-g  instalação global (opencode/pi); claude/codex já são globais
+  --global,-g  instalação global (opencode/pi); claude/codex/antigravity já são globais
   --yes,-y     auto-instala deps faltantes (pi, no init)
   --dry-run    mostra o que faria, sem alterar nada
   -h,--help    esta ajuda
 
 exemplos:
   npx github:${REPO_SLUG} init claudecode
+  npx github:${REPO_SLUG} init antigravity
   npx github:${REPO_SLUG} init opencode               # projeto atual
   npx github:${REPO_SLUG} init opencode --global      # todos os projetos
   npx github:${REPO_SLUG} init pi --global --yes
@@ -565,24 +638,24 @@ function main() {
     fail(`comando desconhecido: ${cmd} (use \`init <host>\` ou \`uninstall <host>\`)`, 2);
   }
 
-  if (!rawHost) fail('informe o host: claudecode | cursor | codex | opencode | pi', 2);
+  if (!rawHost) fail('informe o host: claudecode | cursor | codex | antigravity | opencode | pi', 2);
   if (extra.length) fail(`argumentos extras não suportados: ${extra.join(' ')}`, 2);
   const host = HOST_ALIASES[rawHost.toLowerCase()];
-  if (!host) fail(`host inválido: ${rawHost} (use claudecode|cursor|codex|opencode|pi)`, 2);
+  if (!host) fail(`host inválido: ${rawHost} (use claudecode|cursor|codex|antigravity|opencode|pi)`, 2);
 
   const opts = parsed.opts;
   const targetDir = path.resolve(opts.dir || rawDir || process.cwd());
   const actions = {
-    init: { claude: installClaude, codex: installCodex, opencode: installOpencode, pi: installPi },
-    uninstall: { claude: uninstallClaude, codex: uninstallCodex, opencode: uninstallOpencode, pi: uninstallPi },
+    init: { claude: installClaude, codex: installCodex, antigravity: installAntigravity, opencode: installOpencode, pi: installPi },
+    uninstall: { claude: uninstallClaude, codex: uninstallCodex, antigravity: uninstallAntigravity, opencode: uninstallOpencode, pi: uninstallPi },
   };
   const globalActions = {
     init: { opencode: installOpencodeGlobal, pi: installPiGlobal },
     uninstall: { opencode: uninstallOpencodeGlobal, pi: uninstallPiGlobal },
   };
 
-  if (host === 'claude' || host === 'codex') {
-    if (opts.global) log('nota: claude/codex já são globais por natureza (registro da CLI) — --global ignorado.');
+  if (host === 'claude' || host === 'codex' || host === 'antigravity') {
+    if (opts.global && (host === 'claude' || host === 'codex')) log('nota: claude/codex já são globais por natureza (registro da CLI) — --global ignorado.');
     actions[cmd][host](opts);
   } else if (opts.global) {
     globalActions[cmd][host](opts);

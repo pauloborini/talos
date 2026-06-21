@@ -214,6 +214,36 @@ test('HOST_NAMES inclui pi', () => {
   assert.ok(HOST_NAMES.includes('pi'));
 });
 
+test('detectHost: antigravity via ATLAS_HOST injetado pelo mcp_config.json', () => {
+  const r = detectHost({}, { ATLAS_HOST: 'antigravity' });
+  assert.equal(r.host, 'antigravity');
+  assert.equal(r.detected_via, 'env:ATLAS_HOST');
+});
+
+test('capabilities: perfil antigravity (subagente define_subagent/invoke_subagent, mcp nativo, sem todo, self_evident)', () => {
+  const cap = capabilities({ host: 'antigravity' });
+  assert.equal(cap.host, 'antigravity');
+  assert.equal(cap.host_label, 'Antigravity');
+  assert.match(cap.subagent_dispatch.mechanism, /define_subagent.*invoke_subagent/);
+  assert.equal(cap.validator_dispatch.dispatcher, 'orchestrator');
+  assert.equal(cap.validator_dispatch.join.sync, 'self_evident');
+  assert.equal(cap.todo_tool, null);
+  assert.equal(cap.capabilities_flags.subagent_available, true);
+  assert.equal(cap.capabilities_flags.mcp_available, true);
+  assert.equal(cap.capabilities_flags.todo_available, false);
+  // host nativo (subagente+MCP nativos) → self_evident, não exige host_capabilities
+  assert.equal(cap.prereq_policy, 'self_evident');
+  assert.deepEqual(cap.required_deps, []);
+});
+
+test('checkPrerequisites: antigravity (self_evident) passa sem report — host nativo', () => {
+  assert.equal(checkPrerequisites({ host: 'antigravity' }).status, 'passed');
+});
+
+test('HOST_NAMES inclui antigravity', () => {
+  assert.ok(HOST_NAMES.includes('antigravity'));
+});
+
 test('capabilities: flags por host', () => {
   for (const h of ['claude', 'codex']) {
     const f = capabilities({ host: h }).capabilities_flags;
