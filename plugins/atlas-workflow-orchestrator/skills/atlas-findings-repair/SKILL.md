@@ -49,6 +49,7 @@ Leia `atlas_run_state` como fonte primária do estado da run. O `state_path` con
 5. **Não despachar validator, review ou qualquer subagente.** O orquestrador faz isso.
 6. **Não iniciar terceiro ciclo.** Esta skill existe só entre validator 1 e validator 2.
 7. **Não trocar o `state_path`.** Atualize o arquivo original em lugar; redirecionar o boundary invalida a correlação do repair.
+8. **Não inventar correlação.** IDs devem existir no packet recebido, sem duplicatas; todo arquivo tocado pertence a pelo menos um `repair_evidence` recebido e nenhum arquivo extra é permitido.
 
 ## Fluxo
 
@@ -67,6 +68,8 @@ Leia do plano apenas o mínimo necessário:
 - Section 6 — contratos técnicos
 - Section 8 — checklist
 
+Capture também `base_sha`, `head_sha`, `task_evidence`, `repair_evidence`, `worktree_baseline` e `worktree_final` do state.
+
 ### 2. Ler os findings recebidos
 
 Trabalhe somente com findings de severidade:
@@ -74,6 +77,8 @@ Trabalhe somente com findings de severidade:
 - `P0`
 - `P1`
 - `P2`
+
+Cada finding novo deve ter `id`, `failure_mode`, `evidence`, `recommendation` e `fix_validation`. `msg` é compatibilidade deprecated e não substitui esses campos.
 
 Se o pacote vier vazio, inconsistente ou sem finding reparável, pare em `blocked`.
 
@@ -115,7 +120,11 @@ Se o finding persistir por falta de decisão de produto, dependência externa ou
 
 Ao terminar:
 
-- atualize o conteúdo do `state_path` original se a evidência do boundary mudou
+- atualize `files_changed` com todo arquivo tocado, inclusive novo/adjacente
+- recompute `head_sha` (`git rev-parse HEAD`) e `diff_stat`; preserve `base_sha`
+- preserve `worktree_baseline` e recapture `worktree_final` após o repair; derive o boundary completo do delta entre snapshots
+- acrescente `repair_evidence[]` no shape `{finding_id, files_touched, checks_run, status}`
+- garanta que cada `repair_evidence.files_touched` esteja em `files_changed`
 - mantenha a mesma slice
 - não invente novo run state paralelo
 
@@ -128,6 +137,7 @@ Retorne saída curta e estruturada com:
 - `state_path`
 - `files_touched`
 - `checks_run`
+- `repairs`: array `{finding_id, files_touched, checks_run, status: resolved|blocked}`
 - `residual_risk` (se houver)
 
 O orquestrador chamará `atlas_lock_validator(action=repair_complete, repair_run_id=..., state_path=<mesmo path original>)` e só então poderá despachar o validator final.

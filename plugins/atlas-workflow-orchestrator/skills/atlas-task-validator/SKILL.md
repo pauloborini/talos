@@ -34,8 +34,15 @@ Read the JSON file at `.atlas/state/<run_id>/<slice>.json` using the schema in `
 3. **Executed task ids** — `tasks`.
 4. **Boundary refs** — `boundary_refs`.
 5. **Explicit cold-review note** — you did not observe implementation; read current code only.
+6. **Deterministic boundary** — `base_sha`, `head_sha`, `contract_kind`, and all evidence/probe arrays.
+7. **Working-tree delta** — compare `worktree_baseline`/`worktree_final` and current tree; unchanged preexisting dirt stays outside, later mutations must be evidenced.
+8. **Repair correlation** — on attempt 2, correlate every target finding id with `repair_evidence` in the same state path.
 
 Do not accept inline contract, copied diff, or pasted task lists as the validation boundary. If `state_path` is missing, unreadable, or lacks any required field, return JSON with `verdict: "fail"` and one P1 finding for `Input insuficiente: <missing item>`.
+
+Compatibilidade: state legado mínimo sem `contract_kind` só é aceito quando `executor_skill=atlas-plan-execute`; nesse caso o plano continua autoritativo. State de `atlas-direct-execute` exige extensão completa e `obligations` não vazio.
+
+Antes de validar código, compare `base_sha...head_sha`, `HEAD`, snapshot final atual e delta `worktree_baseline→worktree_final` com `files_changed`/evidências. Não infira base pelo nome da branch. Divergência gera `boundary_violations` e finding P1 estruturado.
 
 ---
 
@@ -79,23 +86,24 @@ Do not accept inline contract, copied diff, or pasted task lists as the validati
 3. **For each relevant Section 6 Contract:** verify signature, behavior, and returned shape where applicable.
 4. **For each relevant Section 8 checklist item:** mark it pass or fail with evidence.
 5. **Perform cross-task checks** for shared state, missing required args, route order, partial failure handling, and UI/backend permission mismatch.
-6. **Apply universal baseline checks** below. Do not invent new mandatory criteria outside the plan and baseline.
+6. **Aplique baseline + perfis ativos** abaixo. Resolva os perfis por manifests/comandos reais conforme `../_shared/references/stack-profiles.md`; não invente critérios fora do plano, baseline e perfis ativos.
 7. **Do not patch files or propose diffs.** Suggested fix must fit in 1-2 lines of text.
 
 ---
 
-## Universal Baseline
+## Baseline universal + perfis
 
-Always apply these checks:
-* **Naming cross-layer:** New read methods use `get*` prefix. Mutation uses explicit verbs (`create`, `update`, `delete`, `add`, `remove`). Concepts keep consistent root names across layers.
-* **State lifecycle:** Shared stores or controllers reused across modes or routes must reset previous mode state in `init()` or transition.
-* **Navigation args:** Argument resolvers validate required fields; navigation passes all required ids (no empty placeholder `''`).
-* **Partial failure paths:** Multi-step mutations surface partial persistence clearly if a later step fails.
-* **Backend and UI gate match:** Sensitive mutations require server-side enforcement. UI gating alone is insufficient (Page reads `canManage` from Store).
-* **Route registration:** Literal routes are registered before parameterized routes (`/:id`, `/:id/edit`) under the same prefix.
-* **Localization:** New localization keys must exist in every required locale file; generated l10n is clean.
-* **Analyzer:** `flutter analyze` (or stack equivalent) returns zero issues for touched files in boundary.
-* **Casts and nullability:** Remote payload casts use safe defensive patterns; nulos in collections treated with `?? []`.
+Fonte compartilhada: `../_shared/references/stack-profiles.md`. Execute `detectStackProfiles(project_root, declared_commands, boundary_paths)` de `../_shared/scripts/document_quality.mjs`; aplique cada entrada de `boundaries` somente aos arquivos daquele package.
+
+Sempre aplique baseline universal: segurança/permissões, boundary/contratos, erros/falhas parciais, concorrência/reentrada, cleanup/estado stale, integridade de dados/input e checks realmente declarados.
+
+Ative regras específicas somente quando o perfil retornar `true`:
+
+- `flutter_dart`: lifecycle Flutter, rotas/args, null-safety/casts, l10n, analyze/test; GetX somente se dependência/import/regra real confirmar GetX.
+- `node_typescript`: handles/promises, validação runtime, ESM/CJS/exports/tipos e scripts Node reais.
+- `python`: context managers/cleanup, exceções/async, typing/parsing e ferramentas Python declaradas.
+
+Monorepo pode ativar múltiplos perfis, sempre restritos ao boundary correspondente. Fixture Node sem sinal Flutter não recebe regra Flutter/GetX.
 
 ---
 
@@ -110,10 +118,15 @@ Return strict JSON as the final output. Do not wrap it in Markdown and do not pr
   "verdict": "pass | fail | pass_with_observations",
   "findings": [
     {
+      "id": "F-001",
       "severity": "P0|P1|P2|P3",
       "file": "string",
-      "line": 0,
-      "msg": "string"
+      "line": 1,
+      "failure_mode": "string",
+      "evidence": "string",
+      "recommendation": "string",
+      "fix_validation": "string",
+      "msg": "string (deprecated; derivado por uma release)"
     }
   ],
   "observations": [
@@ -133,6 +146,8 @@ Return strict JSON as the final output. Do not wrap it in Markdown and do not pr
 ```
 
 `dispatch_token` must equal `validator_recovery.expected_dispatch_token`. `findings`, `observations`, and `boundary_violations` must always be arrays. Use empty arrays when there are no items.
+
+IDs são únicos, obrigatórios no formato `F-NNN` e estáveis nos dois ciclos. Severity é estritamente `P0|P1|P2|P3`. No segundo ciclo, confirme por ID que `repair_evidence` registra arquivos, checks e `status: resolved`; finding não correlacionado permanece P1. O MCP rejeita shape incompleto e `pass`/`pass_with_observations` quando há P0/P1.
 
 **Proof-of-work (`challenge_response`).** If `validator_recovery.challenge` is not `null`, it carries `{ file, algo: "sha256" }` — a boundary file you must have read access to. Compute the sha256 of that file's raw bytes (`shasum -a 256 "<challenge.file>"`) and return the hex (first token) in `challenge_response`. If `challenge` is `null`, return `null`. Never fabricate the hash: the orchestrator recomputes it from disk and blocks the slice (`challenge_failed`) on mismatch. This is a *mechanical* attestation that the verdict touched real boundary bytes — it closes the laziest bypass (claiming `pass` with no read at all); it does **not** by itself prove you read and understood the code (hashing a file does not require loading its content). Reading the boundary remains your obligation. It is not a non-forgeable isolation proof either (the MCP shares one stdio caller). Challenge failures are bounded per attempt: past the cap the slot closes terminally (`challenge_exhausted`), which usually signals path resolution diverging from the consumer root.
 

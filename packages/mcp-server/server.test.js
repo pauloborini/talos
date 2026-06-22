@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import {
   HOST_NAMES,
   PREREQUISITES,
@@ -19,6 +20,7 @@ import {
   checkPrerequisites,
   checkJoinCapability,
   expectedNextPhase,
+  expectedExecutorSkill,
   guaranteeLevelForMode,
   classifyArtifactContent,
   BANNER_TEMPLATES,
@@ -31,6 +33,8 @@ import {
   preflight,
   lockDispatch,
   lockValidator as lockValidatorCore,
+  captureWorktreeSnapshot,
+  validateStateBoundary,
   assertAfterPlan,
   runState,
   ping,
@@ -80,7 +84,30 @@ function lockValidator(args) {
       // Testes de hard-fail sem slot/estado devem alcançar o runtime sem token.
     }
   }
+  if (args.action === 'complete' && !Object.hasOwn(args, 'data')) {
+    args = { ...args, data: { findings: [] } };
+  }
   return lockValidatorCore(args);
+}
+
+function finding(overrides = {}) {
+  return {
+    id: 'F-001', severity: 'P1', file: 'x.ts', line: 1,
+    failure_mode: 'fluxo inválido', evidence: 'teste falhou',
+    recommendation: 'corrigir fluxo', fix_validation: 'node --test',
+    ...overrides,
+  };
+}
+
+function resolvedRepair(root, statePath, findingId = 'F-001', file = 'x.ts') {
+  const abs = path.join(root, statePath);
+  const state = JSON.parse(fs.readFileSync(abs, 'utf8'));
+  const evidence = {
+    finding_id: findingId, files_touched: [file], checks_run: ['node --test'], status: 'resolved',
+  };
+  state.repair_evidence = [evidence];
+  fs.writeFileSync(abs, JSON.stringify(state, null, 2));
+  return { repairs: [evidence] };
 }
 
 test('ping: capabilities cobre exatamente a superfície de tools (sem drift)', () => {
@@ -129,9 +156,23 @@ test('capabilities: schema_version atual e campos do contrato v5', () => {
   assert.equal(cap.schema_version, 5);
   assert.ok(cap.capabilities_flags);
   assert.ok(cap.validator_dispatch);
+  assert.ok(cap.question_prompt);
+  assert.equal(cap.question_prompt.mode, 'structured');
+  assert.equal(cap.question_prompt.persistence, 'prd_after_each_round');
   assert.ok(cap.hooks);
   assert.deepEqual(cap.prerequisites, PREREQUISITES);
   assert.deepEqual(cap.known_hosts, HOST_NAMES);
+});
+
+test('capabilities: mecanismo estruturado de entrevista declarado por adapter sem alterar schema v5', () => {
+  for (const host of HOST_NAMES) {
+    const prompt = capabilities({ host }).question_prompt;
+    assert.equal(typeof prompt.mechanism, 'string', `host ${host}`);
+    assert.ok(prompt.mechanism.length > 0, `host ${host}`);
+    assert.ok(prompt.max_questions >= 1 && prompt.max_questions <= 4, `host ${host}`);
+    assert.equal(prompt.options_per_question, 3, `host ${host}`);
+  }
+  assert.equal(capabilities({ host: 'codex' }).schema_version, 5);
 });
 
 test('capabilities: validator_dispatch de todos os hosts expõe dispatcher/join; Codex adiciona contrato explícito do validator', () => {
@@ -510,6 +551,75 @@ test('expectedNextPhase: execute → plan_execute sem regredir full/direct/inter
   assert.equal(expectedNextPhase({ mode: 'interview-only' }, {}), 'prd_interview');
   // next_phase explícito do dispatch sempre prevalece
   assert.equal(expectedNextPhase({ mode: 'execute' }, { next_phase: 'slice_review' }), 'slice_review');
+});
+
+test('matriz modo → executor preserva phase plan_execute compartilhada (Etapa 1 T01)', () => {
+  assert.equal(expectedExecutorSkill('full'), 'atlas-plan-execute');
+  assert.equal(expectedExecutorSkill('execute'), 'atlas-plan-execute');
+  assert.equal(expectedExecutorSkill('direct'), 'atlas-direct-execute');
+  assert.equal(expectedExecutorSkill('interview-only'), null);
+  for (const mode of ['direct', 'execute']) {
+    assert.equal(expectedNextPhase({ mode }, {}), 'plan_execute');
+  }
+});
+
+test('atlas_preflight materializa executor efetivo por modo sem alterar phase/FSM (Etapa 1 T01)', () => {
+  for (const [mode, executor] of [
+    ['full', 'atlas-plan-execute'],
+    ['direct', 'atlas-direct-execute'],
+    ['execute', 'atlas-plan-execute'],
+  ]) {
+    const result = preflight({
+      run_id: `route-${mode}`,
+      project_root: tmpRoot(),
+      mode,
+      host: 'codex',
+    });
+    assert.equal(result.status, 'passed');
+    assert.equal(result.routing.executor_skill, executor);
+    assert.equal(expectedNextPhase(result.routing, {}), mode === 'full' ? 'plan_handoff' : 'plan_execute');
+  }
+});
+
+test('contrato interview-only materializa PRD real e passa artifact+TC antes da entrevista (Etapa 1 T04)', () => {
+  const root = tmpRoot();
+  const runId = 'interview-only-real-prd';
+  preflight({ run_id: runId, project_root: root, mode: 'interview-only', host: 'codex' });
+  const prdPath = path.join(root, 'PRD_BRAINSTORM.md');
+  assert.equal(verifyArtifact({ run_id: runId, project_root: root, artifact_path: prdPath, artifact_kind: 'prd' }).status, 'blocked');
+  fs.writeFileSync(prdPath, [
+    '# PRD: Brainstorm',
+    '| Campo | Valor |',
+    '|---|---|',
+    '| **Status** | Em decisão |',
+    '## 1. Contexto e objetivo',
+    'Objetivo inicial da entrevista.',
+    '## 2. Escopo',
+    'Escopo preliminar.',
+    '## 3. Decisões de produto (fechadas)',
+    '| ID | Decisão |',
+    '|---|---|',
+    '| D1 | Levar este draft para entrevista estruturada |',
+    '## 4. Fluxos e cenários UX',
+    'Fluxo inicial.',
+    '## 5. Contrato funcional e invariantes',
+    'Contrato inicial.',
+    '## 6. Critérios de aceite (negócio)',
+    '**Produto**', '- [ ] Objetivo confirmado.',
+    '**UX**', '- [ ] Fluxo confirmado.',
+    '**Dados**', '- [ ] Dados confirmados.',
+    '**Regressão de produto**', '- [ ] Regressões confirmadas.',
+  ].join('\n'));
+  const artifact = verifyArtifact({ run_id: runId, project_root: root, artifact_path: prdPath, artifact_kind: 'prd' });
+  const conformance = verifyTemplateConformance({
+    run_id: runId, project_root: root, artifact_path: prdPath, artifact_type: 'prd',
+  });
+  assert.equal(artifact.status, 'passed');
+  assert.equal(conformance.status, 'passed');
+  fs.writeFileSync(path.join(root, 'PRD_INVALIDO.md'), '# PRD incompleto\n');
+  assert.equal(verifyTemplateConformance({
+    run_id: runId, project_root: root, artifact_path: path.join(root, 'PRD_INVALIDO.md'), artifact_type: 'prd',
+  }).status, 'blocked');
 });
 
 test('guaranteeLevelForMode: execute/full/direct = full_pipeline (T04)', () => {
@@ -917,7 +1027,9 @@ test('atlas_lock_validator: G12 bloqueia start sem state_path_created correspond
   const stateRel = '.atlas/state/g12validator/slice.json';
   const abs = path.join(root, stateRel);
   fs.mkdirSync(path.dirname(abs), { recursive: true });
-  fs.writeFileSync(abs, JSON.stringify({ files_changed: [] }, null, 2));
+  fs.writeFileSync(abs, JSON.stringify({
+    ...fixtureState('state-legacy-plan.json'), run_id: 'g12validator',
+  }, null, 2));
 
   const beforeCheckpoint = lockValidatorCore({
     run_id: 'g12validator',
@@ -931,7 +1043,9 @@ test('atlas_lock_validator: G12 bloqueia start sem state_path_created correspond
 
   const otherRel = '.atlas/state/g12validator/other.json';
   const otherAbs = path.join(root, otherRel);
-  fs.writeFileSync(otherAbs, JSON.stringify({ files_changed: [] }, null, 2));
+  fs.writeFileSync(otherAbs, JSON.stringify({
+    ...fixtureState('state-legacy-plan.json'), run_id: 'g12validator',
+  }, null, 2));
   const checkpoint = lockDispatch({
     run_id: 'g12validator',
     project_root: root,
@@ -1017,7 +1131,7 @@ test('atlas_lock_validator: codex sibling bloqueia validator concorrente e exige
     state_path: '.atlas/state/rv1/slice.json',
     validator_run_id: start1.validator_run_id,
     verdict: 'fail',
-    data: { findings: [{ severity: 'P1', file: 'x.ts', line: 1, msg: 'boom' }] },
+    data: { findings: [finding()] },
   });
   assert.equal(fail1.status, 'passed');
   assert.equal(fail1.validator_status, 'repair_required');
@@ -1074,6 +1188,7 @@ test('atlas_lock_validator: codex sibling bloqueia validator concorrente e exige
     action: 'repair_complete',
     repair_run_id: repairStart.repair_run_id,
     state_path: '.atlas/state/rv1/slice.json',
+    data: resolvedRepair(root, '.atlas/state/rv1/slice.json'),
   });
   assert.equal(repairDone.status, 'passed');
   assert.equal(repairDone.validator_status, 'ready_for_retry');
@@ -1112,7 +1227,7 @@ test('atlas_lock_validator: terceiro validator é impossível e segundo fail blo
     state_path: '.atlas/state/rv2/slice.json',
     validator_run_id: start1.validator_run_id,
     verdict: 'fail',
-    data: { findings: [{ severity: 'P1', file: 'x.ts', line: 1, msg: 'boom' }] },
+    data: { findings: [finding()] },
   });
   const repairStart = lockValidator({
     run_id: 'rv2',
@@ -1150,6 +1265,7 @@ test('atlas_lock_validator: terceiro validator é impossível e segundo fail blo
     action: 'repair_complete',
     repair_run_id: repairStart.repair_run_id,
     state_path: '.atlas/state/rv2/slice.json',
+    data: resolvedRepair(root, '.atlas/state/rv2/slice.json'),
   });
   assert.equal(repair1Done.status, 'passed');
 
@@ -1170,7 +1286,7 @@ test('atlas_lock_validator: terceiro validator é impossível e segundo fail blo
     state_path: '.atlas/state/rv2/slice.json',
     validator_run_id: start2.validator_run_id,
     verdict: 'fail',
-    data: { findings: [{ severity: 'P1', file: 'y.ts', line: 2, msg: 'still bad' }] },
+    data: { findings: [finding({ file: 'y.ts', line: 2 })] },
   });
   assert.equal(fail2.status, 'blocked');
   assert.equal(fail2.validator_status, 'blocked_final_validator_failed');
@@ -1525,7 +1641,7 @@ test('S04: dispatch_token incrementa monotonicamente a cada validatorStart aceit
     run_id: 'tok1', project_root: root, host: 'codex', action: 'complete',
     state_path: '.atlas/state/tok1/slice.json',
     validator_run_id: start1.validator_run_id, verdict: 'fail',
-    data: { findings: [{ severity: 'P1', file: 'x.ts', line: 1, msg: 'boom' }] },
+    data: { findings: [finding()] },
   });
   // token sobrevive ao complete (preservado pelo merge), slot fechado.
   cycle = readRunJson(root, 'tok1').data.validator_cycle;
@@ -1540,6 +1656,7 @@ test('S04: dispatch_token incrementa monotonicamente a cada validatorStart aceit
     run_id: 'tok1', project_root: root, host: 'codex', action: 'repair_complete',
     repair_run_id: repairStart.repair_run_id,
     state_path: '.atlas/state/tok1/slice.json',
+    data: resolvedRepair(root, '.atlas/state/tok1/slice.json'),
   });
 
   const start2 = lockValidator({
@@ -1716,7 +1833,7 @@ test('P3(b): dispatch_token do 2º validatorStart > 1º após start→fail→rep
     state_path: '.atlas/state/mono1/slice.json',
     validator_run_id: start1.validator_run_id,
     verdict: 'fail',
-    data: { findings: [{ severity: 'P1', file: 'a.ts', line: 1, msg: 'x' }] },
+    data: { findings: [finding({ file: 'a.ts' })] },
   });
 
   // dispatch_token persiste após complete (não reseta).
@@ -1731,6 +1848,7 @@ test('P3(b): dispatch_token do 2º validatorStart > 1º após start→fail→rep
     run_id: 'mono1', project_root: root, host: 'codex', action: 'repair_complete',
     repair_run_id: repairStart.repair_run_id,
     state_path: '.atlas/state/mono1/slice.json',
+    data: resolvedRepair(root, '.atlas/state/mono1/slice.json'),
   });
 
   const start2 = lockValidator({
@@ -1826,7 +1944,7 @@ test('S05: host claude percorre ciclo completo start→fail→repair→start→p
     state_path: '.atlas/state/claude1/slice.json',
     validator_run_id: start1.validator_run_id,
     verdict: 'fail',
-    data: { findings: [{ severity: 'P1', file: 'foo.ts', line: 1, msg: 'erro' }] },
+    data: { findings: [finding({ file: 'foo.ts' })] },
   });
   assert.equal(fail1.status, 'passed');
   assert.equal(fail1.validator_status, 'repair_required');
@@ -1845,6 +1963,7 @@ test('S05: host claude percorre ciclo completo start→fail→repair→start→p
     run_id: 'claude1', project_root: root, host: 'claude', action: 'repair_complete',
     repair_run_id: repairStart.repair_run_id,
     state_path: '.atlas/state/claude1/slice.json',
+    data: resolvedRepair(root, '.atlas/state/claude1/slice.json', 'F-001', 'foo.ts'),
   });
 
   // 2º start — attempt e dispatch_token incrementam (monotonicidade).
@@ -1865,6 +1984,7 @@ test('S05: host claude percorre ciclo completo start→fail→repair→start→p
     state_path: '.atlas/state/claude1/slice.json',
     validator_run_id: start2.validator_run_id,
     verdict: 'pass',
+    data: { findings: [], repaired_finding_ids: ['F-001'] },
   });
   assert.equal(pass1.status, 'passed');
   assert.equal(pass1.validator_status, 'passed');
@@ -1894,7 +2014,7 @@ test('S10(a): retorno stale do attempt-1 após attempt-2 despachado → blocked,
     run_id: 's10a', project_root: root, host: 'codex', action: 'complete',
     state_path: '.atlas/state/s10a/slice.json',
     validator_run_id: start1.validator_run_id, verdict: 'fail',
-    data: { findings: [{ severity: 'P1', file: 'x.ts', line: 1, msg: 'boom' }] },
+    data: { findings: [finding()] },
   });
   const repairStart = lockValidator({
     run_id: 's10a', project_root: root, host: 'codex', action: 'repair_start',
@@ -1904,6 +2024,7 @@ test('S10(a): retorno stale do attempt-1 após attempt-2 despachado → blocked,
     run_id: 's10a', project_root: root, host: 'codex', action: 'repair_complete',
     repair_run_id: repairStart.repair_run_id,
     state_path: '.atlas/state/s10a/slice.json',
+    data: resolvedRepair(root, '.atlas/state/s10a/slice.json'),
   });
   const start2 = lockValidator({
     run_id: 's10a', project_root: root, host: 'codex', action: 'start',
@@ -1995,7 +2116,7 @@ test('S10(c): repair_complete duplicado → idempotente reconhecível', () => {
     run_id: 's10c', project_root: root, host: 'codex', action: 'complete',
     state_path: '.atlas/state/s10c/slice.json',
     validator_run_id: start1.validator_run_id, verdict: 'fail',
-    data: { findings: [{ severity: 'P1', file: 'x.ts', line: 1, msg: 'boom' }] },
+    data: { findings: [finding()] },
   });
   const repairStart = lockValidator({
     run_id: 's10c', project_root: root, host: 'codex', action: 'repair_start',
@@ -2005,6 +2126,7 @@ test('S10(c): repair_complete duplicado → idempotente reconhecível', () => {
     run_id: 's10c', project_root: root, host: 'codex', action: 'repair_complete',
     repair_run_id: repairStart.repair_run_id,
     state_path: '.atlas/state/s10c/slice.json',
+    data: resolvedRepair(root, '.atlas/state/s10c/slice.json'),
   });
   assert.equal(repairDone.status, 'passed');
 
@@ -2126,7 +2248,7 @@ test('S10(f): duplicado de attempt-1 (fail→repair_required) em repair_required
     run_id: 's10f', project_root: root, host: 'codex', action: 'complete',
     state_path: '.atlas/state/s10f/slice.json',
     validator_run_id: start1.validator_run_id, verdict: 'fail',
-    data: { findings: [{ severity: 'P1', file: 'x.ts', line: 1, msg: 'boom' }] },
+    data: { findings: [finding()] },
   });
   assert.equal(fail1.status, 'passed');
   assert.equal(fail1.validator_status, 'repair_required');
@@ -2216,7 +2338,7 @@ test('S12.1: ciclo canônico da FSM percorre idle→running→repair_required→
     run_id: 's12fsm', project_root: root, host: 'codex', action: 'complete',
     state_path: '.atlas/state/s12fsm/slice.json',
     validator_run_id: start1.validator_run_id, verdict: 'fail',
-    data: { findings: [{ severity: 'P1', file: 'x.ts', line: 1, msg: 'boom' }] },
+    data: { findings: [finding()] },
   });
   assert.equal(fail1.validator_status, 'repair_required');
   assert.equal(status(), 'repair_required', 'após complete(fail) attempt<max → repair_required');
@@ -2235,6 +2357,7 @@ test('S12.1: ciclo canônico da FSM percorre idle→running→repair_required→
     run_id: 's12fsm', project_root: root, host: 'codex', action: 'repair_complete',
     repair_run_id: repairStart.repair_run_id,
     state_path: '.atlas/state/s12fsm/slice.json',
+    data: resolvedRepair(root, '.atlas/state/s12fsm/slice.json'),
   });
   assert.equal(repairDone.validator_status, 'ready_for_retry');
   assert.equal(status(), 'ready_for_retry', 'após repair_complete → ready_for_retry (retry autorizado)');
@@ -2253,6 +2376,7 @@ test('S12.1: ciclo canônico da FSM percorre idle→running→repair_required→
     run_id: 's12fsm', project_root: root, host: 'codex', action: 'complete',
     state_path: '.atlas/state/s12fsm/slice.json',
     validator_run_id: start2.validator_run_id, verdict: 'pass',
+    data: { findings: [], repaired_finding_ids: ['F-001'] },
   });
   assert.equal(pass2.status, 'passed');
   assert.equal(pass2.validator_status, 'passed');
@@ -2369,7 +2493,7 @@ test('S12.2(b2): repair_start em status repair_running (fora de ordem, sem valid
     run_id: 's12b2', project_root: root, host: 'codex', action: 'complete',
     state_path: '.atlas/state/s12b2/slice.json',
     validator_run_id: start1.validator_run_id, verdict: 'fail',
-    data: { findings: [{ severity: 'P1', file: 'x.ts', line: 1, msg: 'boom' }] },
+    data: { findings: [finding()] },
   });
   // status → repair_running.
   lockValidator({
@@ -2498,7 +2622,7 @@ test('S12.2(e): reabrir slice que passou no attempt 2 (terminal no último attem
     run_id: 's12e', project_root: root, host: 'codex', action: 'complete',
     state_path: '.atlas/state/s12e/slice.json',
     validator_run_id: start1.validator_run_id, verdict: 'fail',
-    data: { findings: [{ severity: 'P1', file: 'x.ts', line: 1, msg: 'falha1' }] },
+    data: { findings: [finding()] },
   });
   assert.equal(fail1.validator_status, 'repair_required', 'fail1 → repair_required');
 
@@ -2510,6 +2634,7 @@ test('S12.2(e): reabrir slice que passou no attempt 2 (terminal no último attem
     run_id: 's12e', project_root: root, host: 'codex', action: 'repair_complete',
     repair_run_id: repairStart.repair_run_id,
     state_path: '.atlas/state/s12e/slice.json',
+    data: resolvedRepair(root, '.atlas/state/s12e/slice.json'),
   });
 
   // Attempt 2 (último): pass → terminal.
@@ -2523,6 +2648,7 @@ test('S12.2(e): reabrir slice que passou no attempt 2 (terminal no último attem
     run_id: 's12e', project_root: root, host: 'codex', action: 'complete',
     state_path: '.atlas/state/s12e/slice.json',
     validator_run_id: start2.validator_run_id, verdict: 'pass',
+    data: { findings: [], repaired_finding_ids: ['F-001'] },
   });
   assert.equal(pass2.validator_status, 'passed', 'attempt 2 terminou em passed');
 
@@ -2713,6 +2839,422 @@ test('proof-of-work: challenge emitido exige challenge_response (ausência bloqu
   assert.match(noResp.error, /challenge_response_ausente/);
 });
 
+test('proof-of-work: arquivo removido após challenge falha fechado e consome orçamento bounded', () => {
+  const { root, sliceRel } = setupValidatorRun('pow-file-removed', {
+    'src/foo.js': 'export const x = 1;\n',
+  });
+  const start = lockValidator({
+    run_id: 'pow-file-removed', project_root: root, action: 'start', state_path: sliceRel,
+  });
+  fs.rmSync(path.join(root, start.challenge.file));
+  const payload = {
+    run_id: 'pow-file-removed', project_root: root, action: 'complete', state_path: sliceRel,
+    validator_run_id: start.validator_run_id, dispatch_token: start.dispatch_token,
+    challenge_response: 'deadbeef', verdict: 'pass',
+  };
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    const failed = lockValidator(payload);
+    assert.equal(failed.status, 'blocked');
+    assert.equal(failed.validator_status, 'challenge_failed');
+    assert.match(failed.error, /challenge_file_unreadable/);
+    assert.equal(failed.challenge_failures, attempt);
+  }
+  const exhausted = lockValidator(payload);
+  assert.equal(exhausted.status, 'blocked');
+  assert.equal(exhausted.validator_status, 'challenge_exhausted');
+});
+
+test('proof-of-work: arquivo ilegível após challenge nunca aprova o veredito', {
+  skip: process.platform === 'win32' || (typeof process.getuid === 'function' && process.getuid() === 0),
+}, () => {
+  const { root, sliceRel } = setupValidatorRun('pow-file-unreadable', {
+    'src/foo.js': 'export const x = 1;\n',
+  });
+  const start = lockValidator({
+    run_id: 'pow-file-unreadable', project_root: root, action: 'start', state_path: sliceRel,
+  });
+  const challenged = path.join(root, start.challenge.file);
+  fs.chmodSync(challenged, 0o000);
+  try {
+    const failed = lockValidator({
+      run_id: 'pow-file-unreadable', project_root: root, action: 'complete', state_path: sliceRel,
+      validator_run_id: start.validator_run_id, dispatch_token: start.dispatch_token,
+      challenge_response: 'deadbeef', verdict: 'pass',
+    });
+    assert.equal(failed.status, 'blocked');
+    assert.equal(failed.validator_status, 'challenge_failed');
+    assert.match(failed.error, /challenge_file_unreadable/);
+  } finally {
+    fs.chmodSync(challenged, 0o600);
+  }
+});
+
+function initGitFixture() {
+  const root = tmpRoot();
+  execFileSync('git', ['-C', root, 'init', '-q']);
+  execFileSync('git', ['-C', root, 'config', 'user.email', 'atlas@example.invalid']);
+  execFileSync('git', ['-C', root, 'config', 'user.name', 'Atlas Test']);
+  fs.writeFileSync(path.join(root, 'README.md'), 'base\n');
+  execFileSync('git', ['-C', root, 'add', 'README.md']);
+  execFileSync('git', ['-C', root, 'commit', '-qm', 'base']);
+  const head = execFileSync('git', ['-C', root, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  return { root, head };
+}
+
+function fixtureState(name, replacements = {}) {
+  let raw = fs.readFileSync(path.resolve('packages/mcp-server/fixtures', name), 'utf8');
+  for (const [token, value] of Object.entries(replacements)) raw = raw.replaceAll(token, value);
+  return JSON.parse(raw);
+}
+
+function withSnapshot(state, root, baseline = []) {
+  state.worktree_baseline = baseline;
+  state.worktree_final = captureWorktreeSnapshot(root);
+  return state;
+}
+
+function writeSliceState(root, runId, state) {
+  const sliceRel = `.atlas/state/${runId}/slice.json`;
+  const abs = path.join(root, sliceRel);
+  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  fs.writeFileSync(abs, JSON.stringify({ ...state, run_id: runId }, null, 2));
+  return sliceRel;
+}
+
+test('Etapa 2: state legado mínimo de plan continua aceito', () => {
+  const root = tmpRoot();
+  const state = fixtureState('state-legacy-plan.json');
+  const statePath = writeSliceState(root, state.run_id, state);
+  const result = validateStateBoundary(statePath, { project_root: root });
+  assert.equal(result.ok, true);
+  assert.equal(result.legacy, true);
+});
+
+test('Etapa 2: direct sem obligations bloqueia', () => {
+  const { root, head } = initGitFixture();
+  fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'src/direct.js'), 'export const direct = true;\n');
+  const state = fixtureState('state-direct.json', { __BASE_SHA__: head, __HEAD_SHA__: head });
+  state.obligations = [];
+  const statePath = writeSliceState(root, state.run_id, state);
+  const result = validateStateBoundary(statePath, { project_root: root });
+  assert.equal(result.ok, false);
+  assert.ok(result.violations.includes('direct exige obligations não vazio'));
+});
+
+test('Etapa 2: fixtures plan e direct novos passam no mesmo validator de state', () => {
+  const { root, head } = initGitFixture();
+  fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'src/direct.js'), 'export const direct = true;\n');
+  const direct = fixtureState('state-direct.json', { __BASE_SHA__: head, __HEAD_SHA__: head });
+  withSnapshot(direct, root);
+  const directPath = writeSliceState(root, direct.run_id, direct);
+  assert.equal(validateStateBoundary(directPath, { project_root: root }).ok, true);
+  const planBaseline = captureWorktreeSnapshot(root);
+  fs.writeFileSync(path.join(root, 'src/initial.js'), 'export const initial = true;\n');
+  const plan = fixtureState('state-repair.json', { __BASE_SHA__: head, __HEAD_SHA__: head });
+  plan.files_changed = ['src/initial.js'];
+  plan.diff_stat = '1 file';
+  plan.repair_evidence = [];
+  withSnapshot(plan, root, planBaseline);
+  const planPath = writeSliceState(root, 'fixture-plan-current', plan);
+  assert.equal(validateStateBoundary(planPath, { project_root: root }).ok, true);
+});
+
+function planStateForBoundary(root, head, baseline, files) {
+  const state = fixtureState('state-repair.json', { __BASE_SHA__: head, __HEAD_SHA__: head });
+  state.files_changed = [...files].sort();
+  state.diff_stat = `${files.length} files`;
+  state.task_evidence = [{ task: 'T03', files: [...files].sort(), checks: ['node --test'], result: 'passed' }];
+  state.repair_evidence = [];
+  return withSnapshot(state, root, baseline);
+}
+
+test('F-003: dirty preexistente intacto não contamina; mutação posterior entra no boundary', () => {
+  const { root, head } = initGitFixture();
+  fs.writeFileSync(path.join(root, 'README.md'), 'dirty anterior\n');
+  const baseline = captureWorktreeSnapshot(root);
+  const intact = planStateForBoundary(root, head, baseline, []);
+  const intactPath = writeSliceState(root, 'dirty-intacto', intact);
+  assert.equal(validateStateBoundary(intactPath, { project_root: root }).ok, true);
+
+  fs.writeFileSync(path.join(root, 'README.md'), 'alterado durante a slice\n');
+  const mutated = planStateForBoundary(root, head, baseline, ['README.md']);
+  const mutatedPath = writeSliceState(root, 'dirty-mutado', mutated);
+  assert.equal(validateStateBoundary(mutatedPath, { project_root: root }).ok, true);
+
+  const omitted = { ...mutated, files_changed: [], task_evidence: [] };
+  const omittedPath = writeSliceState(root, 'dirty-omitido', omitted);
+  const result = validateStateBoundary(omittedPath, { project_root: root });
+  assert.equal(result.ok, false);
+  assert.match(result.violations.join(' '), /README\.md/);
+});
+
+test('F-003: untracked novo omitido e state stale bloqueiam', () => {
+  const { root, head } = initGitFixture();
+  const baseline = captureWorktreeSnapshot(root);
+  fs.writeFileSync(path.join(root, 'novo.js'), 'v1\n');
+  const omitted = planStateForBoundary(root, head, baseline, []);
+  const omittedPath = writeSliceState(root, 'untracked-omitido', omitted);
+  assert.match(validateStateBoundary(omittedPath, { project_root: root }).violations.join(' '), /novo\.js/);
+
+  const stale = planStateForBoundary(root, head, baseline, ['novo.js']);
+  const stalePath = writeSliceState(root, 'state-stale', stale);
+  fs.writeFileSync(path.join(root, 'novo.js'), 'v2\n');
+  assert.match(validateStateBoundary(stalePath, { project_root: root }).violations.join(' '), /worktree_final stale/);
+});
+
+test('F-003: remoção e rename são representados no delta real', () => {
+  const removed = initGitFixture();
+  const removedBaseline = captureWorktreeSnapshot(removed.root);
+  fs.rmSync(path.join(removed.root, 'README.md'));
+  const removedState = planStateForBoundary(removed.root, removed.head, removedBaseline, ['README.md']);
+  const removedPath = writeSliceState(removed.root, 'arquivo-removido', removedState);
+  assert.equal(validateStateBoundary(removedPath, { project_root: removed.root }).ok, true);
+  assert.deepEqual(removedState.worktree_final.find((entry) => entry.path === 'README.md'), {
+    path: 'README.md', status: 'D', sha256: null,
+  });
+
+  const renamed = initGitFixture();
+  const renamedBaseline = captureWorktreeSnapshot(renamed.root);
+  execFileSync('git', ['-C', renamed.root, 'mv', 'README.md', 'RENAMED.md']);
+  const renamedState = planStateForBoundary(
+    renamed.root, renamed.head, renamedBaseline, ['README.md', 'RENAMED.md'],
+  );
+  const renamedPath = writeSliceState(renamed.root, 'arquivo-renomeado', renamedState);
+  assert.equal(validateStateBoundary(renamedPath, { project_root: renamed.root }).ok, true);
+  assert.deepEqual(renamedState.worktree_final.map((entry) => [entry.path, entry.status]), [
+    ['README.md', 'D'], ['RENAMED.md', 'R'],
+  ]);
+});
+
+test('Etapa 2: SHAs divergentes bloqueiam boundary stale', () => {
+  const { root, head } = initGitFixture();
+  fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'src/direct.js'), 'export const direct = true;\n');
+  const state = fixtureState('state-direct.json', { __BASE_SHA__: head, __HEAD_SHA__: '0000000000000000000000000000000000000000' });
+  const statePath = writeSliceState(root, state.run_id, state);
+  const result = validateStateBoundary(statePath, { project_root: root });
+  assert.equal(result.ok, false);
+  assert.match(result.violations.join(' '), /boundary Git inválido/);
+});
+
+test('Etapa 2: P1 com verdict pass é rejeitado pelo MCP', () => {
+  const { root, sliceRel } = setupValidatorRun('verdict-p1-pass', {});
+  const start = lockValidator({ run_id: 'verdict-p1-pass', project_root: root, action: 'start', state_path: sliceRel });
+  const result = lockValidator({
+    run_id: 'verdict-p1-pass', project_root: root, action: 'complete', state_path: sliceRel,
+    validator_run_id: start.validator_run_id, dispatch_token: start.dispatch_token, verdict: 'pass',
+    data: { findings: [{
+      id: 'F-001', severity: 'P1', file: 'src/x.js', line: 1,
+      failure_mode: 'fluxo quebra', evidence: 'teste falhou', recommendation: 'corrigir fluxo',
+      fix_validation: 'node --test', msg: 'fluxo quebra: teste falhou',
+    }] },
+  });
+  assert.equal(result.status, 'blocked');
+  assert.equal(result.validator_status, 'invalid_verdict_severity');
+});
+
+test('F-002: findings sem ID, duplicados, inválidos ou incompletos nunca fecham G4', () => {
+  const cases = [
+    { name: 'id ausente', items: [{ ...finding(), id: undefined }] },
+    { name: 'id formato inválido', items: [finding({ id: 'finding-1' })] },
+    { name: 'id duplicado', items: [finding(), finding({ file: 'y.ts' })] },
+    { name: 'severity desconhecida', items: [finding({ severity: 'critical' })] },
+    { name: 'linha inválida', items: [finding({ line: 0 })] },
+    { name: 'campo vazio', items: [finding({ evidence: '  ' })] },
+  ];
+  for (const [index, sample] of cases.entries()) {
+    const runId = `finding-shape-${index}`;
+    const { root, sliceRel } = setupValidatorRun(runId, {
+      'src/foo.js': 'export const x = 1;\n',
+    });
+    const start = lockValidator({ run_id: runId, project_root: root, action: 'start', state_path: sliceRel });
+    const result = lockValidator({
+      run_id: runId, project_root: root, action: 'complete', state_path: sliceRel,
+      validator_run_id: start.validator_run_id, dispatch_token: start.dispatch_token,
+      challenge_response: sha256File(root, start.challenge.file), verdict: 'pass',
+      data: { findings: sample.items },
+    });
+    assert.equal(result.status, 'blocked', sample.name);
+    assert.equal(result.validator_status, 'invalid_finding_shape', sample.name);
+  }
+});
+
+test('F-002: packet ausente ou findings não-array nunca fecham G4', () => {
+  const cases = [
+    { name: 'packet ausente', data: undefined },
+    { name: 'findings ausente', data: {} },
+    { name: 'findings objeto', data: { findings: {} } },
+  ];
+  for (const [index, sample] of cases.entries()) {
+    const runId = `finding-packet-shape-${index}`;
+    const { root, sliceRel } = setupValidatorRun(runId, {
+      'src/foo.js': 'export const x = 1;\n',
+    });
+    const start = lockValidator({ run_id: runId, project_root: root, action: 'start', state_path: sliceRel });
+    const complete = {
+      run_id: runId, project_root: root, action: 'complete', state_path: sliceRel,
+      validator_run_id: start.validator_run_id, dispatch_token: start.dispatch_token,
+      challenge_response: sha256File(root, start.challenge.file), verdict: 'pass',
+      ...(sample.data === undefined ? {} : { data: sample.data }),
+    };
+    const result = sample.data === undefined ? lockValidatorCore(complete) : lockValidator(complete);
+    assert.equal(result.status, 'blocked', sample.name);
+    assert.equal(result.validator_status, 'invalid_finding_shape', sample.name);
+  }
+});
+
+test('Etapa 2: repair inclui arquivo novo e segundo validator correlaciona finding', () => {
+  const { root, head } = initGitFixture();
+  fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'src/initial.js'), 'export const initial = true;\n');
+  const runId = 'repair-correlation';
+  const initial = fixtureState('state-repair.json', { __BASE_SHA__: head, __HEAD_SHA__: head });
+  initial.files_changed = ['src/initial.js'];
+  initial.diff_stat = '1 file';
+  initial.repair_evidence = [];
+  withSnapshot(initial, root);
+  const sliceRel = writeSliceState(root, runId, initial);
+  preflight({ run_id: runId, project_root: root, mode: 'execute', host: 'claude', host_capabilities: { subagent_available: true, mcp_available: true } });
+  lockDispatch({ run_id: runId, project_root: root, action: 'start', phase: 'plan_execute' });
+  const start1 = lockValidator({ run_id: runId, project_root: root, action: 'start', state_path: sliceRel });
+  assert.equal(start1.status, 'passed');
+  const fail1 = lockValidator({
+    run_id: runId, project_root: root, action: 'complete', state_path: sliceRel,
+    validator_run_id: start1.validator_run_id, dispatch_token: start1.dispatch_token,
+    challenge_response: sha256File(root, start1.challenge.file), verdict: 'fail',
+    data: { findings: [{
+      id: 'F-001', severity: 'P1', file: 'src/initial.js', line: 1,
+      failure_mode: 'evidência incompleta', evidence: 'arquivo auxiliar ausente',
+      recommendation: 'criar arquivo auxiliar', fix_validation: 'node --test',
+    }] },
+  });
+  assert.equal(fail1.validator_status, 'repair_required');
+  const repairStart = lockValidator({ run_id: runId, project_root: root, action: 'repair_start', state_path: sliceRel });
+  assert.equal(repairStart.findings[0].msg, 'evidência incompleta: arquivo auxiliar ausente');
+  fs.writeFileSync(path.join(root, 'src/repair-new.js'), 'export const repaired = true;\n');
+  const repaired = fixtureState('state-repair.json', { __BASE_SHA__: head, __HEAD_SHA__: head });
+  withSnapshot(repaired, root);
+  fs.writeFileSync(path.join(root, sliceRel), JSON.stringify({ ...repaired, run_id: runId }, null, 2));
+  const repairComplete = lockValidator({
+    run_id: runId, project_root: root, action: 'repair_complete', state_path: sliceRel,
+    repair_run_id: repairStart.repair_run_id,
+    data: { repairs: [{ finding_id: 'F-001', files_touched: ['src/repair-new.js'], checks_run: ['node --test'], status: 'resolved' }] },
+  });
+  assert.equal(repairComplete.status, 'passed');
+  const start2 = lockValidator({ run_id: runId, project_root: root, action: 'start', state_path: sliceRel });
+  assert.equal(start2.status, 'passed');
+  assert.equal(start2.validator_attempt, 2);
+  assert.equal(start2.validator_cycle.findings_packet.findings[0].id, 'F-001');
+  const missingCorrelation = lockValidator({
+    run_id: runId, project_root: root, action: 'complete', state_path: sliceRel,
+    validator_run_id: start2.validator_run_id, dispatch_token: start2.dispatch_token,
+    challenge_response: sha256File(root, start2.challenge.file), verdict: 'pass',
+    data: { findings: [], repaired_finding_ids: ['F-001'] },
+    data: { findings: [], repaired_finding_ids: [] },
+  });
+  assert.equal(missingCorrelation.status, 'blocked');
+  assert.equal(missingCorrelation.validator_status, 'repair_correlation_missing');
+  const pass2 = lockValidator({
+    run_id: runId, project_root: root, action: 'complete', state_path: sliceRel,
+    validator_run_id: start2.validator_run_id, dispatch_token: start2.dispatch_token,
+    challenge_response: sha256File(root, start2.challenge.file), verdict: 'pass',
+    data: { findings: [], repaired_finding_ids: ['F-001'] },
+  });
+  assert.equal(pass2.status, 'passed');
+  assert.equal(pass2.validator_status, 'passed');
+  const boundary = validateStateBoundary(sliceRel, { project_root: root });
+  assert.equal(boundary.ok, true);
+  assert.ok(boundary.state.files_changed.includes('src/repair-new.js'));
+  assert.equal(boundary.state.repair_evidence[0].finding_id, 'F-001');
+});
+
+function setupExtendedRepair(runId) {
+  const { root, head } = initGitFixture();
+  const baseline = captureWorktreeSnapshot(root);
+  fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'src/initial.js'), 'export const initial = true;\n');
+  const initial = planStateForBoundary(root, head, baseline, ['src/initial.js']);
+  const sliceRel = writeSliceState(root, runId, initial);
+  preflight({
+    run_id: runId, project_root: root, mode: 'execute', host: 'claude',
+    host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: runId, project_root: root, action: 'start', phase: 'plan_execute' });
+  const start = lockValidator({ run_id: runId, project_root: root, action: 'start', state_path: sliceRel });
+  lockValidator({
+    run_id: runId, project_root: root, action: 'complete', state_path: sliceRel,
+    validator_run_id: start.validator_run_id, dispatch_token: start.dispatch_token,
+    challenge_response: sha256File(root, start.challenge.file), verdict: 'fail',
+    data: { findings: [finding({ file: 'src/initial.js' })] },
+  });
+  const repairStart = lockValidator({ run_id: runId, project_root: root, action: 'repair_start', state_path: sliceRel });
+  return { root, head, baseline, sliceRel, repairStart };
+}
+
+function persistExtendedRepair(context, evidence, files) {
+  const state = planStateForBoundary(context.root, context.head, context.baseline, files);
+  state.task_evidence = [{
+    task: 'T03', files: ['src/initial.js'], checks: ['node --test'], result: 'passed',
+  }];
+  state.repair_evidence = evidence;
+  fs.writeFileSync(path.join(context.root, context.sliceRel), JSON.stringify({
+    ...state, run_id: path.basename(path.dirname(context.sliceRel)),
+  }, null, 2));
+}
+
+test('F-005: repair ID desconhecido ou duplicado bloqueia', () => {
+  for (const scenario of ['unknown', 'duplicate']) {
+    const context = setupExtendedRepair(`repair-${scenario}`);
+    fs.writeFileSync(path.join(context.root, 'src/repair.js'), 'export const repair = true;\n');
+    const baseEvidence = {
+      finding_id: scenario === 'unknown' ? 'F-999' : 'F-001',
+      files_touched: ['src/repair.js'], checks_run: ['node --test'], status: 'resolved',
+    };
+    const evidence = scenario === 'duplicate' ? [baseEvidence, { ...baseEvidence }] : [baseEvidence];
+    persistExtendedRepair(context, evidence, ['src/initial.js', 'src/repair.js']);
+    const result = lockValidator({
+      run_id: `repair-${scenario}`, project_root: context.root, action: 'repair_complete',
+      state_path: context.sliceRel, repair_run_id: context.repairStart.repair_run_id,
+      data: { repairs: evidence },
+    });
+    assert.equal(result.status, 'blocked', scenario);
+    assert.match(result.error, scenario === 'unknown' ? /ID desconhecido/ : /ID duplicado/);
+  }
+});
+
+test('F-005: arquivo extra e metadados stale bloqueiam repair_complete', () => {
+  const extra = setupExtendedRepair('repair-extra');
+  fs.writeFileSync(path.join(extra.root, 'src/repair.js'), 'repair\n');
+  fs.writeFileSync(path.join(extra.root, 'src/extra.js'), 'extra\n');
+  const evidence = [{
+    finding_id: 'F-001', files_touched: ['src/repair.js'], checks_run: ['node --test'], status: 'resolved',
+  }];
+  persistExtendedRepair(extra, evidence, ['src/initial.js', 'src/repair.js', 'src/extra.js']);
+  const extraResult = lockValidator({
+    run_id: 'repair-extra', project_root: extra.root, action: 'repair_complete',
+    state_path: extra.sliceRel, repair_run_id: extra.repairStart.repair_run_id,
+    data: { repairs: evidence },
+  });
+  assert.equal(extraResult.status, 'blocked');
+  assert.match(extraResult.error, /boundary|evidência/);
+
+  const stale = setupExtendedRepair('repair-stale');
+  fs.writeFileSync(path.join(stale.root, 'src/repair.js'), 'repair\n');
+  persistExtendedRepair(stale, evidence, ['src/initial.js', 'src/repair.js']);
+  const raw = JSON.parse(fs.readFileSync(path.join(stale.root, stale.sliceRel), 'utf8'));
+  raw.diff_stat = '0 files';
+  fs.writeFileSync(path.join(stale.root, stale.sliceRel), JSON.stringify(raw, null, 2));
+  const staleResult = lockValidator({
+    run_id: 'repair-stale', project_root: stale.root, action: 'repair_complete',
+    state_path: stale.sliceRel, repair_run_id: stale.repairStart.repair_run_id,
+    data: { repairs: evidence },
+  });
+  assert.equal(staleResult.status, 'blocked');
+  assert.match(staleResult.error, /diff_stat stale/);
+});
+
 test('proof-of-work: boundary sem arquivo legível não emite challenge nem exige resposta (não quebra)', () => {
   const { root, sliceRel } = setupValidatorRun('pow5', {}); // files_changed vazio
   const start = lockValidator({ run_id: 'pow5', project_root: root, action: 'start', state_path: sliceRel });
@@ -2737,14 +3279,17 @@ test('proof-of-work: challenge é re-emitido e enforçado no attempt 2 (fail→r
     run_id: 'pow6', project_root: root, action: 'complete', state_path: sliceRel,
     validator_run_id: start1.validator_run_id, dispatch_token: start1.dispatch_token,
     challenge_response: sha256File(root, start1.challenge.file), verdict: 'fail',
-    data: { findings: [{ severity: 'P1', file: 'src/a.js', line: 1, msg: 'x' }] },
+    data: { findings: [finding({ file: 'src/a.js' })] },
   });
   assert.equal(fail1.validator_status, 'repair_required');
   assert.equal(fail1.challenge_verified, 'verified', 'fail também exige proof-of-work');
 
   // repair completo → retry autorizado.
   const rs = lockValidator({ run_id: 'pow6', project_root: root, action: 'repair_start', state_path: sliceRel });
-  lockValidator({ run_id: 'pow6', project_root: root, action: 'repair_complete', repair_run_id: rs.repair_run_id, state_path: sliceRel });
+  lockValidator({
+    run_id: 'pow6', project_root: root, action: 'repair_complete', repair_run_id: rs.repair_run_id,
+    state_path: sliceRel, data: resolvedRepair(root, sliceRel, 'F-001', 'src/a.js'),
+  });
 
   // attempt 2: NOVO challenge (novo dispatch_token), enforçado de novo.
   const start2 = lockValidator({ run_id: 'pow6', project_root: root, action: 'start', state_path: sliceRel });
@@ -2762,12 +3307,13 @@ test('proof-of-work: challenge é re-emitido e enforçado no attempt 2 (fail→r
     run_id: 'pow6', project_root: root, action: 'complete', state_path: sliceRel,
     validator_run_id: start2.validator_run_id, dispatch_token: start2.dispatch_token,
     challenge_response: sha256File(root, start2.challenge.file), verdict: 'pass',
+    data: { findings: [], repaired_finding_ids: ['F-001'] },
   });
   assert.equal(pass2.status, 'passed');
   assert.equal(pass2.challenge_verified, 'verified');
 });
 
-test('proof-of-work: arquivo do challenge some entre start e complete → unverifiable (não bloqueia)', () => {
+test('proof-of-work: arquivo do challenge some entre start e complete → fail-closed', () => {
   const { root, sliceRel } = setupValidatorRun('pow7', { 'src/foo.js': 'export const x = 1;\n' });
   const start = lockValidator({ run_id: 'pow7', project_root: root, action: 'start', state_path: sliceRel });
   assert.ok(start.challenge);
@@ -2778,8 +3324,9 @@ test('proof-of-work: arquivo do challenge some entre start e complete → unveri
     validator_run_id: start.validator_run_id, dispatch_token: start.dispatch_token,
     challenge_response: 'qualquer-coisa', verdict: 'pass',
   });
-  assert.equal(done.status, 'passed', 'arquivo ausente no complete não bloqueia run legítima');
-  assert.equal(done.challenge_verified, 'unverifiable');
+  assert.equal(done.status, 'blocked', 'mutação do boundary após start deve bloquear');
+  assert.equal(done.validator_status, 'challenge_failed');
+  assert.match(done.error, /challenge_file_unreadable/);
 });
 
 test('proof-of-work: falhas de challenge são bounded — esgotado o teto, slot fecha terminal (challenge_exhausted)', () => {

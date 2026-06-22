@@ -47,8 +47,8 @@ No workflow `full`, `atlas-plan-handoff` é autoria documental do agente princip
 
 ## Fluxo obrigatório
 
-1. **Classificação da tarefa:** feature, ui, contract, navigation, shared, security, diagnostic, refactoring, testing. Leia `project-rules/index/<tipo>.md` e regras em `project-rules/rules/` (ou equivalente do repo ativo).
-2. **Grounding no código:** confirme padrões, contratos e comandos locais (`flutter analyze` / `flutter test` com path do package) antes de inferir.
+1. **Classificação da tarefa:** feature, ui, contract, navigation, shared, security, diagnostic, refactoring, testing. Leia instruções reais aplicáveis do repo; `project-rules/` é apenas um formato possível, nunca requisito universal.
+2. **Grounding no código:** confirme padrões, contratos, manifests e comandos reais antes de inferir. Resolva baseline/perfis via `../_shared/references/stack-profiles.md` + `detectStackProfiles(project_root, declared_commands, boundary_paths)`; não presuma Flutter nem aplique perfil fora do package correspondente.
 3. **Decisões estáveis:** sanar bloqueios com perguntas ao usuário; registrar no plano (não recopiar tabela D* do PRD — referenciar `PRD §3`).
 4. **Escrita:** artefato markdown no path canônico `.atlas/plans/`. Teto orientativo ~250–350 linhas (até ~450 com slices).
 
@@ -112,7 +112,9 @@ Tarefas `#### T01.` … `#### TNN.` com schema de `BOUNDARY_PRD_PLAN.md` canôni
 - **Quality gates** (opcional em tasks críticas)
 - **Casos mínimos** (somente em tasks de teste)
 
-Última task típica: **Validação final** (`flutter analyze`, `flutter test`, passos manuais alinhados a **PRD §4–6**).
+**Regra de minimalismo estrutural (autoria de task):** ao redigir `Mudança esperada`, prefira a forma mínima viável que cumpre o `Critério de done` — reusar módulo/símbolo já existente no repo antes de introduzir nova abstração; usar stdlib/feature nativa antes de dependência nova; evitar indireção, factory, wrapper, camada ou opção de config não exigida por PRD/invariante. A regra recai **somente** sobre abstração/indireção/arquivo/dependência nova. **Nunca** reduz: validação de trust-boundary, error-handling, data-loss, invariantes §2, cobertura de cenário/teste e negative paths. Em dúvida entre enxuto e seguro, escolha seguro.
+
+Última task típica: **Validação final** (checks reais da stack ativa e passos manuais alinhados a **PRD §4–6**). Flutter usa `flutter analyze/test`; Node e Python usam somente scripts/ferramentas declarados no repo/plano.
 
 ### 6. Contratos técnicos (só ambiguidade PRD → código)
 
@@ -126,7 +128,7 @@ Tarefas `#### T01.` … `#### TNN.` com schema de `BOUNDARY_PRD_PLAN.md` canôni
 
 - Critérios derivados de **PRD §6** + invariantes **§2** deste plano.
 - Título recomendado: `## 8. Validação e checklist (validator)`.
-- Comandos globais de analyze/test do package.
+- Comandos globais aplicáveis ao package, derivados de manifests/scripts reais; nunca inventar `flutter`, `npm` ou `pytest`.
 
 ---
 
