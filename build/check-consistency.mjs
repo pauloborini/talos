@@ -264,6 +264,29 @@ if (findingsRepairSkill != null) {
   }
 }
 
+// Etapa 3: gate da review é Node canônico; entrevista usa adapter; backlog segue opt-in.
+const sliceReviewSkill = read('packages/skills/atlas-slice-review/SKILL.md');
+const nodeFindingsGate = read('packages/skills/atlas-slice-review/scripts/classify_findings.mjs');
+if (sliceReviewSkill != null && !/node scripts\/classify_findings\.mjs/.test(sliceReviewSkill)) {
+  errors.push('portabilidade-regressão: slice review não invoca gate Node canônico');
+}
+if (nodeFindingsGate == null) errors.push('portabilidade-regressão: gate Node de findings ausente');
+
+const interviewSkill = read('packages/skills/atlas-prd-interview/SKILL.md');
+if (interviewSkill != null) {
+  if (/AskUserQuestion/.test(interviewSkill)) errors.push('interview-regressão: skill hardcoda AskUserQuestion');
+  for (const token of ['atlas_capabilities', 'question_prompt', 'persistInterviewRound', 'pendingInterviewQuestions']) {
+    if (!interviewSkill.includes(token)) errors.push(`interview-regressão: contrato não cita '${token}'`);
+  }
+}
+const backlogSkill = read('packages/skills/atlas-backlog-generator/SKILL.md');
+if (backlogSkill != null && !/explicit-only/.test(backlogSkill)) {
+  errors.push('backlog-regressão: atlas-backlog-generator perdeu trigger explicit-only');
+}
+if (orchestratorSkill != null && !/atlas-backlog-generator` \(\*\*explicit-only\*\*\)/.test(orchestratorSkill)) {
+  errors.push('backlog-regressão: orquestrador não marca backlog generator como explicit-only');
+}
+
 // Codex custom agents não podem depender apenas do bundle do plugin: o instalador
 // precisa copiar os atlas-*.toml para CODEX_HOME/agents, que é o caminho nativo que
 // `spawn_agent(agent_type)` carrega. Regressão aqui volta ao erro `unknown agent_type`.

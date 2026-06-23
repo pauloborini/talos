@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import process from 'node:process';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const SERVER_NAME = 'atlas-workflow-orchestrator';
@@ -62,6 +63,7 @@ const WORKFLOW_CONFIG = {
     prd_interview: 'atlas-prd-interview',
     plan_handoff: 'atlas-plan-handoff',
     plan_execute: 'atlas-plan-execute',
+    direct_execute: 'atlas-direct-execute',
     findings_repair: 'atlas-findings-repair',
     slice_review: 'atlas-slice-review',
     task_validator: 'atlas-task-validator',
@@ -110,8 +112,17 @@ const MODE_GUARANTEE_LEVEL = {
   direct: 'full_pipeline',
   execute: 'full_pipeline',
 };
+const MODE_EXECUTOR_SKILL = {
+  full: WORKFLOW_CONFIG.skills.plan_execute,
+  direct: WORKFLOW_CONFIG.skills.direct_execute,
+  execute: WORKFLOW_CONFIG.skills.plan_execute,
+};
 function guaranteeLevelForMode(mode) {
   return MODE_GUARANTEE_LEVEL[mode] ?? null;
+}
+
+function expectedExecutorSkill(mode) {
+  return MODE_EXECUTOR_SKILL[mode] ?? null;
 }
 
 // Banco canônico de templates de banner de fase (PRD §4 Fluxos / D*, PLAN §6.2).
@@ -164,7 +175,7 @@ function renderBanner(event, slots = {}) {
 // Skills consultam atlas_capabilities e usam o descritor retornado em vez de
 // hardcodar nome de host. Adicionar host novo = adicionar entrada aqui.
 // Contrato HostAdapter (DEC-007): entrada runtime data-driven. Campos:
-//   subagent_dispatch, todo_tool, hooks, capabilities_flags. plan_paths/state são
+//   subagent_dispatch, question_prompt, todo_tool, hooks, capabilities_flags. plan_paths/state são
 //   portáveis (iguais a todos os hosts) e vivem em capabilities(). Adicionar host =
 //   adicionar entrada aqui; nenhum ramo `if host==` em outro lugar.
 // capabilities_flags: pré-requisitos essenciais (subagent_available, mcp_available)
@@ -185,6 +196,7 @@ const HOST_ADAPTERS = {
         mechanism: 'Agent(subagent_type) bloqueante por design do host',
       },
     },
+    question_prompt: { mechanism: 'AskUserQuestion', mode: 'structured', max_questions: 4, options_per_question: 3, persistence: 'prd_after_each_round' },
     todo_tool: 'TodoWrite',
     hooks: { supported: true, mechanism: 'hooks/claude/settings.snippet.json' },
     capabilities_flags: { subagent_available: true, mcp_available: true, todo_available: true },
@@ -207,6 +219,7 @@ const HOST_ADAPTERS = {
         mechanism: 'spawn_agent bloqueante; retorno via state_path + veredito; no Codex deve usar explicitamente agent_type="atlas-task-validator"',
       },
     },
+    question_prompt: { mechanism: 'request_user_input', mode: 'structured', max_questions: 3, options_per_question: 3, persistence: 'prd_after_each_round' },
     todo_tool: 'tasks',
     hooks: { supported: false, mechanism: null },
     // Codex subagents are native, but spawned agents do not receive spawn_agent in
@@ -229,6 +242,7 @@ const HOST_ADAPTERS = {
         mechanism: '@<name> bloqueante presumido',
       },
     },
+    question_prompt: { mechanism: 'question', mode: 'structured', max_questions: 4, options_per_question: 3, persistence: 'prd_after_each_round' },
     // opencode expõe `todowrite` nativo ao agente primário (orquestrador). O `todoread`
     // foi fundido em `todowrite` (mar/2026): a tool retorna a lista atual no output.
     // Subagentes têm `todowrite` desabilitado por padrão, mas o todo é usado pelo
@@ -255,6 +269,7 @@ const HOST_ADAPTERS = {
         mechanism: 'subagent({agent,task}) via pi-subagents; join depende de dep externa',
       },
     },
+    question_prompt: { mechanism: 'interactive_prompt', mode: 'structured', max_questions: 4, options_per_question: 3, persistence: 'prd_after_each_round' },
     todo_tool: null,
     hooks: { supported: false, mechanism: null },
     // pi exige 2 deps externas obrigatórias (DEC-005): pi-mcp-adapter (MCP) e
@@ -281,6 +296,7 @@ const HOST_ADAPTERS = {
         mechanism: 'invoke_subagent bloqueante por design do host',
       },
     },
+    question_prompt: { mechanism: 'notify_user', mode: 'structured', max_questions: 4, options_per_question: 3, persistence: 'prd_after_each_round' },
     todo_tool: null,
     hooks: { supported: false, mechanism: null },
     capabilities_flags: { subagent_available: true, mcp_available: true, todo_available: false },
@@ -300,6 +316,7 @@ const HOST_ADAPTERS = {
         mechanism: 'indeterminado; host deve reportar',
       },
     },
+    question_prompt: { mechanism: 'native_structured_question', mode: 'structured', max_questions: 4, options_per_question: 3, persistence: 'prd_after_each_round' },
     todo_tool: null,
     hooks: { supported: false, mechanism: null },
     // generic EXIGE subagente+MCP do host (DEC-004); host MCP-only sem subagente
@@ -378,6 +395,7 @@ function capabilities(args = {}) {
     schema_version: CAPABILITIES_SCHEMA_VERSION,
     subagent_dispatch: adapter.subagent_dispatch,
     validator_dispatch: adapter.validator_dispatch,
+    question_prompt: adapter.question_prompt,
     todo_tool: adapter.todo_tool,
     hooks: adapter.hooks,
     capabilities_flags: adapter.capabilities_flags,
@@ -1695,6 +1713,7 @@ function preflight(args = {}) {
       ...(guaranteeLevel ? { guarantee_level: guaranteeLevel } : {}),
       routing: {
         mode,
+        ...(expectedExecutorSkill(mode) ? { executor_skill: expectedExecutorSkill(mode) } : {}),
         ...(guaranteeLevel ? { guarantee_level: guaranteeLevel } : {}),
         skills: config.skills,
         version: version.version,
@@ -2238,8 +2257,7 @@ function pickValidatorChallenge(statePathValue, args, dispatchToken) {
 
 // Verifica o challenge_response no complete recomputando o hash do disco.
 //   { ok: true }                         — sem challenge emitido OU hash confere
-//   { ok: true, unverifiable: true }     — arquivo sumiu no complete (não bloqueia)
-//   { ok: false, reason }                — resposta ausente ou hash divergente
+//   { ok: false, reason }                — resposta ausente, arquivo ilegível ou hash divergente
 function verifyValidatorChallenge(challenge, response, args) {
   if (!challenge || typeof challenge.file !== 'string') return { ok: true };
   if (typeof response !== 'string' || response.trim() === '') {
@@ -2251,11 +2269,247 @@ function verifyValidatorChallenge(challenge, response, args) {
       .update(fs.readFileSync(resolveConsumerPath(challenge.file, args)))
       .digest('hex');
   } catch {
-    return { ok: true, unverifiable: true };
+    return { ok: false, reason: 'challenge_file_unreadable' };
   }
   // Aceita hex puro ou saída de `shasum` (`<hash>  <arquivo>`): primeiro token.
   const submitted = response.trim().toLowerCase().split(/\s+/)[0];
   return submitted === actual ? { ok: true } : { ok: false, reason: 'challenge_hash_divergente' };
+}
+
+const STATE_REQUIRED_FIELDS = [
+  'run_id', 'slice', 'tasks', 'files_changed', 'diff_stat', 'plan_path',
+  'boundary_refs', 'executed_at', 'executor_skill',
+];
+const STATE_EXTENSION_ARRAYS = [
+  'obligations', 'invariants', 'scenario_probes', 'risk_probes',
+  'validation_map', 'task_evidence', 'worktree_baseline', 'worktree_final',
+];
+
+function gitOutput(root, gitArgs) {
+  return execFileSync('git', ['-C', root, ...gitArgs], {
+    encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+  }).trim();
+}
+
+function gitLines(root, gitArgs) {
+  const output = gitOutput(root, gitArgs);
+  return output ? output.split(/\r?\n/).filter(Boolean) : [];
+}
+
+function stateEvidenceFiles(state) {
+  const result = [];
+  for (const item of [...(state.task_evidence ?? []), ...(state.repair_evidence ?? [])]) {
+    if (!item || typeof item !== 'object') continue;
+    for (const key of ['files', 'files_touched']) {
+      if (Array.isArray(item[key])) result.push(...item[key]);
+    }
+    if (typeof item.file === 'string') result.push(item.file);
+  }
+  return [...new Set(result.filter((item) => typeof item === 'string' && item.trim()))].sort();
+}
+
+function snapshotStatus(xy) {
+  if (xy === '??') return 'A';
+  for (const status of ['U', 'D', 'R', 'C', 'A', 'T', 'M']) {
+    if (xy.includes(status)) return status;
+  }
+  return 'M';
+}
+
+function normalizeSnapshotPath(input) {
+  if (typeof input !== 'string' || !input.trim()) throw new Error('path vazio');
+  const normalized = path.posix.normalize(input.replaceAll('\\', '/'));
+  if (path.posix.isAbsolute(normalized) || normalized === '..' || normalized.startsWith('../')) {
+    throw new Error('path fora do projeto');
+  }
+  return normalized;
+}
+
+function snapshotHash(root, rel) {
+  try {
+    const normalized = normalizeSnapshotPath(rel);
+    const abs = path.resolve(root, normalized);
+    if (abs !== root && !abs.startsWith(`${root}${path.sep}`)) throw new Error('path fora do projeto');
+    const stat = fs.lstatSync(abs);
+    const content = stat.isSymbolicLink()
+      ? Buffer.from(fs.readlinkSync(abs))
+      : fs.readFileSync(abs);
+    return crypto.createHash('sha256').update(content).digest('hex');
+  } catch {
+    return null;
+  }
+}
+
+function captureWorktreeSnapshot(root) {
+  const raw = execFileSync('git', [
+    '-C', root, 'status', '--porcelain=v1', '-z', '--untracked-files=all',
+  ]);
+  const records = raw.toString('utf8').split('\0').filter(Boolean);
+  const snapshot = [];
+  for (let index = 0; index < records.length; index += 1) {
+    const record = records[index];
+    const xy = record.slice(0, 2);
+    const rel = normalizeSnapshotPath(record.slice(3));
+    const status = snapshotStatus(xy);
+    if (status === 'R' || status === 'C') {
+      const previous = normalizeSnapshotPath(records[index + 1]);
+      index += 1;
+      if (!previous.startsWith('.atlas/state/')) {
+        snapshot.push({ path: previous, status: 'D', sha256: null });
+      }
+    }
+    if (!rel.startsWith('.atlas/state/')) {
+      snapshot.push({ path: rel, status, sha256: status === 'D' ? null : snapshotHash(root, rel) });
+    }
+  }
+  return snapshot.sort((a, b) => a.path.localeCompare(b.path) || a.status.localeCompare(b.status));
+}
+
+function validateSnapshot(snapshot, field, violations) {
+  if (!Array.isArray(snapshot)) return;
+  const paths = new Set();
+  const normalized = [];
+  for (const [index, entry] of snapshot.entries()) {
+    const label = `${field}[${index}]`;
+    if (!entry || typeof entry !== 'object') {
+      violations.push(`${label} deve ser objeto`);
+      continue;
+    }
+    let rel;
+    try {
+      rel = normalizeSnapshotPath(entry.path);
+    } catch {
+      violations.push(`${label}.path inválido`);
+      continue;
+    }
+    if (paths.has(rel)) violations.push(`${field} contém path duplicado: ${rel}`);
+    paths.add(rel);
+    if (!['A', 'M', 'D', 'R', 'C', 'T', 'U'].includes(entry.status)) {
+      violations.push(`${label}.status inválido`);
+    }
+    if (entry.status === 'D') {
+      if (entry.sha256 !== null) violations.push(`${label}.sha256 deve ser null para delete`);
+    } else if (typeof entry.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(entry.sha256)) {
+      violations.push(`${label}.sha256 inválido`);
+    }
+    normalized.push({ path: rel, status: entry.status, sha256: entry.sha256 });
+  }
+  const sorted = [...normalized].sort((a, b) => a.path.localeCompare(b.path) || a.status.localeCompare(b.status));
+  if (JSON.stringify(normalized) !== JSON.stringify(sorted)) violations.push(`${field} deve estar ordenado por path/status`);
+}
+
+function snapshotDeltaFiles(baseline, finalSnapshot) {
+  const before = new Map(baseline.map((entry) => [entry.path, JSON.stringify(entry)]));
+  const after = new Map(finalSnapshot.map((entry) => [entry.path, JSON.stringify(entry)]));
+  return [...new Set([...before.keys(), ...after.keys()])]
+    .filter((rel) => before.get(rel) !== after.get(rel))
+    .sort();
+}
+
+function validateStateBoundary(statePathValue, args = {}) {
+  let state;
+  try {
+    state = JSON.parse(fs.readFileSync(resolveConsumerPath(statePathValue, args), 'utf8'));
+  } catch (error) {
+    return { ok: false, violations: [`state_path inválido: ${error.message}`] };
+  }
+  const violations = [];
+  for (const field of STATE_REQUIRED_FIELDS) {
+    if (state[field] === undefined || state[field] === null) violations.push(`campo obrigatório ausente: ${field}`);
+  }
+  for (const field of ['tasks', 'files_changed', 'boundary_refs']) {
+    if (!Array.isArray(state[field])) violations.push(`${field} deve ser array`);
+  }
+  const isDirect = state.executor_skill === 'atlas-direct-execute';
+  const hasExtension = state.contract_kind !== undefined;
+  if (!hasExtension && state.executor_skill !== 'atlas-plan-execute') violations.push('schema legado permitido somente para atlas-plan-execute');
+  if (isDirect && state.contract_kind !== 'direct') violations.push('atlas-direct-execute exige contract_kind=direct');
+  if (hasExtension && state.executor_skill === 'atlas-plan-execute' && state.contract_kind !== 'plan') violations.push('atlas-plan-execute exige contract_kind=plan');
+  if (hasExtension && !['plan', 'direct'].includes(state.contract_kind)) violations.push('contract_kind deve ser plan ou direct');
+  if (hasExtension || isDirect) {
+    for (const field of ['base_sha', 'head_sha']) {
+      if (typeof state[field] !== 'string' || !state[field].trim()) violations.push(`${field} obrigatório na extensão`);
+    }
+    for (const field of STATE_EXTENSION_ARRAYS) {
+      if (!Array.isArray(state[field])) violations.push(`${field} deve ser array na extensão`);
+    }
+    if (isDirect && Array.isArray(state.obligations) && state.obligations.length === 0) violations.push('direct exige obligations não vazio');
+    validateSnapshot(state.worktree_baseline, 'worktree_baseline', violations);
+    validateSnapshot(state.worktree_final, 'worktree_final', violations);
+  }
+  if (violations.length > 0 || !hasExtension) {
+    return { ok: violations.length === 0, legacy: !hasExtension, state, violations };
+  }
+  const root = consumerRoot(args);
+  try {
+    gitOutput(root, ['rev-parse', '--verify', `${state.base_sha}^{commit}`]);
+    gitOutput(root, ['rev-parse', '--verify', `${state.head_sha}^{commit}`]);
+    const currentHead = gitOutput(root, ['rev-parse', 'HEAD']);
+    if (currentHead !== state.head_sha) violations.push(`head_sha stale: state=${state.head_sha}, real=${currentHead}`);
+    const committed = gitLines(root, ['diff', '--name-only', `${state.base_sha}...${state.head_sha}`]);
+    const actualFinal = captureWorktreeSnapshot(root);
+    if (JSON.stringify(actualFinal) !== JSON.stringify(state.worktree_final)) {
+      violations.push('worktree_final stale: snapshot diverge do working tree atual');
+    }
+    const worktreeDelta = snapshotDeltaFiles(state.worktree_baseline, state.worktree_final);
+    const claimedEvidence = stateEvidenceFiles(state);
+    const expectedFiles = [...new Set([...committed, ...worktreeDelta])].sort();
+    const declaredFiles = [...new Set((state.files_changed ?? []).filter((f) => typeof f === 'string'))].sort();
+    if (JSON.stringify(expectedFiles) !== JSON.stringify(declaredFiles)) {
+      violations.push(`files_changed diverge do boundary real: esperado=${JSON.stringify(expectedFiles)} recebido=${JSON.stringify(declaredFiles)}`);
+    }
+    if (JSON.stringify(expectedFiles) !== JSON.stringify(claimedEvidence)) {
+      violations.push(`evidência diverge do boundary real: esperado=${JSON.stringify(expectedFiles)} recebido=${JSON.stringify(claimedEvidence)}`);
+    }
+    const statMatch = /^(\d+)\s+files?\b/.exec(String(state.diff_stat).trim());
+    if (!statMatch || Number(statMatch[1]) !== expectedFiles.length) {
+      violations.push(`diff_stat stale: esperado ${expectedFiles.length} files, recebido=${JSON.stringify(state.diff_stat)}`);
+    }
+  } catch (error) {
+    violations.push(`boundary Git inválido: ${error.message}`);
+  }
+  return { ok: violations.length === 0, legacy: false, state, violations };
+}
+
+function structuredBlockingFindings(packet) {
+  const findings = Array.isArray(packet?.findings) ? packet.findings : [];
+  return findings.filter((finding) => finding && ['P0', 'P1'].includes(finding.severity));
+}
+
+function normalizeFindingsPacket(packet) {
+  if (!packet || typeof packet !== 'object') {
+    return { packet, violations: ['finding packet obrigatório'] };
+  }
+  if (!Array.isArray(packet.findings)) {
+    return { packet, violations: ['findings deve ser array'] };
+  }
+  const violations = [];
+  const ids = new Set();
+  const findings = packet.findings.map((finding, index) => {
+    if (!finding || typeof finding !== 'object') {
+      violations.push(`finding ${index} deve ser objeto`);
+      return finding;
+    }
+    const label = typeof finding.id === 'string' && finding.id.trim()
+      ? finding.id.trim()
+      : `finding ${index}`;
+    if (typeof finding.id !== 'string' || !/^F-\d{3}$/.test(finding.id.trim())) {
+      violations.push(`${label}: id obrigatório no formato F-NNN`);
+    } else if (ids.has(finding.id.trim())) {
+      violations.push(`${label}: id duplicado`);
+    } else {
+      ids.add(finding.id.trim());
+    }
+    if (!['P0', 'P1', 'P2', 'P3'].includes(finding.severity)) {
+      violations.push(`${label}: severity deve ser P0|P1|P2|P3`);
+    }
+    for (const field of ['file', 'failure_mode', 'evidence', 'recommendation', 'fix_validation']) {
+      if (typeof finding[field] !== 'string' || !finding[field].trim()) violations.push(`${label}: ${field} obrigatório`);
+    }
+    if (!Number.isInteger(finding.line) || finding.line < 1) violations.push(`${label}: line inválida`);
+    return { ...finding, msg: `${finding.failure_mode ?? ''}: ${finding.evidence ?? ''}`.trim() };
+  });
+  return { packet: { ...packet, findings }, violations };
 }
 
 function validatorStart(args, context) {
@@ -2300,6 +2554,17 @@ function validatorStart(args, context) {
       last_checkpoint: liveness?.last_checkpoint ?? null,
       last_state_path: lastCheckpoint?.state_path ?? null,
       next_action: 'aguardar_state_path_created_antes_do_validator',
+    };
+  }
+
+  const boundaryValidation = validateStateBoundary(statePathValue, args);
+  if (!boundaryValidation.ok) {
+    return {
+      gate: 'G4', action: 'start', status: 'blocked', timestamp,
+      state_path: statePathValue,
+      boundary_violations: boundaryValidation.violations,
+      error: `State/boundary inválido: ${boundaryValidation.violations.join('; ')}`,
+      next_action: 'regerar_state_path_com_boundary_real',
     };
   }
 
@@ -2411,13 +2676,15 @@ function validatorStart(args, context) {
       last_state_path: statePathValue,
       repair: {
         skill: WORKFLOW_CONFIG.skills.findings_repair,
-        status: 'not_needed',
-        required_from_attempt: null,
-        requested_at: null,
-        completed_at: null,
+        status: cycle.repair.status === 'completed' ? 'completed' : 'not_needed',
+        required_from_attempt: cycle.repair.required_from_attempt,
+        requested_at: cycle.repair.requested_at,
+        completed_at: cycle.repair.completed_at,
         active: null,
       },
-      findings_packet: null,
+      // O retry precisa manter os findings originais: o complete do attempt 2
+      // correlaciona `repaired_finding_ids` contra exatamente esse packet.
+      findings_packet: attempt === 2 ? cycle.findings_packet : null,
     },
   };
 }
@@ -2428,7 +2695,8 @@ function validatorComplete(args, context) {
   const statePathValue = requiredString(args, 'state_path');
   const activeValidatorRunId = requiredString(args, 'validator_run_id');
   const verdict = requiredString(args, 'verdict');
-  const packet = optionalData(args);
+  const packetResult = normalizeFindingsPacket(optionalData(args));
+  const packet = packetResult.packet;
   // S04/S16: token de dispatch é obrigatório para fechar o slot ativo. Ele vem
   // do validator_recovery lido pela folha fria e volta no output estruturado do
   // validator. Sem token não existe garantia anti-stale completa.
@@ -2545,7 +2813,7 @@ function validatorComplete(args, context) {
   // Falha (resposta ausente/hash divergente) NÃO fecha o slot — igual stale: active é
   // preservado (não retornamos validator_cycle), o orquestrador re-despacha o MESMO
   // validador (mesmo attempt) que lê o boundary e reenvia o hash correto. Não consome
-  // attempt nem reabre terminal. `unverifiable` (arquivo sumiu no complete) não bloqueia.
+  // attempt nem reabre terminal. Arquivo sumido/ilegível consome o mesmo orçamento bounded.
   const challengeCheck = verifyValidatorChallenge(cycle.active.challenge, challengeResponse, args);
   if (!challengeCheck.ok) {
     // P2-1: falhas de challenge são bounded por attempt. As anteriores ficam no
@@ -2602,15 +2870,57 @@ function validatorComplete(args, context) {
       next_action: 'redespachar_o_mesmo_validador_irmao_que_le_o_boundary_e_reenvia_challenge_response',
     };
   }
-  const challengeVerified = !cycle.active.challenge
-    ? 'no_challenge'
-    : challengeCheck.unverifiable ? 'unverifiable' : 'verified';
+  const challengeVerified = !cycle.active.challenge ? 'no_challenge' : 'verified';
+
+  if (packetResult.violations.length > 0) {
+    return {
+      gate: 'G4', action: 'complete', status: 'blocked', timestamp,
+      validator_attempt: cycle.active.attempt, validator_run_id: activeValidatorRunId,
+      state_path: statePathValue, validator_status: 'invalid_finding_shape',
+      error: `Finding estruturado inválido: ${packetResult.violations.join('; ')}`,
+      next_action: 'corrigir_shape_estruturado_do_finding',
+    };
+  }
 
   const normalizedVerdict = verdict === 'pass'
     ? 'passed'
     : verdict === 'pass_with_observations'
       ? 'passed_with_observations'
       : verdict;
+
+  const blockingFindings = structuredBlockingFindings(packet);
+  if (VALIDATOR_PASSED_STATUSES.has(normalizedVerdict) && blockingFindings.length > 0) {
+    return {
+      gate: 'G4', action: 'complete', status: 'blocked', timestamp,
+      validator_attempt: cycle.active.attempt,
+      validator_run_id: activeValidatorRunId,
+      state_path: statePathValue,
+      validator_status: 'invalid_verdict_severity',
+      finding_ids: blockingFindings.map((finding) => finding.id ?? null),
+      error: `${blockingFindings[0].severity} exige verdict fail`,
+      next_action: 'corrigir_veredito_estruturado_do_validator',
+    };
+  }
+
+  if (cycle.active.attempt === 2
+    && cycle.repair.status === 'completed'
+    && VALIDATOR_PASSED_STATUSES.has(normalizedVerdict)) {
+    const targetIds = structuredBlockingFindings(cycle.findings_packet)
+      .map((finding) => finding.id)
+      .filter((id) => typeof id === 'string' && id.trim());
+    const correlated = new Set(Array.isArray(packet?.repaired_finding_ids) ? packet.repaired_finding_ids : []);
+    const missingIds = targetIds.filter((id) => !correlated.has(id));
+    if (missingIds.length > 0) {
+      return {
+        gate: 'G4', action: 'complete', status: 'blocked', timestamp,
+        validator_attempt: cycle.active.attempt, validator_run_id: activeValidatorRunId,
+        state_path: statePathValue, validator_status: 'repair_correlation_missing',
+        missing_finding_ids: missingIds,
+        error: 'Segundo validator não correlacionou todos os findings reparados',
+        next_action: 'revalidar_repair_e_retornar_repaired_finding_ids',
+      };
+    }
+  }
 
   if (VALIDATOR_PASSED_STATUSES.has(normalizedVerdict)) {
     return {
@@ -2775,6 +3085,18 @@ function validatorRepairStart(args, context) {
     };
   }
 
+
+  const boundaryBefore = validateStateBoundary(statePathValue, args);
+  if (!boundaryBefore.ok) {
+    return {
+      gate: 'G4', action: 'repair_start', status: 'blocked', timestamp,
+      state_path: statePathValue,
+      boundary_violations: boundaryBefore.violations,
+      error: `Repair bloqueado por state/boundary inválido: ${boundaryBefore.violations.join('; ')}`,
+      next_action: 'corrigir_state_path_antes_do_repair',
+    };
+  }
+
   const activeRepairRunId = repairRunId(runId, cycle.attempts_used, timestamp);
   return {
     gate: 'G4',
@@ -2784,6 +3106,7 @@ function validatorRepairStart(args, context) {
     validator_attempt: cycle.attempts_used,
     repair_run_id: activeRepairRunId,
     repair_budget: 1,
+    findings: cycle.findings_packet?.findings ?? [],
     state_path: statePathValue,
     validator_status: 'repair_running',
     next_action: `dispatch_${WORKFLOW_CONFIG.skills.findings_repair}`,
@@ -2800,6 +3123,12 @@ function validatorRepairStart(args, context) {
           run_id: activeRepairRunId,
           state_path: statePathValue,
           started_at: timestamp,
+          boundary_before: {
+            head_sha: boundaryBefore.state.head_sha ?? null,
+            diff_stat: boundaryBefore.state.diff_stat,
+            files_changed: boundaryBefore.state.files_changed,
+            worktree_final: boundaryBefore.state.worktree_final ?? null,
+          },
         },
       },
     },
@@ -2811,6 +3140,7 @@ function validatorRepairComplete(args, context) {
   const cycle = normalizeValidatorCycle(context.state.data?.validator_cycle ?? {});
   const statePathValue = requiredString(args, 'state_path');
   const activeRepairRunId = requiredString(args, 'repair_run_id');
+  const repairData = optionalData(args);
 
   if (cycle.active) {
     return {
@@ -2898,6 +3228,105 @@ function validatorRepairComplete(args, context) {
       error: `state_path do repair ativo diverge: esperado ${cycle.repair.active.state_path}, recebido ${statePathValue}`,
       next_action: 'atualizar_o_state_path_original_sem_redirecionar_boundary',
     };
+  }
+
+
+  const boundaryAfter = validateStateBoundary(statePathValue, args);
+  if (!boundaryAfter.ok) {
+    return {
+      gate: 'G4', action: 'repair_complete', status: 'blocked', timestamp,
+      repair_run_id: activeRepairRunId, state_path: statePathValue,
+      boundary_violations: boundaryAfter.violations,
+      error: `Repair não atualizou state/boundary completo: ${boundaryAfter.violations.join('; ')}`,
+      next_action: 'atualizar_head_stat_snapshots_files_e_evidencias_no_state_original',
+    };
+  }
+
+  const targets = structuredBlockingFindings(cycle.findings_packet).filter(
+    (finding) => typeof finding.id === 'string' && finding.id.trim(),
+  );
+  const findings = Array.isArray(cycle.findings_packet?.findings) ? cycle.findings_packet.findings : [];
+  const receivedIds = new Set(findings.map((finding) => finding?.id).filter(Boolean));
+  const repairs = Array.isArray(repairData?.repairs) ? repairData.repairs : [];
+  const stateRepairs = Array.isArray(boundaryAfter.state.repair_evidence)
+    ? boundaryAfter.state.repair_evidence
+    : [];
+  const repairViolations = [];
+  for (const [label, entries] of [['output', repairs], ['state', stateRepairs]]) {
+    const seen = new Set();
+    for (const repair of entries) {
+      const id = repair?.finding_id;
+      if (!receivedIds.has(id)) repairViolations.push(`${label}: repair ID desconhecido ${id ?? '<ausente>'}`);
+      if (seen.has(id)) repairViolations.push(`${label}: repair ID duplicado ${id}`);
+      seen.add(id);
+      if (!Array.isArray(repair?.files_touched) || repair.files_touched.length === 0) {
+        repairViolations.push(`${label}: ${id ?? '<ausente>'} sem files_touched`);
+      }
+    }
+  }
+  const normalizeRepair = (repair) => ({
+    finding_id: repair.finding_id,
+    files_touched: [...repair.files_touched].sort(),
+    checks_run: [...(repair.checks_run ?? [])].sort(),
+    status: repair.status,
+  });
+  if (repairViolations.length === 0) {
+    const outputNormalized = repairs.map(normalizeRepair).sort((a, b) => a.finding_id.localeCompare(b.finding_id));
+    const stateNormalized = stateRepairs.map(normalizeRepair).sort((a, b) => a.finding_id.localeCompare(b.finding_id));
+    if (JSON.stringify(outputNormalized) !== JSON.stringify(stateNormalized)) {
+      repairViolations.push('output do repair diverge de repair_evidence persistido');
+    }
+  }
+  const before = cycle.repair.active.boundary_before;
+  if (Array.isArray(before?.worktree_final) && Array.isArray(boundaryAfter.state.worktree_final)) {
+    let committedDuringRepair = [];
+    if (before.head_sha && before.head_sha !== boundaryAfter.state.head_sha) {
+      try {
+        committedDuringRepair = gitLines(consumerRoot(args), [
+          'diff', '--name-only', `${before.head_sha}...${boundaryAfter.state.head_sha}`,
+        ]);
+      } catch (error) {
+        repairViolations.push(`não foi possível derivar commits do repair: ${error.message}`);
+      }
+    }
+    const touchedReal = [...new Set([
+      ...snapshotDeltaFiles(before.worktree_final, boundaryAfter.state.worktree_final),
+      ...committedDuringRepair,
+    ])].sort();
+    const touchedClaimed = [...new Set(repairs.flatMap((repair) => repair?.files_touched ?? []))].sort();
+    if (JSON.stringify(touchedReal) !== JSON.stringify(touchedClaimed)) {
+      repairViolations.push(`arquivos do repair divergem do delta real: esperado=${JSON.stringify(touchedReal)} recebido=${JSON.stringify(touchedClaimed)}`);
+    }
+  }
+  if (repairViolations.length > 0) {
+    return {
+      gate: 'G4', action: 'repair_complete', status: 'blocked', timestamp,
+      repair_run_id: activeRepairRunId, state_path: statePathValue,
+      repair_violations: repairViolations,
+      error: `Repair fora do boundary recebido: ${repairViolations.join('; ')}`,
+      next_action: 'corrigir_correlacao_ids_arquivos_e_state_do_repair',
+    };
+  }
+  if (targets.length > 0) {
+    const missing = targets.filter((target) => {
+      const output = repairs.find((repair) => repair?.finding_id === target.id);
+      const persisted = stateRepairs.find((repair) => repair?.finding_id === target.id);
+      return output?.status !== 'resolved'
+        || !Array.isArray(output.files_touched) || output.files_touched.length === 0
+        || !Array.isArray(output.checks_run) || output.checks_run.length === 0
+        || persisted?.status !== 'resolved'
+        || !Array.isArray(persisted.files_touched) || persisted.files_touched.length === 0
+        || !Array.isArray(persisted.checks_run) || persisted.checks_run.length === 0;
+    });
+    if (missing.length > 0) {
+      return {
+        gate: 'G4', action: 'repair_complete', status: 'blocked', timestamp,
+        repair_run_id: activeRepairRunId, state_path: statePathValue,
+        unresolved_finding_ids: missing.map((finding) => finding.id),
+        error: 'Repair sem evidência de resolução para finding P0/P1 alvo',
+        next_action: 'persistir_correlacao_finding_arquivo_check_status',
+      };
+    }
   }
 
   return {
@@ -3384,6 +3813,7 @@ export {
   checkPrerequisites,
   checkJoinCapability,
   expectedNextPhase,
+  expectedExecutorSkill,
   guaranteeLevelForMode,
   classifyArtifactContent,
   BANNER_TEMPLATES,
@@ -3396,6 +3826,8 @@ export {
   preflight,
   lockDispatch,
   lockValidator,
+  captureWorktreeSnapshot,
+  validateStateBoundary,
   assertAfterPlan,
   runState,
   ping,

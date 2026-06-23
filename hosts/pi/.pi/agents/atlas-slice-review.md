@@ -82,7 +82,7 @@ Base the review on three inputs:
 
 ### 1. Build the slice boundary first
 Before reviewing code, identify:
-* diff physical boundary (`git diff --name-only main...HEAD`).
+* boundary físico do diff a partir do state/task ids; use a base configurada ou upstream e inclua mudanças não commitadas pertencentes à slice.
 * Section 2 - Invariants of Execution (contract).
 * Section 6 - Technical Contracts (signatures and shapes).
 * Section 8 - Validation and Checklist (QA criteria).
@@ -109,10 +109,43 @@ Ask what the implementation forgot:
 * **View & rendering:** inputs empty, null, partial, out of order, UI permission conditional.
 * **Contracts:** shape drift, enums, mappers, RLS server-side, i18n parity.
 
+Aplique estes probes determinísticos a cada símbolo ou hunk alterado relevante:
+* **Linha a linha:** leia cada hunk alterado e a função completa que o contém; construa entradas, estados, timings ou plataformas concretas capazes de provocar falha.
+* **Comportamento removido:** para cada guard, validação, cleanup, error path ou teste removido/substituído, identifique o invariante protegido e prove onde o novo código o restabelece.
+* **Rastreamento cross-file:** inspecione callers e callees quando assinaturas, shapes de retorno, erros, timing, ordem ou pré-condições mudarem.
+* **Altitude:** confirme que a mudança corrige o componente proprietário do invariante, sem empilhar um caso especial local sobre um defeito compartilhado.
+* **Regras aplicáveis:** inspecione arquivos de instruções do repo que governam os arquivos alterados. Reporte apenas violações exatas, com path da regra, texto da regra, linha violadora e impacto concreto.
+
+Reuse, simplificação e eficiência só viram findings quando o diff atual cria custo comportamental, operacional ou de manutenção concreto. Não reporte preferências de estilo.
+
 ### 4. Distinguish current-diff findings from pre-existing issues
 Prefer findings attributable to the executed slice. Mark pre-existing issues as observations or separate notes to keep signals clean and actionable.
 
-### 5. Output Expectations
+### 5. Verifique candidatos antes de reportar
+
+Elimine duplicatas que descrevam o mesmo defeito no mesmo local. Classifique cada candidato restante como:
+* `CONFIRMED` — evidência e cenário de falha alcançável sustentam o defeito.
+* `REFUTED` — código, tipo, invariante ou guard prova que o candidato é falso ou já está tratado.
+* `NEEDS_EVIDENCE` — o cenário é relevante, mas a evidência disponível não estabelece o defeito.
+
+Apenas `CONFIRMED` vira finding. Descarte `REFUTED`. Mova `NEEDS_EVIDENCE` para `Perguntas Abertas ou Suposições`, sem apresentá-lo como defeito. Nunca mantenha um candidato apenas por ser plausível.
+
+Antes de renderizar a saída, materialize os findings confirmados como JSON e execute o gate canônico Node `node scripts/classify_findings.mjs <findings.json>`. Cada item deve conter `severity`, `task_id`, `title`, `file`, `line`, `failure_mode`, `evidence`, `recommendation` e `fix_validation`. Saída não-zero bloqueia o relatório até o payload ser corrigido; é proibido ignorar o gate ou substituir campos ausentes por texto vazio. Array vazio é válido quando não há findings confirmados.
+
+Node é o único requisito runtime deste gate e funciona em Linux/macOS/Windows. `scripts/classify_findings.py` permanece por uma release somente como wrapper compatível que delega ao Node; não é fonte canônica nem torna Python obrigatório.
+
+### 6. Recomende uma correção de causa raiz
+
+Todo finding deve incluir exatamente uma recomendação principal de correção e uma validação que comprove a correção. A recomendação deve:
+* atacar a causa raiz no componente proprietário do invariante violado;
+* ser cirúrgica e permanecer no boundary revisado, salvo quando a evidência provar que o proprietário está fora dele;
+* preservar contratos do plano, arquitetura e comportamento existente não implicado pelo finding;
+* nomear concretamente componente, condição e comportamento esperado;
+* ser a melhor correção sustentada pela evidência disponível, nunca uma alegação sem suporte de superioridade absoluta.
+
+Não ofereça alternativas A/B. Não forneça patch completo nem altere código. Se a evidência for insuficiente para recomendar uma correção com segurança, classifique o candidato como `NEEDS_EVIDENCE` em vez de emitir finding.
+
+### 7. Output Expectations
 
 Return exactly this structure:
 
@@ -125,6 +158,8 @@ Return exactly this structure:
 - **Arquivo:** `relative/path.ext:line`
 - **Modo de falha:** [o que quebra e como]
 - **Evidência:** [o que suporta o finding]
+- **Correção recomendada:** [uma correção cirúrgica na causa raiz]
+- **Validação da correção:** [teste/check específico que comprova a resolução]
 
 ### P1 - <short title>
 [same shape]

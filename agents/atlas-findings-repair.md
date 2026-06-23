@@ -32,4 +32,8 @@ O orquestrador passa obrigatoriamente `state_path`, findings estruturados, `vali
 - Não replanejar
 - Não ampliar escopo
 - Atualizar o `state_path` original em lugar; não trocar o boundary para outro arquivo
+- Consumir IDs/recommendations estruturadas; persistir correlação em `repair_evidence`
+- Preservar `worktree_baseline`, recapturar `worktree_final` e incluir exatamente todo arquivo tocado em `files_changed`; recomputar `head_sha` e `diff_stat`
+- Aceitar somente IDs recebidos; cada arquivo tocado deve estar atribuído a um finding recebido, sem IDs/arquivos extras ou duplicados
+- Devolver `repairs[]` com `finding_id`, arquivos, checks e status
 - Ao terminar, devolver `repair_complete` ou `blocked`

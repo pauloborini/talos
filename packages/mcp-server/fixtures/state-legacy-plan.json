@@ -1,0 +1,11 @@
+{
+  "run_id": "fixture-legacy",
+  "slice": "A",
+  "tasks": ["T01"],
+  "files_changed": [],
+  "diff_stat": "0 files",
+  "plan_path": ".atlas/plans/fixture.md",
+  "boundary_refs": ["§2.I1"],
+  "executed_at": "2026-06-22T00:00:00Z",
+  "executor_skill": "atlas-plan-execute"
+}

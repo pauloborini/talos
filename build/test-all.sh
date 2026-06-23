@@ -8,6 +8,8 @@ echo "== build + check-consistency =="
 bash "$ROOT/build/build-plugins.sh" >/dev/null
 echo "== unit (node --test) =="
 node --test "$ROOT/packages/mcp-server/server.test.js" 2>&1 | grep -E "ℹ (tests|pass|fail)"
+echo "== unit (slice review findings gate) =="
+node --test "$ROOT/build/tests/classify-findings.test.mjs" "$ROOT/build/tests/etapa3.test.mjs"
 echo "== smoke por host =="
 node "$ROOT/build/smoke-hosts.mjs" | tail -1
 echo "== conformance multi-host =="

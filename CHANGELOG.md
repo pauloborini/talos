@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.9.2 - 2026-06-22
+
+Tipo: **hardening contratual, determinismo e portabilidade** (sem breaking; `CAPABILITIES_SCHEMA_VERSION` segue **v5**, modos públicos `full`/`direct`/`execute`/`interview-only` intactos). Três frentes de melhoria das skills.
+
+Mudanças:
+- **Routing/ownership** — matriz modo→executor fechada: `full`/`execute`→`atlas-plan-execute`, `direct`→`atlas-direct-execute`, todos preservando `phase: plan_execute`. `atlas-direct-execute` deixa de degradar para self-check quando subagente/MCP ausente → retorna `blocked` (alinhado ao gate PREREQ hard-fail). `interview-only` materializa PRD real via template antes de invocar `atlas-prd-interview`.
+- **Evidência determinística / validator / repair** — state schema estendido de forma aditiva (`base_sha`/`head_sha`, `contract_kind`, `obligations[]`, `invariants[]`, `scenario_probes[]`/`risk_probes[]`, `validation_map[]`, `task_evidence[]`). MCP valida boundary real (`base_sha...head_sha` + delta de worktree vs `files_changed`); findings estruturados (`id/failure_mode/evidence/recommendation/fix_validation`) com rejeição de incoerência severidade×verdict; repair correlaciona finding→arquivo→check→status e recomputa boundary.
+- **Portabilidade e qualidade documental** — gate da slice review portado de Python para Node (`classify_findings.mjs` canônico; wrapper `.py` legado por uma release, sem virar requisito). Baseline universal + perfis de stack (Flutter/Node/Python) — regras Flutter/GetX só ativam com sinal real do repo. Backlog update não-destrutivo (preserva IDs/sprints done/decisões). Sprint PRD com autoridade de fonte explícita. Interview host-agnostic via `atlas_capabilities` + persistência por rodada.
+- **Testes/CI** — +20 testes no núcleo MCP (148 no total) + suíte de helpers (`classify-findings`, `etapa3`); job cross-OS prova gate documental sem Python em Linux/macOS/Windows.
+
 ## 0.9.1 - 2026-06-21
 
 Tipo: **patch de distribuição** (sem mudança de schema/runtime; `CAPABILITIES_SCHEMA_VERSION` segue **v5**). Corrige o instalador do host Antigravity introduzido em 0.9.0.

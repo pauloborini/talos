@@ -16,6 +16,7 @@
 | **Data** | <YYYY-MM-DD> |
 | **Dependências de negócio** | <Entregas anteriores necessárias — ex.: “dashboard com lista”> |
 | **Relacionado** | <Regras de negócio, MVP, backlog §X, DEC-*, Q-* — links> |
+| **Fonte da sprint** | <path explícito do backlog autoritativo + anchor único SNN> |
 
 ### Metadados de execução
 
@@ -134,7 +135,7 @@
 
 **Dependências:** <ID entrega — por que bloqueia ou alimenta> · <decisão externa, se houver>
 
-**Referências:** <PRD pai, regras de negócio, backlog — sem listar arquivos de código>
+**Referências:** <PRD pai, regras de negócio, backlog autoritativo + anchor; anchors de contrato/código usados na validação, sem copiar implementação>
 
 **Histórico:** <YYYY-MM-DD — evento>
 

@@ -164,15 +164,29 @@ Create `.atlas/state/<run_id>/<slice>.json` following `packages/templates/STATE_
 {
   "run_id": "<run_id>",
   "slice": "<slice id>",
+  "base_sha": "<base commit explícito do plano/handoff>",
+  "head_sha": "<git rev-parse HEAD ao fechar a execução>",
+  "contract_kind": "plan",
   "tasks": ["T01"],
   "files_changed": ["relative/path.ext"],
   "diff_stat": "N files, +X -Y",
   "plan_path": ".atlas/plans/<id>.plan.md",
   "boundary_refs": ["§2.I1", "§6.1", "§8"],
+  "obligations": [],
+  "invariants": [{"id": "I1", "requirement": "<invariante>", "expected_evidence": ["<path/check>"]}],
+  "scenario_probes": [{"id": "S1", "scenario": "<cenário>", "expected": "<resultado>"}],
+  "risk_probes": [{"id": "R1", "risk": "<risco>", "probe": "<pergunta verificável>"}],
+  "validation_map": [{"obligation_ids": [], "checks": ["<comando>"], "status": "passed"}],
+  "task_evidence": [{"task": "T01", "files": ["relative/path.ext"], "checks": ["<comando>"], "result": "passed"}],
+  "repair_evidence": [],
+  "worktree_baseline": [{"path": "relative/preexisting.ext", "status": "M", "sha256": "<64 hex>"}],
+  "worktree_final": [{"path": "relative/preexisting.ext", "status": "M", "sha256": "<64 hex>"}],
   "executed_at": "ISO8601",
   "executor_skill": "atlas-plan-execute"
 }
 ```
+
+Capture `base_sha` da referência explícita do plano/handoff; nunca infira pelo nome da branch. Antes da primeira mutação, capture `worktree_baseline`; imediatamente antes do handoff, capture `worktree_final`. `files_changed` e `task_evidence` representam exatamente `base_sha...head_sha` + delta entre snapshots. Dirty preexistente byte/status-idêntico fica fora; qualquer alteração posterior entra.
 
 Validation is always **sibling**, on every host. The validator is registered as a real subagent on every host, but this executor **never** dispatches it and never validates its own work. After tasks and local gates pass and the state file is written, this executor **stops mutation** and returns `validator_handoff_required` with the `state_path`. The orchestrator dispatches `atlas-task-validator` as the next isolated sibling phase, locks it via `atlas_lock_validator`, and — if the verdict is `fail` — dispatches `atlas-findings-repair` (not this executor) before the **2nd and last** validator.
 
@@ -191,5 +205,5 @@ This executor does not parse the validator output — the **orchestrator** does,
 
 Never decide by substring matching prose. Once the slice is closed, do not edit code, tests, or boundary files just to satisfy an observation; that reopens the slice and forces an avoidable re-validation. Real follow-up from an observation goes to the final report or a backlog item, not into an extra in-slice change.
 
-### 10. Report final outcome
-At the end of execution, report completed tasks, validations run, validator outcome, and any residual gaps.
+### 10. Report executor handoff
+Report only completed tasks, local validations, files changed, and `validator_handoff_required` with `state_path`. Validator verdict/cycles and final residuals belong exclusively to the orchestrator's final report.
