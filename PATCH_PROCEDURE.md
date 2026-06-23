@@ -26,7 +26,7 @@ Antes de editar:
 ```bash
 rtk git status --short --branch
 rtk git log --oneline -8
-rtk rg -n "0\\.8\\.|Plugin version|version|npm|release|CI|bump" VERSION package.json packages/mcp-server/package.json README.md COMMANDS.md CHANGELOG.md PATCH_PROCEDURE.md .github build packages/orchestrator .claude-plugin plugin-manifests
+rtk rg -n "Plugin version|version|npm|release|CI|bump" VERSION package.json packages/mcp-server/package.json README.md COMMANDS.md CHANGELOG.md PATCH_PROCEDURE.md .github build packages/orchestrator .claude-plugin plugin-manifests
 ```
 
 Se houver mudancas locais que voce nao fez, preserve. Nao reverta. Se afetarem o
@@ -69,12 +69,28 @@ arquivos com versao concreta, regenera bundles/catalogos e roda check-consistenc
 rtk node build/bump-version.mjs <nova-versao>   # ex.: 0.8.3
 ```
 
-Ele toca: `VERSION`, `package.json`, `packages/mcp-server/package.json`,
-`.claude-plugin/plugin.json`, `README.md`, `COMMANDS.md`,
-`packages/mcp-server/README.md` e a linha `**Plugin version:**` do
-`packages/orchestrator/README.md`. NAO toca `CHANGELOG.md`, `PATCH_PROCEDURE.md`
-nem a secao `### Novidades vX` do orchestrator README (prosa/exemplos historicos)
-— esses seguem manuais.
+Ele toca:
+
+- `VERSION`
+- `plugins/atlas-workflow-orchestrator/VERSION`
+- `hosts/pi/atlas/VERSION`
+- `hosts/opencode/.opencode/atlas/VERSION`
+- `package.json`
+- `packages/mcp-server/package.json`
+- `.claude-plugin/plugin.json`
+- `README.md`
+- `COMMANDS.md`
+- `packages/mcp-server/README.md`
+- linha `**Plugin version:**` de `packages/orchestrator/README.md`
+- manifests e READMEs concretos em `plugins/atlas-workflow-orchestrator/**`
+- manifests e READMEs concretos em `hosts/pi/**`
+- manifests e READMEs concretos em `hosts/opencode/**`
+- linhas `Versão: \`X.Y.Z\`` em `CLAUDE.md` e `AGENTS.md`
+
+Tambem regenera bundles/catalogos via `build/build-plugins.sh` e roda
+`build/check-consistency.mjs`. NAO toca `CHANGELOG.md`, `PATCH_PROCEDURE.md` nem
+a secao `### Novidades vX` do orchestrator README (prosa/exemplos historicos) —
+esses seguem manuais.
 
 Atualizar manualmente (sempre):
 
@@ -85,11 +101,19 @@ Atualizar manualmente (sempre):
 Se rodar o bump a mao em vez do script, atualizar:
 
 - `VERSION`
+- `plugins/atlas-workflow-orchestrator/VERSION`
+- `hosts/pi/atlas/VERSION`
+- `hosts/opencode/.opencode/atlas/VERSION`
 - `package.json`
 - `packages/mcp-server/package.json`
 - `.claude-plugin/plugin.json`
 - `README.md`
 - `COMMANDS.md`
+- `CLAUDE.md`
+- `AGENTS.md`
+- manifests e READMEs concretos em `plugins/atlas-workflow-orchestrator/**`
+- manifests e READMEs concretos em `hosts/pi/**`
+- manifests e READMEs concretos em `hosts/opencode/**`
 
 Atualizar quando aplicavel:
 
@@ -189,7 +213,12 @@ Inspecionar manifests gerados:
 rtk unzip -p dist/atlas-workflow-claude.plugin .claude-plugin/plugin.json
 rtk unzip -p dist/atlas-workflow-codex.plugin .codex-plugin/plugin.json
 rtk rg -n "\"version\": \"X.Y.Z\"|Plugin version:\\*\\* X.Y.Z|version: X.Y.Z|vX.Y.Z|X.Y.Z" VERSION package.json packages/mcp-server/package.json README.md COMMANDS.md CHANGELOG.md packages/orchestrator plugins hosts .claude-plugin
+rtk rg -n "<versao-antiga>" . --glob '!archive/**' --glob '!raycast/**' --glob '!node_modules/**'
 ```
+
+No ultimo comando, substitua `<versao-antiga>` pela versao anterior real. Deve
+retornar apenas historicos esperados (`CHANGELOG.md`, `reports/**` etc.).
+Qualquer doc corrente com versao antiga e drift de bump.
 
 Se existir no host local:
 
@@ -248,15 +277,20 @@ rtk node build/bump-version.mjs X.Y.Z
 rtk git push origin main          # => Release dispara: tag + npm + GitHub release
 ```
 
-Override manual por tag (hotfix fora da main / re-release) continua valendo:
+`build/bump-version.mjs` NAO cria tag local. Se houver tag local `vX.Y.Z` criada
+antes do commit, apagar e recriar depois do commit ou preferir o fluxo full-auto.
+Tag apontando para commit pre-bump quebra a publicacao.
+
+Override manual por tag (hotfix fora da main / re-release) continua valendo,
+mas a tag deve apontar para o commit final ja validado:
 
 ```bash
 rtk git tag -a vX.Y.Z -m "vX.Y.Z" && rtk git push origin vX.Y.Z
 ```
 
 Mudancas so em `.github/`, `build/` ou `PATCH_PROCEDURE.md` (fora do artefato
-distribuido) podem ir pra `main` SEM bumpar `VERSION` — a release nao dispara
-(filtro `paths: VERSION`), e o novo fluxo so vale a partir do proximo bump real.
+distribuido) podem ir pra `main` SEM bumpar `VERSION`. O workflow roda em push
+na `main`, mas o job `decide` pula publicacao se a tag da versao atual ja existir.
 
 O workflow `.github/workflows/release.yml` deve:
 
@@ -296,6 +330,7 @@ Pare e corrija antes de finalizar se:
 
 - `VERSION`, `package.json`, `packages/mcp-server/package.json` ou manifests concretos divergem;
 - `README`/`COMMANDS` apontam versao antiga;
+- `AGENTS.md`/`CLAUDE.md` apontam versao antiga;
 - `Plugin version` em `packages/orchestrator/README.md` ou bundles aponta versao antiga;
 - `build/check-consistency.mjs` falha;
 - teste MCP, smoke ou conformance falha;
