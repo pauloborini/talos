@@ -43,6 +43,10 @@ jobs:
         shell: bash
         run: node --test packages/mcp-server/server.test.js
 
+      - name: Portabilidade documental sem Python (Linux)
+        shell: bash
+        run: node --test build/tests/classify-findings.test.mjs build/tests/etapa3.test.mjs
+
       - name: Smoke por host
         shell: bash
         run: node build/smoke-hosts.mjs
@@ -76,6 +80,9 @@ jobs:
 
       - name: Testes unitários do núcleo MCP
         run: node --test packages/mcp-server/server.test.js
+
+      - name: Portabilidade documental sem Python (macOS/Windows)
+        run: node --test build/tests/classify-findings.test.mjs build/tests/etapa3.test.mjs
 
       - name: Smoke por host
         run: node build/smoke-hosts.mjs

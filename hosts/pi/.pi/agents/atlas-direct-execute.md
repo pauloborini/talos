@@ -181,6 +181,8 @@ For each task, keep a tiny task contract:
 
 Do not widen scope for opportunistic cleanup.
 
+**Minimalism rung (per task, before writing):** prefer the minimal viable implementation that satisfies the obligation — reuse existing repo code/symbol before introducing a new abstraction; use a stdlib/native platform feature before a new dependency; avoid indirection, factory, wrapper, extra layer, config option, or extra file not required by an obligation or invariant. This rung constrains only new abstraction/indirection/file/dependency. It never reduces trust-boundary validation, error handling, data-loss handling, invariants, scenario/test coverage, or negative paths. When minimal and safe conflict, choose safe.
+
 Before the first concrete task, emit `task_started`. After the first workspace mutation, emit `first_write`.
 
 ### 4. Gate each task
@@ -207,6 +209,8 @@ After tasks and local gates pass, write `.atlas/state/<run_id>/<slice>.json` fol
 
 For direct execution, the state file is still the only validator input. Use the user-provided PRD/spec path as `plan_path` when no handoff plan exists, and include direct-contract anchors in `boundary_refs` such as `direct.O1`, `direct.invariant.permissions`, or `direct.risk.partial_failure`.
 
+Persist the full direct contract using the additive state extension: `base_sha`, `head_sha`, `contract_kind: direct`, non-empty `obligations`, `invariants`, `scenario_probes`, `risk_probes`, `validation_map`, `task_evidence`, empty `repair_evidence`, `worktree_baseline` and `worktree_final`. Capture baseline before the first mutation and final immediately before handoff; `files_changed`/evidence must equal `base_sha...head_sha` + snapshot delta. Capture base from an explicit task/spec anchor or execution-start `HEAD`; never infer it from branch name. Recompute `head_sha` and `diff_stat` immediately before handoff. A direct state without obligations is invalid and must block.
+
 The state file is the only validator input. Validation is always **sibling**, on every host: this executor **never** dispatches `atlas-task-validator` itself and never validates its own work in the same context. After tasks and local gates pass and the state file is written, this executor **stops mutation** and returns `validator_handoff_required` with the `state_path`. The orchestrator then dispatches `atlas-task-validator` as the next isolated sibling phase, locks it via `atlas_lock_validator`, and — if the verdict is `fail` — dispatches `atlas-findings-repair` (not this executor) before the **2nd and last** validator.
 
 After writing the state file and before returning, emit `state_path_created` with the same `state_path`.
@@ -222,7 +226,7 @@ The verdict is consumed by the **orchestrator**, not by this executor:
 
 This executor only re-engages if the orchestrator explicitly re-dispatches it for a new slice. It must not "fix" observations and reopen a closed slice; real follow-up from an observation goes to the final report or backlog, not into an extra in-slice change.
 
-If isolated subagents are unavailable in the current environment, do not pretend the slice is validator-closed. Run a local self-check against the same contract, report `validator not run`, and mark residual risk explicitly.
+If isolated subagents or MCP are unavailable, return `blocked` with the missing prerequisite and next safe action. Never replace cold validation with a local self-check or report `validator not run` as an accepted pipeline outcome.
 
 ## Stop Conditions
 
@@ -243,7 +247,7 @@ Keep final report short:
 - changed scope
 - files touched
 - validations run
-- validator verdict/cycles
+- `validator_handoff_required` + `state_path`
 - blockers or residual risks
 
 Do not include the full internal contract unless the user asks.

@@ -117,7 +117,7 @@ Status:
    ↓
 2. Validate PRD + Interview (condicional)
    ↓
-3. Execute
+3. Execute (`atlas-direct-execute`, mantendo `phase: plan_execute`)
    ↓
 4. Review (se --review)
    ↓
@@ -127,9 +127,11 @@ Status:
 ### Interview-Only Mode
 
 ```
-1. Entrevista direta (sem PRD anterior)
+1. Cria draft mínimo pelo `PRD_TEMPLATE.md` quando a entrada é brainstorm
    ↓
-2. Output (PRD esboço + decisões)
+2. Entrevista `atlas-prd-interview` com `prd_path` válido
+   ↓
+3. Output (PRD esboço + decisões)
 ```
 
 ## Sequências canônicas
@@ -140,7 +142,7 @@ Atlas é família única. Cliente (Claude Code, Cursor, Codex App) é apenas o h
 |------|-----------|
 | `full` | `atlas-sprint-prd-generator` → `atlas-prd-interview` quando necessário → `atlas-plan-handoff` → `atlas-plan-execute` → `atlas-task-validator` → `atlas-findings-repair` (no `fail`) → `atlas-slice-review` somente com `--review` |
 | `direct` | PRD/spec existente → `atlas-direct-execute` → `atlas-task-validator` → `atlas-findings-repair` (no `fail`) → `atlas-slice-review` somente com `--review` |
-| `interview-only` | `atlas-prd-interview` |
+| `interview-only` | draft PRD mínimo (se brainstorm) → `atlas-prd-interview` |
 
 ## Validação automática
 
@@ -220,7 +222,7 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `atlas-*` para o
 
 ---
 
-**Plugin version:** 0.8.5
+**Plugin version:** 0.9.1
 **Author:** Paulo Borini
 **Last updated:** 2026-06-16
 

@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.9.2 - 2026-06-22
+
+Tipo: **hardening contratual, determinismo e portabilidade** (sem breaking; `CAPABILITIES_SCHEMA_VERSION` segue **v5**, modos públicos `full`/`direct`/`execute`/`interview-only` intactos). Três frentes de melhoria das skills.
+
+Mudanças:
+- **Routing/ownership** — matriz modo→executor fechada: `full`/`execute`→`atlas-plan-execute`, `direct`→`atlas-direct-execute`, todos preservando `phase: plan_execute`. `atlas-direct-execute` deixa de degradar para self-check quando subagente/MCP ausente → retorna `blocked` (alinhado ao gate PREREQ hard-fail). `interview-only` materializa PRD real via template antes de invocar `atlas-prd-interview`.
+- **Evidência determinística / validator / repair** — state schema estendido de forma aditiva (`base_sha`/`head_sha`, `contract_kind`, `obligations[]`, `invariants[]`, `scenario_probes[]`/`risk_probes[]`, `validation_map[]`, `task_evidence[]`). MCP valida boundary real (`base_sha...head_sha` + delta de worktree vs `files_changed`); findings estruturados (`id/failure_mode/evidence/recommendation/fix_validation`) com rejeição de incoerência severidade×verdict; repair correlaciona finding→arquivo→check→status e recomputa boundary.
+- **Portabilidade e qualidade documental** — gate da slice review portado de Python para Node (`classify_findings.mjs` canônico; wrapper `.py` legado por uma release, sem virar requisito). Baseline universal + perfis de stack (Flutter/Node/Python) — regras Flutter/GetX só ativam com sinal real do repo. Backlog update não-destrutivo (preserva IDs/sprints done/decisões). Sprint PRD com autoridade de fonte explícita. Interview host-agnostic via `atlas_capabilities` + persistência por rodada.
+- **Testes/CI** — +20 testes no núcleo MCP (148 no total) + suíte de helpers (`classify-findings`, `etapa3`); job cross-OS prova gate documental sem Python em Linux/macOS/Windows.
+
+## 0.9.1 - 2026-06-21
+
+Tipo: **patch de distribuição** (sem mudança de schema/runtime; `CAPABILITIES_SCHEMA_VERSION` segue **v5**). Corrige o instalador do host Antigravity introduzido em 0.9.0.
+
+Mudanças:
+- **Fix — `init antigravity` via npx-from-GitHub** (`build/cli/atlas-init.mjs`). O instalador copiava skills e mcp-server de `ROOT/packages/` (`packages/skills`, `packages/orchestrator/...`, `packages/mcp-server`), mas `/packages/` é excluído do tarball npm por `.npmignore` — então `npx github:pauloborini/atlas-workflow init antigravity` abortava com `ENOENT` em `packages/skills`. Passa a copiar do bundle shipado `plugins/atlas-workflow-orchestrator/` (`skills/` já inclui a skill `atlas-workflow-orchestrator`; `packages/mcp-server/`), mesmo padrão de fonte dos demais hosts. Bug não pegava em testes locais porque o checkout do repo tem `/packages/`; só o caminho de instalação real (npx) era afetado.
+
+## 0.9.0 - 2026-06-21
+
+Tipo: **minor aditivo** — novo host **Antigravity (Gemini)**, sexto host suportado. **Sem breaking** (`CAPABILITIES_SCHEMA_VERSION` segue **v5**); comportamento dos hosts existentes preservado.
+
+Mudanças:
+- **Novo adapter `antigravity`** em `HOST_ADAPTERS` (`packages/mcp-server/server.js`, replicado nas 4 cópias de bundle). Subagente nativo via `define_subagent(name, system_prompt)` + `invoke_subagent(Subagents)`; `validator_dispatch.join.sync = self_evident` (`invoke_subagent` bloqueante por design do host); MCP nativo; sem todo nativo. `prereq_policy` default `self_evident` — host nativo, não exige `host_capabilities` (igual claude/codex/opencode).
+- **Detecção** via `ATLAS_HOST=antigravity` (injetado no `mcp_config.json` pelo instalador) ou `arg host`. Mesmo padrão de injeção de opencode/pi; sem file-detection.
+- **Instalador** (`build/cli/atlas-init.mjs`): `installAntigravity`/`uninstallAntigravity` instalam globalmente em `~/.gemini/config/` (plugin em `plugins/atlas-workflow-orchestrator/` + merge do MCP em `mcp_config.json`). Aliases `antigravity`/`gemini`/`antigravitycode`. `--global` é no-op (já global por natureza).
+- **Robustez de runtime** (beneficia Antigravity, sem regredir os demais): (1) `cwd` igual a `/` ou `/var/folders` sem root explícito cai para `$HOME`; (2) gravação do `mcp.log` em `try/catch` (tolera diretório somente-leitura); (3) código de erro JSON-RPC sanitizado para inteiro (`Number.isInteger(code) ? code : -32603`, `original_code` preservado em `data`) — conformidade com clients estritos.
+- **Docs**: `host-adapters.md` (matriz de adapters, 5 cópias), `README.md`, `COMMANDS.md` atualizados com o sexto host. Correção: Antigravity não gera artefato `.plugin` (instalação from-source por cópia direta).
+- **Testes**: 4 testes novos cobrindo detecção, perfil de capabilities, prereq self_evident e presença em `HOST_NAMES` (`packages/mcp-server/server.test.js`).
+
 ## 0.8.3 - 2026-06-16
 
 Tipo: **patch de confiabilidade runtime**. **Sem mudança de schema** (`CAPABILITIES_SCHEMA_VERSION` segue **v5**). Origem: post-mortem de travamento repetido em `plan_execute` (`atlas-plan-execute` despachado, sem `state_path`, sem progresso material e sem erro terminal), mesmo padrão já observado em S30/S32.

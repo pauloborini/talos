@@ -1,0 +1,23 @@
+{
+  "run_id": "fixture-direct",
+  "slice": "A",
+  "base_sha": "__BASE_SHA__",
+  "head_sha": "__HEAD_SHA__",
+  "contract_kind": "direct",
+  "tasks": ["T01"],
+  "files_changed": ["src/direct.js"],
+  "diff_stat": "1 file",
+  "plan_path": "specs/direct.md",
+  "boundary_refs": ["direct.O1"],
+  "obligations": [{"id": "O1", "requirement": "entregar direct", "expected_evidence": ["src/direct.js"]}],
+  "invariants": [],
+  "scenario_probes": [],
+  "risk_probes": [],
+  "validation_map": [{"obligation_ids": ["O1"], "checks": ["node --test"], "status": "passed"}],
+  "task_evidence": [{"task": "T01", "files": ["src/direct.js"], "checks": ["node --test"], "result": "passed"}],
+  "repair_evidence": [],
+  "worktree_baseline": [],
+  "worktree_final": [],
+  "executed_at": "2026-06-22T00:00:00Z",
+  "executor_skill": "atlas-direct-execute"
+}

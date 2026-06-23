@@ -52,6 +52,24 @@ DISPATCHED_AGENTS=(
   atlas-slice-review
 )
 
+copy_mcp_runtime() {
+  local destination_parent="$1"
+  cp -R "$ROOT/packages/mcp-server" "$destination_parent/"
+  rm -f "$destination_parent/mcp-server"/*.test.js
+  rm -rf "$destination_parent/mcp-server/fixtures"
+  rm -rf "$destination_parent/mcp-server/.atlas"
+}
+
+assert_no_runtime_state() {
+  local stage="$1"
+  local leaked
+  leaked="$(find "$stage" -type d -name .atlas -print -quit)"
+  if [[ -n "$leaked" ]]; then
+    echo "Estado local .atlas não pode entrar no bundle: ${leaked#$stage/}" >&2
+    exit 4
+  fi
+}
+
 # Guard de consistência roda no FIM (depois de sincronizar catálogos from-source),
 # para que rebuild de catálogo stale não trave no próprio guard que ele corrige.
 
@@ -82,9 +100,8 @@ build_host() {
   mkdir -p "$stage_host/packages"
   cp -R "$ROOT/packages/skills" "$stage_host/packages/"
   cp -R "$ROOT/packages/templates" "$stage_host/packages/"
-  cp -R "$ROOT/packages/mcp-server" "$stage_host/packages/"
-  # Testes não vão no bundle do host (rodam só em CI/dev).
-  rm -f "$stage_host/packages/mcp-server"/*.test.js
+  # Testes e estado local não vão no bundle do host (rodam só em CI/dev).
+  copy_mcp_runtime "$stage_host/packages"
   cp "$ROOT/VERSION" "$stage_host/VERSION"
 
   if [[ "$host" == "codex" ]]; then
@@ -123,8 +140,8 @@ JSON
   mkdir -p "$stage_host/$manifest_dir"
   sed "s/__VERSION__/${VERSION}/g" "$manifest_src" > "$stage_host/$manifest_dir/plugin.json"
 
-  # Validação mínima do JSON gerado (parse com python3, sem dep extra de runtime)
-  if ! python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$stage_host/$manifest_dir/plugin.json" >/dev/null 2>&1; then
+  # Validação mínima do JSON gerado com Node, runtime já obrigatório.
+  if ! node -e 'JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"))' "$stage_host/$manifest_dir/plugin.json" >/dev/null 2>&1; then
     echo "manifest gerado para $host não é JSON válido" >&2
     exit 3
   fi
@@ -137,6 +154,7 @@ JSON
   fi
 
   echo "zipando $host"
+  assert_no_runtime_state "$stage_host"
   rm -f "$out"
   # Build determinístico: ordem fixa, sem timestamps locais variando o zip
   ( cd "$stage_host" && find . -type f | LC_ALL=C sort | zip -X -q "$out" -@ )
@@ -153,8 +171,7 @@ build_opencode() {
   mkdir -p "$stage/.opencode/agents" "$stage/.opencode/skills" "$stage/.opencode/atlas/packages"
 
   # Runtime bundlado sob .opencode/atlas/ (server lê ../../VERSION = .opencode/atlas/VERSION)
-  cp -R "$ROOT/packages/mcp-server" "$stage/.opencode/atlas/packages/"
-  rm -f "$stage/.opencode/atlas/packages/mcp-server"/*.test.js
+  copy_mcp_runtime "$stage/.opencode/atlas/packages"
   cp -R "$ROOT/packages/templates" "$stage/.opencode/atlas/packages/"
   cp -R "$ROOT/packages/orchestrator" "$stage/.opencode/atlas/"
   cp "$ROOT/VERSION" "$stage/.opencode/atlas/VERSION"
@@ -174,6 +191,7 @@ build_opencode() {
   cp "$ROOT/plugin-manifests/opencode/opencode.json" "$stage/opencode.json"
 
   echo "zipando opencode"
+  assert_no_runtime_state "$stage"
   rm -f "$out"
   ( cd "$stage" && find . -type f | LC_ALL=C sort | zip -X -q "$out" -@ )
 
@@ -194,8 +212,7 @@ build_pi() {
   # (paths reais das deps, verificados no pi real — não 'agents/'/'mcp.json' no root).
   mkdir -p "$stage/.pi/agents" "$stage/skills" "$stage/atlas/packages"
 
-  cp -R "$ROOT/packages/mcp-server" "$stage/atlas/packages/"
-  rm -f "$stage/atlas/packages/mcp-server"/*.test.js
+  copy_mcp_runtime "$stage/atlas/packages"
   cp -R "$ROOT/packages/templates" "$stage/atlas/packages/"
   cp -R "$ROOT/packages/orchestrator" "$stage/atlas/"
   cp "$ROOT/VERSION" "$stage/atlas/VERSION"
@@ -214,6 +231,7 @@ build_pi() {
   cp "$ROOT/plugin-manifests/pi/mcp.json" "$stage/.mcp.json"
 
   echo "zipando pi"
+  assert_no_runtime_state "$stage"
   rm -f "$out"
   ( cd "$stage" && find . -type f | LC_ALL=C sort | zip -X -q "$out" -@ )
 

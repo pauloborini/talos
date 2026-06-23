@@ -811,7 +811,17 @@ Ações imediatas:
 
 ---
 
-## 21. Como usar este template
+## 21. Registro de alterações
+
+Registro append-only de atualizações deste backlog. Não substitui decisões da seção 18.
+
+| Data | IDs afetados | Alteração | Motivo / fonte |
+|---|---|---|---|
+| [AAAA-MM-DD] | [SNN/DEC-N/RN] | [resumo objetivo] | [pedido, PRD, contrato ou código] |
+
+---
+
+## 22. Como usar este template
 
 ### Setup inicial
 
@@ -840,5 +850,6 @@ Ações imediatas:
 ### Manter vivo
 
 16. Toda decisão que muda escopo, contrato ou sequência atualiza: fonte canônica → PRD afetado → este backlog.
-17. Registrar decisões na seção 18 e riscos na seção 19.
-18. Manter o registro de sprints (seção 7) e o progresso (seção 8.2) como fonte de estado do projeto.
+17. Em updates, preservar IDs, sprints `done`, decisões fechadas e itens não relacionados; bloquear ciclos, enums inválidos e placeholders acidentais.
+18. Registrar decisões na seção 18, riscos na seção 19 e cada update no registro append-only da seção 21.
+19. Manter o registro de sprints (seção 7) e o progresso (seção 8.2) como fonte de estado do projeto.

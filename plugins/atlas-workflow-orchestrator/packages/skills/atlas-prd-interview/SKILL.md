@@ -41,8 +41,11 @@ Ataque principalmente as seguintes seções do template de PRD:
 * **§5 Contrato funcional e invariantes:** `❌` se campos críticos não possuírem regras de formato (ex: decimais) ou se a regra de negócio for ambígua/impossível de verificar na codebase.
 * **§6 Critérios de aceite (negócio):** `❌` se o critério for subjetivo, não observável ou não testável.
 
-3. **Perguntas por Rodada (AskUserQuestion):** Formule rodadas de no máximo 4 perguntas concisas via ferramenta nativa `AskUserQuestion`, com exatamente 3 opções e indicando a recomendada. **Pare o turno e aguarde a resposta.**
-4. **Veredito Final:** Só emita o veredito de `Pronto para planejamento` quando zerar todos os `❌`.
+3. **Resolver mecanismo estruturado:** chame `atlas_capabilities`, leia `question_prompt` e use seu `mechanism`/shape. Nunca hardcode nome de ferramenta de host. Se o descriptor estiver ausente ou indisponível, bloqueie a rodada; não degrade para pergunta livre sem correlação.
+4. **Perguntas por rodada:** formule no máximo 4 perguntas concisas, exatamente 3 opções, recomendada explícita e `decision_id` D* estável. Antes de perguntar, use `pendingInterviewQuestions` de `../_shared/scripts/document_quality.mjs` para excluir decisões já fechadas.
+5. **Persistência imediata:** ao receber respostas, grave-as no mesmo PRD antes de qualquer nova pergunta, preservando IDs/anchors e acrescentando histórico. Use `persistInterviewRound(prd_path, answers)`, que escreve via arquivo temporário + rename e valida readback; falha bloqueia. Nunca acumule respostas apenas no chat.
+6. **Reindexação:** releia o PRD salvo, reexecute o índice §3–§6 e recalcule perguntas pendentes. Decisão fechada não pode reaparecer em rodada posterior.
+7. **Veredito Final:** só emita `Pronto para planejamento` quando zerar todos os `❌`; no workflow, devolva controle ao orquestrador para reexecutar artifact/scan/TC.
 
 ---
 
@@ -54,6 +57,8 @@ Ataque principalmente as seguintes seções do template de PRD:
 §5 Contrato+inv:  ✅/⚠️/❌
 §6 Aceite:        ✅/⚠️/❌
 ```
+
+O índice é materializado novamente após cada persistência; não reutilize índice anterior à resposta.
 
 ---
 

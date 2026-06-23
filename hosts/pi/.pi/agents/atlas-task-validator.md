@@ -27,8 +27,13 @@ Leia o JSON em `.atlas/state/<run_id>/<slice>.json` usando o schema em `packages
 2. **Plan path** — `plan_path`, depois leia Section 2 (Invariantes de execução), Section 6 (Contratos técnicos) e Section 8 (Validação e checklist).
 3. **Executed task ids** — `tasks`.
 4. **Boundary refs** — `boundary_refs`.
+5. **Deterministic boundary** — `base_sha`, `head_sha`, `contract_kind` e arrays de evidence/probes.
+6. **Working-tree delta** — confronte `worktree_baseline`, `worktree_final` e árvore atual; dirty preexistente intacto fica fora, mutação posterior entra.
+7. **Repair correlation** — no attempt 2, correlacione findings por ID com `repair_evidence` no mesmo state path.
 
 Não aceite contrato inline, diff colado ou listas de tasks coladas como boundary de validação. Se `state_path` estiver ausente, ilegível, ou faltar qualquer campo obrigatório, retorne JSON com `verdict: "fail"` e um finding P1 `Input insuficiente: <missing item>`.
+
+Compatibilidade: state legado mínimo sem `contract_kind` só é aceito para `atlas-plan-execute`. `atlas-direct-execute` exige extensão completa e `obligations` não vazio. Compare `base_sha...head_sha`, `HEAD` atual e arquivos evidenciados no working tree com `files_changed`; nunca infira base pelo nome da branch. Divergência gera boundary violation + P1.
 
 ## State persistence
 
@@ -88,7 +93,17 @@ Retorne JSON estrito como output final. Não envolva em Markdown e não anteceda
   "challenge_response": "string (sha256 hex do challenge.file; null se sem challenge)",
   "verdict": "pass | fail | pass_with_observations",
   "findings": [
-    { "severity": "P0|P1|P2|P3", "file": "string", "line": 0, "msg": "string" }
+    {
+      "id": "F-001",
+      "severity": "P0|P1|P2|P3",
+      "file": "string",
+      "line": 1,
+      "failure_mode": "string",
+      "evidence": "string",
+      "recommendation": "string",
+      "fix_validation": "string",
+      "msg": "string (deprecated; derivado por uma release)"
+    }
   ],
   "observations": [
     { "file": "string", "line": 0, "msg": "string" }
@@ -100,6 +115,8 @@ Retorne JSON estrito como output final. Não envolva em Markdown e não anteceda
 ```
 
 `dispatch_token` deve ser exatamente `validator_recovery.expected_dispatch_token`. `findings`, `observations` e `boundary_violations` são sempre arrays. Use arrays vazios quando não houver itens.
+
+IDs são únicos, obrigatórios no formato `F-NNN` e estáveis nos dois ciclos; severity é estritamente `P0|P1|P2|P3`. No segundo, devolva `repaired_finding_ids` e confirme que cada ID alvo possui `repair_evidence` com arquivos, checks e `status: resolved`. O MCP rejeita shape incompleto e `pass`/`pass_with_observations` com P0/P1.
 
 ## Severity Model
 

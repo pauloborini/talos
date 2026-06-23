@@ -15,13 +15,16 @@ claude plugin update atlas-workflow-orchestrator@atlas-workflow
 # Codex — recomendado: reinstala plugin + custom agents em CODEX_HOME/agents
 npx github:pauloborini/atlas-workflow init codex
 
+# Antigravity — reinstalar pega runtime novo (mesmo comando do init)
+npx github:pauloborini/atlas-workflow init antigravity
+
 # opencode / pi — reinstalar pega runtime novo (mesmo comando do init)
 npx github:pauloborini/atlas-workflow init opencode --global
 npx github:pauloborini/atlas-workflow init pi --global --yes
 
 ```
 
-Smoke pós-update: `atlas_ping` → `version: 0.8.5`; `atlas_capabilities` → `schema_version: 5` (sibling-only).
+Smoke pós-update: `atlas_ping` → `version: 0.9.1`; `atlas_capabilities` → `schema_version: 5` (sibling-only).
 
 ---
 
@@ -35,6 +38,9 @@ npx github:pauloborini/atlas-workflow init cursor
 # Codex  (global por natureza)
 npx github:pauloborini/atlas-workflow init codex
 
+# Antigravity (global por natureza)
+npx github:pauloborini/atlas-workflow init antigravity
+
 # opencode  — global (recomendado) ou por-projeto
 npx github:pauloborini/atlas-workflow init opencode --global
 npx github:pauloborini/atlas-workflow init opencode
@@ -47,9 +53,10 @@ npx github:pauloborini/atlas-workflow init pi --yes
 ## Desinstalar
 
 ```bash
-# Claude Code / Cursor / Codex (sempre globais)
+# Claude Code / Cursor / Codex / Antigravity (sempre globais)
 npx github:pauloborini/atlas-workflow uninstall claudecode   
 npx github:pauloborini/atlas-workflow uninstall codex
+npx github:pauloborini/atlas-workflow uninstall antigravity
 
 # opencode / pi — desinstalação global (recomendado)
 npx github:pauloborini/atlas-workflow uninstall opencode --global
@@ -82,6 +89,7 @@ Remove **só** os artefatos do Atlas. Preserva config, skills e outros MCP serve
 |------|--------------|------------|
 | claude/cursor | registro da CLI (`claude plugin`) | — |
 | codex | registro da CLI (`codex plugin`) | — |
+| antigravity | `~/.gemini/config/` | `mcp_config.json` |
 | opencode | `~/.config/opencode/` (Win: `%APPDATA%\opencode`; honra `XDG_CONFIG_HOME`) | `opencode.json` |
 | pi | `~/.pi/agent/` (honra `PI_CODING_AGENT_DIR`) | `mcp.json` |
 
@@ -91,7 +99,7 @@ Remove **só** os artefatos do Atlas. Preserva config, skills e outros MCP serve
 
 Abra a CLI no host e chame as tools:
 
-- `atlas_ping` → deve retornar `host=<claude|codex|opencode|pi>`
+- `atlas_ping` → deve retornar `host=<claude|codex|antigravity|opencode|pi>`
 - `atlas_capabilities` → descritores + `prereq_policy`
 
 > **Não** dispare o `atlas-task-validator` à mão: ele roda automaticamente dentro do

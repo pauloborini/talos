@@ -33,8 +33,10 @@ Se faltar informação não bloqueante, gere o backlog com premissas marcadas e 
 6. **Decompor em sprints:** transforme o objetivo em fatias verticais pequenas, cada uma com objetivo único, dependências e PRD futuro (`PRD_S<NN>_<slug>.md`).
 7. **Priorizar:** para cada sprint, preencha MoSCoW, ganho, esforço e prioridade usando a regra da seção 8.3 do template.
 8. **Selecionar próxima sprint:** escolha a primeira sprint executável respeitando dependências, DoR, MoSCoW, esforço x ganho e risco. Registre a justificativa na seção 20.
-9. **Salvar artefato:** grave o backlog no path pedido ou, se não houver path, crie o diretório `.atlas/backlog/` no projeto consumidor e use `.atlas/backlog/BACKLOG_MESTRE_<slug>.md`.
-10. **Validar antes de finalizar:** releia o arquivo salvo e confirme que não restaram placeholders acidentais, exceto campos conscientemente pendentes e marcados.
+9. **Atualização não destrutiva:** se o arquivo já existe, compare antes/depois com `validateBacklogUpdate(before, after, { authorizedIds })` de `../_shared/scripts/document_quality.mjs`. `authorizedIds` contém somente IDs cuja mudança foi explicitamente decidida pelo usuário. Preserve demais IDs, linhas `done`, decisões `decidido|fechado|aprovado`, itens/sprints e ordem histórica.
+10. **Registrar alterações:** toda atualização acrescenta `## Registro de alterações` (data, IDs afetados, motivo e fonte). Não reescreva histórico anterior.
+11. **Salvar artefato:** grave o backlog no path pedido ou, se não houver path, crie o diretório `.atlas/backlog/` no projeto consumidor e use `.atlas/backlog/BACKLOG_MESTRE_<slug>.md`.
+12. **Validar antes de finalizar:** bloqueie se `validateBacklogUpdate` apontar sprint/decisão removida, sprint `done` alterada, enum inválido, ciclo de dependência, placeholder acidental ou falta de registro. Confirme também que dependências referenciam IDs existentes.
 
 ---
 
@@ -76,6 +78,7 @@ O backlog final deve:
 - Ter catálogo de fases preservado e adaptado apenas quando necessário.
 - Ter riscos, decisões e próxima sprint executável preenchidos.
 - Ser específico o bastante para gerar PRDs de sprint depois com `atlas-sprint-prd-generator`.
+- Preservar histórico/IDs em update e passar validação de ciclos/enums/placeholders.
 
 ---
 
@@ -86,3 +89,5 @@ O backlog final deve:
 - Não inventar endpoints, tabelas, schemas, fornecedores, métricas ou responsabilidades como fatos. Quando forem hipóteses, marcar como premissa.
 - Não transformar o backlog em plano técnico de implementação. Código, classes e comandos entram no plano/PRD quando apropriado, não no backlog mestre.
 - Não deixar `[...]` ou placeholders óbvios no arquivo final, salvo quando o campo estiver deliberadamente pendente e explicado.
+- Não renumerar IDs, reabrir/editar sprint `done`, alterar decisão fechada ou remover item não relacionado por conveniência editorial.
+- Não ser acionada pelo orquestrador: permanece **explicit-only**, fora de qualquer cadeia automática.

@@ -1,0 +1,23 @@
+{
+  "run_id": "fixture-repair",
+  "slice": "A",
+  "base_sha": "__BASE_SHA__",
+  "head_sha": "__HEAD_SHA__",
+  "contract_kind": "plan",
+  "tasks": ["T01"],
+  "files_changed": ["src/initial.js", "src/repair-new.js"],
+  "diff_stat": "2 files",
+  "plan_path": ".atlas/plans/fixture.md",
+  "boundary_refs": ["§2.I1"],
+  "obligations": [],
+  "invariants": [],
+  "scenario_probes": [],
+  "risk_probes": [],
+  "validation_map": [],
+  "task_evidence": [{"task": "T01", "files": ["src/initial.js"], "checks": ["node --test"], "result": "passed"}],
+  "repair_evidence": [{"finding_id": "F-001", "files_touched": ["src/repair-new.js"], "checks_run": ["node --test"], "status": "resolved"}],
+  "worktree_baseline": [],
+  "worktree_final": [],
+  "executed_at": "2026-06-22T00:00:00Z",
+  "executor_skill": "atlas-plan-execute"
+}

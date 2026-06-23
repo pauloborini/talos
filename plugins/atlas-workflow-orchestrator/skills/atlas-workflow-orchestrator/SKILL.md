@@ -21,7 +21,7 @@ Orquestra pipelines de desenvolvimento de features no projeto Atlas, automatizan
 Três modos **canônicos de execução** — `full`, `direct`, `execute` (PRD §5 D1) — mais o modo `interview-only`, que permanece **separado** (entrevista sem execução; PRD D2, não é colapsado em `full`).
 
 - **`full`** — pipeline completo: PRD → validação → entrevista (se necessário) → **plano (artefato obrigatório)** → executor → review (opcional)
-- **`direct`** — pipeline enxuto: PRD → validação → entrevista (se necessário) → executor → review (opcional). **Não produz plano de handoff** — a diferença real para `full` é exatamente essa.
+- **`direct`** — pipeline enxuto: PRD → validação → entrevista (se necessário) → `atlas-direct-execute` → review (opcional). **Não produz plano de handoff** — a diferença real para `full` é exatamente essa.
 - **`execute`** — recebe um **`PLAN_*.md` pronto** e o executa **sem gerar plano** (PRD D1). Entrada = caminho de plano; reverifica o artefato + conformidade de template e despacha `plan_execute` direto. Não regera nem replaneja: ajustes de plano pedem `full`. `atlas_assert_after_plan` (gate pós-plano do `full`) **não se aplica** em `execute` — o plano já é o input; o equivalente é a reverificação na entrada (PRD D13). **Não há alias `plan`**: usar `plan` como modo é ambíguo com planejamento documental e deve ser rejeitado como modo inválido.
 - **`interview-only`** — entrevista direta (ex: brainstorm, resolução de decisões). Entrevista **sem execução**: não usa `guarantee_level` no fluxo (não há execução de código a garantir). Permanece modo separado (PRD D2).
 
@@ -51,7 +51,7 @@ Três modos **canônicos de execução** — `full`, `direct`, `execute` (PRD §
 → Gera PRD de indicação, força entrevista, plano, executor
 
 /workflow interview-only brainstorm "que tal dark mode?"
-→ Entrevista direto, sem PRD prévio
+→ Cria draft mínimo pelo template canônico, valida o path e entrevista esse PRD; sem execução
 
 /workflow execute plan "/path/to/PLAN_S05_login.md"
 → Reverifica o plano (artifact + TC), executa direto via plan_execute + validador frio. Não gera plano.
@@ -102,7 +102,7 @@ Executar **antes** de iniciar o pipeline. Se qualquer item falhar, **parar e rep
       Ação: instalar/ativar o plugin ou corrigir o pacote atlas-* disponível no host
    ```
    **PROIBIDO o fallback "implementação direta" / "contratos equivalentes inline".** Não existe caminho onde o orquestrador faz plano ou código no próprio fio. Emulação inline e fallback direto são a falha-raiz que esta skill proíbe — se não há sub-agent, **para**. (Gate G7.)
-8. **Rejeitar conflito de modo:** se o pedido tiver `full`/`direct` junto com "sem patch", "sem editar código", "planejamento apenas", "handoff only" ou equivalente, **pare antes de gerar artefatos**. `full`/`direct` executam `plan_execute`; não existe interpretação plan-only implícita.
+8. **Rejeitar conflito de modo:** se o pedido tiver `full`/`direct` junto com "sem patch", "sem editar código", "planejamento apenas", "handoff only" ou equivalente, **pare antes de gerar artefatos**. `full` executa `atlas-plan-execute`; `direct` executa `atlas-direct-execute`; não existe interpretação plan-only implícita.
 9. **Declarar o plano de execução** (1 bloco curto): `run_id`, modo, **ids exatos de cada sub-agent**, sequência de fases, artefatos esperados e tools MCP que sustentarão cada gate. Só então iniciar a Fase 1.
 
 ---
@@ -120,7 +120,7 @@ O pipeline é **fire-and-continue**: uma vez iniciado, o orquestrador avança fa
 
 **Após entrevista**: reexecuta os gates afetados (`atlas_verify_artifact`/`atlas_scan_prd`/TC) e **retoma o pipeline (plano→execução) automaticamente**, sem nova confirmação.
 
-A única interação legítima com o usuário é **dentro de uma fase** — o `AskUserQuestion` da entrevista para resolver ambiguidade de produto. Resolver ambiguidade ≠ pedir permissão pra avançar. Terminada a fase, o pipeline segue sozinho até o próximo gate duro ou o output final.
+A única interação legítima com o usuário é **dentro de uma fase** — o mecanismo estruturado `question_prompt` devolvido por `atlas_capabilities`, usado pela entrevista para resolver ambiguidade de produto. Resolver ambiguidade ≠ pedir permissão pra avançar. Terminada a fase, respostas são persistidas no PRD, gates são reexecutados e o pipeline segue sozinho.
 
 ## Papel do orquestrador (fronteira de determinismo pela mutação de código)
 
@@ -129,7 +129,7 @@ O orquestrador **coordena a execução**, não implementa código — maestro qu
 - **ANTES do plano validado — autoria documental livre no fio principal.** Pode autorar PRD, entrevistar e escrever `PLAN_*.md` direto; fases documentais não exigem sub-agent (documento não muta o produto). **Ao finalizar um PRD inline, estampar `| Status | Aprovado para implementação |`** — é o `required_status` do gate TC; sem isso o PRD sai `Draft` e trava o TC em rodadas de correção.
 - **DEPOIS do plano validado (`atlas_verify_artifact` + TC `passed`) — mãos atadas fortes.** Não edita mais PRD/plano/código nem roda comando mutante; só coordena (despachar sub-agent, ler artefato pra verificar gate, ecoar banner, montar output).
 
-Execução de código é **sempre** sub-agent `plan_execute` (blocking, um por vez) + validador frio `task_validator` (Gate G9/G7 — detalhe na tabela de gates). Dispatch blocking: despacha → espera retorno → verifica gate → próxima fase. Nunca dois sub-agents simultâneos.
+Execução de código é **sempre** sub-agent executor do modo (`atlas-plan-execute` em `full`/`execute`; `atlas-direct-execute` em `direct`), mantendo `phase: plan_execute`, + validador frio `task_validator` (Gate G9/G7). Dispatch blocking: despacha → espera retorno → verifica gate → próxima fase. Nunca dois sub-agents simultâneos.
 
 ### Verbo de dispatch é host-agnóstico (não assuma "Agent tool")
 
@@ -180,9 +180,9 @@ Regras inegociáveis. Violação = parar, não contornar.
 
 ## Fluxo de execução
 
-### [EXEC] — passo comum de execução + validação (idêntico em `full`/`direct`/`execute`)
+### [EXEC] — passo comum de execução + validação
 
-`atlas_lock_dispatch(action=start, phase=plan_execute)`; despachar `plan_execute` como sub-agent blocking (lê `PLAN_*.md` em `full`/`execute`, PRD em `direct`). O executor emite checkpoints G12; sem retorno/progresso, chamar `atlas_lock_dispatch(action=status, phase=plan_execute)` e tratar `executor_bootstrap_timeout`/`executor_progress_timeout` como `stalled`/retry — nunca como execução em andamento. O executor retorna `validator_handoff_required` com `state_path`; o MCP só abre o slot após o checkpoint `state_path_created` para esse mesmo `state_path`. Validação sempre **sibling**: `atlas_lock_validator(action=start)`, despachar **um** `task_validator`, exigir no output o `dispatch_token` do slot e fechar com `validator_run_id` + `dispatch_token`. Em `fail`: `repair_start`, despachar `atlas-findings-repair` com `{state_path, findings, validator_attempt, repair_run_id, repair_budget: 1}`, exigir atualização do mesmo `state_path`, fechar com `repair_run_id` e rodar o **2º e último** validator. `passed`/`passed_with_observations` são terminais aprovados; status diferente bloqueia review e output completed.
+`atlas_lock_dispatch(action=start, phase=plan_execute)` em todos os modos; despachar como sub-agent blocking o `routing.executor_skill` devolvido pelo preflight: `atlas-plan-execute` em `full`/`execute`, `atlas-direct-execute` em `direct`. O executor emite checkpoints G12; sem retorno/progresso, chamar `atlas_lock_dispatch(action=status, phase=plan_execute)` e tratar `executor_bootstrap_timeout`/`executor_progress_timeout` como `stalled`/retry — nunca como execução em andamento. O executor retorna `validator_handoff_required` com `state_path`; o MCP só abre o slot após o checkpoint `state_path_created` para esse mesmo `state_path`. Validação sempre **sibling**: `atlas_lock_validator(action=start)`, despachar **um** `task_validator`, exigir no output o `dispatch_token` do slot e fechar com `validator_run_id` + `dispatch_token`. Em `fail`: `repair_start`, despachar `atlas-findings-repair` com `{state_path, findings, validator_attempt, repair_run_id, repair_budget: 1}`, exigir atualização do mesmo `state_path`, fechar com `repair_run_id` e rodar o **2º e último** validator. `passed`/`passed_with_observations` são terminais aprovados; status diferente bloqueia review e output completed.
 
 ### Full mode
 
@@ -225,8 +225,9 @@ Entrada: um **`PLAN_*.md` pronto**. Artefatos esperados: (plano já existe) → 
 
 ### Interview-only mode
 
-1. Entrevista direta (sem PRD anterior) — invoca o id resolvido para `prd_interview`.
-2. Gera PRD esboço (opcional).
+1. Se a entrada já for PRD válido, usar seu path. Se for `brainstorm`, criar primeiro um draft mínimo em disco com `packages/templates/PRD_TEMPLATE.md`, preservando as 6 seções canônicas e registrando o brainstorm em contexto/objetivo.
+2. Verificar o draft com `atlas_verify_artifact` e `atlas_verify_template_conformance(artifact_type=prd)`; path ausente/inválido bloqueia.
+3. Invocar `prd_interview` no fio principal com `prd_path` válido; persistir respostas no mesmo artefato e reverificar.
 
 > `interview-only` é entrevista **sem execução**: não há fase `plan_execute` nem `guarantee_level` no fluxo (nada de código a garantir). A autoria do esboço é documental e livre.
 
@@ -245,9 +246,10 @@ O scan é **determinístico** e roda **dentro do MCP** (`atlas_scan_prd`): a lis
 Detalhe do caminho que a "Princípio de continuação automática" exige para decisão pendente de **qualquer fonte** (scan/entrevista/validação de plano/`PERGUNTAS_EM_ABERTO.md`/`DISCUSSAO_*.md`/backlog — a fonte não muda o tratamento):
 
 1. **Garantir o PRD primeiro.** Em `full`/`direct`, se o PRD não existe, **gerar o PRD draft** com as decisões marcadas. A entrevista é **PRD-scoped**: roda **sobre** o PRD, nunca antes. Detectar decisão não antecipa nem pula a geração do PRD.
-2. **Disparar `atlas-prd-interview`** sobre o PRD — resolve via `AskUserQuestion` (interação dentro da fase, não pedido de permissão).
-3. **Propagar** ao PRD/plano/DEC/registro de origem.
-4. **Reexecutar** os gates afetados (`atlas_verify_artifact`/`atlas_scan_prd`/TC) e **continuar** automaticamente.
+2. **Disparar `atlas-prd-interview`** sobre o PRD — resolve via `atlas_capabilities.question_prompt`, sem hardcode de host.
+3. **Persistir após cada rodada** no mesmo PRD, reindexar §3–§6 e não repetir D* fechada.
+4. **Propagar** ao PRD/plano/DEC/registro de origem.
+5. **Reexecutar** os gates afetados (`atlas_verify_artifact`/`atlas_scan_prd`/TC) e **continuar** automaticamente.
 
 Marcar TBD e adiar só se o usuário pedir **explicitamente** — nunca por iniciativa do orquestrador.
 
@@ -326,13 +328,16 @@ Se `full` gerou `PLAN_*.md` mas não despachou `plan_execute`, o cabeçalho deve
 
 ## Skills envolvidas
 
+`atlas-backlog-generator` aparece apenas para descoberta do catálogo: é **explicit-only** e nunca integra `full`/`direct`/`execute`/`interview-only`. A cadeia automática começa em PRD/input já fornecido.
+
 | Skill | Entrada | Saída (artefato) |
 |-------|---------|------------------|
-| `atlas-backlog-generator` | ideia/prompt/conversa/briefing | `BACKLOG_MESTRE_*.md` |
+| `atlas-backlog-generator` (**explicit-only**) | pedido explícito de backlog | `BACKLOG_MESTRE_*.md` |
 | `atlas-sprint-prd-generator` | sprint_id/indicação | `PRD_*.md`, decisions_found |
 | `atlas-prd-interview` | prd_path, ambiguities | `PRD_*.md` atualizado, decisions |
 | `atlas-plan-handoff` | prd_path | `PLAN_*.md` |
-| `atlas-plan-execute` | plan_path (full / **execute**) ou prd_path (direct) | diff de código, evidência |
+| `atlas-plan-execute` | plan_path (`full` / `execute`) | diff de código, evidência, `state_path` |
+| `atlas-direct-execute` | prd_path/spec/task (`direct`) | diff de código, evidência, `state_path` |
 | `atlas-slice-review` | diff/output | review_feedback |
 
 **Sub-agent frio (Gate G4):** `atlas-task-validator` é verificado no pré-flight pelo orquestrador e sempre roda isolado como **sub-agent irmão (sibling)**, em todos os hosts: despachado pelo orquestrador a partir do `state_path` retornado pelo executor. A topologia é sempre sibling — o executor nunca despacha o validador.
@@ -356,11 +361,11 @@ Se o MCP não responder ou reportar drift, o pacote está inválido: abortar no 
 ```
 orquestrador
  ├─ MCP ping + preflight                         → atlas_ping + atlas_preflight (G10)
- ├─ PRD        → sub-agent                       → atlas_verify_artifact (G1)
+ ├─ PRD        → autoria documental no pai       → atlas_verify_artifact (G1)
  ├─ scan       → atlas_scan_prd (G5) + TC        → entrevista se bloqueado ou --interview
- ├─ PLANO      → lock_dispatch + sub-agent       → atlas_verify_artifact + atlas_verify_template_conformance
+ ├─ PLANO      → autoria documental no pai       → atlas_verify_artifact + atlas_verify_template_conformance
  ├─ G11        → atlas_assert_after_plan         → próxima ação obrigatória = plan_execute
- ├─ EXECUÇÃO   → atlas_lock_dispatch + sub-agent plan_execute
+ ├─ EXECUÇÃO   → atlas_lock_dispatch + sub-agent atlas-plan-execute
  ├─ VALIDAÇÃO  → lock_validator + task-validator irmão
  │                └─ fail → findings-repair (budget 1, mesmo state_path) → validator final
  └─ REVIEW     → atlas_lock_dispatch + sub-agent slice_review (se --review)
