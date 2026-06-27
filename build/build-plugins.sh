@@ -241,12 +241,69 @@ build_pi() {
   cp -R "$stage" "$ROOT/hosts/pi"
 }
 
+# Build do host zcode (ZCode — Claude Agent SDK compat). Estrutura: .zcode-plugin/
+# (manifest), agents/ (subagentes canônicos, mesmo formato claude .md), skills/,
+# packages/ (MCP server + templates + orchestrator). MCP local com stdio; o host
+# injeta ZCODE_PLUGIN_ROOT no env (comprovado no bundle zcode.cjs).
+# Catálogo from-source commitado em hosts/zcode/ (install via GitHub público — DEC-008).
+build_zcode() {
+  local stage="$STAGE/zcode"
+  local out="$DIST/atlas-workflow-zcode.plugin"
+  echo "montando zcode"
+  mkdir -p "$stage/.zcode-plugin" "$stage/agents" "$stage/skills" "$stage/packages"
+
+  # Subagentes canônicos (mesmo formato claude — .md com frontmatter).
+  # ZCode é Claude Agent SDK: descobre agents/ na raiz do plugin automaticamente.
+  cp -R "$ROOT/agents/." "$stage/agents/"
+  for ag in "${DISPATCHED_AGENTS[@]}"; do
+    node "$ROOT/build/gen-host-agent.mjs" opencode "$stage/agents/$ag.md" 2>/dev/null || true
+    # Fallback: se o gen-host-agent não conhecer "opencode" para zcode, copia o canônico.
+    if [[ ! -f "$stage/agents/$ag.md" ]]; then
+      cp "$ROOT/agents/$ag.md" "$stage/agents/$ag.md"
+    fi
+  done
+
+  # Skills
+  cp -R "$ROOT/packages/skills/." "$stage/skills/"
+  rm -rf "$stage/skills/atlas-workflow-orchestrator"
+  cp -R "$ROOT/packages/orchestrator/skills/atlas-workflow-orchestrator" \
+    "$stage/skills/atlas-workflow-orchestrator"
+
+  # Runtime + templates + orchestrator
+  copy_mcp_runtime "$stage/packages"
+  cp -R "$ROOT/packages/templates" "$stage/packages/"
+  cp -R "$ROOT/packages/orchestrator" "$stage/packages/"
+  cp "$ROOT/VERSION" "$stage/packages/mcp-server/VERSION"
+
+  # Manifest .zcode-plugin (com VERSION injetada)
+  local manifest_src="$ROOT/plugin-manifests/zcode/plugin.json"
+  mkdir -p "$stage/.zcode-plugin"
+  sed "s/__VERSION__/${VERSION}/g" "$manifest_src" > "$stage/.zcode-plugin/plugin.json"
+
+  # Validação mínima do JSON gerado
+  if ! node -e 'JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"))' "$stage/.zcode-plugin/plugin.json" >/dev/null 2>&1; then
+    echo "manifest gerado para zcode não é JSON válido" >&2
+    exit 3
+  fi
+
+  echo "zipando zcode"
+  assert_no_runtime_state "$stage"
+  rm -f "$out"
+  ( cd "$stage" && find . -type f | LC_ALL=C sort | zip -X -q "$out" -@ )
+
+  echo "sincronizando catálogo zcode em hosts/zcode"
+  rm -rf "$ROOT/hosts/zcode"
+  mkdir -p "$ROOT/hosts"
+  cp -R "$stage" "$ROOT/hosts/zcode"
+}
+
 for h in "${HOSTS[@]}"; do
   build_host "$h"
 done
 
 build_opencode
 build_pi
+build_zcode
 
 (
   cd "$DIST"
@@ -264,4 +321,4 @@ else
   echo "aviso: node ausente — pulando check-consistency" >&2
 fi
 
-echo "ok — dist/atlas-workflow-{claude,codex,opencode,pi}.plugin dist/SHA256SUMS + hosts/{opencode,pi}/"
+echo "ok — dist/atlas-workflow-{claude,codex,opencode,pi,zcode}.plugin dist/SHA256SUMS + hosts/{opencode,pi,zcode}/"

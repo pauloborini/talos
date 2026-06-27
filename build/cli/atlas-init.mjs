@@ -31,6 +31,7 @@ const HOST_ALIASES = {
   codex: 'codex',
   opencode: 'opencode',
   pi: 'pi',
+  zcode: 'zcode', zai: 'zcode',
   antigravity: 'antigravity', gemini: 'antigravity', antigravitycode: 'antigravity',
 };
 
@@ -571,6 +572,91 @@ function uninstallAntigravity(opts) {
   log('ok — artefatos globais do Atlas para Antigravity removidos.');
 }
 
+// --- ZCode (cache-based install) ----------------------------------------------
+// ZCode só descobre plugins no escopo `zcode-plugins-official` (verificado
+// empiricamente no bundle zcode.cjs: `G2="zcode-plugins-official"` é hardcoded e o
+// scan de cache é restrito a `cache/zcode-plugins-official/<plugin>/<version>/`).
+// Por isso o installer copia para esse path — não para um marketplace custom.
+// O ZCode também regenera `marketplaces/zcode-plugins-official/marketplace.json` no
+// boot a partir do scan; mantemos essa entry sincronizada para visualização imediata.
+
+const ZCODE_MARKETPLACE = 'zcode-plugins-official';
+const ZCODE_PLUGIN_NAME = 'atlas-workflow-orchestrator';
+
+function zcodeCacheDir() {
+  return path.join(homedir(), '.zcode', 'cli', 'plugins', 'cache', ZCODE_MARKETPLACE, ZCODE_PLUGIN_NAME, VERSION);
+}
+
+function zcodeMarketplaceCacheFile() {
+  return path.join(homedir(), '.zcode', 'cli', 'plugins', 'marketplaces', ZCODE_MARKETPLACE, 'marketplace.json');
+}
+
+function updateZcodeMarketplaceCacheEntry(cacheDir) {
+  const file = zcodeMarketplaceCacheFile();
+  let cfg = { name: ZCODE_MARKETPLACE, plugins: [], version: 1 };
+  if (fs.existsSync(file)) {
+    try { cfg = JSON.parse(fs.readFileSync(file, 'utf8')); }
+    catch { log(`  aviso: ${path.basename(file)} é JSON inválido — reescrevendo do zero`); }
+  }
+  cfg.name = ZCODE_MARKETPLACE;
+  cfg.plugins = (cfg.plugins ?? []).filter((p) => p.name !== ZCODE_PLUGIN_NAME);
+  cfg.plugins.push({ cachePath: cacheDir, name: ZCODE_PLUGIN_NAME, source: 'filesystem', version: VERSION });
+  cfg.version = 1;
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(cfg, null, 2) + '\n');
+}
+
+function removeZcodeMarketplaceCacheEntry() {
+  const file = zcodeMarketplaceCacheFile();
+  if (!fs.existsSync(file)) return;
+  try {
+    const cfg = JSON.parse(fs.readFileSync(file, 'utf8'));
+    cfg.plugins = (cfg.plugins ?? []).filter((p) => p.name !== ZCODE_PLUGIN_NAME);
+    fs.writeFileSync(file, JSON.stringify(cfg, null, 2) + '\n');
+  } catch { log(`  aviso: ${path.basename(file)} é JSON inválido — não mexi`); }
+}
+
+function installZcode(opts) {
+  const cacheDir = zcodeCacheDir();
+  const catalogSrc = path.join(ROOT, 'hosts/zcode');
+  log(`instalando Atlas (zcode v${VERSION}) GLOBAL em ${cacheDir}`);
+  if (!fs.existsSync(catalogSrc)) fail(`catálogo zcode ausente: hosts/zcode/ (rode build/build-plugins.sh)`);
+  if (opts.dryRun) {
+    log(`  [dry-run] copiaria hosts/zcode/ → ${cacheDir}`);
+    log(`  [dry-run] atualizaria ${zcodeMarketplaceCacheFile()}`);
+    return;
+  }
+  // Limpa instalação anterior (pode haver versão stale)
+  const parentDir = path.dirname(cacheDir);
+  if (fs.existsSync(parentDir)) fs.rmSync(parentDir, { recursive: true, force: true });
+  fs.mkdirSync(cacheDir, { recursive: true });
+  fs.cpSync(catalogSrc, cacheDir, { recursive: true });
+  // Gera o seed file no formato que o ZCode espera
+  const seed = {
+    hash: '',
+    marketplace: ZCODE_MARKETPLACE,
+    plugin: ZCODE_PLUGIN_NAME,
+    pluginVersion: VERSION,
+    source: 'filesystem',
+    version: 1,
+  };
+  fs.writeFileSync(path.join(cacheDir, '.zcode-plugin-seed.json'), JSON.stringify(seed, null, 2) + '\n');
+  // Sincroniza a entry do marketplace cache (o ZCode regenera no boot, mas
+  // mantemos sincronizado para visualização imediata no `/plugins`).
+  updateZcodeMarketplaceCacheEntry(cacheDir);
+  log('ok — ZCode instalado no cache oficial.');
+  log('próximo: abra o ZCode e ative via /plugins enable atlas-workflow-orchestrator');
+  log('  confirme com a tool MCP atlas_ping (host=zcode, status=alive).');
+}
+
+function uninstallZcode(opts) {
+  const cacheParent = path.join(homedir(), '.zcode', 'cli', 'plugins', 'cache', ZCODE_MARKETPLACE, ZCODE_PLUGIN_NAME);
+  log(`removendo Atlas (zcode) GLOBAL de ${cacheParent}`);
+  rmIfExists(cacheParent, opts);
+  removeZcodeMarketplaceCacheEntry();
+  log('ok — ZCode: cache e registry removidos.');
+}
+
 function usage() {
   log(`atlas-workflow v${VERSION} — instalador multi-host
 
@@ -582,6 +668,7 @@ hosts:
   claudecode | cursor   via \`claude plugin\` (marketplace from-source; já global)
   codex                 via \`codex plugin\` + custom agents em CODEX_HOME/agents
   antigravity           via plugin nativo em ~/.gemini/config/ (já global)
+  zcode                 via cache ~/.zcode/cli/plugins/cache/ (já global; /plugins enable)
   opencode              por-projeto: .opencode/ + opencode.json no [dir]
                         --global: ~/.config/opencode/ (vale em todos os projetos)
   pi                    por-projeto: .mcp.json + .pi/agents/ no [dir] + deps
@@ -636,23 +723,23 @@ function main() {
     fail(`comando desconhecido: ${cmd} (use \`init <host>\` ou \`uninstall <host>\`)`, 2);
   }
 
-  if (!rawHost) fail('informe o host: claudecode | cursor | codex | antigravity | opencode | pi', 2);
+  if (!rawHost) fail('informe o host: claudecode | cursor | codex | antigravity | zcode | opencode | pi', 2);
   if (extra.length) fail(`argumentos extras não suportados: ${extra.join(' ')}`, 2);
   const host = HOST_ALIASES[rawHost.toLowerCase()];
-  if (!host) fail(`host inválido: ${rawHost} (use claudecode|cursor|codex|antigravity|opencode|pi)`, 2);
+  if (!host) fail(`host inválido: ${rawHost} (use claudecode|cursor|codex|antigravity|zcode|opencode|pi)`, 2);
 
   const opts = parsed.opts;
   const targetDir = path.resolve(opts.dir || rawDir || process.cwd());
   const actions = {
-    init: { claude: installClaude, codex: installCodex, antigravity: installAntigravity, opencode: installOpencode, pi: installPi },
-    uninstall: { claude: uninstallClaude, codex: uninstallCodex, antigravity: uninstallAntigravity, opencode: uninstallOpencode, pi: uninstallPi },
+    init: { claude: installClaude, codex: installCodex, antigravity: installAntigravity, zcode: installZcode, opencode: installOpencode, pi: installPi },
+    uninstall: { claude: uninstallClaude, codex: uninstallCodex, antigravity: uninstallAntigravity, zcode: uninstallZcode, opencode: uninstallOpencode, pi: uninstallPi },
   };
   const globalActions = {
     init: { opencode: installOpencodeGlobal, pi: installPiGlobal },
     uninstall: { opencode: uninstallOpencodeGlobal, pi: uninstallPiGlobal },
   };
 
-  if (host === 'claude' || host === 'codex' || host === 'antigravity') {
+  if (host === 'claude' || host === 'codex' || host === 'antigravity' || host === 'zcode') {
     if (opts.global && (host === 'claude' || host === 'codex')) log('nota: claude/codex já são globais por natureza (registro da CLI) — --global ignorado.');
     actions[cmd][host](opts);
   } else if (opts.global) {

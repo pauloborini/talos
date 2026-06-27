@@ -266,6 +266,7 @@ test('capabilities: perfil antigravity (subagente define_subagent/invoke_subagen
   assert.equal(cap.host, 'antigravity');
   assert.equal(cap.host_label, 'Antigravity');
   assert.match(cap.subagent_dispatch.mechanism, /define_subagent.*invoke_subagent/);
+  assert.equal(cap.subagent_dispatch.skill_loading, 'embed_in_system_prompt');
   assert.equal(cap.validator_dispatch.dispatcher, 'orchestrator');
   assert.equal(cap.validator_dispatch.join.sync, 'self_evident');
   assert.equal(cap.todo_tool, null);
@@ -275,7 +276,11 @@ test('capabilities: perfil antigravity (subagente define_subagent/invoke_subagen
   // host nativo (subagente+MCP nativos) → self_evident, não exige host_capabilities
   assert.equal(cap.prereq_policy, 'self_evident');
   assert.deepEqual(cap.required_deps, []);
+  // question_prompt: ask_question nativo + retomada automática pós-entrevista
+  assert.equal(cap.question_prompt.mechanism, 'ask_question');
+  assert.equal(cap.question_prompt.resume_after_interview, 'automatic');
 });
+
 
 test('checkPrerequisites: antigravity (self_evident) passa sem report — host nativo', () => {
   assert.equal(checkPrerequisites({ host: 'antigravity' }).status, 'passed');

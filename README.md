@@ -1,8 +1,8 @@
 # Atlas Workflow
 
-Plugin **Atlas Workflow Orchestrator** v0.9.1 — pipeline determinístico (PRD → plano → execução → validação) com skills `atlas-*`, templates e MCP. Um pacote, seis hosts: **Claude Code**, **Cursor**, **Codex App**, **Antigravity (Gemini)**, **OpenCode** e **Pi CLI**.
+Plugin **Atlas Workflow Orchestrator** v0.9.3 — pipeline determinístico (PRD → plano → execução → validação) com skills `atlas-*`, templates e MCP. Um pacote, sete hosts: **Claude Code**, **Cursor**, **Codex App**, **Antigravity (Gemini)**, **ZCode**, **OpenCode** e **Pi CLI**.
 
-**Versão:** [`VERSION`](VERSION) (`0.9.1`) · **Repo:** https://github.com/pauloborini/atlas-workflow
+**Versão:** [`VERSION`](VERSION) (`0.9.3`) · **Repo:** https://github.com/pauloborini/atlas-workflow
 
 ## Hosts
 
@@ -12,6 +12,7 @@ Plugin **Atlas Workflow Orchestrator** v0.9.1 — pipeline determinístico (PRD 
 | Cursor | **Igual ao Claude Code** (ver nota abaixo) | `atlas-workflow-claude.plugin` | — |
 | Codex App | Marketplace GitHub | `atlas-workflow-codex.plugin` | — |
 | Antigravity (Gemini) | Instalador from-source (`init antigravity`) → `~/.gemini/config/` | — (cópia direta, sem artefato `.plugin`) | — |
+| ZCode | Instalador cache-based (`init zcode`) → `~/.zcode/cli/plugins/cache/` | `atlas-workflow-zcode.plugin` | — |
 | Opencode | Catálogo from-source `hosts/opencode/` | `atlas-workflow-opencode.plugin` | — |
 | Pi CLI | Catálogo from-source `hosts/pi/` | `atlas-workflow-pi.plugin` | **`pi-mcp-adapter` + `pi-subagents`** |
 
@@ -31,6 +32,7 @@ Um instalador único cobre os hosts de forma **global** (recomendado para valer 
 npx github:pauloborini/atlas-workflow init claudecode   # ou: cursor
 npx github:pauloborini/atlas-workflow init codex
 npx github:pauloborini/atlas-workflow init antigravity
+npx github:pauloborini/atlas-workflow init zcode
 npx github:pauloborini/atlas-workflow init opencode --global
 npx github:pauloborini/atlas-workflow init pi --global --yes  # --yes auto-instala as 2 deps
 ```
@@ -38,6 +40,7 @@ npx github:pauloborini/atlas-workflow init pi --global --yes  # --yes auto-insta
 - **claudecode/cursor**: o instalador roda o `marketplace add` + `install` nativos da CLI por você. Já são globais por natureza.
 - **codex**: o instalador roda `marketplace add` + `plugin add` e também copia os custom agents Atlas para `CODEX_HOME/agents` (`~/.codex/agents` se `CODEX_HOME` não estiver definido). Este é o caminho garantido para `spawn_agent(agent_type: "atlas-*")`.
 - **antigravity**: o instalador registra o Atlas como um plugin em `~/.gemini/config/plugins/` e adiciona o MCP correspondente em `mcp_config.json`.
+- **zcode**: o instalador copia o catálogo from-source `hosts/zcode/` para `~/.zcode/cli/plugins/cache/pauloborini/atlas-workflow-orchestrator/<version>/` e registra o plugin no `marketplace.json` do ZCode. Ative no host via `/plugins enable atlas-workflow-orchestrator`. ZCode é Claude Agent SDK (clone estrutural do Claude Code): `Agent(subagent_type)` + `TodoWrite` + MCP stdio nativos — perfil `self_evident`, sem dependências externas.
 - **opencode**: com `--global`, instala globalmente em `~/.config/opencode/` (o MCP é registrado com caminho absoluto, funcionando em todos os projetos).
 - **pi**: com `--global`, instala globalmente em `~/.pi/agent/` (honra `PI_CODING_AGENT_DIR`), registra o MCP em `mcp.json` global e checa/instala as deps `pi-mcp-adapter` + `pi-subagents`.
 

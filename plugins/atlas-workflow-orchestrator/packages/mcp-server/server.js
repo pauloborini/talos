@@ -283,23 +283,81 @@ const HOST_ADAPTERS = {
   },
   antigravity: {
     label: 'Antigravity',
+    // Antigravity não tem skill loader nativo em subagentes — o SKILL.md completo
+    // DEVE ser embutido no Prompt de cada invoke_subagent (via define_subagent como
+    // system_prompt ou diretamente no Prompt). Nunca despachar subagente sem SKILL.md
+    // injetado, pois o subagente não carregará o contrato e o pipeline vai impasse.
+    //
+    // Fluxo para fases de execução/validação (executor, validator, repair, review):
+    //   1. define_subagent(name: "<atlas-exec>", system_prompt: "<SKILL.MD completo>")
+    //   2. invoke_subagent(Subagents: [{TypeName: "<atlas-exec>", Role: "<papel>",
+    //                                   Prompt: "<state_path ou plan_path>",
+    //                                   Workspace: "branch"}])
+    //   — invoke_subagent é BLOQUEANTE por design: não polling, não background.
+    //   — Workspace: "branch" garante isolamento de contexto (fronteira G4/G9).
+    //
+    // Fases documentais (PRD, entrevista, plano) NÃO usam subagente — o orquestrador
+    // conduz no fio principal; define_subagent não é chamado para essas fases.
     subagent_dispatch: {
-      mechanism: 'define_subagent(name, system_prompt) + invoke_subagent(Subagents)',
-      example: 'define_subagent(name: "atlas-task-validator", system_prompt: "<SKILL_MD>") e invoke_subagent(Subagents: [{TypeName: "atlas-task-validator", Role: "Validator", Prompt: "<state_path>"}])',
-      registration: 'Mapeamento de skills e agents via define_subagent dinâmico',
+      mechanism: 'define_subagent(name, system_prompt) + invoke_subagent(Subagents: [{TypeName, Role, Prompt, Workspace}])',
+      example: 'define_subagent(name: "atlas-task-validator", system_prompt: "<SKILL.MD completo do atlas-task-validator>") seguido de invoke_subagent(Subagents: [{TypeName: "atlas-task-validator", Role: "Validador frio", Prompt: "<state_path>", Workspace: "branch"}])',
+      registration: 'define_subagent dinâmico por sessão — o SKILL.md canônico é passado como system_prompt; sem pré-registro persistente',
+      // Sem loader nativo: o SKILL.md DEVE ser embutido no system_prompt do define_subagent.
+      // Não usar TypeName: "self" sem injetar o SKILL.md — o subagente herdaria o contexto
+      // do orquestrador e violaria o isolamento frio (G4/G9).
+      skill_loading: 'embed_in_system_prompt',
     },
     validator_dispatch: {
       dispatcher: 'orchestrator',
       join: {
         sync: 'self_evident',
         confidence: 'high',
-        mechanism: 'invoke_subagent bloqueante por design do host',
+        mechanism: 'invoke_subagent bloqueante por design do host — sem polling, sem callback',
       },
     },
-    question_prompt: { mechanism: 'notify_user', mode: 'structured', max_questions: 4, options_per_question: 3, persistence: 'prd_after_each_round' },
+    // question_prompt: usado pela atlas-prd-interview para fazer perguntas ao usuário.
+    // No Antigravity, usar ask_question (ferramenta nativa de perguntas interativas).
+    // IMPORTANTE — resume_after_interview: após receber respostas via ask_question,
+    // persistir no PRD e RETOMAR O PIPELINE IMEDIATAMENTE sem nova confirmação.
+    // Nunca aguardar input adicional do usuário entre fases — viola fire-and-continue.
+    question_prompt: {
+      mechanism: 'ask_question',
+      mode: 'structured',
+      max_questions: 4,
+      options_per_question: 3,
+      persistence: 'prd_after_each_round',
+      resume_after_interview: 'automatic',
+    },
     todo_tool: null,
     hooks: { supported: false, mechanism: null },
     capabilities_flags: { subagent_available: true, mcp_available: true, todo_available: false },
+    // self_evident: MCP nativo + invoke_subagent bloqueante provados pelo boot do host.
+    // Não exige host_capabilities report (igual claude/codex/opencode).
+    prereq_policy: 'self_evident',
+  },
+  zcode: {
+    label: 'ZCode',
+    subagent_dispatch: {
+      // ZCode roda no Claude Agent SDK: Agent(subagent_type) nativo e bloqueante.
+      // Skills/agents do plugin vivem no bundle (.zcode-plugin) carregado pelo host.
+      mechanism: 'Agent(subagent_type)',
+      example: 'Agent(subagent_type: "atlas-task-validator", prompt: "<state_path>")',
+      registration: 'agents/<name>.md na raiz do plugin (descoberto via .zcode-plugin/plugin.json)',
+    },
+    validator_dispatch: {
+      dispatcher: 'orchestrator',
+      join: {
+        sync: 'self_evident',
+        confidence: 'presumed',
+        mechanism: 'Agent(subagent_type) bloqueante por design do host (Claude Agent SDK)',
+      },
+    },
+    question_prompt: { mechanism: 'AskUserQuestion', mode: 'structured', max_questions: 4, options_per_question: 3, persistence: 'prd_after_each_round' },
+    todo_tool: 'TodoWrite',
+    hooks: { supported: true, mechanism: '.zcode-plugin/plugin.json (hooks)' },
+    // ZCode é clone estrutural do Claude Code (Claude Agent SDK): subagente +
+    // MCP-local + TodoWrite nativos. Perfil self_evident — passa PREREQ/JOIN sem report.
+    capabilities_flags: { subagent_available: true, mcp_available: true, todo_available: true },
   },
   generic: {
     label: 'Host genérico',
@@ -367,6 +425,10 @@ const HOST_NAMES = Object.keys(HOST_ADAPTERS);
 const HOST_DETECTORS = [
   { via: 'env:CLAUDE_PLUGIN_ROOT', detect: (env) => (env.CLAUDE_PLUGIN_ROOT ? 'claude' : null) },
   { via: 'env:CODEX', detect: (env) => (env.CODEX_HOME || env.CODEX_PLUGIN_ROOT ? 'codex' : null) },
+  // ZCode (app Electron no Claude Agent SDK) injeta ZCODE_PLUGIN_ROOT ao spawnar o
+  // subprocesso MCP do plugin (comprovado no bundle zcode.cjs: interpolação análoga a
+  // CLAUDE_PLUGIN_ROOT). Sinal próprio e determinístico — precedência sobre ATLAS_HOST.
+  { via: 'env:ZCODE_PLUGIN_ROOT', detect: (env) => (env.ZCODE_PLUGIN_ROOT ? 'zcode' : null) },
   // opencode/pi não expõem env distintivo garantido no subprocesso MCP (S01).
   // Detecção determinística: o packaging injeta ATLAS_HOST no env do MCP —
   //   opencode: opencode.json → mcp.<name>.environment.ATLAS_HOST = "opencode"
@@ -419,7 +481,7 @@ function capabilities(args = {}) {
 // do host com a disponibilidade real reportada pelo caller (`host_capabilities`).
 //
 // Política por host (`prereq_policy`):
-//   - 'self_evident' (claude/codex/opencode, default): runtime nativo. Flag essencial
+//   - 'self_evident' (claude/codex/opencode/zcode, default): runtime nativo. Flag essencial
 //     vem do report quando presente, senão do perfil (otimista justificado: MCP-vivo
 //     prova-se no boot; subagente é nativo do host/plugin instalado).
 //   - 'must_report' (pi/generic): essencial depende de dep externa (pi) ou de host
@@ -469,7 +531,7 @@ function checkPrerequisites(args = {}) {
 
 // Gate JOIN (DEC-SIB-003, SPEC_JOIN_CAPABILITY_S03 §3/§5). Espelha checkPrerequisites:
 // lê validator_dispatch.join do adapter e decide hard-fail por política.
-//   - join.sync === 'self_evident' (claude/codex/opencode): host nativo conhecido;
+//   - join.sync === 'self_evident' (claude/codex/opencode/zcode): host nativo conhecido;
 //     o runtime presume join disponível e NÃO exige report. confidence 'presumed'
 //     (claude/opencode) passa, mas é registrado para observabilidade (smoke S13).
 //   - join.sync === 'must_report' (pi/generic): fail-closed. Só passa se o caller

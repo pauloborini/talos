@@ -91,7 +91,7 @@ for (const rel of [
   }
 }
 
-// Catálogos from-source dos hosts opencode/pi devem existir (install via GitHub
+// Catálogos from-source dos hosts opencode/pi/zcode devem existir (install via GitHub
 // público — DEC-008). Stale/ausente => host não instala pelo caminho primário.
 for (const rel of [
   'hosts/opencode/opencode.json',
@@ -100,6 +100,9 @@ for (const rel of [
   'hosts/pi/.mcp.json',
   'hosts/pi/.pi/agents/atlas-task-validator.md',
   'hosts/pi/atlas/packages/mcp-server/server.js',
+  'hosts/zcode/.zcode-plugin/plugin.json',
+  'hosts/zcode/agents/atlas-task-validator.md',
+  'hosts/zcode/packages/mcp-server/server.js',
 ]) {
   if (!fs.existsSync(path.join(ROOT, rel))) {
     errors.push(`ausente: ${rel} (rode build/build-plugins.sh e commite hosts/)`);
@@ -107,11 +110,12 @@ for (const rel of [
 }
 
 // Contrato do validator por host (S10): o bloco JSON de veredito dos agentes
-// gerados (opencode/pi) deve ser idêntico ao canônico — catálogo stale = drift.
+// gerados (opencode/pi/zcode) deve ser idêntico ao canônico — catálogo stale = drift.
 for (const rel of [
   'plugins/atlas-workflow-orchestrator/.codex/agents/atlas-task-validator.toml',
   'hosts/opencode/.opencode/agents/atlas-task-validator.md',
   'hosts/pi/.pi/agents/atlas-task-validator.md',
+  'hosts/zcode/agents/atlas-task-validator.md',
 ]) {
   const hostAgent = agentText(rel);
   const hostVerdict = verdictBlock(hostAgent, rel);
@@ -158,6 +162,7 @@ const AGENT_DIRS = [
   ['codex', 'plugins/atlas-workflow-orchestrator/.codex/agents'],
   ['opencode', 'hosts/opencode/.opencode/agents'],
   ['pi', 'hosts/pi/.pi/agents'],
+  ['zcode', 'hosts/zcode/agents'],
 ];
 for (const skillId of DISPATCHED_EXEC_AGENTS) {
   for (const [host, dir] of AGENT_DIRS) {
@@ -199,8 +204,12 @@ if (versionFile != null) {
       errors.push(`Drift de versão: ${rel} (${got}) != VERSION (${want})`);
     }
   }
-  // Catálogos opencode/pi carregam VERSION crua (não plugin.json).
-  for (const rel of ['hosts/opencode/.opencode/atlas/VERSION', 'hosts/pi/atlas/VERSION']) {
+  // Catálogos opencode/pi/zcode carregam VERSION crua (não plugin.json).
+  for (const rel of [
+    'hosts/opencode/.opencode/atlas/VERSION',
+    'hosts/pi/atlas/VERSION',
+    'hosts/zcode/packages/mcp-server/VERSION',
+  ]) {
     const raw = read(rel);
     if (raw != null && raw.trim() !== want) {
       errors.push(`Drift de versão: ${rel} (${raw.trim()}) != VERSION (${want})`);

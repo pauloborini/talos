@@ -122,6 +122,7 @@ O pipeline é **fire-and-continue**: uma vez iniciado, o orquestrador avança fa
 
 A única interação legítima com o usuário é **dentro de uma fase** — o mecanismo estruturado `question_prompt` devolvido por `atlas_capabilities`, usado pela entrevista para resolver ambiguidade de produto. Resolver ambiguidade ≠ pedir permissão pra avançar. Terminada a fase, respostas são persistidas no PRD, gates são reexecutados e o pipeline segue sozinho.
 
+
 ## Papel do orquestrador (fronteira de determinismo pela mutação de código)
 
 O orquestrador **coordena a execução**, não implementa código — maestro que aponta cada sub-agent na ordem e espera terminar, **nunca pega o instrumento de código**. A fronteira de determinismo é a **mutação de código** (PRD D10), com **duas fases**:
@@ -142,6 +143,7 @@ O **mecanismo** varia por host — leia `subagent_dispatch.mechanism`, `.example
 - **generic:** subagente nativo do host
 
 > Ausência de "Agent tool" (host ≠ Claude) **não** é licença pra executar inline — é sinal pra usar o verbo daquele host (Gate G9, qualquer host). Host sem mecanismo de sub-agent já abortou em PREREQ; você nunca chega aqui sem isolamento.
+
 
 ## Protocolo de banner (única comunicação de progresso)
 

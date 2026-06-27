@@ -18,7 +18,7 @@ HOST="${1:-}"
 TARGET="${2:-}"
 
 if [[ -z "$HOST" || -z "$TARGET" ]]; then
-  echo "uso: build/install-host.sh <opencode|pi> <target-dir>" >&2
+  echo "uso: build/install-host.sh <opencode|pi|zcode> <target-dir>" >&2
   exit 2
 fi
 
@@ -31,8 +31,12 @@ case "$HOST" in
     SRC="$ROOT/hosts/pi"
     VERSION_FILE="$SRC/atlas/VERSION"
     ;;
+  zcode)
+    SRC="$ROOT/hosts/zcode"
+    VERSION_FILE="$SRC/packages/mcp-server/VERSION"
+    ;;
   *)
-    echo "host inválido: '$HOST' (use opencode ou pi)" >&2
+    echo "host inválido: '$HOST' (use opencode, pi ou zcode)" >&2
     exit 2
     ;;
 esac
@@ -61,7 +65,13 @@ if [[ "$HOST" == "pi" ]]; then
   echo "  - pi-subagents    (subagente) → pi install npm:pi-subagents"
   echo "MCP em '$TARGET/.mcp.json' (descoberto pelo pi-mcp-adapter); subagente em '$TARGET/.pi/agents/'."
   echo "lance o pi com cwd em $TARGET; dispare o validator via tool subagent({agent:\"atlas-task-validator\", task:\"<state_path>\"})."
-else
+elif [[ "$HOST" == "zcode" ]]; then
+  echo "lembrete: copie o conteúdo para o cache do ZCode e registre no marketplace.json:"
+  echo "  cp -R . ~/.zcode/cli/plugins/cache/pauloborini/atlas-workflow/<version>/"
+  echo "  e registre em ~/.zcode/cli/plugins/marketplaces/pauloborini/marketplace.json"
+  echo "  (ou use: npx github:pauloborini/atlas-workflow init zcode)"
+  echo "Subagente em '$TARGET/agents/'; ative via /plugins enable no ZCode."
+elif [[ "$HOST" == "opencode" ]]; then
   echo "registre/mescle '$TARGET/opencode.json'; reinicie o opencode com cwd em $TARGET."
 fi
 

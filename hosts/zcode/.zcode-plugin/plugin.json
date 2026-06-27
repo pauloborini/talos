@@ -14,15 +14,12 @@
     "execution",
     "automation"
   ],
-  "skills": [
-    "./packages/skills/",
-    "./packages/orchestrator/skills/"
-  ],
+  "skills": "./skills/",
   "mcpServers": {
     "atlas-workflow": {
       "command": "node",
       "args": [
-        "${CLAUDE_PLUGIN_ROOT}/packages/mcp-server/server.js"
+        "${ZCODE_PLUGIN_ROOT}/packages/mcp-server/server.js"
       ],
       "transport": "stdio"
     }

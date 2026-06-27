@@ -20,6 +20,7 @@ const EXPECTED_SCHEMA_VERSION = 5;
 const CASES = [
   { name: 'claude (= cursor via CLAUDE_PLUGIN_ROOT)', env: { CLAUDE_PLUGIN_ROOT: '/tmp/x' }, host: 'claude', via: 'env:CLAUDE_PLUGIN_ROOT', join_sync: 'self_evident' },
   { name: 'codex (CODEX_HOME)', env: { CODEX_HOME: '/tmp/y' }, host: 'codex', via: 'env:CODEX', join_sync: 'self_evident' },
+  { name: 'zcode (ZCODE_PLUGIN_ROOT)', env: { ZCODE_PLUGIN_ROOT: '/tmp/z' }, host: 'zcode', via: 'env:ZCODE_PLUGIN_ROOT', join_sync: 'self_evident' },
   { name: 'opencode (ATLAS_HOST via opencode.json)', env: { ATLAS_HOST: 'opencode' }, host: 'opencode', via: 'env:ATLAS_HOST', join_sync: 'self_evident' },
   { name: 'pi (ATLAS_HOST via mcp.json)', env: { ATLAS_HOST: 'pi' }, host: 'pi', via: 'env:ATLAS_HOST', join_sync: 'must_report' },
   { name: 'generic (sem env)', env: {}, host: 'generic', via: 'default', join_sync: 'must_report' },
@@ -34,7 +35,7 @@ function runCase(c) {
   return new Promise((resolve) => {
     // Limpa env de host herdado para não contaminar a detecção.
     const env = { ...process.env };
-    delete env.ATLAS_HOST; delete env.CLAUDE_PLUGIN_ROOT; delete env.CODEX_HOME; delete env.CODEX_PLUGIN_ROOT;
+    delete env.ATLAS_HOST; delete env.CLAUDE_PLUGIN_ROOT; delete env.CODEX_HOME; delete env.CODEX_PLUGIN_ROOT; delete env.ZCODE_PLUGIN_ROOT;
     Object.assign(env, c.env);
     const server = spawn('node', [SERVER], { env, stdio: ['pipe', 'pipe', 'ignore'] });
     let buf = '';

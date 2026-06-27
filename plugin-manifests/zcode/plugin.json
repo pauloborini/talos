@@ -1,6 +1,6 @@
 {
   "name": "atlas-workflow-orchestrator",
-  "version": "0.9.3",
+  "version": "__VERSION__",
   "description": "Orquestra pipelines de desenvolvimento de features no Atlas (PRD, validação, entrevista, plano, execução, repair, review) e oferece geração explícita de backlog mestre. Bundle único: 9 skills atlas-* + orquestrador + 5 templates canônicos + validator subagente. Pipeline orientado a artefato com gates G1–G11.",
   "author": {
     "name": "Paulo Borini"
@@ -14,15 +14,12 @@
     "execution",
     "automation"
   ],
-  "skills": [
-    "./packages/skills/",
-    "./packages/orchestrator/skills/"
-  ],
+  "skills": "./skills/",
   "mcpServers": {
     "atlas-workflow": {
       "command": "node",
       "args": [
-        "${CLAUDE_PLUGIN_ROOT}/packages/mcp-server/server.js"
+        "${ZCODE_PLUGIN_ROOT}/packages/mcp-server/server.js"
       ],
       "transport": "stdio"
     }

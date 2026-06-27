@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.9.3 - 2026-06-27
+
+Tipo: **adição de host tier-1** (sem breaking; `CAPABILITIES_SCHEMA_VERSION` segue **v5**, modos públicos intactos). Integração do ZCode como novo host suportado do pipeline.
+
+Mudanças:
+- **Novo host: ZCode** — adicionada entrada `zcode` em `HOST_ADAPTERS` (`packages/mcp-server/server.js`) com perfil `self_evident` (subagente + MCP + TodoWrite nativos via Claude Agent SDK). Detector por env `ZCODE_PLUGIN_ROOT` injetado pelo host em `HOST_DETECTORS`. `validator_dispatch.join.sync: 'self_evident'`, `confidence: 'presumed'`. ZCode é clone estrutural do Claude Code (mesmo `Agent(subagent_type)` + mesmo formato `agents/<name>.md` no plugin root) — reusa o agente canônico sem geração extra. Smoke real (`build/smoke-hosts.mjs` + boot MCP com `ZCODE_PLUGIN_ROOT`) confirma `host=zcode`, `schema_version=5`, `atlas_ping status=alive` em v0.9.3.
+- **Installer `init zcode`** (`build/cli/atlas-init.mjs`) — copia o catálogo from-source `hosts/zcode/` para `~/.zcode/cli/plugins/cache/pauloborini/atlas-workflow-orchestrator/<version>/` e registra o plugin no `marketplace.json` do ZCode. Alias `zai` aceito. Ativação no host via `/plugins enable atlas-workflow-orchestrator`. `uninstall zcode` reversível.
+- **Packaging** — `build-plugins.sh`: nova função `build_zcode()` (cria `.zcode-plugin/plugin.json` com `${ZCODE_PLUGIN_ROOT}` injetado, copia `agents/`, `skills/`, `packages/`); `HOSTS`/dist include `zcode`. `install-host.sh`: case `zcode` adicionado. Novo manifest `plugin-manifests/zcode/plugin.json` (template com `__VERSION__`).
+- **Consistência** — `check-consistency.mjs`: checagens para `hosts/zcode/.zcode-plugin/plugin.json`, `hosts/zcode/agents/<despachados>`, `hosts/zcode/packages/mcp-server/{server.js,VERSION}`. `AGENT_DIRS` inclui zcode. Bloco de veredito M3 (sibling) cross-host agora cobre `hosts/zcode/agents/atlas-task-validator.md`.
+- **Smoke** — `build/smoke-hosts.mjs`: novo caso `zcode (ZCODE_PLUGIN_ROOT) → host=zcode sv=5 ping=ok`; env `ZCODE_PLUGIN_ROOT` adicionado à lista de variáveis limpas no boot do caso.
+- **Doc** — `host-adapters.md` (linha de detecção, coluna na matriz, checklist "adicionar host" + status multi-host) e `AGENTS.md` (cinco → seis hosts) atualizados. `README.md` ganha a 6ª linha de host + comando de instalação + nota de "Claude Agent SDK compat".
+
+Nota sobre o modelo de distribuição: ZCode não expõe uma CLI `zcode plugin marketplace add` no shell — o app Electron é o ponto de instalação. O caminho de install é cache-based (drop em `~/.zcode/cli/plugins/cache/` + registro no `marketplace.json`), análogo ao `init antigravity`. O `init zcode` é o `npx` wrapper que automatiza esse drop. Distribuição da release segue via catálogo from-source commitado em `hosts/zcode/` (DEC-008), e o artefato `.plugin` é gerado em `dist/` pelo build.
+
 ## 0.9.2 - 2026-06-22
 
 Tipo: **hardening contratual, determinismo e portabilidade** (sem breaking; `CAPABILITIES_SCHEMA_VERSION` segue **v5**, modos públicos `full`/`direct`/`execute`/`interview-only` intactos). Três frentes de melhoria das skills.
