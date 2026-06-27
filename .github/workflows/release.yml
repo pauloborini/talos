@@ -112,7 +112,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for host in claude codex opencode pi; do
+          for host in claude codex opencode pi zcode; do
             test -f "dist/atlas-workflow-${host}.plugin"
             unzip -t "dist/atlas-workflow-${host}.plugin" >/dev/null
           done
@@ -152,4 +152,5 @@ jobs:
             dist/atlas-workflow-codex.plugin
             dist/atlas-workflow-opencode.plugin
             dist/atlas-workflow-pi.plugin
+            dist/atlas-workflow-zcode.plugin
             dist/SHA256SUMS
