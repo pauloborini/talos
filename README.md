@@ -89,6 +89,7 @@ Se a instalação foi **global** (padrão recomendado):
 ```bash
 npx github:pauloborini/atlas-workflow uninstall claudecode   # ou: cursor
 npx github:pauloborini/atlas-workflow uninstall codex
+npx github:pauloborini/atlas-workflow uninstall antigravity
 npx github:pauloborini/atlas-workflow uninstall zcode
 npx github:pauloborini/atlas-workflow uninstall opencode --global
 npx github:pauloborini/atlas-workflow uninstall pi --global
