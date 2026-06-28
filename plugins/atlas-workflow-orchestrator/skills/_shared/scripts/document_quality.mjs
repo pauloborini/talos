@@ -10,7 +10,11 @@ const VALID = Object.freeze({
   state: new Set(['backlog', 'ready', 'doing', 'review', 'done', 'blocked']),
 });
 
-const STACK_MANIFESTS = ['package.json', 'tsconfig.json', 'pubspec.yaml', 'pyproject.toml', 'requirements.txt', 'setup.py'];
+const STACK_MANIFESTS = [
+  'package.json', 'tsconfig.json', 'pubspec.yaml', 'pyproject.toml', 'requirements.txt', 'setup.py',
+  'go.mod', 'Cargo.toml', 'pom.xml', 'build.gradle', 'build.gradle.kts', 'settings.gradle', 'settings.gradle.kts',
+  'firebase.json', '.firebaserc', 'openapi.yaml', 'openapi.yml', 'openapi.json', 'swagger.yaml', 'swagger.yml', 'swagger.json',
+];
 
 function boundaryRoot(projectRoot, boundary) {
   const project = path.resolve(projectRoot);
@@ -47,6 +51,9 @@ function containsGetxImport(root) {
 
 function detectBoundaryProfile(root, declaredCommands) {
   const exists = (name) => fs.existsSync(path.join(root, name));
+  const readIfExists = (name) => {
+    try { return exists(name) ? fs.readFileSync(path.join(root, name), 'utf8') : ''; } catch { return ''; }
+  };
   const commands = declaredCommands.filter((v) => typeof v === 'string');
   let packageJson = null;
   if (exists('package.json')) {
@@ -57,13 +64,36 @@ function detectBoundaryProfile(root, declaredCommands) {
     try { pubspec = fs.readFileSync(path.join(root, 'pubspec.yaml'), 'utf8'); } catch {}
   }
   const packageCommands = Object.values(packageJson?.scripts ?? {}).filter((v) => typeof v === 'string');
+  const packageDeps = Object.keys({
+    ...(packageJson?.dependencies ?? {}),
+    ...(packageJson?.devDependencies ?? {}),
+    ...(packageJson?.peerDependencies ?? {}),
+    ...(packageJson?.optionalDependencies ?? {}),
+  });
+  const cargo = readIfExists('Cargo.toml');
+  const pom = readIfExists('pom.xml');
+  const gradle = `${readIfExists('build.gradle')}\n${readIfExists('build.gradle.kts')}\n${readIfExists('settings.gradle')}\n${readIfExists('settings.gradle.kts')}`;
   const allCommands = [...commands, ...packageCommands];
   const hasCommand = (re) => allCommands.some((command) => re.test(command));
+  const hasPackageDep = (re) => packageDeps.some((dep) => re.test(dep));
+  const javaKotlinSignal = exists('pom.xml') || exists('build.gradle') || exists('build.gradle.kts')
+    || exists('settings.gradle') || exists('settings.gradle.kts') || hasCommand(/\b(gradle|mvn|java|javac|kotlinc)\b/);
+  const restSignal = exists('openapi.yaml') || exists('openapi.yml') || exists('openapi.json')
+    || exists('swagger.yaml') || exists('swagger.yml') || exists('swagger.json')
+    || hasPackageDep(/\b(openapi|swagger|express|fastify|koa|hono|axios|ky)\b/i)
+    || /openapi|swagger|spring-boot-starter-web|ktor|retrofit/i.test(`${pom}\n${gradle}\n${pubspec}`);
   return {
     universal: true,
     flutter_dart: exists('pubspec.yaml') || hasCommand(/\b(flutter|dart)\b/),
     node_typescript: exists('package.json') || exists('tsconfig.json') || hasCommand(/\b(node|npm|pnpm|yarn|bun|tsc)\b/),
     python: exists('pyproject.toml') || exists('requirements.txt') || exists('setup.py') || hasCommand(/\b(python3?|pytest|ruff|mypy)\b/),
+    go: exists('go.mod') || hasCommand(/\bgo\s+(test|build|run|vet|fmt)\b/),
+    rust: exists('Cargo.toml') || hasCommand(/\bcargo\s+(test|build|run|check|clippy|fmt)\b/) || /^\s*\[package\]/m.test(cargo),
+    java_kotlin: javaKotlinSignal,
+    firebase: exists('firebase.json') || exists('.firebaserc') || hasPackageDep(/^firebase$|^@firebase\/|firebase-admin/i)
+      || /firebase_core|cloud_firestore|firebase_auth|firebase_messaging|firebase_storage/i.test(pubspec),
+    supabase: hasPackageDep(/^@supabase\/|supabase-js/i) || /supabase_flutter|supabase|postgrest/i.test(pubspec),
+    rest_openapi: restSignal,
     getx: /^\s{0,4}get\s*:/m.test(pubspec) || containsGetxImport(root),
   };
 }
@@ -80,6 +110,12 @@ export function detectStackProfiles(root, declaredCommands = [], boundaryPaths =
     flutter_dart: boundaries.some((profile) => profile.flutter_dart),
     node_typescript: boundaries.some((profile) => profile.node_typescript),
     python: boundaries.some((profile) => profile.python),
+    go: boundaries.some((profile) => profile.go),
+    rust: boundaries.some((profile) => profile.rust),
+    java_kotlin: boundaries.some((profile) => profile.java_kotlin),
+    firebase: boundaries.some((profile) => profile.firebase),
+    supabase: boundaries.some((profile) => profile.supabase),
+    rest_openapi: boundaries.some((profile) => profile.rest_openapi),
     getx: boundaries.some((profile) => profile.getx),
     boundaries,
   };

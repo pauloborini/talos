@@ -3720,7 +3720,7 @@ function toolsList() {
       },
       {
         name: 'atlas_preflight',
-        description: 'Gate PREREQ+G10: hard-fail de pré-requisitos de determinismo (subagente/MCP do host, DEC-004), depois valida modo, versão e lock ativo, travando a rota da run. Output declara guarantee_level (enum full_pipeline|reduced_standalone).',
+        description: 'Gate PREREQ+G10: hard-fail de pré-requisitos de determinismo (subagente/MCP do host, DEC-004), depois valida modo, versão e lock ativo, travando a rota da run. Output declara guarantee_level só em modos com execução.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,

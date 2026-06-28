@@ -11,7 +11,7 @@ Servidor MCP do plugin Atlas Workflow v0.9.3.
 - `atlas_verify_artifact`: Gate G1; verifica se artefato obrigatório existe e é legível (`artifact_kind` opcional para banner correto).
 - `atlas_verify_template_conformance`: Gate TC; PRD/PLAN só avançam com template conforme e `pending_count: 0`.
 - `atlas_scan_prd`: Gate G5; escaneia PRD por padrões determinísticos de ambiguidade bloqueante.
-- `atlas_preflight`: Gate G10; valida modo, versão, lock ativo e mapa oficial de skills atlas-*.
+- `atlas_preflight`: Gate G10; valida modo, versão, lock ativo e mapa oficial de skills atlas-*; `guarantee_level` só aparece em modos com execução.
 - `atlas_lock_dispatch`: Gates G7/G8/G12; controla fase ativa, checkpoints de liveness do executor, ordem de dispatch e validator antes de review (`state_path_created` exige `state_path` legível).
 - `atlas_lock_validator`: Gate G4 sibling; um validator por vez, `dispatch_token` obrigatório, máximo de 2 attempts, repair obrigatório entre fail e retry, proof-of-work (challenge sha256 do boundary recomputado no complete; re-dispatch bounded → `challenge_exhausted`).
 - `atlas_assert_after_plan`: Gate G11; bloqueia encerramento prematuro do modo full após plano validado.
