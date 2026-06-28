@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.9.4 - 2026-06-27
+
+Tipo: **runtime** (sem breaking; `CAPABILITIES_SCHEMA_VERSION` segue **v5**, modos públicos `full`/`direct`/`execute`/`interview-only`/`audit` intactos). Endurecimento do modo `audit` e expansão dos perfis de stack das skills.
+
+Resumo: `/workflow audit --handoff` passa a emitir um plano **conforme ao `PLAN_TEMPLATE.md`** (passa no gate TC e é de fato consumível por `/workflow execute plan`), e os perfis de stack ganham 6 novas linguagens/plataformas detectáveis no validador frio e no baseline universal.
+
+Mudanças:
+- **Audit handoff TC-conforme** (`packages/skills/atlas-audit/SKILL.md`, replicado nos bundles) — a "Estrutura mínima" anterior (`Scope boundary`/`Non-goals`/`Stop conditions` + tasks soltas) era anunciada como consumível por `/workflow execute plan`/`atlas-plan-execute`, mas **falharia o gate TC** (`verifyPlanConformance` exige 8 seções nomeadas + linha `| **PRD** |` + ref a `BOUNDARY_PRD_PLAN.md` + tarefas `#### T01.`) e seria rejeitada pelo executor por substância ausente. Agora o `--handoff` escreve `.atlas/plans/PLAN_AUDIT_<slug>.md` espelhando o template canônico (cabeçalho com `| **PRD** | N/A — origem auditoria |` para declarar proveniência sem inventar PRD, `execution_mode: sequencial` que dispensa §7, §1–§6/§8 reancoradas em achados/regras locais, tasks `#### T01.` com `Referência ao achado: AUDIT-NNN — arquivo:linha`). Passo 5 do `atlas-workflow-orchestrator/SKILL.md` e `workflow.md` alinhados.
+- **6 novos perfis de stack** (`packages/skills/_shared/scripts/document_quality.mjs`, `_shared/references/stack-profiles.md`, `atlas-task-validator/SKILL.md`) — `go`, `rust`, `java_kotlin`, `firebase`, `supabase`, `rest_openapi`. Detecção determinística por manifests (`go.mod`, `Cargo.toml`, `pom.xml`/`build.gradle*`, `firebase.json`/`.firebaserc`, `openapi*`/`swagger*`), deps de `package.json`/`pubspec.yaml` reais e comandos declarados. Regra de perfil só ativa no boundary onde o sinal aparece; nada de finding fora do boundary.
+- **`audit`/`interview-only` sem `guarantee_level`** — descrição do `atlas_preflight` (`packages/mcp-server/server.js`, README) endurecida: o campo só aparece em modos com execução de código. Bate com a impl (`guaranteeLevelForMode('audit') → null`, campo omitido). Sem mudança de comportamento.
+
+Impacto:
+- Plano gerado por `audit --handoff` agora passa de fato pelo gate TC e entra em `/workflow execute plan` sem hard-fail — fecha promessa quebrada de consumibilidade.
+- Auditoria/validação cobrem stacks Go/Rust/Java-Kotlin/Firebase/Supabase/REST-OpenAPI sem regredir Flutter/Node/Python (perfis aditivos, gated por sinal real).
+
+Arquivos/artefatos:
+- `packages/skills/atlas-audit/SKILL.md`, `packages/skills/atlas-task-validator/SKILL.md`, `packages/skills/_shared/scripts/document_quality.mjs`, `packages/skills/_shared/references/stack-profiles.md`, `packages/orchestrator/skills/atlas-workflow-orchestrator/SKILL.md`, `packages/orchestrator/commands/workflow.md`, `packages/mcp-server/server.js` (+README) — replicados em `plugins/` e `hosts/{opencode,pi,zcode}/` via build; 4 `.plugin` + `SHA256SUMS` regenerados.
+
+Validação:
+- `build/check-consistency.mjs`: ok (cross-host sincronizado).
+- `build/tests/etapa3.test.mjs`: 11/11 (3 casos novos para os perfis adicionais).
+- `claude plugin validate ./ --strict`: passed.
+
 ## 0.9.3 - 2026-06-27
 
 Tipo: **adição de host tier-1** (sem breaking; `CAPABILITIES_SCHEMA_VERSION` segue **v5**, modos públicos intactos). Integração do ZCode como novo host suportado do pipeline.

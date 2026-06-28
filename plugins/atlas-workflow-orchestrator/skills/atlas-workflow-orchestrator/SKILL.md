@@ -38,7 +38,7 @@ Três modos **canônicos de execução** — `full`, `direct`, `execute` (PRD §
 
 - `--interview` — força entrevista de PRD mesmo sem ambiguidades detectadas
 - `--review` — executa slice-review ao final (senão é opcional)
-- `--handoff` — em `audit`, anexa plano Atlas-style derivado dos achados evidenciados; não executa
+- `--handoff` — em `audit`, escreve plano Atlas-style em `.atlas/plans/` derivado dos achados evidenciados; não executa
 - `--scope <descrição>` — em `audit`, restringe o boundary lógico dentro do target
 - `--help` — mostra sintaxe completa
 
@@ -61,7 +61,7 @@ Três modos **canônicos de execução** — `full`, `direct`, `execute` (PRD §
 → Reverifica o plano (artifact + TC), executa direto via plan_execute + validador frio. Não gera plano.
 
 /workflow audit "apps/mobile/lib/features/auth" --handoff
-→ Audita somente o target informado contra regras locais + stack detectada + Ponytail pass; gera relatório e handoff sem execução.
+→ Audita somente o target informado contra regras locais + stack detectada + Ponytail pass; gera relatório e `PLAN_AUDIT_*.md` sem execução.
 ```
 
 ---
@@ -244,13 +244,13 @@ Entrada: um **`PLAN_*.md` pronto**. Artefatos esperados: (plano já existe) → 
 
 ### Audit mode
 
-Entrada: um `target` auditável, com flags opcionais `--handoff` e `--scope <descrição>`. Artefatos esperados: relatório de auditoria em resposta; se `--handoff`, plano Atlas-style anexado ou salvo conforme instrução explícita do usuário/host. **Não há execução, `plan_execute`, validator, repair, review nem `guarantee_level`.**
+Entrada: um `target` auditável, com flags opcionais `--handoff` e `--scope <descrição>`. Artefatos esperados: relatório de auditoria em resposta; se `--handoff`, plano Atlas-style salvo em `.atlas/plans/PLAN_AUDIT_<slug>.md`. **Não há execução, `plan_execute`, validator, repair, review nem `guarantee_level`.**
 
 1. **Parse / target** — resolver target real em disco. Se o target não for localizável, parar com pedido objetivo de path/boundary.
 2. **Pré-flight leve** — `atlas_ping` → `atlas_capabilities` → `atlas_preflight(mode=audit)` para travar versão/família `atlas-*`. Não chamar `atlas_classify_input`: audit não roteia input para execução.
 3. **Invocar `atlas-audit` no fio principal** — carregar o `SKILL.md` real, auditar só o boundary informado, ler regras locais, detectar stack por manifests/configs/comandos reais, aplicar checklist universal e Ponytail pass final.
 4. **Output** — relatório com stack detectada, regras consultadas, boundary, achados P0/P1/P2/P3 com `arquivo:linha`, gaps por área e limitações.
-5. **Handoff opcional** — se `--handoff`, gerar plano Atlas-style derivado somente dos achados evidenciados, com `Scope boundary`, `Non-goals`, `Stop conditions`, tasks, aceite, validação e riscos. **Parar aqui. Não chamar executor automaticamente.**
+5. **Handoff opcional** — se `--handoff`, escrever `PLAN_AUDIT_*.md` **conforme ao `PLAN_TEMPLATE.md`** (cabeçalho com linha `| **PRD** | N/A — origem auditoria |`, ref a `BOUNDARY_PRD_PLAN.md`, §1–§6/§8, tasks `#### T01.`), derivado somente dos achados evidenciados — passa no gate TC e é consumível por `/workflow execute plan`. Reportar o path e **parar aqui. Não chamar executor automaticamente.**
 
 ---
 
@@ -357,7 +357,7 @@ Se `full` gerou `PLAN_*.md` mas não despachou `plan_execute`, o cabeçalho deve
 | `atlas-sprint-prd-generator` | sprint_id/indicação | `PRD_*.md`, decisions_found |
 | `atlas-prd-interview` | prd_path, ambiguities | `PRD_*.md` atualizado, decisions |
 | `atlas-plan-handoff` | prd_path | `PLAN_*.md` |
-| `atlas-audit` | target, flags (`--handoff`, `--scope`) | relatório de auditoria; plano opcional sem execução |
+| `atlas-audit` | target, flags (`--handoff`, `--scope`) | relatório de auditoria; `.atlas/plans/PLAN_AUDIT_*.md` opcional sem execução |
 | `atlas-plan-execute` | plan_path (`full` / `execute`) | diff de código, evidência, `state_path` |
 | `atlas-direct-execute` | prd_path/spec/task (`direct`) | diff de código, evidência, `state_path` |
 | `atlas-slice-review` | diff/output | review_feedback |

@@ -31,6 +31,7 @@ Exemplos:
 /workflow execute plan "/path/PLAN_S05.md"
 /workflow interview-only brainstorm "que tal dark mode?"
 /workflow audit apps/mobile/lib/features/auth --handoff
+→ Gera relatório e `.atlas/plans/PLAN_AUDIT_*.md`; não executa correções
 ```
 
 Não improvise comportamento fora do `SKILL.md`. **Pipeline é fire-and-continue**: uma vez iniciado, avança fase a fase sem pedir permissão entre gates; só para em gate duro `blocked` ou blockage de ambiente real (ver "Princípio de continuação automática"). Nunca invente "Modo Discussão" ou peça "quer que eu gere/continue?". Decisão em aberto não para — dispara entrevista, propaga e segue. Em caso de erro real, siga "Error handling".

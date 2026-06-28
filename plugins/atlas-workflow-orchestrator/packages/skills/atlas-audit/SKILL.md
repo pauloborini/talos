@@ -27,7 +27,7 @@ Auditoria universal, framework-agnóstica. Esta skill lê o repositório real, a
 - Não migrar lógica especialista de Flutter/Dart para o core universal.
 - Adapters por stack/backend são opcionais; fallback universal deve funcionar.
 - Não inventar comandos de validação: usar apenas manifests/configs/scripts reais.
-- `--handoff` gera artefato de plano, mas não chama executor.
+- `--handoff` gera artefato de plano em `.atlas/plans/`, mas não chama executor.
 
 ## Fluxo obrigatório
 
@@ -129,31 +129,73 @@ Se zero achados, diga explicitamente `Nenhum achado P0/P1/P2/P3 com evidência s
 
 ## `--handoff`
 
-Quando `--handoff` estiver presente, anexar um plano Atlas-style consumível depois por `/workflow execute plan <PLAN_*.md>` ou por uso standalone de `atlas-plan-execute`. O plano só pode conter tasks derivadas dos achados evidenciados.
+Quando `--handoff` estiver presente, escrever em `.atlas/plans/PLAN_AUDIT_<slug>.md` um plano **conforme ao `PLAN_TEMPLATE.md` canônico** (resolver em `<raiz-do-plugin>/packages/templates/`), para que passe no gate TC (`atlas_verify_template_conformance`) e seja consumível por `/workflow execute plan <path>` ou por `atlas-plan-execute`. O plano só pode conter tasks derivadas dos achados evidenciados. Se a escrita falhar, reportar bloqueio e não fingir que há handoff executável.
 
-Metadados obrigatórios:
+A auditoria **não tem PRD**: a fonte de verdade é o relatório de auditoria + achados + regras locais reais. O plano espelha o template, mas reancorado na auditoria — **sem inventar decisões `D*` nem referências PRD inexistentes**.
+
+### Cabeçalho obrigatório (gate TC)
+
+O gate TC exige literalmente a linha `| **PRD** |`, referência a `BOUNDARY_PRD_PLAN.md` e tarefas `#### T01.`. Em `execution_mode: sequencial`, a §7 Slices é dispensável.
 
 ```md
+# PLAN AUDIT — <target> (correção de auditoria)
+
+| Campo | Valor |
+|-------|-------|
+| **PRD** | N/A — origem auditoria; ver **Source audit** abaixo |
+| **Package / app** | `<boundary auditado>` |
+| **Tipo** | `audit-fix` |
+| **execution_mode** | `sequencial (T01→TN)` |
+| **Data** | <YYYY-MM-DD> |
+
+**Escopo técnico:** boundary da auditoria. **Fora:** <o que ficou fora do target/scope>.
+
+Política: [BOUNDARY_PRD_PLAN.md](./BOUNDARY_PRD_PLAN.md).
+
 ## Metadados de execução
 - Plan prefix: `atlas`
-- Execution mode: `sequencial (T01→TN)` | `orchestrated-per-slice`
+- Execution mode: `sequencial (T01→TN)`
 - Executor skill: `atlas-plan-execute`
 - Internal validator: `atlas-task-validator`
 - Source audit: `<título/path/data do relatório>`
 ```
 
-Estrutura mínima:
+> `N/A — origem auditoria` satisfaz o regex do TC declarando a proveniência sem inventar PRD.
 
-- `Scope boundary`
-- `Non-goals`
-- `Stop conditions`
-- Tasks `T01..TN` com objetivo, referência ao achado, mudança esperada, invariantes, não mudar, dependências, riscos, done e validação local.
-- `Checklist validator`
+### Seções obrigatórias (§1–§6, §8)
 
-Regras do handoff:
+Sem PRD, as âncoras "derivados do PRD" do template passam a apontar para achados/regras locais:
+
+- **§1 Tradução executiva** — 1 parágrafo do que será corrigido + resultado observável; referência ao relatório de auditoria.
+- **§2 Invariantes de execução** — invariantes derivados das regras locais reais e do boundary (não de `D*`).
+- **§3 Pitfalls** — anti-padrões evidenciados na auditoria → correção canônica.
+- **§4 Estado na abertura da sprint** — 3–6 bullets do que está quebrado hoje, ancorados nos achados.
+- **§5 Tarefas de execução** — `#### T01.`…`#### TNN.`, uma por achado evidenciado (schema abaixo).
+- **§6 Contratos técnicos** — só se a auditoria revelou contrato/dados/schema afetado; senão `Não aplicável`.
+- **§8 Validação e checklist (validator)** — comandos reais detectados (manifests/scripts) + checkboxes derivados dos achados. Nunca inventar `flutter`/`npm`/`pytest`.
+
+### Schema de cada task (§5)
+
+```md
+#### T01. <correção curta>
+- **Objetivo:** <resultado observável>
+- **Referência ao achado:** `AUDIT-NNN` — `arquivo:linha`
+- **Mudança esperada:** <o que muda concretamente>
+- **Invariantes preservados:** <§2 / regra local>
+- **Não mudar:** <…>
+- **Dependências:** <nenhuma | T0X>
+- **Riscos:** <se relevante>
+- **Critério de done:** <sinal objetivo>
+- **Validação local:**
+  ```bash
+  cd <package> && <comando real>
+  ```
+```
+
+### Regras do handoff
 
 - Incluir apenas validações derivadas de manifests/configs reais.
 - Não usar task vaga como "refatorar geral".
-- Não incluir achado sem `arquivo:linha`.
+- Não incluir achado sem `arquivo:linha`; toda task aponta para um `AUDIT-NNN`.
 - Não chamar executor automaticamente.
-
+- Reportar o path final do plano e deixar claro que ele não foi executado.

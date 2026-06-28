@@ -102,6 +102,12 @@ Ative regras específicas somente quando o perfil retornar `true`:
 - `flutter_dart`: lifecycle Flutter, rotas/args, null-safety/casts, l10n, analyze/test; GetX somente se dependência/import/regra real confirmar GetX.
 - `node_typescript`: handles/promises, validação runtime, ESM/CJS/exports/tipos e scripts Node reais.
 - `python`: context managers/cleanup, exceções/async, typing/parsing e ferramentas Python declaradas.
+- `go`: context/cancelamento, goroutines, erros retornados, data race e comandos Go declarados.
+- `rust`: `Result`/`Option`, ownership/lifetime, unwrap em fronteiras recuperáveis e comandos Cargo declarados.
+- `java_kotlin`: nullability, exceptions, resource cleanup, threads/coroutines e Maven/Gradle declarados.
+- `firebase`: rules/claims/authz, paths/ownership, listeners e emuladores/checks declarados.
+- `supabase`: RLS/auth claims, schema/migrations, RPC/Edge Functions, storage policies e checks declarados.
+- `rest_openapi`: request/response, status codes, paginação, erros, idempotência e contrato OpenAPI quando presente.
 
 Monorepo pode ativar múltiplos perfis, sempre restritos ao boundary correspondente. Fixture Node sem sinal Flutter não recebe regra Flutter/GetX.
 

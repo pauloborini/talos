@@ -222,9 +222,15 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `atlas-*` para o
 
 ---
 
-**Plugin version:** 0.9.3
+**Plugin version:** 0.9.4
 **Author:** Paulo Borini
-**Last updated:** 2026-06-16
+**Last updated:** 2026-06-27
+
+### Novidades v0.9.4 — audit handoff TC-conforme + perfis de stack
+
+- `/workflow audit --handoff` passa a escrever `.atlas/plans/PLAN_AUDIT_<slug>.md` **conforme ao `PLAN_TEMPLATE.md`** (cabeçalho com `| **PRD** | N/A — origem auditoria |`, ref a `BOUNDARY_PRD_PLAN.md`, §1–§6/§8, tasks `#### T01.`): passa no gate TC e é de fato consumível por `/workflow execute plan`. Fecha a promessa quebrada da estrutura ad-hoc anterior, que falharia o gate.
+- Perfis de stack ganham 6 linhas detectáveis — `go`, `rust`, `java_kotlin`, `firebase`, `supabase`, `rest_openapi` — no baseline universal e no validador frio, ativadas só por manifests/deps/comandos reais no boundary.
+- `audit`/`interview-only` não declaram `guarantee_level` (não há execução a garantir); descrição do `atlas_preflight` endurecida para refletir a impl.
 
 ### Novidades v0.8.4 — liveness do executor (Gate G12)
 

@@ -1,8 +1,8 @@
 # Atlas Workflow
 
-Plugin **Atlas Workflow Orchestrator** v0.9.3 — pipeline determinístico (PRD → plano → execução → validação) com skills `atlas-*`, templates e MCP. Um pacote, sete hosts: **Claude Code**, **Cursor**, **Codex App**, **Antigravity (Gemini)**, **ZCode**, **OpenCode** e **Pi CLI**.
+Plugin **Atlas Workflow Orchestrator** v0.9.4 — pipeline determinístico (PRD → plano → execução → validação) com skills `atlas-*`, templates e MCP. Um pacote, sete hosts: **Claude Code**, **Cursor**, **Codex App**, **Antigravity (Gemini)**, **ZCode**, **OpenCode** e **Pi CLI**.
 
-**Versão:** [`VERSION`](VERSION) (`0.9.3`) · **Repo:** https://github.com/pauloborini/atlas-workflow
+**Versão:** [`VERSION`](VERSION) (`0.9.4`) · **Repo:** https://github.com/pauloborini/atlas-workflow
 
 ## Hosts
 
@@ -112,7 +112,7 @@ Comando (Claude Code / Cursor): `/workflow <mode> <input-type> [input] [flags]`
 
 No Codex, opencode, pi e zcode, invoque a skill do orquestrador com o mesmo padrão de argumentos (ex.: `workflow full backlog-item S05`). O verbo de dispatch do subagente é resolvido por `atlas_capabilities` (host-agnóstico).
 
-Se você quiser começar fora do fluxo principal, as skills listadas abaixo são os atalhos explícitos para backlog, PRD, plano, execução e revisão.
+Se você quiser começar fora do fluxo principal, as skills listadas abaixo são os atalhos explícitos para backlog, PRD, auditoria, plano, execução e revisão.
 
 ### Modos
 
@@ -122,8 +122,9 @@ Se você quiser começar fora do fluxo principal, as skills listadas abaixo são
 | **`direct`** | PRD já existe e está maduro | Valida PRD → entrevista só se houver gap → **executa direto** (sem fase de plan handoff) → review opcional |
 | **`execute`** | Já tenho um `PLAN_*.md` pronto | Reverifica o plano (artefato + conformidade) → **executa o plano existente** → review opcional. **Não regera plano.** |
 | `interview-only` | Só fechar decisões / brainstorm | Entrevista; não implementa |
+| **`audit`** | Quero diagnóstico sem patch | Audita target/boundary contra regras locais + stack detectada + Ponytail pass; `--handoff` grava `.atlas/plans/PLAN_AUDIT_*.md` sem executar |
 
-**Dica:** `full` = “quero PRD + plano + código”. `direct` = “já tenho PRD aprovado, implementa”. `execute` = “já tenho o plano, só executa”.
+**Dica:** `full` = “quero PRD + plano + código”. `direct` = “já tenho PRD aprovado, implementa”. `execute` = “já tenho o plano, só executa”. `audit` = “diagnostica, não corrige”.
 
 > **Roteamento por tipo de input (v0.4.1+):** o tipo do arquivo que você passa **prevalece** sobre o modo digitado. Apontar um `PLAN_*.md` em `direct`/`full` (mesmo renomeado) auto-roteia para `execute` com um aviso de uma linha — nunca gera “plano de plano”. Pedir `execute` sobre um backlog/PRD roteia de volta para `full`/`direct`.
 
@@ -133,6 +134,7 @@ Se você quiser começar fora do fluxo principal, as skills listadas abaixo são
 - `idea` — indicação curta em texto
 - `prd` — caminho para `PRD_*.md` existente (principal em **`direct`**)
 - `plan` — caminho para `PLAN_*.md` existente (principal em **`execute`**)
+- `target` — arquivo/diretório/feature/módulo auditável (só em **`audit`**)
 - `brainstorm` — texto livre (só com `interview-only`)
 
 ### Flags
@@ -189,7 +191,9 @@ Só alinhar decisões antes de planejar:
 
 ### Skills da cadeia
 
-Cadeia automática: `atlas-sprint-prd-generator` → `atlas-prd-interview` → `atlas-plan-handoff` → `atlas-plan-execute` (full) ou `atlas-direct-execute` (direct) → `atlas-task-validator` → `atlas-findings-repair` (só após `fail`, em qualquer host) → `atlas-slice-review` (opcional)
+Cadeia automática de execução: `atlas-sprint-prd-generator` → `atlas-prd-interview` → `atlas-plan-handoff` → `atlas-plan-execute` (full) ou `atlas-direct-execute` (direct) → `atlas-task-validator` → `atlas-findings-repair` (só após `fail`, em qualquer host) → `atlas-slice-review` (opcional)
+
+Modo sem execução: `atlas-audit` roda no fio principal, não altera código, não chama executor e pode gravar handoff Atlas-style em `.atlas/plans/` com `--handoff`.
 
 No modo `full`, as etapas documentais (`PRD`, entrevista, `PLAN_*.md`) ficam no agente principal/orquestrador. O primeiro sub-agent obrigatório nasce só na fase de execução (`atlas-plan-execute`).
 
@@ -200,6 +204,7 @@ Além da cadeia automática, estas skills também podem ser chamadas diretamente
 - `atlas-backlog-generator` — cria `BACKLOG_MESTRE_*.md` a partir de uma conversa, briefing, roadmap ou lista solta de requisitos. Use quando o objetivo for organizar demanda antes de virar PRD.
 - `atlas-sprint-prd-generator` — transforma um sprint ID como `S01`/`S02` em PRD de sprint. Use quando o escopo já está amarrado ao roadmap e você quer o PRD da rodada.
 - `atlas-prd-interview` — valida e amadurece um PRD antes de planejar. Use quando você quer fechar ambiguidades, dependências ou decisões de produto.
+- `atlas-audit` — audita um target sem corrigir código. Use quando você quer achados com evidência `arquivo:linha` e, opcionalmente, handoff para correção posterior.
 - `atlas-plan-handoff` — converte um PRD validado em plano executável. Use quando a intenção é preparar a execução, não ainda codar.
 - `atlas-direct-execute` — executa diretamente quando o PRD já está maduro. Use quando você quer pular a fase de plan handoff.
 - `atlas-task-validator` — faz a validação fria da slice executada. Use como veredito final de conformidade, nunca como ação manual de rotina.

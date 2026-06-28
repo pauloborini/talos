@@ -38,15 +38,45 @@ test('perfis: Flutter, Node e Python ativam só regras aplicáveis', () => {
     for (const [file, content] of Object.entries(files)) fs.writeFileSync(path.join(dir, file), content);
     return detectStackProfiles(dir, commands);
   };
-  assert.deepEqual(fixture('node', { 'package.json': '{"scripts":{"test":"node --test"}}' }).boundaries[0], {
-    boundary: '.', universal: true, flutter_dart: false, node_typescript: true, python: false, getx: false,
+  assert.deepEqual(pickProfile(fixture('node', { 'package.json': '{"scripts":{"test":"node --test"}}' }).boundaries[0]), {
+    boundary: '.', flutter_dart: false, node_typescript: true, python: false, go: false, rust: false, java_kotlin: false,
+    firebase: false, supabase: false, rest_openapi: false, getx: false,
   });
-  assert.deepEqual(fixture('flutter', { 'pubspec.yaml': 'name: fixture\ndependencies:\n  flutter:\n    sdk: flutter\n' }).boundaries[0], {
-    boundary: '.', universal: true, flutter_dart: true, node_typescript: false, python: false, getx: false,
+  assert.deepEqual(pickProfile(fixture('flutter', { 'pubspec.yaml': 'name: fixture\ndependencies:\n  flutter:\n    sdk: flutter\n' }).boundaries[0]), {
+    boundary: '.', flutter_dart: true, node_typescript: false, python: false, go: false, rust: false, java_kotlin: false,
+    firebase: false, supabase: false, rest_openapi: false, getx: false,
   });
-  assert.deepEqual(fixture('python', { 'pyproject.toml': '[project]\nname="fixture"\n' }).boundaries[0], {
-    boundary: '.', universal: true, flutter_dart: false, node_typescript: false, python: true, getx: false,
+  assert.deepEqual(pickProfile(fixture('python', { 'pyproject.toml': '[project]\nname="fixture"\n' }).boundaries[0]), {
+    boundary: '.', flutter_dart: false, node_typescript: false, python: true, go: false, rust: false, java_kotlin: false,
+    firebase: false, supabase: false, rest_openapi: false, getx: false,
   });
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+function pickProfile(profile) {
+  const {
+    boundary, flutter_dart, node_typescript, python, go, rust, java_kotlin,
+    firebase, supabase, rest_openapi, getx,
+  } = profile;
+  return {
+    boundary, flutter_dart, node_typescript, python, go, rust, java_kotlin,
+    firebase, supabase, rest_openapi, getx,
+  };
+}
+
+test('perfis: Go, Rust, Java/Kotlin, Firebase, Supabase e REST/OpenAPI são detectáveis', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-stack-extra-'));
+  const fixture = (name, files) => {
+    const dir = path.join(root, name); fs.mkdirSync(dir);
+    for (const [file, content] of Object.entries(files)) fs.writeFileSync(path.join(dir, file), content);
+    return detectStackProfiles(dir).boundaries[0];
+  };
+  assert.equal(fixture('go', { 'go.mod': 'module example.com/app\n' }).go, true);
+  assert.equal(fixture('rust', { 'Cargo.toml': '[package]\nname="app"\n' }).rust, true);
+  assert.equal(fixture('java', { 'pom.xml': '<project><dependencies></dependencies></project>\n' }).java_kotlin, true);
+  assert.equal(fixture('firebase', { 'firebase.json': '{"firestore":{}}\n' }).firebase, true);
+  assert.equal(fixture('supabase', { 'package.json': '{"dependencies":{"@supabase/supabase-js":"latest"}}\n' }).supabase, true);
+  assert.equal(fixture('openapi', { 'openapi.yaml': 'openapi: 3.0.0\ninfo:\n  title: API\n  version: 1\n' }).rest_openapi, true);
   fs.rmSync(root, { recursive: true, force: true });
 });
 
