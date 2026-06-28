@@ -11,6 +11,28 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const errors = [];
 
+// Guard de bit +x: scripts .sh em build/ precisam ser executáveis quando invocados
+// diretamente (./script.sh). actions/checkout@v4 em Linux respeita o file mode do
+// index do git, então se um chmod local não for commitado o runner chega sem +x e
+// o shell retorna exit 126 (permission denied) sem mensagem útil. Workflows já
+// invocam via `bash` explícito (imune), mas devs e o test-all.sh chamam diretamente
+// — falha aqui vira erro legível em vez de 126. Só checa .sh: os .mjs são invocados
+// via `node`, que não depende do bit +x.
+const buildDir = path.join(ROOT, 'build');
+if (fs.existsSync(buildDir)) {
+  for (const f of fs.readdirSync(buildDir)) {
+    if (!f.endsWith('.sh')) continue;
+    const abs = path.join(buildDir, f);
+    try {
+      fs.accessSync(abs, fs.constants.X_OK);
+    } catch {
+      errors.push(
+        `+x ausente: build/${f} (rode 'chmod +x build/${f}' e commite o file mode — git update-index --chmod=+x build/${f})`
+      );
+    }
+  }
+}
+
 function read(rel) {
   const p = path.join(ROOT, rel);
   if (!fs.existsSync(p)) { errors.push(`ausente: ${rel}`); return null; }

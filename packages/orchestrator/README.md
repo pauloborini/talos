@@ -268,3 +268,10 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `atlas-*` para o
 - Os únicos sub-agents do pipeline são `atlas-plan-execute`/`atlas-direct-execute`, `atlas-task-validator`, `atlas-findings-repair` e `atlas-slice-review`.
 - A topologia é **sibling** em todos os hosts: o orquestrador coordena o validator irmão a partir do `state_path` retornado pelo executor e só reabre execução em `fail`. Host sem join síncrono é rejeitado no preflight (gate JOIN).
 - `atlas_preflight`/dispatchability distinguem skills documentais de skills executoras, evitando exigir sub-agent para entrevista/plano.
+
+### Novidades v0.9.3 — ZCode como novo host (tier-1)
+
+- **Novo host: ZCode** (Claude Agent SDK compat). Entrada `zcode` em `HOST_ADAPTERS` (`packages/mcp-server/server.js`) com perfil `self_evident` — `Agent(subagent_type)` + `TodoWrite` + MCP stdio + skills nativas, clone estrutural do Claude Code. Detector `ZCODE_PLUGIN_ROOT` em `HOST_DETECTORS`. `validator_dispatch.join.sync: 'self_evident'`, `confidence: 'presumed'`.
+- ZCode reusa o agente canônico `agents/<name>.md` no plugin root (mesmo formato Claude); sem gerador próprio, sem custo de manutenção a cada nova skill/agent.
+- Installer `init zcode` (cache-based, análogo ao `init antigravity`): copia catálogo `hosts/zcode/` para `~/.zcode/cli/plugins/cache/zcode-plugins-official/atlas-workflow-orchestrator/<version>/` e atualiza o `marketplace.json` cache. Ativação no app via `/plugins enable atlas-workflow-orchestrator`. **Sem dependências externas** (não exige `pi-mcp-adapter`/etc. — passa no preflight direto).
+- Sete hosts suportados: `claude`, `codex`, `opencode`, `pi`, `antigravity`, `zcode`, `generic`. `CAPABILITIES_SCHEMA_VERSION` segue **v5** (adição aditiva, sem breaking). Smoke real no host ZCode confirma `host=zcode sv=5 join.sync=self_evident ping=alive version=0.9.3`.

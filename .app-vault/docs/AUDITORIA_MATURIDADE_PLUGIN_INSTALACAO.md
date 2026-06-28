@@ -13,6 +13,7 @@ Evidencia real nova obtida nesta data (Windows, dentro do repo):
 
 - **opencode real (Windows):** `atlas_ping` -> alive, v0.4.0, stdio, 9 capabilities; `atlas_capabilities(host=opencode)` -> host detectado, schema v2, flags corretas. Prova **boot do MCP + leitura de capabilities** no opencode real. (Ainda **nao** provado: descoberta/dispatch de agente e skills.)
 - **pi real (Windows):** `atlas_ping` respondeu via tools **prefixadas** `atlas_workflow_*` -> prova o **`pi-mcp-adapter` vivo e proxiando**; `atlas_capabilities` retornou `host: pi` via `detected_via: env:ATLAS_HOST` -> deteccao deterministica confirmada no pi real. (Ainda **nao** provado: `pi-subagents` / dispatch de subagente.)
+- **ZCode real (macOS, v0.9.3):** `atlas_ping` -> alive, v0.9.3, stdio, 11 capabilities; `atlas_capabilities(host=zcode)` -> host detectado, `detected_via: env:ZCODE_PLUGIN_ROOT`, `schema_version: 5`, `validator_dispatch.join.sync: self_evident` (Claude Agent SDK — `Agent(subagent_type)` bloqueante). Prova **boot do MCP + leitura de capabilities + tier-1 self_evident** no ZCode real. App ZCode descobre o plugin via `/plugins enable atlas-workflow-orchestrator` (cache oficial `zcode-plugins-official/`). Sem dependências externas; detector `ZCODE_PLUGIN_ROOT` é hardcoded como `G2="zcode-plugins-official"` no bundle `zcode.cjs`.
 - **Windows (parcial):** os dois smokes acima rodaram em Windows (`state_dir: .atlas\state`) -> primeira evidencia real do **runtime MCP** funcionando no Windows. (Ainda **nao** provado no Windows: caminho do instalador `npx`, claude/codex, install/uninstall.)
 
 Correcao de capability aplicada e verificada no host real:
@@ -34,7 +35,7 @@ O plugin evoluiu bem:
 - instalador unico `npx github:pauloborini/atlas-workflow init <host>` existe;
 - uninstall existe;
 - opencode/pi tem modo por-projeto e global;
-- MCP detecta `claude`, `codex`, `opencode`, `pi`, `generic`;
+- MCP detecta `claude`, `codex`, `opencode`, `pi`, `zcode`, `generic`;
 - gates de determinismo estao cobertos por testes locais;
 - `build/test-all.sh` esta verde.
 

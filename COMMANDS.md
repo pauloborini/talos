@@ -22,6 +22,9 @@ npx github:pauloborini/atlas-workflow init antigravity
 npx github:pauloborini/atlas-workflow init opencode --global
 npx github:pauloborini/atlas-workflow init pi --global --yes
 
+# zcode — reinstalar pega runtime novo (mesmo comando do init; /plugins enable no host)
+npx github:pauloborini/atlas-workflow init zcode
+
 ```
 
 Smoke pós-update: `atlas_ping` → `version: 0.9.3`; `atlas_capabilities` → `schema_version: 5` (sibling-only).
@@ -40,6 +43,9 @@ npx github:pauloborini/atlas-workflow init codex
 
 # Antigravity (global por natureza)
 npx github:pauloborini/atlas-workflow init antigravity
+
+# ZCode (global por natureza — cache do host; ativar via /plugins enable atlas-workflow-orchestrator)
+npx github:pauloborini/atlas-workflow init zcode
 
 # opencode  — global (recomendado) ou por-projeto
 npx github:pauloborini/atlas-workflow init opencode --global

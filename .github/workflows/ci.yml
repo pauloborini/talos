@@ -22,9 +22,13 @@ jobs:
         with:
           node-version: "20"
 
+      # Invoca via `bash` explícito (não depende de bit +x do script). O
+      # actions/checkout@v4 em Linux respeita o file mode do index do git —
+      # se o +x não for commitado, o runner não tem permissão de executar o
+      # .sh e o shell retorna exit 126 antes de qualquer check rodar.
       - name: Build (gera bundles + catálogos + roda check-consistency no fim)
         shell: bash
-        run: build/build-plugins.sh
+        run: bash build/build-plugins.sh
 
       - name: Catálogos from-source sincronizados (sem diff nem untracked)
         shell: bash

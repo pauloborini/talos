@@ -76,9 +76,13 @@ jobs:
           node-version: "20"
           registry-url: "https://registry.npmjs.org"
 
+      # Invoca via `bash` explícito (não depende de bit +x do script). O
+      # actions/checkout@v4 em Linux respeita o file mode do index do git —
+      # se o +x não for commitado, o runner não tem permissão de executar o
+      # .sh e o shell retorna exit 126 antes de qualquer check rodar.
       - name: Build plugins (roda check-consistency no fim)
         shell: bash
-        run: build/build-plugins.sh
+        run: bash build/build-plugins.sh
 
       # Guards de qualidade antes de publicar (full-auto: main quebrada nunca
       # publica). Espelham o job multihost do ci.yml.

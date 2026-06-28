@@ -2743,6 +2743,33 @@ test('banner: verify_artifact com artifact_kind=prd ecoa banner de PRD; default 
   assert.equal(plan.banner, '▸ atlas: plano · validado (TC pass)', 'default (sem kind) preserva banner de plano');
 });
 
+test('verify_artifact: artifact_kind=json bloqueia JSON inválido e aprova JSON parseável', () => {
+  const root = tmpRoot();
+  const invalidPath = '.atlas/state/json-gate/validator-output.json';
+  const invalidAbs = path.join(root, invalidPath);
+  fs.mkdirSync(path.dirname(invalidAbs), { recursive: true });
+  fs.writeFileSync(invalidAbs, '{"msg":"\\$reason"}\n');
+
+  const invalid = verifyArtifact({
+    run_id: 'json-gate',
+    project_root: root,
+    artifact_path: invalidPath,
+    artifact_kind: 'json',
+  });
+  assert.equal(invalid.status, 'blocked');
+  assert.match(invalid.cause, /Invalid|escape|JSON/);
+
+  fs.writeFileSync(invalidAbs, JSON.stringify({ msg: '$reason' }, null, 2));
+  const valid = verifyArtifact({
+    run_id: 'json-gate',
+    project_root: root,
+    artifact_path: invalidPath,
+    artifact_kind: 'json',
+  });
+  assert.equal(valid.status, 'passed');
+  assert.equal(valid.parsed_type, 'object');
+});
+
 // P1.1 — proof-of-work do validador irmão. Setup: run com plan_execute ativo, um
 // state_path real apontando para files_changed com arquivo real no boundary.
 function setupValidatorRun(runId, files = {}) {
@@ -2796,6 +2823,48 @@ test('proof-of-work: complete com hash correto passa e marca challenge_verified'
   assert.equal(done.status, 'passed');
   assert.equal(done.validator_status, 'passed');
   assert.equal(done.challenge_verified, 'verified');
+});
+
+test('atlas_lock_validator: validator_output_path inválido bloqueia complete sem fechar slot', () => {
+  const runId = 'validator-json-output';
+  const { root, sliceRel } = setupValidatorRun(runId, { 'src/foo.js': 'export const x = 1;\n' });
+  const start = lockValidator({ run_id: runId, project_root: root, action: 'start', state_path: sliceRel });
+  const outputRel = `.atlas/state/${runId}/validator-output.json`;
+  const outputAbs = path.join(root, outputRel);
+  fs.mkdirSync(path.dirname(outputAbs), { recursive: true });
+  fs.writeFileSync(outputAbs, '{"observations":[{"msg":"\\$reason"}]}\n');
+
+  const blocked = lockValidator({
+    run_id: runId,
+    project_root: root,
+    action: 'complete',
+    state_path: sliceRel,
+    validator_run_id: start.validator_run_id,
+    dispatch_token: start.dispatch_token,
+    challenge_response: sha256File(root, start.challenge.file),
+    validator_output_path: outputRel,
+    verdict: 'pass',
+    data: { findings: [] },
+  });
+  assert.equal(blocked.status, 'blocked');
+  assert.equal(blocked.validator_status, 'invalid_validator_output_json');
+  assert.notEqual(readRunJson(root, runId).data.validator_cycle.active, null);
+
+  fs.writeFileSync(outputAbs, JSON.stringify({ verdict: 'pass', findings: [] }, null, 2));
+  const passed = lockValidator({
+    run_id: runId,
+    project_root: root,
+    action: 'complete',
+    state_path: sliceRel,
+    validator_run_id: start.validator_run_id,
+    dispatch_token: start.dispatch_token,
+    challenge_response: sha256File(root, start.challenge.file),
+    validator_output_path: outputRel,
+    verdict: 'pass',
+    data: { findings: [] },
+  });
+  assert.equal(passed.status, 'passed');
+  assert.equal(passed.validator_status, 'passed');
 });
 
 test('proof-of-work: complete aceita saída do shasum (hash + nome do arquivo)', () => {

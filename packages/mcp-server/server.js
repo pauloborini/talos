@@ -1160,6 +1160,16 @@ function runState(args = {}) {
   throw rpcError(-32602, `Ação inválida para atlas_run_state: ${action}`);
 }
 
+function validateJsonArtifactFile(absolutePath) {
+  try {
+    const content = fs.readFileSync(absolutePath, 'utf8');
+    const parsed = JSON.parse(content);
+    return { ok: true, parsed_type: Array.isArray(parsed) ? 'array' : typeof parsed };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+}
+
 function verifyArtifact(args = {}) {
   const runId = validateRunId(args.run_id);
   const artifactPath = requiredString(args, 'artifact_path');
@@ -1172,7 +1182,9 @@ function verifyArtifact(args = {}) {
   const artifactKind = optionalString(args, 'artifact_kind');
   const okBanner = artifactKind === 'prd'
     ? renderBanner('prd_ok', {})
-    : renderBanner('plano', {});
+    : artifactKind === 'json'
+      ? renderBanner('validacao', { status: 'json_ok' })
+      : renderBanner('plano', {});
   let result;
 
   try {
@@ -1189,15 +1201,43 @@ function verifyArtifact(args = {}) {
       };
     } else {
       fs.accessSync(absolutePath, fs.constants.R_OK);
-      result = {
-        gate: 'G1',
-        status: 'passed',
-        artifact_path: artifactPath,
-        bytes: stat.size,
-        timestamp,
-        banner: okBanner,
-        next_action: 'avançar',
-      };
+      if (artifactKind === 'json') {
+        const jsonCheck = validateJsonArtifactFile(absolutePath);
+        if (!jsonCheck.ok) {
+          result = {
+            gate: 'G1',
+            status: 'blocked',
+            artifact_path: artifactPath,
+            bytes: stat.size,
+            timestamp,
+            banner: renderBanner('preflight_fail', { motivo: `json inválido: ${artifactPath}` }),
+            error: `Artefato JSON inválido: ${artifactPath}`,
+            cause: jsonCheck.error,
+            next_action: 'corrigir_json_ou_regenerar_por_serializer',
+          };
+        } else {
+          result = {
+            gate: 'G1',
+            status: 'passed',
+            artifact_path: artifactPath,
+            bytes: stat.size,
+            parsed_type: jsonCheck.parsed_type,
+            timestamp,
+            banner: okBanner,
+            next_action: 'avançar',
+          };
+        }
+      } else {
+        result = {
+          gate: 'G1',
+          status: 'passed',
+          artifact_path: artifactPath,
+          bytes: stat.size,
+          timestamp,
+          banner: okBanner,
+          next_action: 'avançar',
+        };
+      }
     }
   } catch (error) {
     result = {
@@ -2764,6 +2804,7 @@ function validatorComplete(args, context) {
   // validator. Sem token não existe garantia anti-stale completa.
   const dispatchToken = optionalInteger(args, 'dispatch_token');
   const challengeResponse = optionalString(args, 'challenge_response');
+  const validatorOutputPath = optionalString(args, 'validator_output_path');
 
   if (!cycle.active) {
     // S10: slot já fechado. Distinguir retorno duplicado já aplicado (idempotente
@@ -2933,6 +2974,28 @@ function validatorComplete(args, context) {
     };
   }
   const challengeVerified = !cycle.active.challenge ? 'no_challenge' : 'verified';
+
+  if (validatorOutputPath) {
+    const outputPath = resolveConsumerPath(validatorOutputPath, args);
+    const jsonCheck = validateJsonArtifactFile(outputPath);
+    if (!jsonCheck.ok) {
+      return {
+        gate: 'G4',
+        action: 'complete',
+        status: 'blocked',
+        timestamp,
+        validator_attempt: cycle.active.attempt,
+        validator_run_id: activeValidatorRunId,
+        state_path: statePathValue,
+        validator_output_path: validatorOutputPath,
+        validator_status: 'invalid_validator_output_json',
+        error: `Output JSON do validator inválido: ${validatorOutputPath}`,
+        cause: jsonCheck.error,
+        impact: 'relatorio_do_validador_nao_e_parseavel_como_json_confiavel',
+        next_action: 'regenerar_validator_output_json_por_serializer_e_reenviar_complete',
+      };
+    }
+  }
 
   if (packetResult.violations.length > 0) {
     return {
@@ -3605,7 +3668,7 @@ function toolsList() {
             run_id: { type: 'string', minLength: 1 },
             project_root: { type: 'string', minLength: 1 },
             artifact_path: { type: 'string', minLength: 1 },
-            artifact_kind: { enum: ['prd', 'plan'] },
+            artifact_kind: { enum: ['prd', 'plan', 'json'] },
           },
         },
       },
@@ -3724,6 +3787,7 @@ function toolsList() {
             repair_run_id: { type: 'string' },
             dispatch_token: { type: 'integer' },
             challenge_response: { type: 'string' },
+            validator_output_path: { type: 'string' },
             verdict: { type: 'string', enum: ['pass', 'pass_with_observations', 'fail'] },
             data: { type: 'object', additionalProperties: true },
             host: { type: 'string', enum: HOST_NAMES },
