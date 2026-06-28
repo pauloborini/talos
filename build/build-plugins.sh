@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Atlas Workflow — build dos pacotes .plugin (Claude/Cursor + Codex).
-# Lê VERSION, monta bundle único (9 skills atlas-* + subagentes + orquestrador + templates), gera zips + checksums.
+# Lê VERSION, monta bundle único (10 skills atlas-* + subagentes + orquestrador + templates), gera zips + checksums.
 # Idempotente; sem Node/npm. Aborta com exit != 0 em qualquer entrada faltante.
 
 set -euo pipefail

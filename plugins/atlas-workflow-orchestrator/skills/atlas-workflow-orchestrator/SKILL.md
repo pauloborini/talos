@@ -1,6 +1,6 @@
 ---
 name: atlas-workflow-orchestrator
-description: "Orquestra pipeline completo de desenvolvimento de features: /workflow <mode> <input-type> [flags]. Automatiza PRD generation → validação → entrevista (se necessário) → planejamento → execução → review (opcional). Pipeline orientado a artefato com gates duros: cada fase só conta se produzir arquivo verificável em disco."
+description: "Orquestra pipeline completo de desenvolvimento de features: /workflow <mode> <input-type> [flags]. Automatiza PRD generation → validação → entrevista (se necessário) → planejamento → execução → review (opcional) e oferece audit universal sem correção. Pipeline orientado a artefato com gates duros: cada fase só conta se produzir arquivo verificável em disco."
 category: Development Automation
 ---
 
@@ -13,17 +13,18 @@ Orquestra pipelines de desenvolvimento de features no projeto Atlas, automatizan
 ## Sintaxe
 
 ```
-/workflow <mode> <input-type> [flags]
+/workflow <mode> <input-type|target> [flags]
 ```
 
 ### Modos
 
-Três modos **canônicos de execução** — `full`, `direct`, `execute` (PRD §5 D1) — mais o modo `interview-only`, que permanece **separado** (entrevista sem execução; PRD D2, não é colapsado em `full`).
+Três modos **canônicos de execução** — `full`, `direct`, `execute` (PRD §5 D1) — mais os modos sem execução `interview-only` e `audit`.
 
 - **`full`** — pipeline completo: PRD → validação → entrevista (se necessário) → **plano (artefato obrigatório)** → executor → review (opcional)
 - **`direct`** — pipeline enxuto: PRD → validação → entrevista (se necessário) → `atlas-direct-execute` → review (opcional). **Não produz plano de handoff** — a diferença real para `full` é exatamente essa.
 - **`execute`** — recebe um **`PLAN_*.md` pronto** e o executa **sem gerar plano** (PRD D1). Entrada = caminho de plano; reverifica o artefato + conformidade de template e despacha `plan_execute` direto. Não regera nem replaneja: ajustes de plano pedem `full`. `atlas_assert_after_plan` (gate pós-plano do `full`) **não se aplica** em `execute` — o plano já é o input; o equivalente é a reverificação na entrada (PRD D13). **Não há alias `plan`**: usar `plan` como modo é ambíguo com planejamento documental e deve ser rejeitado como modo inválido.
 - **`interview-only`** — entrevista direta (ex: brainstorm, resolução de decisões). Entrevista **sem execução**: não usa `guarantee_level` no fluxo (não há execução de código a garantir). Permanece modo separado (PRD D2).
+- **`audit`** — auditoria universal sem correção de código: lê target/boundary, regras locais e stack detectada; gera relatório de achados e, com `--handoff`, plano Atlas-style para correção futura. **Não executa plano, não chama executor e não altera código.**
 
 ### Input Types
 
@@ -31,11 +32,14 @@ Três modos **canônicos de execução** — `full`, `direct`, `execute` (PRD §
 - **`idea`** — Indicação/brainstorm curto
 - **`prd`** — Path para PRD existente ou nome do arquivo
 - **`brainstorm`** — Texto livre (só para `interview-only`)
+- **`target`** — Path/feature/módulo auditável (só para `audit`)
 
 ### Flags
 
 - `--interview` — força entrevista de PRD mesmo sem ambiguidades detectadas
 - `--review` — executa slice-review ao final (senão é opcional)
+- `--handoff` — em `audit`, anexa plano Atlas-style derivado dos achados evidenciados; não executa
+- `--scope <descrição>` — em `audit`, restringe o boundary lógico dentro do target
 - `--help` — mostra sintaxe completa
 
 ## Exemplos
@@ -55,6 +59,9 @@ Três modos **canônicos de execução** — `full`, `direct`, `execute` (PRD §
 
 /workflow execute plan "/path/to/PLAN_S05_login.md"
 → Reverifica o plano (artifact + TC), executa direto via plan_execute + validador frio. Não gera plano.
+
+/workflow audit "apps/mobile/lib/features/auth" --handoff
+→ Audita somente o target informado contra regras locais + stack detectada + Ponytail pass; gera relatório e handoff sem execução.
 ```
 
 ---
@@ -63,7 +70,7 @@ Três modos **canônicos de execução** — `full`, `direct`, `execute` (PRD §
 
 Executar **antes** de iniciar o pipeline. Se qualquer item falhar, **parar e reportar** — nunca emular.
 
-1. **Parse** dos argumentos `<mode> <input-type> [input] [flags]`. Se inválido ou `--help` → mostrar sintaxe e parar.
+1. **Parse** dos argumentos `<mode> <input-type|target> [input] [flags]`. Se inválido ou `--help` → mostrar sintaxe e parar. Em `audit`, o segundo argumento é `target`, não `input-type`.
 2. **Chamar MCP `atlas_ping`.** Se não responder, versão vier vazia, `version_check.status` vier bloqueado ou capacidades não listarem os gates exigidos pelo modo → abortar com erro de MCP indisponível/drift. Não seguir por prosa.
 2a. **Chamar MCP `atlas_capabilities`.** Ler `host`, `subagent_dispatch`, `validator_dispatch`, `capabilities_flags` e `required_deps`. Determinar a **disponibilidade real** dos pré-requisitos essenciais neste host: o subagente do plugin é despachável? o MCP está vivo (ping ok)? Em hosts com `required_deps` (ex.: pi: `pi-mcp-adapter` + `pi-subagents`), confirmar que cada dep está presente; se faltar, o pré-requisito correspondente é `false`.
 2b. **Chamar MCP `atlas_classify_input`** no input informado (`input_path`), **antes de rotear** (PRD D3/D6). `classify_input` é para **artefato em arquivo** (path em disco). A tool devolve `artifact_type` ∈ {`backlog`, `prd`, `plan`, `idea`, `unknown`} (verdade forte = TC de plano passa) e um `banner` de roteamento já pronto. **O tipo de input é fato e prevalece sobre o modo pedido** (intenção). Aplicar o roteamento:
@@ -90,7 +97,7 @@ Executar **antes** de iniciar o pipeline. Se qualquer item falhar, **parar e rep
    ```
 4. **Usar a cadeia única `atlas-*`.** Cliente (Claude Code, Cursor, Codex App, Antigravity, ZCode, OpenCode, Pi CLI) é host de execução, não família de skills. Não existe roteamento por cliente.
 5. **Carregar defaults do pacote do plugin** (`defaults/paths.md` e `references/subagent_dispatch.md`). Não exigir config na raiz do repositório usuário.
-6. **Verificar disponibilidade dos ids `atlas-*`.** Para cada skill exigida pelo modo, confirmar que o id exato é **invocável** no host. Para as skills de **execução/validação/review** (`plan_execute`, `direct_execute`, `task_validator`, `findings_repair`, `slice_review`), confirmar também que são **despacháveis pelo verbo nativo do host** — leia `atlas_capabilities.subagent_dispatch.mechanism` (não assuma "Agent tool"; no Codex é `spawn_agent(agent_type)`, no opencode `@<name>`, no pi `subagent({...})`, no ZCode e Claude é `Agent(subagent_type)`). No Codex, `$<skill>` é ativação in-context de skill e **não** conta como sub-agent isolado para execução. Para as skills **documentais** (`prd_generator`, `prd_interview`, `plan_handoff`), basta invocabilidade no fio principal; não exigir despachabilidade como sub-agent.
+6. **Verificar disponibilidade dos ids `atlas-*`.** Para cada skill exigida pelo modo, confirmar que o id exato é **invocável** no host. Para as skills de **execução/validação/review** (`plan_execute`, `direct_execute`, `task_validator`, `findings_repair`, `slice_review`), confirmar também que são **despacháveis pelo verbo nativo do host** — leia `atlas_capabilities.subagent_dispatch.mechanism` (não assuma "Agent tool"; no Codex é `spawn_agent(agent_type)`, no opencode `@<name>`, no pi `subagent({...})`, no ZCode e Claude é `Agent(subagent_type)`). No Codex, `$<skill>` é ativação in-context de skill e **não** conta como sub-agent isolado para execução. Para as skills **documentais/de leitura** (`prd_generator`, `prd_interview`, `plan_handoff`, `audit`), basta invocabilidade no fio principal; não exigir despachabilidade como sub-agent.
    - **Skill ausente é bloqueio** (Gate G10): não substitua por skill nativa, variante antiga ou prompt inline.
    - **Conflito plugin × skill nativa:** use somente o id exato retornado pelo preflight. Se o host não permitir comprovar que a skill vem do plugin esperado, aborte e peça remoção/desativação manual da nativa; não resolva por tentativa silenciosa.
    - **Nunca substituir por variante de executor** (Gate G10).
@@ -102,7 +109,7 @@ Executar **antes** de iniciar o pipeline. Se qualquer item falhar, **parar e rep
       Ação: instalar/ativar o plugin ou corrigir o pacote atlas-* disponível no host
    ```
    **PROIBIDO o fallback "implementação direta" / "contratos equivalentes inline".** Não existe caminho onde o orquestrador faz plano ou código no próprio fio. Emulação inline e fallback direto são a falha-raiz que esta skill proíbe — se não há sub-agent, **para**. (Gate G7.)
-8. **Rejeitar conflito de modo:** se o pedido tiver `full`/`direct` junto com "sem patch", "sem editar código", "planejamento apenas", "handoff only" ou equivalente, **pare antes de gerar artefatos**. `full` executa `atlas-plan-execute`; `direct` executa `atlas-direct-execute`; não existe interpretação plan-only implícita.
+8. **Rejeitar conflito de modo:** se o pedido tiver `full`/`direct` junto com "sem patch", "sem editar código", "planejamento apenas", "handoff only" ou equivalente, **pare antes de gerar artefatos**. `full` executa `atlas-plan-execute`; `direct` executa `atlas-direct-execute`; não existe interpretação plan-only implícita. Se o usuário quer diagnóstico sem patch, o modo correto é `audit`.
 9. **Declarar o plano de execução** (1 bloco curto): `run_id`, modo, **ids exatos de cada sub-agent**, sequência de fases, artefatos esperados e tools MCP que sustentarão cada gate. Só então iniciar a Fase 1.
 
 ---
@@ -113,7 +120,7 @@ O pipeline é **fire-and-continue**: uma vez iniciado, o orquestrador avança fa
 
 **Proibido (regressão, PRD §6):**
 - Pedir confirmação para avançar: "Quer que eu gere o PRD?", "posso seguir?", "continuo?", "devo despachar o executor?". A resposta é sempre sim — **execute**. Se a próxima fase tem artefato a produzir, produza.
-- Inventar modo fora do contrato. **Não existe "Modo Discussão", "modo análise", "dry-run"** ou similar. Os únicos modos são `full`/`direct`/`execute`/`interview-only`. Pedido em linguagem natural que nomeia um modo (ex.: "atlas full backlog s40") **executa esse modo** — não vira pergunta nem resumo passivo.
+- Inventar modo fora do contrato. **Não existe "Modo Discussão", "modo análise", "dry-run"** ou similar. Os únicos modos são `full`/`direct`/`execute`/`interview-only`/`audit`. Pedido em linguagem natural que nomeia um modo (ex.: "atlas full backlog s40") **executa esse modo** — não vira pergunta nem resumo passivo.
 - Parar por decisão em aberto. Decisão pendente de **qualquer fonte** (scan de PRD, entrevista, `PERGUNTAS_EM_ABERTO.md`, doc de discussão/decisões como `DISCUSSAO_*.md`, ou o próprio backlog) **não é blockage**: gera o PRD se ainda não existe, dispara `atlas-prd-interview` sobre ele, propaga e **continua**. Nunca oferecer "responda só: seguir com recomendação ou D=...". Ver "Decisão em aberto ≠ parada".
 
 **PRD ausente em `full`/`direct`** = o passo "Generate PRD" **gera o PRD automaticamente** (invoca o id resolvido para `prd_generator` / autoria documental no fio principal). Nunca perguntar "quer que eu gere?".
@@ -235,6 +242,16 @@ Entrada: um **`PLAN_*.md` pronto**. Artefatos esperados: (plano já existe) → 
 
 > `interview-only` é entrevista **sem execução**: não há fase `plan_execute` nem `guarantee_level` no fluxo (nada de código a garantir). A autoria do esboço é documental e livre.
 
+### Audit mode
+
+Entrada: um `target` auditável, com flags opcionais `--handoff` e `--scope <descrição>`. Artefatos esperados: relatório de auditoria em resposta; se `--handoff`, plano Atlas-style anexado ou salvo conforme instrução explícita do usuário/host. **Não há execução, `plan_execute`, validator, repair, review nem `guarantee_level`.**
+
+1. **Parse / target** — resolver target real em disco. Se o target não for localizável, parar com pedido objetivo de path/boundary.
+2. **Pré-flight leve** — `atlas_ping` → `atlas_capabilities` → `atlas_preflight(mode=audit)` para travar versão/família `atlas-*`. Não chamar `atlas_classify_input`: audit não roteia input para execução.
+3. **Invocar `atlas-audit` no fio principal** — carregar o `SKILL.md` real, auditar só o boundary informado, ler regras locais, detectar stack por manifests/configs/comandos reais, aplicar checklist universal e Ponytail pass final.
+4. **Output** — relatório com stack detectada, regras consultadas, boundary, achados P0/P1/P2/P3 com `arquivo:linha`, gaps por área e limitações.
+5. **Handoff opcional** — se `--handoff`, gerar plano Atlas-style derivado somente dos achados evidenciados, com `Scope boundary`, `Non-goals`, `Stop conditions`, tasks, aceite, validação e riscos. **Parar aqui. Não chamar executor automaticamente.**
+
 ---
 
 ## Validação automática de PRD
@@ -332,7 +349,7 @@ Se `full` gerou `PLAN_*.md` mas não despachou `plan_execute`, o cabeçalho deve
 
 ## Skills envolvidas
 
-`atlas-backlog-generator` aparece apenas para descoberta do catálogo: é **explicit-only** e nunca integra `full`/`direct`/`execute`/`interview-only`. A cadeia automática começa em PRD/input já fornecido.
+`atlas-backlog-generator` aparece apenas para descoberta do catálogo: é **explicit-only** e nunca integra `full`/`direct`/`execute`/`interview-only`/`audit`. A cadeia automática começa em PRD/input já fornecido.
 
 | Skill | Entrada | Saída (artefato) |
 |-------|---------|------------------|
@@ -340,6 +357,7 @@ Se `full` gerou `PLAN_*.md` mas não despachou `plan_execute`, o cabeçalho deve
 | `atlas-sprint-prd-generator` | sprint_id/indicação | `PRD_*.md`, decisions_found |
 | `atlas-prd-interview` | prd_path, ambiguities | `PRD_*.md` atualizado, decisions |
 | `atlas-plan-handoff` | prd_path | `PLAN_*.md` |
+| `atlas-audit` | target, flags (`--handoff`, `--scope`) | relatório de auditoria; plano opcional sem execução |
 | `atlas-plan-execute` | plan_path (`full` / `execute`) | diff de código, evidência, `state_path` |
 | `atlas-direct-execute` | prd_path/spec/task (`direct`) | diff de código, evidência, `state_path` |
 | `atlas-slice-review` | diff/output | review_feedback |

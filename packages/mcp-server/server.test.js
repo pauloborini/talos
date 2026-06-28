@@ -540,13 +540,15 @@ test('preflight: self_evident — codex/claude/opencode passam sem reportar join
 
 // ── Slice A: modo execute, classify_input, routing, guarantee_level ──────────
 
-test('WORKFLOW_CONFIG: modo execute presente; interview-only/interview_only mantidos (T01)', () => {
+test('WORKFLOW_CONFIG: modo execute presente; audit e interview-only/interview_only mantidos (T01)', () => {
   assert.ok(WORKFLOW_CONFIG.modes.includes('execute'));
   assert.ok(WORKFLOW_CONFIG.modes.includes('full'));
   assert.ok(WORKFLOW_CONFIG.modes.includes('direct'));
+  assert.ok(WORKFLOW_CONFIG.modes.includes('audit'));
   assert.ok(WORKFLOW_CONFIG.modes.includes('interview-only'));
   assert.ok(WORKFLOW_CONFIG.modes.includes('interview_only'));
   assert.ok(!WORKFLOW_CONFIG.modes.includes('plan'));
+  assert.equal(WORKFLOW_CONFIG.skills.audit, 'atlas-audit');
 });
 
 test('expectedNextPhase: execute → plan_execute sem regredir full/direct/interview (T02)', () => {
@@ -554,6 +556,7 @@ test('expectedNextPhase: execute → plan_execute sem regredir full/direct/inter
   assert.equal(expectedNextPhase({ mode: 'full' }, {}), 'plan_handoff');
   assert.equal(expectedNextPhase({ mode: 'direct' }, {}), 'plan_execute');
   assert.equal(expectedNextPhase({ mode: 'interview-only' }, {}), 'prd_interview');
+  assert.equal(expectedNextPhase({ mode: 'audit' }, {}), 'audit_report');
   // next_phase explícito do dispatch sempre prevalece
   assert.equal(expectedNextPhase({ mode: 'execute' }, { next_phase: 'slice_review' }), 'slice_review');
 });
@@ -563,6 +566,7 @@ test('matriz modo → executor preserva phase plan_execute compartilhada (Etapa 
   assert.equal(expectedExecutorSkill('execute'), 'atlas-plan-execute');
   assert.equal(expectedExecutorSkill('direct'), 'atlas-direct-execute');
   assert.equal(expectedExecutorSkill('interview-only'), null);
+  assert.equal(expectedExecutorSkill('audit'), null);
   for (const mode of ['direct', 'execute']) {
     assert.equal(expectedNextPhase({ mode }, {}), 'plan_execute');
   }
@@ -639,7 +643,22 @@ test('guaranteeLevelForMode: execute/full/direct = full_pipeline (T04)', () => {
 test('guaranteeLevelForMode: modos sem execução (interview) → null (campo omitido)', () => {
   assert.equal(guaranteeLevelForMode('interview-only'), null);
   assert.equal(guaranteeLevelForMode('interview_only'), null);
+  assert.equal(guaranteeLevelForMode('audit'), null);
   assert.equal(guaranteeLevelForMode('desconhecido'), null);
+});
+
+test('atlas_preflight: audit passa sem executor/guarantee_level e expõe atlas-audit', () => {
+  const result = preflight({
+    run_id: 'route-audit',
+    project_root: tmpRoot(),
+    mode: 'audit',
+    host: 'codex',
+  });
+  assert.equal(result.status, 'passed');
+  assert.equal(result.routing.executor_skill, undefined);
+  assert.equal(result.routing.guarantee_level, undefined);
+  assert.equal(result.routing.skills.audit, 'atlas-audit');
+  assert.equal(expectedNextPhase(result.routing, {}), 'audit_report');
 });
 
 // Fixture de plano conforme o template canônico (verifyPlanConformance → 0 pendências).

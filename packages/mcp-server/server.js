@@ -64,11 +64,12 @@ const WORKFLOW_CONFIG = {
     plan_handoff: 'atlas-plan-handoff',
     plan_execute: 'atlas-plan-execute',
     direct_execute: 'atlas-direct-execute',
+    audit: 'atlas-audit',
     findings_repair: 'atlas-findings-repair',
     slice_review: 'atlas-slice-review',
     task_validator: 'atlas-task-validator',
   },
-  modes: ['full', 'direct', 'execute', 'interview-only', 'interview_only'],
+  modes: ['full', 'direct', 'execute', 'interview-only', 'interview_only', 'audit'],
 };
 
 const VALIDATOR_MAX_ATTEMPTS = 2;
@@ -104,7 +105,7 @@ function repairRunId(runId, attempt, timestamp) {
 // pipelines completas (full/direct/execute) declaram full_pipeline; uso avulso
 // documental/leitura declara reduced_standalone (fora do escopo desta camada).
 // Data-driven: rota → nível, sem ramo solto. Modos sem execução de código
-// (interview-only) NÃO declaram guarantee_level (não há execução a garantir):
+// (interview-only/audit) NÃO declaram guarantee_level (não há execução a garantir):
 // guaranteeLevelForMode devolve null e o campo é OMITIDO do output (PRD D2/D12).
 const GUARANTEE_LEVELS = ['full_pipeline', 'reduced_standalone'];
 const MODE_GUARANTEE_LEVEL = {
@@ -1859,6 +1860,7 @@ function expectedNextPhase(routing, dispatch) {
   if (routing.mode === 'full') return 'plan_handoff';
   if (routing.mode === 'direct') return 'plan_execute';
   if (routing.mode === 'execute') return 'plan_execute';
+  if (routing.mode === 'audit') return 'audit_report';
   return 'prd_interview';
 }
 

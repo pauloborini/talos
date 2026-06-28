@@ -59,10 +59,11 @@ npx github:pauloborini/atlas-workflow init pi --yes
 ## Desinstalar
 
 ```bash
-# Claude Code / Cursor / Codex / Antigravity (sempre globais)
+# Claude Code / Cursor / Codex / Antigravity / ZCode (sempre globais)
 npx github:pauloborini/atlas-workflow uninstall claudecode   
 npx github:pauloborini/atlas-workflow uninstall codex
 npx github:pauloborini/atlas-workflow uninstall antigravity
+npx github:pauloborini/atlas-workflow uninstall zcode
 
 # opencode / pi — desinstalação global (recomendado)
 npx github:pauloborini/atlas-workflow uninstall opencode --global
@@ -96,6 +97,7 @@ Remove **só** os artefatos do Atlas. Preserva config, skills e outros MCP serve
 | claude/cursor | registro da CLI (`claude plugin`) | — |
 | codex | registro da CLI (`codex plugin`) | — |
 | antigravity | `~/.gemini/config/` | `mcp_config.json` |
+| zcode | `~/.zcode/cli/plugins/cache/zcode-plugins-official/atlas-workflow-orchestrator/<version>/` | `.zcode-plugin/plugin.json` (MCP via `${ZCODE_PLUGIN_ROOT}`; ativar via `/plugins enable`) |
 | opencode | `~/.config/opencode/` (Win: `%APPDATA%\opencode`; honra `XDG_CONFIG_HOME`) | `opencode.json` |
 | pi | `~/.pi/agent/` (honra `PI_CODING_AGENT_DIR`) | `mcp.json` |
 

@@ -1,6 +1,6 @@
 ---
-description: Orquestra pipeline de desenvolvimento de feature no Atlas (PRD → validação → entrevista → plano → execução → review)
-argument-hint: <mode> <input-type> [input] [--interview] [--review] [--help]
+description: Orquestra pipeline de desenvolvimento de feature no Atlas (PRD → validação → entrevista → plano → execução → review) e auditoria universal sem correção
+argument-hint: <mode> <input-type|target> [input] [--interview] [--review] [--handoff] [--scope] [--help]
 ---
 
 Você está executando o comando `/workflow` do plugin **atlas-workflow-orchestrator**.
@@ -16,12 +16,12 @@ Argumentos recebidos: `$ARGUMENTS`
 ## Referência rápida de sintaxe
 
 ```
-/workflow <mode> <input-type> [input] [flags]
+/workflow <mode> <input-type|target> [input] [flags]
 ```
 
-- **mode**: `full` · `direct` · `execute` · `interview-only`
+- **mode**: `full` · `direct` · `execute` · `interview-only` · `audit`
 - **input-type**: `backlog-item` · `idea` · `prd` · `plan` · `brainstorm`
-- **flags**: `--interview` · `--review` · `--help`
+- **flags**: `--interview` · `--review` · `--handoff` · `--scope <descrição>` · `--help`
 
 Exemplos:
 
@@ -30,6 +30,7 @@ Exemplos:
 /workflow direct prd "/path/PRD_S05.md" --review
 /workflow execute plan "/path/PLAN_S05.md"
 /workflow interview-only brainstorm "que tal dark mode?"
+/workflow audit apps/mobile/lib/features/auth --handoff
 ```
 
 Não improvise comportamento fora do `SKILL.md`. **Pipeline é fire-and-continue**: uma vez iniciado, avança fase a fase sem pedir permissão entre gates; só para em gate duro `blocked` ou blockage de ambiente real (ver "Princípio de continuação automática"). Nunca invente "Modo Discussão" ou peça "quer que eu gere/continue?". Decisão em aberto não para — dispara entrevista, propaga e segue. Em caso de erro real, siga "Error handling".
