@@ -2264,8 +2264,16 @@ function updateSprintStatus(args = {}) {
       throw new Error('update_sprint_status_postcondition_failed');
     }
 
+    // Escrita com rollback (P2): backlog primeiro; se o sprint file falhar (erro de
+    // FS real — EACCES/ENOSPC), restaura o backlog ao estado original para não deixar
+    // drift backlog↔sprint. Ou ambos escritos, ou nenhum efeito visível.
     fs.writeFileSync(backlogAbs, nextBacklog.markdown);
-    fs.writeFileSync(sprintAbs, nextSprint);
+    try {
+      fs.writeFileSync(sprintAbs, nextSprint);
+    } catch (writeError) {
+      fs.writeFileSync(backlogAbs, backlogBefore);
+      throw writeError;
+    }
     result = {
       gate: 'update_sprint_status',
       status: 'passed',

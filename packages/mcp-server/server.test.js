@@ -2,7 +2,7 @@
 // Cobre: detecção de host (registry data-driven + precedência), contrato
 // atlas_capabilities (schema_version, flags, known_hosts) e hard-fail de
 // pré-requisitos (DEC-004). Rodar: node --test packages/mcp-server/
-import { test } from 'node:test';
+import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -1473,6 +1473,42 @@ test('atlas_update_sprint_status: reabrir done bloqueia por padrão', () => {
   });
   assert.equal(r.status, 'blocked');
   assert.ok(r.pendencies.some((p) => p.category === 'status_transition'));
+});
+
+test('atlas_update_sprint_status: falha de FS no sprint file faz rollback do backlog (P2)', () => {
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S01', { status: 'ready', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | ready | ready | `.atlas/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+  const before = fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8');
+  const sprintAbs = path.resolve(root, '.atlas/backlog/sprints/SPRINT_S01_runtime.md');
+  // Injeta falha de FS determinística só no write do sprint file: o backlog já foi
+  // escrito quando o sprint file falha (EACCES), exercitando o caminho de rollback.
+  const realWrite = fs.writeFileSync;
+  mock.method(fs, 'writeFileSync', (target, data, ...rest) => {
+    if (path.resolve(target) === sprintAbs) {
+      throw Object.assign(new Error('EACCES: simulated'), { code: 'EACCES' });
+    }
+    return realWrite(target, data, ...rest);
+  });
+  try {
+    const r = updateSprintStatus({
+      run_id: 'r1',
+      project_root: root,
+      backlog_path: 'BACKLOG.md',
+      sprint_id: 'S01',
+      status: 'done',
+      validator_verdict: 'pass',
+      state_path: '.atlas/state/S01.json',
+      evidence: 'validator pass',
+    });
+    assert.equal(r.status, 'blocked');
+    // Backlog restaurado ao original — sem drift backlog↔sprint.
+    assert.equal(fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8'), before);
+  } finally {
+    mock.restoreAll();
+  }
 });
 
 test('atlas_classify_input: plano → banner roteia com modo=execute (T07)', () => {
