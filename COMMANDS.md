@@ -27,7 +27,7 @@ npx github:pauloborini/atlas-workflow init zcode
 
 ```
 
-Smoke pós-update: `atlas_ping` → `version: 0.10.0`; `atlas_capabilities` → `schema_version: 5` (sibling-only).
+Smoke pós-update: `atlas_ping` → `version: 0.10.1`; `atlas_capabilities` → `schema_version: 5` (sibling-only).
 
 ---
 
@@ -107,7 +107,7 @@ Remove **só** os artefatos do Atlas. Preserva config, skills e outros MCP serve
 
 Abra a CLI no host e chame as tools:
 
-- `atlas_ping` → deve retornar `host=<claude|codex|antigravity|opencode|pi>`
+- `atlas_ping` → deve retornar `host=<claude|codex|antigravity|zcode|opencode|pi>`
 - `atlas_capabilities` → descritores + `prereq_policy`
 
 > **Não** dispare o `atlas-task-validator` à mão: ele roda automaticamente dentro do

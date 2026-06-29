@@ -79,7 +79,7 @@ Observações:
 3. Sprint grande deve ser quebrada antes de PRD/PLAN.
 4. Dependência bloqueante precisa ter dono, status e ação.
 5. `Must` sem dependência pronta não fura fila por urgência verbal.
-6. PRD só nasce de sprint file/backlog-item recortado.
+6. PRD só nasce de sprint file/`sprint` recortado (`backlog-item` é alias legado).
 7. PLAN só nasce de PRD aprovado + leitura do código real.
 8. Evidência vence narrativa: claim importante precisa apontar para artefato, gate ou state.
 9. Aprendizado entre sprints entra no sprint file/backlog, não em memória solta.
