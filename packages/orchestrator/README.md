@@ -218,8 +218,11 @@ Plugin automatiza tudo. Você valida output.
 | `atlas-backlog-generator` | Cria backlog mestre a partir de ideia, prompt, conversa ou briefing; roda explicitamente ou como primeira fase documental em macro input `backlog_first` |
 | `atlas-sprint-prd-generator` | Gera PRD a partir de sprint/indicação |
 | `atlas-prd-interview` | Entrevista de PRD (resolve ambiguidades) |
+| `atlas-audit` | Audita target/boundary sem patch: lê regras locais, detecta stack, produz achados com `arquivo:linha`; com `--handoff`, grava `.atlas/plans/PLAN_AUDIT_*.md` TC-conforme sem executar |
 | `atlas-plan-handoff` | Cria plano executável |
 | `atlas-plan-execute` | Executa plano (com `atlas-task-validator` sub-agent) |
+| `atlas-findings-repair` | Corrige findings P0/P1/P2 após `fail` do validator dentro do boundary executado |
+| `atlas-task-validator` | Validador frio sibling; lê `state_path`, emite veredito estruturado e nunca corrige |
 | `atlas-slice-review` | Review fria de implementação quando `--review` está presente |
 
 ## Configuração

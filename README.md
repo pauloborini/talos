@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/atlas-logo-header-darktheme.png" alt="Atlas Workflow" width="96" height="96">
+</p>
+
 # Atlas Workflow
 
 Plugin **Atlas Workflow Orchestrator** v0.10.0 — pipeline determinístico (PRD → plano → execução → validação) com skills `atlas-*`, templates e MCP. Um pacote, sete hosts: **Claude Code**, **Cursor**, **Codex App**, **Antigravity (Gemini)**, **ZCode**, **OpenCode** e **Pi CLI**.
@@ -111,7 +115,7 @@ Alternativa à instalação via GitHub: baixar o `.plugin` do host (`claude`, `c
 
 Comando (Claude Code / Cursor): `/workflow <mode> <input-type> [input] [flags]`
 
-No Codex, opencode, pi e zcode, invoque a skill do orquestrador com o mesmo padrão de argumentos (ex.: `workflow full backlog-item S05`). O verbo de dispatch do subagente é resolvido por `atlas_capabilities` (host-agnóstico).
+No Codex, Antigravity, opencode, pi e zcode, invoque a skill do orquestrador com o mesmo padrão de argumentos (ex.: `workflow full backlog-item S05`). O verbo de dispatch do subagente é resolvido por `atlas_capabilities` (host-agnóstico).
 
 Se você quiser começar fora do fluxo principal, as skills listadas abaixo são os atalhos explícitos para backlog, PRD, auditoria, plano, execução e revisão.
 
@@ -205,7 +209,7 @@ Além da cadeia automática, estas skills também podem ser chamadas diretamente
 - `atlas-backlog-generator` — cria `BACKLOG_MESTRE_*.md` a partir de uma conversa, briefing, roadmap ou lista solta de requisitos. Use quando o objetivo for organizar demanda antes de virar PRD.
 - `atlas-sprint-prd-generator` — transforma um sprint ID como `S01`/`S02` em PRD de sprint. Use quando o escopo já está amarrado ao roadmap e você quer o PRD da rodada.
 - `atlas-prd-interview` — valida e amadurece um PRD antes de planejar. Use quando você quer fechar ambiguidades, dependências ou decisões de produto.
-- `atlas-audit` — audita um target sem corrigir código. Use quando você quer achados com evidência `arquivo:linha` e, opcionalmente, handoff para correção posterior.
+- `atlas-audit` — audita arquivo, diretório, pacote, módulo, feature ou boundary localizável sem corrigir código. Lê regras locais reais, detecta stack por manifests/configs, analisa arquitetura/contratos/erros/segurança/testes/observabilidade, faz Ponytail pass final e só promove achado com evidência `arquivo:linha`. Com `--handoff`, grava `.atlas/plans/PLAN_AUDIT_*.md` TC-conforme para correção posterior; não chama executor.
 - `atlas-plan-handoff` — converte um PRD validado em plano executável. Use quando a intenção é preparar a execução, não ainda codar.
 - `atlas-direct-execute` — executa diretamente quando o PRD já está maduro. Use quando você quer pular a fase de plan handoff.
 - `atlas-task-validator` — faz a validação fria da slice executada. Use como veredito final de conformidade, nunca como ação manual de rotina.
@@ -235,7 +239,7 @@ O validador frio (`atlas-task-validator`) **sempre** roda isolado e **sempre** c
 | [`agents/`](agents/) | Subagentes despachados (Claude): `atlas-task-validator`, `atlas-plan-execute`, `atlas-direct-execute`, `atlas-slice-review` |
 | [`plugins/atlas-workflow-orchestrator/`](plugins/atlas-workflow-orchestrator/) | Catálogo Codex from-source (marketplace) |
 | [`hosts/opencode/`](hosts/opencode/) · [`hosts/pi/`](hosts/pi/) · [`hosts/zcode/`](hosts/zcode/) | Catálogos from-source opencode/pi/zcode |
-| [`plugin-manifests/`](plugin-manifests/) | Manifests/configs por host (claude, codex, opencode, pi, zcode) |
+| [`plugin-manifests/`](plugin-manifests/) | Manifests/configs por host (claude, codex, opencode, pi, zcode; Antigravity é gerado pelo instalador) |
 | [`build/`](build/) | Gera `.plugin` em `dist/`, sincroniza catálogos, testes/smoke/conformance |
 | [`CHANGELOG.md`](CHANGELOG.md) · [`PATCH_PROCEDURE.md`](PATCH_PROCEDURE.md) | Release e manutenção |
 
@@ -245,4 +249,3 @@ Templates canônicos em [`packages/templates/`](packages/templates/) — fonte �
 
 - Adapters de host: [`host-adapters.md`](packages/orchestrator/references/host-adapters.md)
 - MCP: [`packages/mcp-server/`](packages/mcp-server/) (`atlas_ping`, `atlas_run_state`, `atlas_capabilities`)
-- Plugin v0.1.10 (rollback): [`archive/v0.1.10/`](archive/v0.1.10/)
