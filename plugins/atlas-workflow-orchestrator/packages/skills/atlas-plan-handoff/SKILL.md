@@ -9,6 +9,14 @@ Use esta skill quando o usuário pedir um plano executável da cadeia `atlas-*`.
 
 O artefato segue `PLAN_TEMPLATE.md` e `BOUNDARY_PRD_PLAN.md` — **localize ambos em `<raiz-do-plugin>/packages/templates/`**. O plano **não** depende de memória do chat para prefixo, modo ou executor.
 
+Fontes obrigatórias do PLAN:
+
+1. PRD aprovado/conforme.
+2. Sprint file vivo referenciado pelo PRD/backlog.
+3. Código real do repo no boundary da sprint.
+
+Sem uma dessas fontes, não gerar plano executável. Backlog mestre é índice/status; não substitui sprint file nem PRD.
+
 ## Resolução Canônica de Templates
 
 * Fonte única: `packages/templates/` empacotado no plugin Atlas Workflow.
@@ -48,9 +56,10 @@ No workflow `full`, `atlas-plan-handoff` é autoria documental do agente princip
 ## Fluxo obrigatório
 
 1. **Classificação da tarefa:** feature, ui, contract, navigation, shared, security, diagnostic, refactoring, testing. Leia instruções reais aplicáveis do repo; `project-rules/` é apenas um formato possível, nunca requisito universal.
-2. **Grounding no código:** confirme padrões, contratos, manifests e comandos reais antes de inferir. Resolva baseline/perfis via `../_shared/references/stack-profiles.md` + `detectStackProfiles(project_root, declared_commands, boundary_paths)`; não presuma Flutter nem aplique perfil fora do package correspondente.
-3. **Decisões estáveis:** sanar bloqueios com perguntas ao usuário; registrar no plano (não recopiar tabela D* do PRD — referenciar `PRD §3`).
-4. **Escrita:** artefato markdown no path canônico `.atlas/plans/`. Teto orientativo ~250–350 linhas (até ~450 com slices).
+2. **Validar fontes documentais:** ler o PRD, resolver o sprint file declarado no cabeçalho/referências e confirmar backlink/status no backlog mestre quando disponível. Chamar `atlas_verify_sprint_file`; se sprint file estiver ausente, inválido, divergente do PRD, sem `eval_manifest`/`policy_manifest` ou com gate bloqueado/indisponível, bloquear com ação corretiva.
+3. **Grounding no código:** confirme padrões, contratos, manifests e comandos reais antes de inferir. Resolva baseline/perfis via `../_shared/references/stack-profiles.md` + `detectStackProfiles(project_root, declared_commands, boundary_paths)`; não presuma Flutter nem aplique perfil fora do package correspondente.
+4. **Decisões estáveis:** sanar bloqueios com perguntas ao usuário; registrar no plano (não recopiar tabela D* do PRD — referenciar `PRD §3`; não copiar YAML integral do sprint file — referenciar `Sprint §9/§10` e IDs).
+5. **Escrita:** artefato markdown no path canônico `.atlas/plans/`. Teto orientativo ~250–350 linhas (até ~450 com slices).
 
 ---
 
@@ -69,6 +78,7 @@ Regras:
 
 - `Plan prefix` é sempre `atlas`.
 - Se o modo não estiver decidido, o plano **não** está pronto para execução.
+- O topo do plano deve linkar PRD e Sprint file; `eval_manifest`/`policy_manifest` entram por referência, não por cópia integral.
 - Deixe explícito por que o modo escolhido é adequado, checks por task vs fechamento de slice e quando parar em `blocked`.
 
 ---
@@ -84,7 +94,8 @@ Regras:
 ### 2. Invariantes de execução (derivados do PRD)
 
 - Invariantes técnicos inegociáveis (ex.: sem refetch ao filtrar).
-- Referenciar IDs: `PRD §3 D12` — não colar a tabela D* inteira.
+- Invariantes/gates derivados de `Sprint §9 eval_manifest` e `Sprint §10 policy_manifest`.
+- Referenciar IDs: `PRD §3 D12`, `Sprint §9 EVAL-001`, `Sprint §10 policy.allowed_scope` — não colar a tabela D* nem YAML inteiro.
 
 ### 3. Pitfalls
 
@@ -104,6 +115,7 @@ Tarefas `#### T01.` … `#### TNN.` com schema de `BOUNDARY_PRD_PLAN.md` canôni
 - **Pré-condições**
 - **Mudança esperada**
 - **Invariantes preservados**
+- **Eval/Policy** (`Sprint §9 EVAL-*` / `Sprint §10 policy` relevante)
 - **Não mudar** / **Não fazer**
 - **Dependências**
 - **Riscos** (se não óbvio)
@@ -114,7 +126,7 @@ Tarefas `#### T01.` … `#### TNN.` com schema de `BOUNDARY_PRD_PLAN.md` canôni
 
 **Regra de minimalismo estrutural (autoria de task):** ao redigir `Mudança esperada`, prefira a forma mínima viável que cumpre o `Critério de done` — reusar módulo/símbolo já existente no repo antes de introduzir nova abstração; usar stdlib/feature nativa antes de dependência nova; evitar indireção, factory, wrapper, camada ou opção de config não exigida por PRD/invariante. A regra recai **somente** sobre abstração/indireção/arquivo/dependência nova. **Nunca** reduz: validação de trust-boundary, error-handling, data-loss, invariantes §2, cobertura de cenário/teste e negative paths. Em dúvida entre enxuto e seguro, escolha seguro.
 
-Última task típica: **Validação final** (checks reais da stack ativa e passos manuais alinhados a **PRD §4–6**). Flutter usa `flutter analyze/test`; Node e Python usam somente scripts/ferramentas declarados no repo/plano.
+Toda task que prova claim ou toca boundary sensível deve trazer `Eval/Policy`. Última task típica: **Validação final** (checks reais da stack ativa e passos manuais alinhados a **PRD §4–6** + `Sprint §9`). Flutter usa `flutter analyze/test`; Node e Python usam somente scripts/ferramentas declarados no repo/plano.
 
 ### 6. Contratos técnicos (só ambiguidade PRD → código)
 
@@ -126,7 +138,7 @@ Tarefas `#### T01.` … `#### TNN.` com schema de `BOUNDARY_PRD_PLAN.md` canôni
 
 ### 8. Validação e checklist (validator)
 
-- Critérios derivados de **PRD §6** + invariantes **§2** deste plano.
+- Critérios derivados de **PRD §6** + invariantes **§2** deste plano + `eval_manifest` do sprint file.
 - Título recomendado: `## 8. Validação e checklist (validator)`.
 - Comandos globais aplicáveis ao package, derivados de manifests/scripts reais; nunca inventar `flutter`, `npm` ou `pytest`.
 
@@ -161,7 +173,7 @@ Você pode invocar `atlas-plan-handoff` diretamente, fora do pipeline, para escr
 
 ### (b) O artefato NÃO é confiável só por existir
 
-Um plano escrito standalone **não vale como gate aprovado** só porque existe — nem mesmo com nome `PLAN_*.md`. Ao entrar em execução (modos `full`/`direct`/`execute`), o plano é **re-gateado obrigatoriamente** por `atlas_verify_artifact` + `atlas_verify_template_conformance` (TC); no modo `execute`, essa reverificação na entrada é o equivalente ao gate pós-plano (PRD D13). Plano velho, manual, renomeado ou fora de conformidade **trava na entrada da execução**, não na autoria. Esta skill não declara o plano "executável de forma determinística" só por tê-lo escrito.
+Um plano escrito standalone **não vale como gate aprovado** só porque existe — nem mesmo com nome `PLAN_*.md`. Ao entrar em execução (modos `full`/`direct`/`execute`), o plano é **re-gateado obrigatoriamente** por `atlas_verify_artifact` + `atlas_verify_template_conformance` (TC); em fluxo de sprint, TC usa `require_sprint_file=true`. No modo `execute` legado, essa reverificação na entrada é o equivalente ao gate pós-plano (PRD D13) e pode continuar sem sprint file se o plano já for autossuficiente. Plano velho, manual, renomeado ou fora de conformidade **trava na entrada da execução**, não na autoria. Esta skill não declara o plano "executável de forma determinística" só por tê-lo escrito.
 
 ### (c) Standalone vs protocolo interno no workflow
 

@@ -116,8 +116,8 @@ First, emit `executor_started`, then `skill_loaded`, before doing any long scan.
 
 Read the `atlas-plan-handoff` artifact. Extract at minimum:
 * **Execution metadata**: Prefix, mode, and validator options.
-* **Executive translation and PRD links** (from Section 1 — include path to PRD; cite `PRD §3` D* IDs, do not paste the full D* table).
-* **Execution invariants** (from Section 2).
+* **Executive translation, PRD link and Sprint file link** (from Section 1/header — include path to PRD and `SPRINT_S<NN>_*.md`; cite `PRD §3` D* and `Sprint §9 EVAL-*`, do not paste full tables/YAML).
+* **Execution invariants** (from Section 2), including invariants derived from `Sprint §9 eval_manifest` and `Sprint §10 policy_manifest`.
 * **Current state at sprint opening** (from Section 4 — not Section 2).
 * **Pitfalls** (from Section 3).
 * **All execution tasks TNN** (from Section 5).
@@ -129,7 +129,7 @@ Treat headings as semantic. If the plan uses equivalent wording but carries the 
 The old Gate of Readiness (§15) and Handoff Prompt (§16) are **no longer required** in the compact template.
 If optional Section 9 (open questions / real blockers — **not** PRD §7 Apêndice/Referências) has active blocking items, stop execution and request clarification.
 
-When Section 8 checklist is thin, read **PRD §4–6** from the PRD path in the plan header for business acceptance.
+When Section 8 checklist is thin, read **PRD §4–6** from the PRD path in the plan header for business acceptance and **Sprint §9/§10** from the sprint file for eval/policy obligations.
 
 After the plan is loaded, emit `plan_loaded`. After validating the execution boundary and `state_path` target, emit `handoff_accepted`.
 
@@ -171,11 +171,17 @@ Create `.atlas/state/<run_id>/<slice>.json` following `packages/templates/STATE_
   "files_changed": ["relative/path.ext"],
   "diff_stat": "N files, +X -Y",
   "plan_path": ".atlas/plans/<id>.plan.md",
-  "boundary_refs": ["§2.I1", "§6.1", "§8"],
+  "boundary_refs": ["§2.I1", "§6.1", "§8", "Sprint §9 EVAL-001"],
+  "sprint_id": "S01",
+  "sprint_file_path": ".atlas/backlog/sprints/SPRINT_S01_slug.md",
+  "prd_path": ".atlas/prd/PRD_S01_slug.md",
   "obligations": [],
   "invariants": [{"id": "I1", "requirement": "<invariante>", "expected_evidence": ["<path/check>"]}],
   "scenario_probes": [{"id": "S1", "scenario": "<cenário>", "expected": "<resultado>"}],
   "risk_probes": [{"id": "R1", "risk": "<risco>", "probe": "<pergunta verificável>"}],
+  "eval_results": [{"id": "EVAL-001", "claim": "<claim>", "status": "passed", "evidence": ["<path/check/state>"], "checks": ["<comando>"]}],
+  "evidence_to_claim": [{"claim_id": "EVAL-001", "source": "Sprint §9", "evidence": ["<path/check/state>"], "status": "passed"}],
+  "policy_scope": {"allowed_scope": ["<path>"], "forbidden_scope": ["<path>"], "required_gates": ["atlas_verify_sprint_file", "atlas-task-validator"]},
   "validation_map": [{"obligation_ids": [], "checks": ["<comando>"], "status": "passed"}],
   "task_evidence": [{"task": "T01", "files": ["relative/path.ext"], "checks": ["<comando>"], "result": "passed"}],
   "repair_evidence": [],
@@ -187,6 +193,8 @@ Create `.atlas/state/<run_id>/<slice>.json` following `packages/templates/STATE_
 ```
 
 Capture `base_sha` da referência explícita do plano/handoff; nunca infira pelo nome da branch. Antes da primeira mutação, capture `worktree_baseline`; imediatamente antes do handoff, capture `worktree_final`. `files_changed` e `task_evidence` representam exatamente `base_sha...head_sha` + delta entre snapshots. Dirty preexistente byte/status-idêntico fica fora; qualquer alteração posterior entra.
+
+Se o plano tiver Sprint file, o state deve provar todos os `EVAL-*` do `eval_manifest` com `eval_results.status="passed"` e entrada correspondente em `evidence_to_claim`. `policy_scope` deve refletir `Sprint §10` em forma resumida; arquivo em `forbidden_scope` não pode aparecer em `files_changed`.
 
 Validation is always **sibling**, on every host. The validator is registered as a real subagent on every host, but this executor **never** dispatches it and never validates its own work. After tasks and local gates pass and the state file is written, this executor **stops mutation** and returns `validator_handoff_required` with the `state_path`. The orchestrator dispatches `atlas-task-validator` as the next isolated sibling phase, locks it via `atlas_lock_validator`, and — if the verdict is `fail` — dispatches `atlas-findings-repair` (not this executor) before the **2nd and last** validator.
 

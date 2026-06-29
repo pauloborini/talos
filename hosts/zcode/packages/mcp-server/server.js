@@ -5,6 +5,10 @@ import crypto from 'node:crypto';
 import process from 'node:process';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import {
+  parseSprintRows,
+  validateSprintFileConformance,
+} from '../skills/_shared/scripts/document_quality.mjs';
 
 const SERVER_NAME = 'atlas-workflow-orchestrator';
 const RUN_DIR = path.join('.atlas', 'state');
@@ -159,6 +163,79 @@ const ROUTED_MODE_BY_TYPE = {
   // descrição/spec, sem artefato de plano separado). Não é "input ilegível".
   idea: 'direct',
 };
+const BACKLOG_PRIORITY_INPUT_TYPES = new Set(['idea', 'briefing', 'roadmap', 'conversation', 'prd-macro']);
+const BACKLOG_STATES = new Set(['backlog', 'ready', 'doing', 'review', 'done', 'blocked']);
+const BACKLOG_MOSCOW = new Set(['Must', 'Should', 'Could', "Won't now"]);
+const BACKLOG_LEVEL = new Set(['alto', 'médio', 'baixo']);
+const BACKLOG_PRIORITY = new Set(['P0', 'P1', 'P2', 'P3']);
+const SPRINT_DEP_RE = /S\d{2}(?:[a-z]|\.\d+)?/g;
+const VALIDATOR_VERDICTS = new Set(['pass', 'pass_with_observations', 'fail', 'not_run']);
+const TERMINAL_VALIDATOR_VERDICTS = new Set(['pass', 'pass_with_observations']);
+const SPRINT_STATUS_TRANSITIONS = {
+  backlog: new Set(['ready', 'blocked']),
+  ready: new Set(['doing', 'review', 'done', 'blocked']),
+  doing: new Set(['review', 'done', 'blocked']),
+  review: new Set(['done', 'doing', 'blocked']),
+  blocked: new Set(['ready', 'backlog']),
+  done: new Set(['done']),
+};
+const MOSCOW_RANK = new Map([['Must', 0], ['Should', 1], ['Could', 2], ["Won't now", 3]]);
+const GAIN_RANK = new Map([['alto', 0], ['médio', 1], ['baixo', 2]]);
+const EFFORT_RANK = new Map([['baixo', 0], ['médio', 1], ['alto', 2]]);
+const PRIORITY_RANK = new Map([['P0', 0], ['P1', 1], ['P2', 2], ['P3', 3]]);
+
+function documentFlowForRouting(mode, inputType = null, artifactType = null) {
+  const normalizedInput = typeof inputType === 'string' ? inputType.trim().toLowerCase() : null;
+  const normalizedArtifact = typeof artifactType === 'string' ? artifactType.trim().toLowerCase() : null;
+  const macroInput = BACKLOG_PRIORITY_INPUT_TYPES.has(normalizedInput) || normalizedArtifact === 'idea';
+  if ((mode === 'full' || mode === 'direct') && macroInput) {
+    return {
+      priority: 'backlog_first',
+      reason: 'entrada_macro_sem_backlog_canonico',
+      skills: [
+        WORKFLOW_CONFIG.skills.backlog_generator,
+        WORKFLOW_CONFIG.skills.prd_generator,
+        WORKFLOW_CONFIG.skills.prd_interview,
+        ...(mode === 'full' ? [WORKFLOW_CONFIG.skills.plan_handoff] : []),
+      ],
+      artifacts: [
+        'BACKLOG_MESTRE_*.md',
+        'SPRINT_S<NN>_*.md',
+        'PRD_*.md',
+        ...(mode === 'full' ? ['PLAN_*.md'] : []),
+      ],
+    };
+  }
+  if (normalizedInput === 'backlog-item' || normalizedArtifact === 'backlog') {
+    return {
+      priority: 'sprint_from_backlog',
+      reason: 'backlog_canonico_ja_fornecido',
+      skills: [
+        WORKFLOW_CONFIG.skills.prd_generator,
+        WORKFLOW_CONFIG.skills.prd_interview,
+        ...(mode === 'full' ? [WORKFLOW_CONFIG.skills.plan_handoff] : []),
+      ],
+      artifacts: [
+        'SPRINT_S<NN>_*.md',
+        'PRD_*.md',
+        ...(mode === 'full' ? ['PLAN_*.md'] : []),
+      ],
+    };
+  }
+  return {
+    priority: 'prd_first',
+    reason: 'entrada_ja_recortada_ou_modo_sem_backlog',
+    skills: [
+      WORKFLOW_CONFIG.skills.prd_generator,
+      WORKFLOW_CONFIG.skills.prd_interview,
+      ...(mode === 'full' ? [WORKFLOW_CONFIG.skills.plan_handoff] : []),
+    ],
+    artifacts: [
+      'PRD_*.md',
+      ...(mode === 'full' ? ['PLAN_*.md'] : []),
+    ],
+  };
+}
 
 // Preenche os slots {nome} do template do evento com `slots` e devolve a string
 // pt-BR pronta. Evento desconhecido é erro de programação (lança). Slot ausente
@@ -211,13 +288,11 @@ const HOST_ADAPTERS = {
     subagent_dispatch: {
       mechanism: 'spawn_agent(agent_type)',
       example: 'spawn_agent(agent_type: "atlas-task-validator", items: [{ type: "text", text: "<state_path>" }])',
-      registration: 'CODEX_HOME/agents/<name>.toml via `npx github:pauloborini/atlas-workflow init codex` (custom agent nativo; developer_instructions carrega o SKILL.md; atlas-task-validator pinado em model=gpt-5.4, model_reasoning_effort=high)',
+      registration: 'CODEX_HOME/agents/<name>.toml via `npx github:pauloborini/atlas-workflow init codex` (custom agent nativo; developer_instructions carrega o SKILL.md; modelo herdado do host/conta)',
     },
     validator_dispatch: {
       dispatcher: 'orchestrator',
       required_agent_type: 'atlas-task-validator',
-      required_codex_model: 'gpt-5.4',
-      required_codex_model_reasoning_effort: 'high',
       join: {
         sync: 'self_evident',
         confidence: 'confirmed',
@@ -1503,7 +1578,7 @@ function verifyRequiredSections(headings, requiredSections) {
     ));
 }
 
-function verifyPrdConformance(content, requiredStatus) {
+function verifyPrdConformance(content, requiredStatus, { requireSprintFile = false } = {}) {
   const pendencies = verifyRequiredSections(collectHeadings(content), REQUIRED_PRD_SECTIONS);
 
   if (requiredStatus && !hasRequiredStatus(content, requiredStatus)) {
@@ -1549,10 +1624,31 @@ function verifyPrdConformance(content, requiredStatus) {
     ));
   }
 
+  if (requireSprintFile) {
+    if (!/\|\s*\*\*Sprint file\*\*\s*\|/i.test(content)) {
+      pendencies.push(conformancePending(
+        'sprint_file',
+        'Sprint file',
+        null,
+        'PRD sem link/campo Sprint file no cabeçalho.',
+        'vincular_sprint_file',
+      ));
+    }
+    if (!/\bEval source\b/i.test(content) && !/\bEVAL-\d+\b/.test(content)) {
+      pendencies.push(conformancePending(
+        'eval_manifest',
+        'EVAL-*',
+        null,
+        'PRD sem referência ao eval_manifest/EVAL-* da sprint.',
+        'referenciar_eval_manifest',
+      ));
+    }
+  }
+
   return pendencies;
 }
 
-function verifyPlanConformance(content) {
+function verifyPlanConformance(content, { requireSprintFile = false } = {}) {
   // §7 Slices só é obrigatória em `execution_mode: orchestrated-per-slice` (template).
   // Em `sequencial` a seção é dispensável — não force "§7 Não aplicável" só para passar
   // o gate (S1). Verdade forte = presença do literal orchestrated-per-slice no cabeçalho.
@@ -1570,6 +1666,36 @@ function verifyPlanConformance(content) {
       'Plano sem link/campo PRD no cabeçalho.',
       'vincular_prd',
     ));
+  }
+
+  if (requireSprintFile) {
+    if (!/\|\s*\*\*Sprint file\*\*\s*\|/i.test(content)) {
+      pendencies.push(conformancePending(
+        'sprint_file',
+        'Sprint file',
+        null,
+        'Plano sem link/campo Sprint file no cabeçalho.',
+        'vincular_sprint_file',
+      ));
+    }
+    if (!/\bEval\/Policy\b/i.test(content)) {
+      pendencies.push(conformancePending(
+        'eval_policy',
+        'Eval/Policy',
+        null,
+        'Plano sem campo Eval/Policy nas tasks.',
+        'vincular_eval_policy_nas_tasks',
+      ));
+    }
+    if (!/\bEVAL-\d+\b/.test(content)) {
+      pendencies.push(conformancePending(
+        'eval_manifest',
+        'EVAL-*',
+        null,
+        'Plano sem referência a EVAL-* do sprint file.',
+        'referenciar_eval_manifest',
+      ));
+    }
   }
 
   if (!/####\s+T\d+\./.test(content)) {
@@ -1604,6 +1730,7 @@ function verifyTemplateConformance(args = {}) {
   }
 
   const requiredStatus = optionalString(args, 'required_status');
+  const requireSprintFile = args.require_sprint_file === true;
   const absolutePath = resolveConsumerPath(artifactPath, args);
   const timestamp = nowIso();
   let result;
@@ -1629,14 +1756,15 @@ function verifyTemplateConformance(args = {}) {
       };
     } else {
       const pendencies = artifactType === 'prd'
-        ? verifyPrdConformance(content, requiredStatus)
-        : verifyPlanConformance(content);
+        ? verifyPrdConformance(content, requiredStatus, { requireSprintFile })
+        : verifyPlanConformance(content, { requireSprintFile });
       result = {
         gate: 'template_conformance',
         status: pendencies.length === 0 ? 'passed' : 'blocked',
         artifact_type: artifactType,
         artifact_path: artifactPath,
         required_status: requiredStatus ?? null,
+        require_sprint_file: requireSprintFile,
         timestamp,
         pending_count: pendencies.length,
         banner: pendencies.length === 0
@@ -1668,6 +1796,581 @@ function verifyTemplateConformance(args = {}) {
   }
 
   patchTemplateConformanceResult(runId, result, args);
+  return result;
+}
+
+function verifySprintFile(args = {}) {
+  const runId = validateRunId(args.run_id);
+  const sprintPath = requiredString(args, 'sprint_path');
+  const sprintId = optionalString(args, 'sprint_id');
+  const backlogPath = optionalString(args, 'backlog_path');
+  const absolutePath = resolveConsumerPath(sprintPath, args);
+  const timestamp = nowIso();
+  let result;
+
+  try {
+    const content = fs.readFileSync(absolutePath, 'utf8');
+    const extraPendencies = [];
+    let backlogMarkdown = null;
+    if (backlogPath) {
+      try {
+        backlogMarkdown = fs.readFileSync(resolveConsumerPath(backlogPath, args), 'utf8');
+      } catch (error) {
+        extraPendencies.push(conformancePending(
+          'backlog_link',
+          backlogPath,
+          null,
+          `Backlog mestre ausente ou ilegível: ${backlogPath}`,
+          'corrigir_backlog_path',
+        ));
+      }
+    }
+    const validation = content.trim() === ''
+      ? {
+        valid: false,
+        pending_count: 1,
+        pendencies: [conformancePending('documento', 'arquivo_vazio', null, 'Sprint file vazio não pode passar.', 'preencher_sprint_file')],
+      }
+      : validateSprintFileConformance(content, {
+        sprintPath,
+        sprintId,
+        backlogPath,
+        backlogMarkdown,
+      });
+    const pendencies = [...validation.pendencies, ...extraPendencies];
+    result = {
+      gate: 'sprint_file_conformance',
+      status: pendencies.length === 0 ? 'passed' : 'blocked',
+      sprint_path: sprintPath,
+      sprint_id: sprintId ?? null,
+      backlog_path: backlogPath ?? null,
+      timestamp,
+      pending_count: pendencies.length,
+      banner: pendencies.length === 0
+        ? renderBanner('plano', {})
+        : renderBanner('preflight_fail', { motivo: `sprint file: ${pendencies.length} pendências` }),
+      pendencies,
+      next_action: pendencies.length === 0 ? 'avançar' : pendencies[0].next_action,
+    };
+  } catch (error) {
+    result = {
+      gate: 'sprint_file_conformance',
+      status: 'blocked',
+      sprint_path: sprintPath,
+      sprint_id: sprintId ?? null,
+      backlog_path: backlogPath ?? null,
+      timestamp,
+      pending_count: 1,
+      banner: renderBanner('preflight_fail', { motivo: 'sprint file: artefato ilegível' }),
+      pendencies: [conformancePending(
+        'leitura',
+        sprintPath,
+        null,
+        `Sprint file ausente ou ilegível: ${sprintPath}`,
+        'corrigir_sprint_file_path',
+      )],
+      error: `Sprint file ausente ou ilegível: ${sprintPath}`,
+      cause: error.message,
+      next_action: 'corrigir_sprint_file_path',
+    };
+  }
+
+  patchGateResult(runId, 'sprint_file_conformance', result, args);
+  return result;
+}
+
+function cleanBacklogPathToken(value) {
+  if (!value || value === '—') return '';
+  const link = /\[[^\]]+\]\(([^)]+)\)/.exec(value);
+  const raw = link ? link[1] : value;
+  return raw.replace(/^["'`]+|["'`]+$/g, '').trim();
+}
+
+function pendingPathToken(value) {
+  const cleaned = cleanBacklogPathToken(value);
+  return !cleaned || /^\[/.test(cleaned) || /^pendente$/i.test(cleaned) || /^pending$/i.test(cleaned);
+}
+
+function sprintDeps(value) {
+  if (!value || value === '—') return [];
+  return [...new Set([...String(value).matchAll(SPRINT_DEP_RE)].map((match) => match[0]))];
+}
+
+function sprintMetadataValue(markdown, label) {
+  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = new RegExp(`^\\|\\s*${escaped}\\s*\\|\\s*(.*?)\\s*\\|\\s*$`, 'im').exec(markdown);
+  return match ? match[1].trim() : null;
+}
+
+function sprintDorStatus(markdown) {
+  const match = /^\*\*Status DoR:\*\*\s*\[?([^\]\n]+)\]?/im.exec(markdown);
+  return match ? match[1].trim().toLowerCase() : null;
+}
+
+function detectBacklogCycle(rows) {
+  const graph = new Map(rows.map((row) => [row.id, sprintDeps(row.dependencies)]));
+  const visiting = new Set();
+  const visited = new Set();
+  const walk = (id, chain = []) => {
+    if (visiting.has(id)) return [...chain.slice(chain.indexOf(id)), id];
+    if (visited.has(id)) return null;
+    visiting.add(id);
+    for (const dep of graph.get(id) ?? []) {
+      const cycle = walk(dep, [...chain, id]);
+      if (cycle) return cycle;
+    }
+    visiting.delete(id);
+    visited.add(id);
+    return null;
+  };
+  for (const id of graph.keys()) {
+    const cycle = walk(id);
+    if (cycle) return cycle;
+  }
+  return null;
+}
+
+function backlogIndexBasePendencies(markdown, rows) {
+  const pendencies = [];
+  if (!/^##\s+7\.\s+Registro de sprints\s*$/im.test(markdown)) {
+    pendencies.push(conformancePending('seção_obrigatória', '§7 Registro de sprints', null, 'Backlog sem seção §7 Registro de sprints.', 'corrigir_backlog_index'));
+  }
+  if (rows.length === 0) {
+    pendencies.push(conformancePending('registro_sprints', 'linhas', null, 'Backlog sem linhas de sprint válidas.', 'preencher_registro_sprints'));
+    return pendencies;
+  }
+  const seen = new Set();
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  for (const row of rows) {
+    if (seen.has(row.id)) {
+      pendencies.push(conformancePending('registro_sprints', row.id, null, `Sprint duplicada no backlog: ${row.id}.`, 'corrigir_ids_sprint'));
+    }
+    seen.add(row.id);
+    for (const [field, allowed] of [
+      ['moscow', BACKLOG_MOSCOW],
+      ['gain', BACKLOG_LEVEL],
+      ['effort', BACKLOG_LEVEL],
+      ['priority', BACKLOG_PRIORITY],
+      ['state', BACKLOG_STATES],
+    ]) {
+      if (!allowed.has(row[field])) {
+        pendencies.push(conformancePending('registro_sprints', `${row.id}.${field}`, null, `Enum inválido em ${row.id}.${field}: ${row[field] ?? '<ausente>'}.`, 'corrigir_backlog_index'));
+      }
+    }
+    if (pendingPathToken(row.sprint_file)) {
+      pendencies.push(conformancePending('sprint_file', row.id, null, `Linha ${row.id} não aponta Sprint file real.`, 'preencher_sprint_file_no_backlog'));
+    }
+    for (const dep of sprintDeps(row.dependencies)) {
+      if (!byId.has(dep)) {
+        pendencies.push(conformancePending('dependência', `${row.id}->${dep}`, null, `Dependência interna ausente: ${row.id} depende de ${dep}.`, 'corrigir_dependencias_backlog'));
+      }
+    }
+  }
+  const cycle = detectBacklogCycle(rows);
+  if (cycle) {
+    pendencies.push(conformancePending('dependência', cycle.join('>'), null, `Ciclo de dependência entre sprints: ${cycle.join(' > ')}.`, 'quebrar_ciclo_dependencias'));
+  }
+  if (/\[(?:NOME_|RESULTADO_|objetivo curto|slug)\]/i.test(markdown)) {
+    pendencies.push(conformancePending('placeholder', 'template', null, 'Backlog contém placeholder estrutural não resolvido.', 'preencher_backlog_template'));
+  }
+  return pendencies;
+}
+
+function inspectBacklogIndex(args = {}) {
+  const backlogPath = requiredString(args, 'backlog_path');
+  const backlogMarkdown = fs.readFileSync(resolveConsumerPath(backlogPath, args), 'utf8');
+  const rows = parseSprintRows(backlogMarkdown);
+  const pendencies = backlogIndexBasePendencies(backlogMarkdown, rows);
+  const sprints = [];
+  for (const row of rows) {
+    const sprintPath = cleanBacklogPathToken(row.sprint_file);
+    const info = {
+      id: row.id,
+      state: row.state,
+      moscow: row.moscow,
+      gain: row.gain,
+      effort: row.effort,
+      priority: row.priority,
+      dependencies: sprintDeps(row.dependencies),
+      sprint_file: sprintPath || null,
+      sprint_file_status: pendingPathToken(row.sprint_file) ? 'missing' : 'unread',
+      dor_status: null,
+      prd: cleanBacklogPathToken(row.prd) || null,
+      plan: cleanBacklogPathToken(row.plan) || null,
+      state_file: cleanBacklogPathToken(row.state_file) || null,
+    };
+    if (!pendingPathToken(row.sprint_file)) {
+      try {
+        const sprintMarkdown = fs.readFileSync(resolveConsumerPath(sprintPath, args), 'utf8');
+        const validation = validateSprintFileConformance(sprintMarkdown, {
+          sprintPath,
+          sprintId: row.id,
+          backlogPath,
+          backlogMarkdown,
+        });
+        const sprintStatus = sprintMetadataValue(sprintMarkdown, 'Status');
+        info.sprint_file_status = validation.valid ? 'valid' : 'invalid';
+        info.pending_count = validation.pending_count;
+        info.dor_status = sprintDorStatus(sprintMarkdown);
+        if (sprintStatus && sprintStatus !== row.state) {
+          pendencies.push(conformancePending('status_drift', row.id, null, `Status divergente em ${row.id}: backlog=${row.state}, sprint_file=${sprintStatus}.`, 'sincronizar_status_backlog_sprint'));
+        }
+        for (const pendency of validation.pendencies ?? []) {
+          pendencies.push(conformancePending('sprint_file', `${row.id}:${pendency.category}:${pendency.item}`, pendency.line ?? null, pendency.message, pendency.next_action));
+        }
+      } catch (error) {
+        info.sprint_file_status = 'missing';
+        pendencies.push(conformancePending('sprint_file', row.id, null, `Sprint file ausente ou ilegível para ${row.id}: ${sprintPath}.`, 'corrigir_sprint_file_path'));
+      }
+    }
+    sprints.push(info);
+  }
+  return { backlog_path: backlogPath, rows, sprints, pendencies };
+}
+
+function verifyBacklogIndex(args = {}) {
+  const runId = validateRunId(args.run_id);
+  const backlogPath = requiredString(args, 'backlog_path');
+  const timestamp = nowIso();
+  let result;
+  try {
+    const index = inspectBacklogIndex(args);
+    result = {
+      gate: 'backlog_index_conformance',
+      status: index.pendencies.length === 0 ? 'passed' : 'blocked',
+      backlog_path: backlogPath,
+      timestamp,
+      sprint_count: index.sprints.length,
+      pending_count: index.pendencies.length,
+      sprints: index.sprints,
+      pendencies: index.pendencies,
+      banner: index.pendencies.length === 0
+        ? renderBanner('preflight_ok', { caps: 'backlog_index' })
+        : renderBanner('preflight_fail', { motivo: `backlog index: ${index.pendencies.length} pendências` }),
+      next_action: index.pendencies.length === 0 ? 'avançar' : index.pendencies[0].next_action,
+    };
+  } catch (error) {
+    result = {
+      gate: 'backlog_index_conformance',
+      status: 'blocked',
+      backlog_path: backlogPath,
+      timestamp,
+      sprint_count: 0,
+      pending_count: 1,
+      sprints: [],
+      pendencies: [conformancePending('leitura', backlogPath, null, `Backlog mestre ausente ou ilegível: ${backlogPath}`, 'corrigir_backlog_path')],
+      banner: renderBanner('preflight_fail', { motivo: 'backlog index: artefato ilegível' }),
+      error: `Backlog mestre ausente ou ilegível: ${backlogPath}`,
+      cause: error.message,
+      next_action: 'corrigir_backlog_path',
+    };
+  }
+  patchGateResult(runId, 'backlog_index', result, args);
+  return result;
+}
+
+function depsSatisfied(row, byId) {
+  const unmet = [];
+  for (const dep of sprintDeps(row.dependencies)) {
+    const depRow = byId.get(dep);
+    if (!depRow || depRow.state !== 'done') unmet.push({ id: dep, state: depRow?.state ?? 'missing' });
+  }
+  return unmet;
+}
+
+function sprintSortKey(info) {
+  return [
+    MOSCOW_RANK.get(info.moscow) ?? 99,
+    PRIORITY_RANK.get(info.priority) ?? 99,
+    GAIN_RANK.get(info.gain) ?? 99,
+    EFFORT_RANK.get(info.effort) ?? 99,
+    info.id,
+  ];
+}
+
+function compareSprintCandidates(a, b) {
+  const ak = sprintSortKey(a);
+  const bk = sprintSortKey(b);
+  for (let i = 0; i < ak.length; i += 1) {
+    if (ak[i] < bk[i]) return -1;
+    if (ak[i] > bk[i]) return 1;
+  }
+  return 0;
+}
+
+function derivedSprintGateStatus(status, validatorVerdict) {
+  if (status === 'done') return `validator:${validatorVerdict}`;
+  if (status === 'review') return 'validator:pending';
+  if (status === 'doing') return 'exec:running';
+  if (status === 'blocked') return validatorVerdict === 'fail' ? 'validator:fail' : 'blocked';
+  if (status === 'ready') return 'ready';
+  return '—';
+}
+
+function assertSprintStatusTransition(from, to, allowReopenDone = false) {
+  if (!BACKLOG_STATES.has(to)) {
+    return conformancePending('status', to, null, `Status inválido: ${to}.`, 'usar_status_valido');
+  }
+  if (from === 'done' && to !== 'done' && allowReopenDone !== true) {
+    return conformancePending('status_transition', `${from}->${to}`, null, 'Sprint done não pode ser reaberta sem allow_reopen_done=true.', 'criar_nova_sprint_ou_autorizar_reabertura');
+  }
+  if (!SPRINT_STATUS_TRANSITIONS[from]?.has(to) && !(allowReopenDone === true && from === 'done')) {
+    return conformancePending('status_transition', `${from}->${to}`, null, `Transição de status inválida: ${from} -> ${to}.`, 'corrigir_fluxo_status_sprint');
+  }
+  return null;
+}
+
+function replaceMarkdownTableValue(markdown, label, value) {
+  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(`^(\\|\\s*${escaped}\\s*\\|\\s*)(.*?)(\\s*\\|\\s*)$`, 'im');
+  if (!re.test(markdown)) return markdown;
+  return markdown.replace(re, `$1${value}$3`);
+}
+
+function replaceBacklogSprintRow(markdown, sprintId, updater) {
+  const lines = markdown.split(/\r?\n/);
+  let updated = false;
+  const next = lines.map((line) => {
+    if (updated || !new RegExp(`^\\|\\s*${sprintId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\|`).test(line)) {
+      return line;
+    }
+    const cells = line.split('|').slice(1, -1).map((cell) => cell.trim());
+    const replaced = updater(cells);
+    updated = true;
+    return `| ${replaced.join(' | ')} |`;
+  });
+  return { markdown: next.join('\n'), updated };
+}
+
+function appendToMarkdownSectionTable(markdown, sectionRe, rowCells) {
+  const lines = markdown.split(/\r?\n/);
+  const start = lines.findIndex((line) => sectionRe.test(line));
+  if (start < 0) return markdown;
+  let insertAt = start + 1;
+  for (let i = start + 1; i < lines.length; i += 1) {
+    if (/^##\s+/.test(lines[i])) break;
+    if (/^\|.*\|\s*$/.test(lines[i])) insertAt = i + 1;
+  }
+  lines.splice(insertAt, 0, `| ${rowCells.join(' | ')} |`);
+  return lines.join('\n');
+}
+
+function updatedSprintMarkdown(markdown, {
+  status,
+  prdPath = null,
+  planPath = null,
+  statePath = null,
+  evidence = null,
+  validatorVerdict = 'not_run',
+  timestamp,
+}) {
+  let next = replaceMarkdownTableValue(markdown, 'Status', status);
+  if (prdPath) next = replaceMarkdownTableValue(next, 'PRD', prdPath);
+  if (planPath) next = replaceMarkdownTableValue(next, 'PLAN', planPath);
+  if (statePath) next = replaceMarkdownTableValue(next, 'State / evidência', statePath);
+  const evidenceText = evidence || statePath || validatorVerdict;
+  next = appendToMarkdownSectionTable(next, /^##\s+14\.\s+Execução e validação\s*$/i, [
+    'Sprint status update',
+    derivedSprintGateStatus(status, validatorVerdict),
+    evidenceText,
+  ]);
+  next = appendToMarkdownSectionTable(next, /^##\s+16\.\s+Histórico\s*$/i, [
+    timestamp.slice(0, 10),
+    'Atlas MCP',
+    `Status -> ${status}; validator=${validatorVerdict}; evidence=${evidenceText}`,
+  ]);
+  return next;
+}
+
+function updateSprintStatus(args = {}) {
+  const runId = validateRunId(args.run_id);
+  const backlogPath = requiredString(args, 'backlog_path');
+  const sprintId = requiredString(args, 'sprint_id');
+  const status = requiredString(args, 'status');
+  const validatorVerdict = args.validator_verdict ?? 'not_run';
+  const timestamp = nowIso();
+  let result;
+  const pendencies = [];
+  if (!/^S\d{2}(?:[a-z]|\.\d+)?$/.test(sprintId)) {
+    pendencies.push(conformancePending('sprint_id', sprintId, null, `Sprint ID inválido: ${sprintId}.`, 'usar_sprint_id_valido'));
+  }
+  if (!BACKLOG_STATES.has(status)) {
+    pendencies.push(conformancePending('status', status, null, `Status inválido: ${status}.`, 'usar_status_valido'));
+  }
+  if (!VALIDATOR_VERDICTS.has(validatorVerdict)) {
+    pendencies.push(conformancePending('validator_verdict', validatorVerdict, null, `Veredito inválido: ${validatorVerdict}.`, 'usar_veredito_valido'));
+  }
+  if (status === 'done' && !TERMINAL_VALIDATOR_VERDICTS.has(validatorVerdict)) {
+    pendencies.push(conformancePending('validator_verdict', 'done', null, 'Status done exige validator_verdict pass ou pass_with_observations.', 'rodar_validator_frio'));
+  }
+  if (status === 'done' && !args.state_path) {
+    pendencies.push(conformancePending('state_path', 'done', null, 'Status done exige state_path como evidência.', 'informar_state_path'));
+  }
+  try {
+    const backlogAbs = resolveConsumerPath(backlogPath, args);
+    const backlogBefore = fs.readFileSync(backlogAbs, 'utf8');
+    const rows = parseSprintRows(backlogBefore);
+    const row = rows.find((entry) => entry.id === sprintId);
+    if (!row) {
+      pendencies.push(conformancePending('backlog_index', sprintId, null, `Backlog não contém sprint ${sprintId}.`, 'corrigir_backlog_index'));
+    } else {
+      const transitionPending = assertSprintStatusTransition(row.state, status, args.allow_reopen_done === true);
+      if (transitionPending) pendencies.push(transitionPending);
+      if (pendingPathToken(row.sprint_file)) {
+        pendencies.push(conformancePending('sprint_file', sprintId, null, `Linha ${sprintId} não aponta Sprint file real.`, 'preencher_sprint_file_no_backlog'));
+      }
+    }
+    if (pendencies.length > 0) {
+      throw new Error('update_sprint_status_precondition_failed');
+    }
+
+    const sprintPath = cleanBacklogPathToken(row.sprint_file);
+    const sprintAbs = resolveConsumerPath(sprintPath, args);
+    const sprintBefore = fs.readFileSync(sprintAbs, 'utf8');
+    const nextBacklog = replaceBacklogSprintRow(backlogBefore, sprintId, (cells) => {
+      const nextCells = [...cells];
+      nextCells[8] = args.prd_path ?? nextCells[8];
+      nextCells[10] = status;
+      nextCells[11] = args.gate_status ?? derivedSprintGateStatus(status, validatorVerdict);
+      nextCells[13] = args.plan_path ?? nextCells[13];
+      nextCells[14] = args.state_path ?? nextCells[14];
+      return nextCells;
+    });
+    if (!nextBacklog.updated) {
+      pendencies.push(conformancePending('backlog_index', sprintId, null, `Linha ${sprintId} não atualizada no backlog.`, 'corrigir_backlog_index'));
+      throw new Error('update_sprint_status_row_not_updated');
+    }
+    const nextSprint = updatedSprintMarkdown(sprintBefore, {
+      status,
+      prdPath: args.prd_path,
+      planPath: args.plan_path,
+      statePath: args.state_path,
+      evidence: args.evidence,
+      validatorVerdict,
+      timestamp,
+    });
+    const sprintValidation = validateSprintFileConformance(nextSprint, {
+      sprintPath,
+      sprintId,
+      backlogPath,
+      backlogMarkdown: nextBacklog.markdown,
+    });
+    const backlogRowsAfter = parseSprintRows(nextBacklog.markdown);
+    pendencies.push(...backlogIndexBasePendencies(nextBacklog.markdown, backlogRowsAfter));
+    for (const pendency of sprintValidation.pendencies ?? []) {
+      pendencies.push(conformancePending('sprint_file', `${sprintId}:${pendency.category}:${pendency.item}`, pendency.line ?? null, pendency.message, pendency.next_action));
+    }
+    if (pendencies.length > 0) {
+      throw new Error('update_sprint_status_postcondition_failed');
+    }
+
+    fs.writeFileSync(backlogAbs, nextBacklog.markdown);
+    fs.writeFileSync(sprintAbs, nextSprint);
+    result = {
+      gate: 'update_sprint_status',
+      status: 'passed',
+      backlog_path: backlogPath,
+      sprint_id: sprintId,
+      sprint_file_path: sprintPath,
+      previous_status: row.state,
+      next_status: status,
+      validator_verdict: validatorVerdict,
+      timestamp,
+      pending_count: 0,
+      pendencies: [],
+      banner: renderBanner('preflight_ok', { caps: `sprint_status=${sprintId}:${status}` }),
+      next_action: status === 'done' ? 'selecionar_proxima_sprint' : 'continuar_pipeline',
+    };
+  } catch (error) {
+    result = {
+      gate: 'update_sprint_status',
+      status: 'blocked',
+      backlog_path: backlogPath,
+      sprint_id: sprintId,
+      next_status: status,
+      validator_verdict: validatorVerdict,
+      timestamp,
+      pending_count: pendencies.length || 1,
+      pendencies: pendencies.length > 0 ? pendencies : [
+        conformancePending('leitura', sprintId, null, `Não foi possível atualizar status da sprint ${sprintId}: ${error.message}`, 'corrigir_backlog_ou_sprint_file'),
+      ],
+      banner: renderBanner('preflight_fail', { motivo: `update sprint status: ${pendencies.length || 1} pendências` }),
+      error: `Não foi possível atualizar status da sprint ${sprintId}.`,
+      cause: error.message,
+      next_action: pendencies[0]?.next_action ?? 'corrigir_backlog_ou_sprint_file',
+    };
+  }
+  patchGateResult(runId, 'update_sprint_status', result, args);
+  return result;
+}
+
+function selectNextSprint(args = {}) {
+  const runId = validateRunId(args.run_id);
+  const backlogPath = requiredString(args, 'backlog_path');
+  const timestamp = nowIso();
+  let result;
+  try {
+    const index = inspectBacklogIndex(args);
+    const rowsById = new Map(index.rows.map((row) => [row.id, row]));
+    const candidates = [];
+    const rejected = [];
+    for (const info of index.sprints) {
+      const row = rowsById.get(info.id);
+      const unmet = depsSatisfied(row, rowsById);
+      const reasons = [];
+      if (info.state !== 'ready') reasons.push(`state=${info.state}`);
+      if (unmet.length > 0) reasons.push(`unmet_dependencies=${unmet.map((dep) => `${dep.id}:${dep.state}`).join(',')}`);
+      if (info.sprint_file_status !== 'valid') reasons.push(`sprint_file=${info.sprint_file_status}`);
+      if (info.dor_status !== 'verde') reasons.push(`dor=${info.dor_status ?? 'ausente'}`);
+      if (reasons.length === 0) candidates.push(info);
+      else rejected.push({ id: info.id, reasons });
+    }
+    candidates.sort(compareSprintCandidates);
+    const selected = candidates[0] ?? null;
+    const structuralPendencies = index.pendencies.filter((p) => p.category !== 'status_drift');
+    const blocked = structuralPendencies.length > 0 || !selected;
+    result = {
+      gate: 'select_next_sprint',
+      status: blocked ? 'blocked' : 'passed',
+      backlog_path: backlogPath,
+      timestamp,
+      selected: selected ? {
+        sprint_id: selected.id,
+        sprint_file_path: selected.sprint_file,
+        prd_path: selected.prd,
+        plan_path: selected.plan,
+        state_path: selected.state_file,
+        reason: 'ready + deps done + sprint file válido + DoR verde + maior prioridade determinística',
+      } : null,
+      candidates: candidates.map((item) => item.id),
+      rejected,
+      pending_count: blocked ? (structuralPendencies.length || 1) : 0,
+      pendencies: structuralPendencies.length > 0 ? structuralPendencies : (selected ? [] : [
+        conformancePending('seleção', 'next_sprint', null, 'Nenhuma sprint executável: exige state=ready, deps done, sprint file válido e DoR verde.', 'atualizar_sprint_file_ou_dependencias'),
+      ]),
+      banner: blocked
+        ? renderBanner('preflight_fail', { motivo: selected ? `backlog index: ${structuralPendencies.length} pendências` : 'nenhuma sprint executável' })
+        : renderBanner('preflight_ok', { caps: `next=${selected.id}` }),
+      next_action: blocked ? (structuralPendencies[0]?.next_action ?? 'atualizar_sprint_file_ou_dependencias') : 'gerar_prd',
+    };
+  } catch (error) {
+    result = {
+      gate: 'select_next_sprint',
+      status: 'blocked',
+      backlog_path: backlogPath,
+      timestamp,
+      selected: null,
+      candidates: [],
+      rejected: [],
+      pending_count: 1,
+      pendencies: [conformancePending('leitura', backlogPath, null, `Backlog mestre ausente ou ilegível: ${backlogPath}`, 'corrigir_backlog_path')],
+      banner: renderBanner('preflight_fail', { motivo: 'select next sprint: backlog ilegível' }),
+      error: `Backlog mestre ausente ou ilegível: ${backlogPath}`,
+      cause: error.message,
+      next_action: 'corrigir_backlog_path',
+    };
+  }
+  patchGateResult(runId, 'select_next_sprint', result, args);
   return result;
 }
 
@@ -1909,6 +2612,7 @@ function preflight(args = {}) {
       };
   } else {
     const guaranteeLevel = guaranteeLevelForMode(mode);
+    const documentFlow = documentFlowForRouting(mode, args.input_type, args.artifact_type);
     // Campo OMITIDO quando o modo não declara garantia (interview-only → null).
     result = {
       gate: 'G10',
@@ -1921,6 +2625,7 @@ function preflight(args = {}) {
         ...(expectedExecutorSkill(mode) ? { executor_skill: expectedExecutorSkill(mode) } : {}),
         ...(guaranteeLevel ? { guarantee_level: guaranteeLevel } : {}),
         skills: config.skills,
+        document_flow: documentFlow,
         version: version.version,
         locked_at: currentRouting?.locked_at ?? timestamp,
         config_path: config.path,
@@ -2221,6 +2926,7 @@ function statusDispatch(args, context) {
   const progressDeadline = Date.parse(liveness?.next_progress_deadline_at ?? '');
   const progressExpired = phase === 'plan_execute'
     && checkpoints.length > 0
+    && liveness?.status !== 'handoff_ready'
     && Number.isFinite(progressDeadline)
     && Number.isFinite(now)
     && now > progressDeadline;
@@ -2491,6 +3197,9 @@ const STATE_EXTENSION_ARRAYS = [
   'obligations', 'invariants', 'scenario_probes', 'risk_probes',
   'validation_map', 'task_evidence', 'worktree_baseline', 'worktree_final',
 ];
+const SPRINT_ID_PATTERN = /^S\d{2}(?:[a-z]|\.\d+)?$/;
+const EVAL_ID_PATTERN = /^EVAL-\d+$/;
+const EVAL_STATUSES = new Set(['passed', 'failed', 'blocked', 'not_applicable']);
 
 function gitOutput(root, gitArgs) {
   return execFileSync('git', ['-C', root, ...gitArgs], {
@@ -2513,6 +3222,108 @@ function stateEvidenceFiles(state) {
     if (typeof item.file === 'string') result.push(item.file);
   }
   return [...new Set(result.filter((item) => typeof item === 'string' && item.trim()))].sort();
+}
+
+function extractEvalIdsFromSprint(markdown) {
+  return [...new Set([...markdown.matchAll(/\bid\s*:\s*["']?(EVAL-\d+)["']?/g)].map((match) => match[1]))].sort();
+}
+
+function normalizeScopePrefix(value) {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.startsWith('[') || trimmed === '*' || trimmed === '.') return null;
+  return path.posix.normalize(trimmed.replaceAll('\\', '/')).replace(/\/$/, '');
+}
+
+function pathMatchesScope(rel, scope) {
+  const prefix = normalizeScopePrefix(scope);
+  if (!prefix) return false;
+  const normalized = path.posix.normalize(String(rel).replaceAll('\\', '/'));
+  return normalized === prefix || normalized.startsWith(`${prefix}/`);
+}
+
+function validateSprintEvidenceState(state, args, violations) {
+  const hasSprintContract = state.sprint_file_path !== undefined
+    || state.sprint_id !== undefined
+    || state.eval_results !== undefined
+    || state.evidence_to_claim !== undefined
+    || state.policy_scope !== undefined;
+  if (!hasSprintContract) return;
+
+  if (typeof state.sprint_id !== 'string' || !SPRINT_ID_PATTERN.test(state.sprint_id)) {
+    violations.push('sprint_id obrigatório/inválido quando state declara sprint');
+  }
+  if (typeof state.sprint_file_path !== 'string' || !state.sprint_file_path.trim()) {
+    violations.push('sprint_file_path obrigatório quando state declara sprint');
+    return;
+  }
+
+  let sprintMarkdown = '';
+  try {
+    sprintMarkdown = fs.readFileSync(resolveConsumerPath(state.sprint_file_path, args), 'utf8');
+  } catch (error) {
+    violations.push(`sprint_file_path inválido: ${error.message}`);
+    return;
+  }
+  const sprintValidation = validateSprintFileConformance(sprintMarkdown, {
+    sprintPath: state.sprint_file_path,
+    sprintId: state.sprint_id,
+  });
+  for (const pendency of sprintValidation.pendencies ?? []) {
+    violations.push(`sprint_file inválido: ${pendency.category}:${pendency.item}`);
+  }
+
+  const evalIds = extractEvalIdsFromSprint(sprintMarkdown);
+  if (evalIds.length === 0) violations.push('sprint_file sem EVAL-* verificável');
+  if (!Array.isArray(state.eval_results)) {
+    violations.push('eval_results deve ser array quando state declara sprint');
+  }
+  if (!Array.isArray(state.evidence_to_claim)) {
+    violations.push('evidence_to_claim deve ser array quando state declara sprint');
+  }
+
+  const evalResults = Array.isArray(state.eval_results) ? state.eval_results : [];
+  const seenEval = new Set();
+  for (const [index, item] of evalResults.entries()) {
+    const label = `eval_results[${index}]`;
+    if (!item || typeof item !== 'object') {
+      violations.push(`${label} deve ser objeto`);
+      continue;
+    }
+    if (typeof item.id !== 'string' || !EVAL_ID_PATTERN.test(item.id)) violations.push(`${label}.id inválido`);
+    else if (seenEval.has(item.id)) violations.push(`${label}.id duplicado`);
+    else seenEval.add(item.id);
+    if (!EVAL_STATUSES.has(item.status)) violations.push(`${label}.status inválido`);
+    const evidence = Array.isArray(item.evidence) ? item.evidence : [];
+    if (item.status === 'passed' && evidence.filter((value) => typeof value === 'string' && value.trim()).length === 0) {
+      violations.push(`${label}.evidence obrigatório para status passed`);
+    }
+  }
+
+  const evidenceToClaim = Array.isArray(state.evidence_to_claim) ? state.evidence_to_claim : [];
+  const claimIds = new Set(evidenceToClaim.map((item) => (
+    item && typeof item === 'object' ? (item.claim_id ?? item.eval_id ?? item.id) : null
+  )).filter((value) => typeof value === 'string'));
+  for (const evalId of evalIds) {
+    const result = evalResults.find((item) => item?.id === evalId);
+    if (!result) violations.push(`EVAL sem resultado no state: ${evalId}`);
+    else if (result.status !== 'passed') violations.push(`EVAL não comprovado como passed: ${evalId}:${result.status}`);
+    if (!claimIds.has(evalId)) violations.push(`EVAL sem evidence_to_claim: ${evalId}`);
+  }
+
+  if (!state.policy_scope || typeof state.policy_scope !== 'object' || Array.isArray(state.policy_scope)) {
+    violations.push('policy_scope obrigatório quando state declara sprint');
+    return;
+  }
+  for (const key of ['allowed_scope', 'forbidden_scope', 'required_gates']) {
+    if (!Array.isArray(state.policy_scope[key])) violations.push(`policy_scope.${key} deve ser array`);
+  }
+  const forbidden = Array.isArray(state.policy_scope.forbidden_scope) ? state.policy_scope.forbidden_scope : [];
+  for (const file of state.files_changed ?? []) {
+    if (forbidden.some((scope) => pathMatchesScope(file, scope))) {
+      violations.push(`arquivo alterado viola policy_scope.forbidden_scope: ${file}`);
+    }
+  }
 }
 
 function snapshotStatus(xy) {
@@ -2641,6 +3452,7 @@ function validateStateBoundary(statePathValue, args = {}) {
       if (!Array.isArray(state[field])) violations.push(`${field} deve ser array na extensão`);
     }
     if (isDirect && Array.isArray(state.obligations) && state.obligations.length === 0) violations.push('direct exige obligations não vazio');
+    validateSprintEvidenceState(state, args, violations);
     validateSnapshot(state.worktree_baseline, 'worktree_baseline', violations);
     validateSnapshot(state.worktree_final, 'worktree_final', violations);
   }
@@ -3804,6 +4616,74 @@ function toolsList() {
             artifact_path: { type: 'string', minLength: 1 },
             artifact_type: { type: 'string', enum: ['prd', 'plan'] },
             required_status: { type: 'string' },
+            require_sprint_file: { type: 'boolean' },
+          },
+        },
+      },
+      {
+        name: 'atlas_verify_sprint_file',
+        description: 'Gate de conformidade: valida sprint file vivo contra SPRINT_TEMPLATE e, se fornecido, vínculo lexical com backlog mestre.',
+        inputSchema: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['run_id', 'sprint_path'],
+          properties: {
+            run_id: { type: 'string', minLength: 1 },
+            project_root: { type: 'string', minLength: 1 },
+            sprint_path: { type: 'string', minLength: 1 },
+            sprint_id: { type: 'string', pattern: '^S\\d{2}(?:[a-z]|\\.\\d+)?$' },
+            backlog_path: { type: 'string', minLength: 1 },
+          },
+        },
+      },
+      {
+        name: 'atlas_verify_backlog_index',
+        description: 'Gate de conformidade: valida BACKLOG_MESTRE como índice macro, links para sprint files, deps internas, status espelhado e drift básico.',
+        inputSchema: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['run_id', 'backlog_path'],
+          properties: {
+            run_id: { type: 'string', minLength: 1 },
+            project_root: { type: 'string', minLength: 1 },
+            backlog_path: { type: 'string', minLength: 1 },
+          },
+        },
+      },
+      {
+        name: 'atlas_select_next_sprint',
+        description: 'Gate determinístico: seleciona a próxima sprint executável a partir do backlog indexado, exigindo deps done, sprint file válido e DoR verde.',
+        inputSchema: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['run_id', 'backlog_path'],
+          properties: {
+            run_id: { type: 'string', minLength: 1 },
+            project_root: { type: 'string', minLength: 1 },
+            backlog_path: { type: 'string', minLength: 1 },
+          },
+        },
+      },
+      {
+        name: 'atlas_update_sprint_status',
+        description: 'Gate determinístico: sincroniza status da sprint viva no BACKLOG_MESTRE e no SPRINT_SNN, exigindo evidência/validator para done.',
+        inputSchema: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['run_id', 'backlog_path', 'sprint_id', 'status'],
+          properties: {
+            run_id: { type: 'string', minLength: 1 },
+            project_root: { type: 'string', minLength: 1 },
+            backlog_path: { type: 'string', minLength: 1 },
+            sprint_id: { type: 'string', pattern: '^S\\d{2}(?:[a-z]|\\.\\d+)?$' },
+            status: { type: 'string', enum: [...BACKLOG_STATES] },
+            validator_verdict: { type: 'string', enum: [...VALIDATOR_VERDICTS] },
+            gate_status: { type: 'string', minLength: 1 },
+            prd_path: { type: 'string', minLength: 1 },
+            plan_path: { type: 'string', minLength: 1 },
+            state_path: { type: 'string', minLength: 1 },
+            evidence: { type: 'string', minLength: 1 },
+            allow_reopen_done: { type: 'boolean' },
           },
         },
       },
@@ -3832,6 +4712,8 @@ function toolsList() {
             run_id: { type: 'string', minLength: 1 },
             project_root: { type: 'string', minLength: 1 },
             mode: { type: 'string', enum: WORKFLOW_CONFIG.modes },
+            input_type: { type: 'string', enum: ['backlog-item', 'idea', 'briefing', 'roadmap', 'conversation', 'prd-macro', 'prd', 'plan', 'brainstorm', 'target'] },
+            artifact_type: { type: 'string', enum: ['backlog', 'prd', 'plan', 'idea', 'unknown'] },
             expected_version: { type: 'string' },
             host: { type: 'string', enum: HOST_NAMES },
             // additionalProperties:false é enforçado pelo client MCP; o servidor ainda
@@ -3945,6 +4827,10 @@ function handleRequest(message) {
         name === 'atlas_verify_artifact' ? verifyArtifact(args) :
         name === 'atlas_scan_prd' ? scanPrd(args) :
         name === 'atlas_verify_template_conformance' ? verifyTemplateConformance(args) :
+        name === 'atlas_verify_sprint_file' ? verifySprintFile(args) :
+        name === 'atlas_verify_backlog_index' ? verifyBacklogIndex(args) :
+        name === 'atlas_select_next_sprint' ? selectNextSprint(args) :
+        name === 'atlas_update_sprint_status' ? updateSprintStatus(args) :
         name === 'atlas_classify_input' ? classifyInput(args) :
         name === 'atlas_preflight' ? preflight(args) :
         name === 'atlas_lock_dispatch' ? lockDispatch(args) :
@@ -4049,6 +4935,7 @@ export {
   checkJoinCapability,
   checkDispatchCapability,
   expectedNextPhase,
+  documentFlowForRouting,
   expectedExecutorSkill,
   guaranteeLevelForMode,
   classifyArtifactContent,
@@ -4058,6 +4945,10 @@ export {
   verifyArtifact,
   scanPrd,
   verifyTemplateConformance,
+  verifySprintFile,
+  verifyBacklogIndex,
+  selectNextSprint,
+  updateSprintStatus,
   classifyInput,
   preflight,
   lockDispatch,

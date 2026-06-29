@@ -58,15 +58,11 @@ const PI_TOOLS = {
   'atlas-direct-execute': 'read, write, edit, grep, find, ls, bash',
 };
 
-// Codex custom agents can pin model/runtime knobs per agent. Only the cold
-// validator is pinned here: the user-facing contract is higher reasoning for
-// validation, without changing executor/review defaults.
-const CODEX_AGENT_OVERRIDES = {
-  'atlas-task-validator': {
-    model: 'gpt-5.4',
-    model_reasoning_effort: 'high',
-  },
-};
+// Codex custom agents intentionally do not pin model/runtime knobs here.
+// ChatGPT-backed Codex accounts can reject repo-pinned models even when the
+// native spawn_agent role exists. Determinism comes from sibling isolation +
+// MCP gates; model selection stays with the host/account default.
+const CODEX_AGENT_OVERRIDES = {};
 
 let header;
 if (host === 'opencode') {

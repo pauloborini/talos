@@ -85,8 +85,9 @@ esac
   assert(exists(path.join(codexHome, 'agents/atlas-findings-repair.toml')), 'codex não instalou atlas-findings-repair.toml em CODEX_HOME/agents');
   const validator = fs.readFileSync(path.join(codexHome, 'agents/atlas-task-validator.toml'), 'utf8');
   assert(validator.includes('name = "atlas-task-validator"'), 'codex validator sem name correto');
-  assert(validator.includes('model = "gpt-5.4"'), 'codex validator sem model pinado');
-  assert(validator.includes('model_reasoning_effort = "high"'), 'codex validator sem reasoning pinado');
+  assert(!/^\s*model\s*=/.test(validator), 'codex validator deve ficar sem model pinado');
+  assert(!/^\s*model_reasoning_effort\s*=/.test(validator), 'codex validator deve ficar sem reasoning pinado');
+  assert(validator.includes('developer_instructions'), 'codex validator sem developer_instructions; sem model pinado ele ainda precisa carregar o shim');
   const u = run(['uninstall', 'codex'], env);
   assert(u.status === 0, `codex uninstall falhou: ${u.stderr || u.stdout}`);
   assert(!exists(path.join(codexHome, 'agents/atlas-task-validator.toml')), 'codex uninstall manteve validator');

@@ -70,6 +70,8 @@ Leia do plano apenas o mínimo necessário:
 
 Capture também `base_sha`, `head_sha`, `task_evidence`, `repair_evidence`, `worktree_baseline` e `worktree_final` do state.
 
+Se o state declarar sprint (`sprint_id`/`sprint_file_path`), leia também `eval_results`, `evidence_to_claim` e `policy_scope`. O reparo não pode tocar `policy_scope.forbidden_scope`; se o finding exigir isso, pare em `blocked` com causa explícita.
+
 ### 2. Ler os findings recebidos
 
 Trabalhe somente com findings de severidade:
@@ -124,6 +126,7 @@ Ao terminar:
 - recompute `head_sha` (`git rev-parse HEAD`) e `diff_stat`; preserve `base_sha`
 - preserve `worktree_baseline` e recapture `worktree_final` após o repair; derive o boundary completo do delta entre snapshots
 - acrescente `repair_evidence[]` no shape `{finding_id, files_touched, checks_run, status}`
+- atualize `eval_results`/`evidence_to_claim` somente quando o reparo mudar a prova de um `EVAL-*`; não marque claim como `passed` sem evidência nova
 - garanta que cada `repair_evidence.files_touched` esteja em `files_changed`
 - mantenha a mesma slice
 - não invente novo run state paralelo
