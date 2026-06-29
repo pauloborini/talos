@@ -1,6 +1,6 @@
 # Atlas Workflow MCP Server
 
-Servidor MCP do plugin Atlas Workflow v0.9.4.
+Servidor MCP do plugin Atlas Workflow v0.10.0.
 
 ## Tools
 
