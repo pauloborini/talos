@@ -28,7 +28,8 @@ Três modos **canônicos de execução** — `full`, `direct`, `execute` (PRD §
 
 ### Input Types
 
-- **`backlog-item`** — Sprint ID (ex: S05) ou indicação direta já ancorada no backlog e em sprint file vivo
+- **`sprint`** — Sprint ID (ex: S05) já ancorado no backlog e em sprint file vivo; alias canônico novo para `backlog-item`
+- **`backlog-item`** — alias legado de `sprint`; manter por compatibilidade
 - **`idea`** — Indicação/brainstorm curto ou macro input ainda sem backlog canônico
 - **`prd`** — Path para PRD existente ou nome do arquivo
 - **`brainstorm`** — Texto livre (só para `interview-only`)
@@ -45,8 +46,11 @@ Três modos **canônicos de execução** — `full`, `direct`, `execute` (PRD §
 ## Exemplos
 
 ```
-/workflow full backlog-item "S05"
+/workflow full sprint "S05"
 → Resolve S05 no backlog, valida sprint file, gera PRD, valida, entrevista se necessário, cria PLAN_*.md, executa a partir do plano
+
+/workflow direct sprint "S05"
+→ Resolve S05 no backlog, valida sprint file, gera PRD, valida, executa direto sem PLAN_*.md
 
 /workflow direct prd "/path/to/PRD_S05.md" --review
 → Valida PRD, executa direto (sem handoff), roda review ao final
@@ -95,14 +99,14 @@ Executar **antes** de iniciar o pipeline. Se qualquer item falhar, **parar e rep
       Motivo: subagente sem Write/Edit/Bash verificado para execução
       Ação: <next_action>
    ```
-3b. **Gate DEP — dependência de backlog (só `backlog-item`).** Se o item declara `Dependências` no backlog/registro de origem, ler o status de cada dependência **no mesmo backlog**. Se alguma não estiver `done`, **abortar em `ready`** com `unmet_dependencies`, causa e `next_action` — determinístico, sem pergunta. Todas `done` (ou sem dependências) → segue. Decisão em aberto **não** entra aqui (não é dependência de execução).
+3b. **Gate DEP — dependência de backlog (só `sprint`/`backlog-item`).** Se o item declara `Dependências` no backlog/registro de origem, ler o status de cada dependência **no mesmo backlog**. Se alguma não estiver `done`, **abortar em `ready`** com `unmet_dependencies`, causa e `next_action` — determinístico, sem pergunta. Todas `done` (ou sem dependências) → segue. Decisão em aberto **não** entra aqui (não é dependência de execução).
    ```text
    ⛔ Pré-flight falhou (DEP)
       Item: <id>   Dependência não satisfeita: <dep> (status: <status>)
       Motivo: dependência de backlog não está `done`
       Ação: executar <dep> antes de <id>
    ```
-3c. **Gate Backlog/Sprint — índice e recorte vivo obrigatórios (`full`/`direct` com `backlog-item` ou `backlog_first`).** Quando houver backlog, chamar `atlas_verify_backlog_index`; para macro input, chamar também `atlas_select_next_sprint` e usar somente o `selected` retornado pelo MCP. Resolver o `Sprint file` linkado/selecionado e chamar `atlas_verify_sprint_file`. Se backlog inválido, seleção ausente, sprint file `pendente`, inexistente, divergente do Sprint ID, sem seções mínimas (`Metadados`, `Escopo`, `Definition of Ready`, `eval_manifest`, `policy_manifest`) ou com gate bloqueado/indisponível, **abortar antes do PRD** com causa e `next_action`.
+3c. **Gate Backlog/Sprint — índice e recorte vivo obrigatórios (`full`/`direct` com `sprint`, `backlog-item` ou `backlog_first`).** Quando houver backlog, chamar `atlas_verify_backlog_index`; para macro input, chamar também `atlas_select_next_sprint` e usar somente o `selected` retornado pelo MCP. Resolver o `Sprint file` linkado/selecionado e chamar `atlas_verify_sprint_file`. Se backlog inválido, seleção ausente, sprint file `pendente`, inexistente, divergente do Sprint ID, sem seções mínimas (`Metadados`, `Escopo`, `Definition of Ready`, `eval_manifest`, `policy_manifest`) ou com gate bloqueado/indisponível, **abortar antes do PRD** com causa e `next_action`.
    ```text
    ⛔ Pré-flight falhou (SPRINT_FILE)
       Item: <id>   Sprint file: <path|pendente>
@@ -198,11 +202,11 @@ Regras inegociáveis. Violação = parar, não contornar.
 | G12 | **Executor vivo precisa provar progresso.** Ao iniciar `plan_execute`, `atlas_lock_dispatch(start)` cria liveness de bootstrap/progresso. O executor precisa emitir `atlas_lock_dispatch(checkpoint, phase=plan_execute, event=...)` cedo, começando por `executor_started`/`skill_loaded`, depois `plan_loaded`, `handoff_accepted`, `task_started`, `first_write` e `state_path_created` conforme avança. `state_path_created` exige `state_path` legível/parseável, põe o liveness em `handoff_ready` e não expira por timeout de progresso enquanto aguarda o orquestrador abrir `atlas_lock_validator(start)`. O validator só abre se o último checkpoint for `state_path_created` para exatamente o mesmo `state_path`. Se o sub-agent não retornar, travar, ficar sem primeiro checkpoint, ou ficar com checkpoint antigo sem avanço antes do handoff, o orquestrador chama `atlas_lock_dispatch(action=status, phase=plan_execute)`: `executor_bootstrap_timeout`/`executor_progress_timeout` viram `stalled`, o lock é liberado para `retry_plan_execute`, e a execução não pode ser declarada completa. Sem checkpoint/progresso antes do handoff não há "em andamento" confiável. | execução |
 | G8 | **Ordem fixa de validação: `task-validator` ANTES, `slice-review` POR ÚLTIMO. Nunca em paralelo.** Conclusão de `plan_execute` usa `atlas_lock_dispatch` com `validator_status: passed`; review só inicia após execução concluída. | validação + review |
 | PREREQ | **Pré-requisitos de determinismo (hard-fail, DEC-004).** `atlas_preflight` verifica, **antes de tudo**, se o host tem subagente + MCP (essenciais). Ausente (ex.: pi sem `pi-mcp-adapter`/`pi-subagents`, host MCP-only sem subagente) → aborta em `ready` com `missing_prerequisites`/`next_action`. Sem degradação, sem validator inline, qualquer tamanho. `todo` não-essencial segue sem mirror. | roteamento |
-| DEP | **Dependência de backlog não satisfeita = hard-fail determinístico.** Se o input é `backlog-item` e o item declara `Dependências` (ex.: S40 dep S39) cujo status, lido no mesmo backlog/registro de onde o item veio, **não** é `done`, abortar em `ready` com `unmet_dependencies`, causa e `next_action` (executar a dependência primeiro). Sem improviso e sem pergunta: ou a dep está `done` e segue, ou bloqueia com causa. Não confundir com decisão em aberto (que não bloqueia). | roteamento (backlog-item) |
-| BACKLOG_INDEX | **Backlog mestre é índice verificável.** Em `backlog_first` e `backlog-item`, chamar `atlas_verify_backlog_index` antes de escolher sprint ou gerar PRD. Link ausente, sprint file ilegível, dep interna inválida/cíclica ou status drift bloqueia. | roteamento |
+| DEP | **Dependência de backlog não satisfeita = hard-fail determinístico.** Se o input é `sprint`/`backlog-item` e o item declara `Dependências` (ex.: S40 dep S39) cujo status, lido no mesmo backlog/registro de onde o item veio, **não** é `done`, abortar em `ready` com `unmet_dependencies`, causa e `next_action` (executar a dependência primeiro). Sem improviso e sem pergunta: ou a dep está `done` e segue, ou bloqueia com causa. Não confundir com decisão em aberto (que não bloqueia). | roteamento (`sprint`/`backlog-item`) |
+| BACKLOG_INDEX | **Backlog mestre é índice verificável.** Em `backlog_first` e `sprint`/`backlog-item`, chamar `atlas_verify_backlog_index` antes de escolher sprint ou gerar PRD. Link ausente, sprint file ilegível, dep interna inválida/cíclica ou status drift bloqueia. | roteamento |
 | SELECT_NEXT_SPRINT | **Próxima sprint vem do MCP.** Em `backlog_first`, chamar `atlas_select_next_sprint`; sem `selected` não há PRD. A seleção exige `state=ready`, deps internas `done`, sprint file válido e DoR verde. | roteamento |
 | SPRINT_STATUS_SYNC | **Fechamento de sprint é gate MCP, não prosa.** Quando a execução validada pertence a backlog/sprint file, chamar `atlas_update_sprint_status`: `done` exige `state_path` + `validator_verdict=pass|pass_with_observations`; `blocked` registra `fail`. O MCP sincroniza BACKLOG_MESTRE + SPRINT_SNN e bloqueia reabrir `done` sem autorização explícita. | pós-validação |
-| SPRINT_FILE | **Sprint file vivo obrigatório antes de PRD.** Em `full`/`direct` com `backlog-item` ou `backlog_first`, resolver o sprint file via backlog/saída do backlog-generator e validar com `atlas_verify_sprint_file`. Ausente/inválido/divergente/gate indisponível bloqueia antes do PRD. `audit --handoff`, `execute plan` e `interview-only brainstorm` ficam fora deste gate. | roteamento/PRD |
+| SPRINT_FILE | **Sprint file vivo obrigatório antes de PRD.** Em `full`/`direct` com `sprint`, `backlog-item` ou `backlog_first`, resolver o sprint file via backlog/saída do backlog-generator e validar com `atlas_verify_sprint_file`. Ausente/inválido/divergente/gate indisponível bloqueia antes do PRD. `audit --handoff`, `execute plan` e `interview-only brainstorm` ficam fora deste gate. | roteamento/PRD |
 | G10 | **Família única atlas-*, id exato.** Modo, versão, lock e ids oficiais vêm de `atlas_preflight`, nunca do host. Skill ausente, conflito de origem, lock ativo ou drift de versão → aborta com causa/impacto/próxima ação. | roteamento |
 | G9 | **Fronteira de determinismo pela mutação de código.** O orquestrador **NUNCA** escreve/edita **código** nem roda comando mutante (flutter/test/git write), em qualquer fase ou modo — execução de código é sempre do sub-agent. **Autoria documental** (PRD, entrevista, `PLAN_*.md`) é permitida no fio principal **somente ANTES do plano validado**; uma vez que o plano passa `atlas_verify_artifact` + TC, **mãos atadas fortes**: o orquestrador não edita mais PRD/plano/código, só coordena execução (despachar sub-agent, ler artefato para verificar gate, ecoar banner, montar output final). **NÃO** "ajuda" o sub-agent de execução. **Dispatch é blocking**: despacha **um** sub-agent por vez (verbo nativo do host de `atlas_capabilities`, em foreground), **espera o retorno**, só então segue. Proibido `run_in_background` para fases do pipeline e proibido implementar "em paralelo" enquanto um sub-agent roda. Se o orquestrador tocar em **código** = G9 violado, **inclusive rodar a mutação inline porque o host não tem "Agent tool"** (use o verbo daquele host). | orquestrador |
 | G11 | **`full` deve executar depois do plano.** Depois que `PLAN_*.md` passa G1/G2/G7/TC, chamar `atlas_assert_after_plan`; a próxima ação obrigatória é despachar `plan_execute` como sub-agent blocking. Proibido completed só com handoff. | `full` |
@@ -219,9 +223,9 @@ Regras inegociáveis. Violação = parar, não contornar.
 
 Artefatos esperados (em ordem): `BACKLOG_MESTRE_*.md` (se macro) → `SPRINT_S<NN>_*.md` → `PRD_*.md` → (`PRD_*.md` atualizado) → `PLAN_*.md` → diff de código → relatório do validador.
 
-1. **Parse input** — resolve backlog-item/idea para contexto de sprint.
+1. **Parse input** — resolve `sprint`/`backlog-item`/`idea` para contexto de sprint.
 1a. **Backlog first (condicional)** — se `routing.document_flow.priority = backlog_first`, invocar `atlas-backlog-generator`, produzir/atualizar `BACKLOG_MESTRE_*.md` + sprint file(s), chamar `atlas_verify_artifact`, `atlas_verify_backlog_index`, `atlas_select_next_sprint` e `atlas_verify_sprint_file`. Extrair `sprint_id` + `sprint_file_path` somente de `atlas_select_next_sprint.selected`. Não gerar PRD direto do macro input.
-1b. **Sprint file (obrigatório)** — para `backlog-item`, resolver/validar o sprint file antes do PRD. Se ausente/inválido, bloquear com `SPRINT_FILE`.
+1b. **Sprint file (obrigatório)** — para `sprint`/`backlog-item`, resolver/validar o sprint file antes do PRD. Se ausente/inválido, bloquear com `SPRINT_FILE`.
 2. **Generate PRD** — invocar o id resolvido para `prd_generator` com `sprint_id`, `sprint_file_path` e backlog autoritativo; depois chamar `atlas_verify_artifact` no `PRD_*.md`.
 3. **Validate PRD** — chamar `atlas_scan_prd` e `atlas_verify_template_conformance(artifact_type=prd, required_status=Aprovado para implementação, require_sprint_file=true)` quando o PRD for avançar. G5 e TC entram no ledger com fonte MCP.
 4. **Interview (condicional)** — se `atlas_scan_prd` retornar bloqueante, TC bloquear ou `--interview` → invocar o id resolvido para `prd_interview`, depois reexecutar `atlas_verify_artifact`, `atlas_scan_prd` e TC no PRD atualizado.
@@ -305,7 +309,7 @@ Marcar TBD e adiar só se o usuário pedir **explicitamente** — nunca por inic
 O ledger é **verificado contra disco** (Gate G6). Cada artefato listado precisa existir. A linha `Guarantee level` declara o enum `guarantee_level` emitido pelo MCP (PRD D12) e aparece em `full`/`direct`/`execute` — todos pipeline completo (`full_pipeline`). `interview-only` não emite `guarantee_level` (entrevista sem execução).
 
 ```
-✅ Workflow: claude full backlog-item completed
+✅ Workflow: claude full sprint completed
 
 📄 PRD: /path/to/PRD_S05_login.md            [verificado em disco]
 📋 Plan: /path/to/PLAN_S05_login.md          [verificado em disco]
@@ -332,7 +336,7 @@ Próximo passo:
 Se algum artefato exigido pelo modo estiver ausente, o cabeçalho vira:
 
 ```
-⚠️  Workflow: claude full backlog-item incomplete
+⚠️  Workflow: claude full sprint incomplete
    Faltando: PLAN_*.md (Gate G2 bloqueou execução de código)
 ```
 
@@ -371,7 +375,7 @@ Se `full` gerou `PLAN_*.md` mas não despachou `plan_execute`, o cabeçalho deve
 
 ## Skills envolvidas
 
-`atlas-backlog-generator` é a primeira fase documental para macro inputs em `full`/`direct` quando `routing.document_flow.priority = backlog_first`. Ele deve retornar `backlog_path`, `sprint_id` e `sprint_file_path`. Para `backlog-item`, o orquestrador resolve o sprint file existente via backlog. Para `prd`, `plan`, `execute`, `interview-only` e `audit`, não roda automaticamente; a cadeia continua a partir do artefato/input já recortado.
+`atlas-backlog-generator` é a primeira fase documental para macro inputs em `full`/`direct` quando `routing.document_flow.priority = backlog_first`. Ele deve retornar `backlog_path`, `sprint_id` e `sprint_file_path`. Para `sprint`/`backlog-item`, o orquestrador resolve o sprint file existente via backlog. Para `prd`, `plan`, `execute`, `interview-only` e `audit`, não roda automaticamente; a cadeia continua a partir do artefato/input já recortado.
 
 | Skill | Entrada | Saída (artefato) |
 |-------|---------|------------------|

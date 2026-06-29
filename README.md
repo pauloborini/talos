@@ -4,9 +4,9 @@
 
 # Atlas Workflow
 
-Plugin **Atlas Workflow Orchestrator** v0.10.0 — pipeline determinístico (PRD → plano → execução → validação) com skills `atlas-*`, templates e MCP. Um pacote, sete hosts: **Claude Code**, **Cursor**, **Codex App**, **Antigravity (Gemini)**, **ZCode**, **OpenCode** e **Pi CLI**.
+Plugin **Atlas Workflow Orchestrator** v0.10.1 — pipeline determinístico (PRD → plano → execução → validação) com skills `atlas-*`, templates e MCP. Um pacote, sete hosts: **Claude Code**, **Cursor**, **Codex App**, **Antigravity (Gemini)**, **ZCode**, **OpenCode** e **Pi CLI**.
 
-**Versão:** [`VERSION`](VERSION) (`0.10.0`) · **Repo:** https://github.com/pauloborini/atlas-workflow
+**Versão:** [`VERSION`](VERSION) (`0.10.1`) · **Repo:** https://github.com/pauloborini/atlas-workflow
 
 ## Hosts
 
@@ -115,7 +115,7 @@ Alternativa à instalação via GitHub: baixar o `.plugin` do host (`claude`, `c
 
 Comando (Claude Code / Cursor): `/workflow <mode> <input-type> [input] [flags]`
 
-No Codex, Antigravity, opencode, pi e zcode, invoque a skill do orquestrador com o mesmo padrão de argumentos (ex.: `workflow full backlog-item S05`). O verbo de dispatch do subagente é resolvido por `atlas_capabilities` (host-agnóstico).
+No Codex, Antigravity, opencode, pi e zcode, invoque a skill do orquestrador com o mesmo padrão de argumentos (ex.: `workflow full sprint S05`). O verbo de dispatch do subagente é resolvido por `atlas_capabilities` (host-agnóstico).
 
 Se você quiser começar fora do fluxo principal, as skills listadas abaixo são os atalhos explícitos para backlog, PRD, auditoria, plano, execução e revisão.
 
@@ -135,7 +135,8 @@ Se você quiser começar fora do fluxo principal, as skills listadas abaixo são
 
 ### Input types
 
-- `backlog-item` — ID de sprint ou item (ex.: `S05`)
+- `sprint` — ID de sprint já ancorado no backlog e em sprint file vivo (ex.: `S05`)
+- `backlog-item` — alias legado de `sprint`
 - `idea` — indicação curta em texto
 - `prd` — caminho para `PRD_*.md` existente (principal em **`direct`**)
 - `plan` — caminho para `PLAN_*.md` existente (principal em **`execute`**)
@@ -153,7 +154,13 @@ Se você quiser começar fora do fluxo principal, as skills listadas abaixo são
 Feature nova a partir do sprint (pipeline completo):
 
 ```
-/workflow full backlog-item "S05"
+/workflow full sprint "S05"
+```
+
+Sprint já recortada; implementar direto sem gerar plano separado:
+
+```
+/workflow direct sprint "S05"
 ```
 
 PRD já escrito no repo; implementar sem gerar plano separado:

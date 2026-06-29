@@ -206,7 +206,7 @@ function documentFlowForRouting(mode, inputType = null, artifactType = null) {
       ],
     };
   }
-  if (normalizedInput === 'backlog-item' || normalizedArtifact === 'backlog') {
+  if (normalizedInput === 'backlog-item' || normalizedInput === 'sprint' || normalizedArtifact === 'backlog') {
     return {
       priority: 'sprint_from_backlog',
       reason: 'backlog_canonico_ja_fornecido',
@@ -4720,7 +4720,7 @@ function toolsList() {
             run_id: { type: 'string', minLength: 1 },
             project_root: { type: 'string', minLength: 1 },
             mode: { type: 'string', enum: WORKFLOW_CONFIG.modes },
-            input_type: { type: 'string', enum: ['backlog-item', 'idea', 'briefing', 'roadmap', 'conversation', 'prd-macro', 'prd', 'plan', 'brainstorm', 'target'] },
+            input_type: { type: 'string', enum: ['backlog-item', 'sprint', 'idea', 'briefing', 'roadmap', 'conversation', 'prd-macro', 'prd', 'plan', 'brainstorm', 'target'] },
             artifact_type: { type: 'string', enum: ['backlog', 'prd', 'plan', 'idea', 'unknown'] },
             expected_version: { type: 'string' },
             host: { type: 'string', enum: HOST_NAMES },

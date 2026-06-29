@@ -57,7 +57,7 @@
   {
     "name": "Atlas — workflow Claude full (sprint)",
     "keyword": "!aw-wf-claude",
-    "text": "/workflow claude full backlog-item {cursor}"
+    "text": "/workflow claude full sprint {cursor}"
   },
   {
     "name": "Atlas — workflow Claude direct PRD",
@@ -67,7 +67,7 @@
   {
     "name": "Atlas — workflow Codex full (sprint)",
     "keyword": "!aw-wf-codex",
-    "text": "workflow codex full backlog-item {cursor}"
+    "text": "workflow codex full sprint {cursor}"
   },
   {
     "name": "Atlas — workflow Codex direct PRD",

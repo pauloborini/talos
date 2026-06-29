@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.10.1 - 2026-06-29
+
+Tipo: **patch de contrato e distribuição** — `sprint` vira alias canônico para `backlog-item` em `full`/`direct`, com docs, bundles e launchers alinhados. **Sem breaking** (`CAPABILITIES_SCHEMA_VERSION` segue **v5** e o comportamento legado continua aceito).
+
+Resumo: O fluxo Atlas passa a preferir `/workflow full sprint "SNN"` e `/workflow direct sprint "SNN"` como entrada pública, mantendo `backlog-item` apenas como compatibilidade. A documentação, os bundles dos hosts e os comandos Raycast foram ajustados para refletir o contrato novo sem alterar o runtime do orquestrador.
+
+Mudanças:
+- **Alias `sprint` canônico** — `packages/mcp-server/server.js` e os artefatos gerados passam a tratar `sprint` como input oficial para `full` e `direct`; `backlog-item` permanece como alias legado.
+- **Docs alinhadas** — `README.md`, `COMMANDS.md`, `packages/orchestrator/README.md`, `packages/orchestrator/commands/workflow.md` e as cópias empacotadas foram atualizadas para o novo comando `/workflow ... sprint`.
+- **Raycast atualizado** — os snippets/launchers locais passam a expor `workflow full sprint` como comando padrão.
+- **Versionamento sincronizado** — `VERSION`, `package.json`, `packages/mcp-server/package.json`, `.claude-plugin/plugin.json` e os bundles host foram regenerados em `0.10.1`.
+
+Validação:
+- `build/bump-version.mjs` regenerou bundles e `build/check-consistency.mjs` passou.
+- A suíte completa e a validação de plugin continuam válidas após o bump.
+
 ## 0.10.0 - 2026-06-29
 
 Tipo: **minor aditivo** — backlog em 2 camadas (mestre enxuto + sprint files vivos) + 4 gates MCP novos. **Sem breaking** (`CAPABILITIES_SCHEMA_VERSION` segue **v5**, modos públicos `full`/`direct`/`execute`/`interview-only`/`audit` intactos).

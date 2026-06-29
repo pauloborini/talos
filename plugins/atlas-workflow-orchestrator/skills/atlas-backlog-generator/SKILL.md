@@ -22,7 +22,7 @@ Acione esta skill em dois casos:
 - pedido explícito do usuário para criar, gerar, montar, estruturar ou atualizar backlog mestre;
 - fase `backlog_first` do `atlas-workflow-orchestrator`, quando macro input ainda não tem backlog canônico e precisa ser decomposto antes de PRD/plano/execução.
 
-Não acione para `backlog-item`, PRD já existente, plano já existente, `execute`, `interview-only` ou `audit`. Nesses casos o escopo já está recortado ou não há pipeline de backlog.
+Não acione para `sprint`/`backlog-item`, PRD já existente, plano já existente, `execute`, `interview-only` ou `audit`. Nesses casos o escopo já está recortado ou não há pipeline de backlog.
 
 ---
 

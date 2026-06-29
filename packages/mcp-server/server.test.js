@@ -758,6 +758,18 @@ test('documentFlowForRouting: backlog existente preserva execução pequena por 
   assert.deepEqual(flow.artifacts, ['SPRINT_S<NN>_*.md', 'PRD_*.md', 'PLAN_*.md']);
 });
 
+test('documentFlowForRouting: input sprint é alias estrito de backlog-item', () => {
+  const full = documentFlowForRouting('full', 'sprint');
+  assert.equal(full.priority, 'sprint_from_backlog');
+  assert.ok(!full.skills.includes('atlas-backlog-generator'));
+  assert.deepEqual(full.artifacts, ['SPRINT_S<NN>_*.md', 'PRD_*.md', 'PLAN_*.md']);
+
+  const direct = documentFlowForRouting('direct', 'sprint');
+  assert.equal(direct.priority, 'sprint_from_backlog');
+  assert.ok(!direct.skills.includes('atlas-backlog-generator'));
+  assert.deepEqual(direct.artifacts, ['SPRINT_S<NN>_*.md', 'PRD_*.md']);
+});
+
 test('expectedNextPhase: execute → plan_execute sem regredir full/direct/interview (T02)', () => {
   assert.equal(expectedNextPhase({ mode: 'execute' }, {}), 'plan_execute');
   assert.equal(expectedNextPhase({ mode: 'full' }, {}), 'plan_handoff');

@@ -5,7 +5,7 @@ Orquestra pipelines completos de desenvolvimento de features no projeto Atlas, a
 ## Quick Start
 
 ```bash
-/workflow full backlog-item "S05"
+/workflow full sprint "S05"
 ```
 
 Pipeline completo executado automaticamente:
@@ -32,7 +32,8 @@ Pipeline completo executado automaticamente:
 
 ### Input Types
 
-- `backlog-item` — Sprint ID (ex: S05) ou indicação direta
+- `sprint` — Sprint ID (ex: S05) ancorado no backlog e em sprint file vivo
+- `backlog-item` — alias legado de `sprint`
 - `idea` — Indicação/brainstorm curto
 - `prd` — Path para PRD existente
 - `brainstorm` — Texto livre (só para interview-only)
@@ -48,12 +49,12 @@ Pipeline completo executado automaticamente:
 ### Full pipeline com sprint S05
 
 ```
-/workflow full backlog-item "S05"
+/workflow full sprint "S05"
 ```
 
 Output:
 ```
-✅ Workflow: claude full backlog-item completed
+✅ Workflow: claude full sprint completed
 
 📄 PRD: /path/to/PRD_S05_login.md
 📋 Plan: /path/to/PLAN_S05_login.md
@@ -71,6 +72,12 @@ Status:
 
 ```
 /workflow direct prd "/path/to/PRD_S05.md" --review
+```
+
+### Direct pipeline com sprint S05
+
+```
+/workflow direct sprint "S05"
 ```
 
 ### Entrevista de brainstorm
@@ -200,7 +207,7 @@ Se você rodar `full`/`direct` com macro input (`idea`, briefing, roadmap ou con
 ### Ao rodar workflow
 
 ```
-/workflow full backlog-item "S05"
+/workflow full sprint "S05"
 ```
 
 Plugin automatiza tudo. Você valida output.
@@ -218,8 +225,11 @@ Plugin automatiza tudo. Você valida output.
 | `atlas-backlog-generator` | Cria backlog mestre a partir de ideia, prompt, conversa ou briefing; roda explicitamente ou como primeira fase documental em macro input `backlog_first` |
 | `atlas-sprint-prd-generator` | Gera PRD a partir de sprint/indicação |
 | `atlas-prd-interview` | Entrevista de PRD (resolve ambiguidades) |
+| `atlas-audit` | Audita target/boundary sem patch: lê regras locais, detecta stack, produz achados com `arquivo:linha`; com `--handoff`, grava `.atlas/plans/PLAN_AUDIT_*.md` TC-conforme sem executar |
 | `atlas-plan-handoff` | Cria plano executável |
 | `atlas-plan-execute` | Executa plano (com `atlas-task-validator` sub-agent) |
+| `atlas-findings-repair` | Corrige findings P0/P1/P2 após `fail` do validator dentro do boundary executado |
+| `atlas-task-validator` | Validador frio sibling; lê `state_path`, emite veredito estruturado e nunca corrige |
 | `atlas-slice-review` | Review fria de implementação quando `--review` está presente |
 
 ## Configuração
@@ -239,9 +249,15 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `atlas-*` para o
 
 ---
 
-**Plugin version:** 0.10.0
+**Plugin version:** 0.10.1
 **Author:** Paulo Borini
 **Last updated:** 2026-06-29
+
+### Novidades v0.10.1 — alias `sprint` canônico e Raycast alinhado
+
+- **`sprint` agora é o input público principal** para `/workflow full` e `/workflow direct`; `backlog-item` continua aceito só por compatibilidade.
+- **Comandos e docs sincronizados** — README, `COMMANDS.md`, comandos do orquestrador, bundles dos hosts e snippets do Raycast foram atualizados para o novo contrato.
+- **Sem mudança de runtime** — o fluxo continua determinístico e os gates de validação permanecem os mesmos; a mudança é de contrato de entrada e distribuição.
 
 ### Novidades v0.10.0 — backlog em 2 camadas + 4 gates MCP de sprint
 
@@ -294,7 +310,7 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `atlas-*` para o
 - `atlas-backlog-generator` cria backlog mestre a partir de ideia, prompt ou conversa quando acionado explicitamente ou como primeira fase documental em macro input `backlog_first`.
 - O backlog padrão vai para `.atlas/backlog/BACKLOG_MESTRE_<slug>.md` quando o usuário não informa path.
 - `BACKLOG_MESTRE_TEMPLATE.md` inclui MoSCoW, esforço x ganho, dependências, riscos e próxima sprint executável.
-- Em `full`/`direct`, macro input sem backlog canônico passa por backlog antes do PRD; `backlog-item`, PRD e plano existentes continuam começando no artefato já recortado.
+- Em `full`/`direct`, macro input sem backlog canônico passa por backlog antes do PRD; `sprint`/`backlog-item`, PRD e plano existentes continuam começando no artefato já recortado.
 
 ### Novidades v0.6.1 — fronteira documental no orquestrador
 
