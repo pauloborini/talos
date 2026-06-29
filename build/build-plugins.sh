@@ -255,13 +255,6 @@ build_zcode() {
   # Subagentes canônicos (mesmo formato claude — .md com frontmatter).
   # ZCode é Claude Agent SDK: descobre agents/ na raiz do plugin automaticamente.
   cp -R "$ROOT/agents/." "$stage/agents/"
-  for ag in "${DISPATCHED_AGENTS[@]}"; do
-    node "$ROOT/build/gen-host-agent.mjs" opencode "$stage/agents/$ag.md" 2>/dev/null || true
-    # Fallback: se o gen-host-agent não conhecer "opencode" para zcode, copia o canônico.
-    if [[ ! -f "$stage/agents/$ag.md" ]]; then
-      cp "$ROOT/agents/$ag.md" "$stage/agents/$ag.md"
-    fi
-  done
 
   # Skills
   cp -R "$ROOT/packages/skills/." "$stage/skills/"

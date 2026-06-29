@@ -1,6 +1,6 @@
 # Atlas Workflow Orchestrator
 
-Orquestra pipelines completos de desenvolvimento de features no projeto Atlas, automatizando a sequência de skills (PRD generation → planejamento → execução → review) sob demanda.
+Orquestra pipelines completos de desenvolvimento de features no projeto Atlas, automatizando a sequência de skills (backlog macro → sprint file → PRD → planejamento → execução → validação fria → review) sob demanda.
 
 ## Quick Start
 
@@ -9,12 +9,14 @@ Orquestra pipelines completos de desenvolvimento de features no projeto Atlas, a
 ```
 
 Pipeline completo executado automaticamente:
-1. Gera PRD para sprint S05
-2. Valida PRD (detecta ambiguidades automaticamente)
-3. Executa entrevista se houver decisões em aberto
-4. Cria plano
-5. Executa plano
-6. (Opcional) Executa review
+1. Resolve S05 no backlog e valida o sprint file vivo
+2. Gera PRD a partir do sprint file
+3. Valida PRD (inclui TC com `require_sprint_file:true`)
+4. Executa entrevista se houver decisões em aberto
+5. Cria plano com Eval/Policy por task
+6. Executa plano e grava state com `eval_results`/`policy_scope`
+7. Despacha validator frio
+8. (Opcional) Executa review
 
 ## Sintaxe
 
@@ -24,8 +26,8 @@ Pipeline completo executado automaticamente:
 
 ### Modes
 
-- `full` — Pipeline completo (PRD → plano → executor → review opcional)
-- `direct` — Pipeline enxuto (PRD → executor → review opcional)
+- `full` — Pipeline completo (sprint file → PRD → plano → executor → validator → review opcional)
+- `direct` — Pipeline enxuto (sprint file/PRD → executor → validator → review opcional)
 - `interview-only` — Entrevista direta (brainstorm, resolução de decisões)
 
 ### Input Types
@@ -88,26 +90,35 @@ Status:
 ### Full Mode
 
 ```
-1. Parse input (resolve sprint/indicação)
+1. Parse input (resolve backlog/sprint file)
    ↓
-2. Generate PRD (`atlas-sprint-prd-generator`)
+2. Validate backlog index (`atlas_verify_backlog_index`)
    ↓
-3. Validate PRD (busca TBD, "a confirmar", gaps)
+3. Select next sprint (`atlas_select_next_sprint`)
    ↓
-4. Interview (automático se ambiguidades OU --interview)
+4. Validate Sprint file (`atlas_verify_sprint_file`)
+   ↓
+5. Generate PRD (`atlas-sprint-prd-generator`)
+   ↓
+6. Validate PRD (G5 + TC `require_sprint_file:true`)
+   ↓
+7. Interview (automático se ambiguidades OU --interview)
    └─ Atualiza PRD com decisões coletadas
    ↓
-5. Plan (`atlas-plan-handoff`)
+8. Plan (`atlas-plan-handoff`)
    ↓
-6. Validate Plan (tem gaps?)
-   └─ Pergunta: volta? continua TBD? adia?
+9. Validate Plan (TC `require_sprint_file:true`)
    ↓
-7. Execute obrigatório em `full` (`atlas-plan-execute`, com `atlas-task-validator` sub-agent)
+10. Execute obrigatório em `full` (`atlas-plan-execute`, state com `eval_results`)
    ↓
-8. Review (se --review)
+11. Validator frio (`atlas-task-validator`)
+   ↓
+12. Update sprint status (`atlas_update_sprint_status`)
+   ↓
+13. Review (se --review)
    └─ `atlas-slice-review`
    ↓
-9. Output (resumo + próximos passos)
+14. Output (resumo + próximos passos)
 ```
 
 ### Direct Mode
@@ -119,9 +130,13 @@ Status:
    ↓
 3. Execute (`atlas-direct-execute`, mantendo `phase: plan_execute`)
    ↓
-4. Review (se --review)
+4. Validator frio (`atlas-task-validator`)
    ↓
-5. Output
+5. Update sprint status (`atlas_update_sprint_status`, quando houver backlog/sprint)
+   ↓
+6. Review (se --review)
+   ↓
+7. Output
 ```
 
 ### Interview-Only Mode
@@ -180,6 +195,8 @@ Você escolhe A/B/C → pipeline continua conforme.
 2. Preenchimento de `PERGUNTAS_EM_ABERTO.md` (fora do plugin)
 3. Resolver perguntas abertas fora do pipeline (se necessário)
 
+Se você rodar `full`/`direct` com macro input (`idea`, briefing, roadmap ou conversa solta), o orquestrador prioriza `atlas-backlog-generator` automaticamente quando o MCP retornar `routing.document_flow.priority = backlog_first`. O macro fica no `BACKLOG_MESTRE_*.md`; o MCP valida o índice com `atlas_verify_backlog_index`, escolhe a execução com `atlas_select_next_sprint` e sincroniza backlog+sprint file com `atlas_update_sprint_status` após validator terminal.
+
 ### Ao rodar workflow
 
 ```
@@ -198,7 +215,7 @@ Plugin automatiza tudo. Você valida output.
 
 | Skill | Função |
 |-------|--------|
-| `atlas-backlog-generator` | Cria backlog mestre a partir de ideia, prompt, conversa ou briefing; uso preparatório explícito, fora da cadeia automática |
+| `atlas-backlog-generator` | Cria backlog mestre a partir de ideia, prompt, conversa ou briefing; roda explicitamente ou como primeira fase documental em macro input `backlog_first` |
 | `atlas-sprint-prd-generator` | Gera PRD a partir de sprint/indicação |
 | `atlas-prd-interview` | Entrevista de PRD (resolve ambiguidades) |
 | `atlas-plan-handoff` | Cria plano executável |
@@ -222,9 +239,19 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `atlas-*` para o
 
 ---
 
-**Plugin version:** 0.9.4
+**Plugin version:** 0.10.0
 **Author:** Paulo Borini
-**Last updated:** 2026-06-27
+**Last updated:** 2026-06-29
+
+### Novidades v0.10.0 — backlog em 2 camadas + 4 gates MCP de sprint
+
+- **Backlog em 2 camadas**: mestre enxuto (índice estratégico — fases, tabela de sprints, MoSCoW, dependências, links) + sprint files vivos (`sprints/SNN_<slug>.md`, 16 seções: DoR/DoD, `eval_manifest`, `policy_manifest`, §14 Execução e validação, §16 Histórico). Skills priorizam sprint file como fonte primária de contexto; backlog mestre só para deps/ordem macro.
+- **`atlas_verify_sprint_file`** — valida conformidade do arquivo vivo contra `SPRINT_TEMPLATE.md`: seções obrigatórias, link bidirecional ao backlog, DoR, eval_manifest. Fail-closed (ausente ou vazio = blocked).
+- **`atlas_verify_backlog_index`** — valida backlog mestre: §7 Registro de sprints, enums válidos (MoSCoW/prioridade/status), links para sprint files reais, sem duplicata de sprint ID, detecção de ciclo de dependência, status drift backlog↔sprint file = blocked.
+- **`atlas_select_next_sprint`** — seleção determinística: filtra `state=ready` + deps done + sprint file válido + DoR verde; ordena por MoSCoW→prioridade→ganho→esforço→ID. Resultado único, sem ambiguidade.
+- **`atlas_update_sprint_status`** — atualiza status atomicamente em backlog e sprint file: pré-condição (FSM de transições, `done` exige validator terminal + `state_path`), escrita com rollback P2 (se write do sprint file falhar após o backlog ser escrito, backlog é restaurado), pós-validação antes de `passed`.
+- **`SPRINT_TEMPLATE.md`** canônico — template de 16 seções para sprint files vivos.
+- **`BACKLOG_MESTRE_TEMPLATE.md` refatorado** — índice enxuto sem duplicar conteúdo de sprint.
 
 ### Novidades v0.9.4 — audit handoff TC-conforme + perfis de stack
 
@@ -236,7 +263,8 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `atlas-*` para o
 
 - `plan_execute` agora tem liveness explícito: `atlas_lock_dispatch(start)` cria deadline de bootstrap e o executor precisa emitir checkpoints materiais.
 - `atlas-plan-execute` deve reportar `executor_started`, `skill_loaded`, `plan_loaded`, `handoff_accepted`, `task_started`, `first_write` e `state_path_created` conforme avança.
-- Se o sub-agent não retornar/progredir, o orquestrador consulta `atlas_lock_dispatch(status)`; bootstrap vencido vira `executor_bootstrap_timeout`, checkpoint antigo sem avanço vira `executor_progress_timeout`; ambos persistem `stalled`, liberam retry e não podem ser tratados como execução em andamento.
+- Se o sub-agent não retornar/progredir antes do handoff, o orquestrador consulta `atlas_lock_dispatch(status)`; bootstrap vencido vira `executor_bootstrap_timeout`, checkpoint antigo sem avanço vira `executor_progress_timeout`; ambos persistem `stalled`, liberam retry e não podem ser tratados como execução em andamento.
+- Depois de `state_path_created`, o liveness fica `handoff_ready` e não expira por timeout de progresso enquanto aguarda o orquestrador abrir `atlas_lock_validator(start)`.
 - `atlas_lock_validator(start)` só abre o validator depois de `state_path_created` para o mesmo `state_path`; checkpoint final sem arquivo legível é bloqueado.
 
 ### Novidades v0.8.2 — release/npm e procedimento de bump
@@ -261,12 +289,12 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `atlas-*` para o
 
 - Validação fria é sempre sub-agent irmão em todos os hosts: o executor escreve `state_path` e encerra; o orquestrador despacha `atlas-task-validator`. Gate JOIN no preflight, `dispatch_token` monotônico, máximo de 2 validators por contrato. `CAPABILITIES_SCHEMA_VERSION` v3 → v5 (BREAKING de contrato, sem mudança de comportamento).
 
-### Novidades v0.6.2 — backlog mestre explícito
+### Novidades v0.6.2 — backlog mestre
 
-- `atlas-backlog-generator` cria backlog mestre a partir de ideia, prompt ou conversa somente quando acionado explicitamente.
+- `atlas-backlog-generator` cria backlog mestre a partir de ideia, prompt ou conversa quando acionado explicitamente ou como primeira fase documental em macro input `backlog_first`.
 - O backlog padrão vai para `.atlas/backlog/BACKLOG_MESTRE_<slug>.md` quando o usuário não informa path.
 - `BACKLOG_MESTRE_TEMPLATE.md` inclui MoSCoW, esforço x ganho, dependências, riscos e próxima sprint executável.
-- A cadeia automática do workflow permanece começando no PRD; backlog é preparação documental opcional.
+- Em `full`/`direct`, macro input sem backlog canônico passa por backlog antes do PRD; `backlog-item`, PRD e plano existentes continuam começando no artefato já recortado.
 
 ### Novidades v0.6.1 — fronteira documental no orquestrador
 

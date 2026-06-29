@@ -1,6 +1,6 @@
 ---
 name: atlas-workflow-orchestrator
-description: "Orquestra pipeline completo de desenvolvimento de features: /workflow <mode> <input-type> [flags]. Automatiza PRD generation → validação → entrevista (se necessário) → planejamento → execução → review (opcional) e oferece audit universal sem correção. Pipeline orientado a artefato com gates duros: cada fase só conta se produzir arquivo verificável em disco."
+description: "Orquestra pipeline completo de desenvolvimento de features: /workflow <mode> <input-type> [flags]. Automatiza backlog macro → sprint file → PRD → validação → entrevista (se necessário) → planejamento → execução → review (opcional) e oferece audit universal sem correção. Pipeline orientado a artefato com gates duros: cada fase só conta se produzir arquivo verificável em disco."
 category: Development Automation
 ---
 
@@ -20,16 +20,16 @@ Orquestra pipelines de desenvolvimento de features no projeto Atlas, automatizan
 
 Três modos **canônicos de execução** — `full`, `direct`, `execute` (PRD §5 D1) — mais os modos sem execução `interview-only` e `audit`.
 
-- **`full`** — pipeline completo: PRD → validação → entrevista (se necessário) → **plano (artefato obrigatório)** → executor → review (opcional)
-- **`direct`** — pipeline enxuto: PRD → validação → entrevista (se necessário) → `atlas-direct-execute` → review (opcional). **Não produz plano de handoff** — a diferença real para `full` é exatamente essa.
+- **`full`** — pipeline completo: backlog macro (se necessário) → sprint file → PRD → validação → entrevista (se necessário) → **plano (artefato obrigatório)** → executor → review (opcional)
+- **`direct`** — pipeline enxuto: backlog macro (se necessário) → sprint file → PRD → validação → entrevista (se necessário) → `atlas-direct-execute` → review (opcional). **Não produz plano de handoff** — a diferença real para `full` é exatamente essa.
 - **`execute`** — recebe um **`PLAN_*.md` pronto** e o executa **sem gerar plano** (PRD D1). Entrada = caminho de plano; reverifica o artefato + conformidade de template e despacha `plan_execute` direto. Não regera nem replaneja: ajustes de plano pedem `full`. `atlas_assert_after_plan` (gate pós-plano do `full`) **não se aplica** em `execute` — o plano já é o input; o equivalente é a reverificação na entrada (PRD D13). **Não há alias `plan`**: usar `plan` como modo é ambíguo com planejamento documental e deve ser rejeitado como modo inválido.
 - **`interview-only`** — entrevista direta (ex: brainstorm, resolução de decisões). Entrevista **sem execução**: não usa `guarantee_level` no fluxo (não há execução de código a garantir). Permanece modo separado (PRD D2).
 - **`audit`** — auditoria universal sem correção de código: lê target/boundary, regras locais e stack detectada; gera relatório de achados e, com `--handoff`, plano Atlas-style para correção futura. **Não executa plano, não chama executor e não altera código.**
 
 ### Input Types
 
-- **`backlog-item`** — Sprint ID (ex: S05) ou indicação direta (ex: "implementar login")
-- **`idea`** — Indicação/brainstorm curto
+- **`backlog-item`** — Sprint ID (ex: S05) ou indicação direta já ancorada no backlog e em sprint file vivo
+- **`idea`** — Indicação/brainstorm curto ou macro input ainda sem backlog canônico
 - **`prd`** — Path para PRD existente ou nome do arquivo
 - **`brainstorm`** — Texto livre (só para `interview-only`)
 - **`target`** — Path/feature/módulo auditável (só para `audit`)
@@ -46,13 +46,13 @@ Três modos **canônicos de execução** — `full`, `direct`, `execute` (PRD §
 
 ```
 /workflow full backlog-item "S05"
-→ Gera PRD para S05, valida, entrevista se necessário, cria PLAN_*.md, executa a partir do plano
+→ Resolve S05 no backlog, valida sprint file, gera PRD, valida, entrevista se necessário, cria PLAN_*.md, executa a partir do plano
 
 /workflow direct prd "/path/to/PRD_S05.md" --review
 → Valida PRD, executa direto (sem handoff), roda review ao final
 
 /workflow full idea "melhorar performance de listagem" --interview
-→ Gera PRD de indicação, força entrevista, plano, executor
+→ Prioriza BACKLOG_MESTRE_*.md quando a entrada ainda é macro, cria/atualiza sprint file, seleciona a próxima sprint executável, gera PRD, força entrevista, plano, executor
 
 /workflow interview-only brainstorm "que tal dark mode?"
 → Cria draft mínimo pelo template canônico, valida o path e entrevista esse PRD; sem execução
@@ -72,7 +72,7 @@ Executar **antes** de iniciar o pipeline. Se qualquer item falhar, **parar e rep
 
 1. **Parse** dos argumentos `<mode> <input-type|target> [input] [flags]`. Se inválido ou `--help` → mostrar sintaxe e parar. Em `audit`, o segundo argumento é `target`, não `input-type`.
 2. **Chamar MCP `atlas_ping`.** Se não responder, versão vier vazia, `version_check.status` vier bloqueado ou capacidades não listarem os gates exigidos pelo modo → abortar com erro de MCP indisponível/drift. Não seguir por prosa.
-2a. **Chamar MCP `atlas_capabilities`.** Ler `host`, `subagent_dispatch`, `validator_dispatch`, `capabilities_flags` e `required_deps`. Determinar a **disponibilidade real** dos pré-requisitos essenciais neste host: o subagente do plugin é despachável? o MCP está vivo (ping ok)? Em hosts com `required_deps` (ex.: pi: `pi-mcp-adapter` + `pi-subagents`), confirmar que cada dep está presente; se faltar, o pré-requisito correspondente é `false`.
+2a. **Chamar MCP `atlas_capabilities`.** Ler `host`, `subagent_dispatch`, `validator_dispatch`, `capabilities_flags`, `required_deps` e `dispatch_capability`. Determinar a **disponibilidade real** dos pré-requisitos essenciais neste host: o subagente do plugin é despachável? o MCP está vivo (ping ok)? Em hosts com `required_deps` (ex.: pi: `pi-mcp-adapter` + `pi-subagents`), confirmar que cada dep está presente; se faltar, o pré-requisito correspondente é `false`. Para modos com execução (`full`, `direct`, `execute`), determinar também `host_capabilities.dispatch_mutable`: se `dispatch_capability:"mutable"`, não precisa reportar; se `dispatch_capability:"unknown"` (zcode/pi/generic/antigravity), reporte `dispatch_mutable:true` **somente** quando o sub-agent do host aceitar os agentes atlas-* e tiver ferramentas mutáveis equivalentes a Write/Edit/Bash. Se não for verificável ou for read-only (ex.: schema restrito a `Explore`), não reporte `true`; deixe o `atlas_preflight` bloquear no gate `DISPATCH`.
 2b. **Chamar MCP `atlas_classify_input`** no input informado (`input_path`), **antes de rotear** (PRD D3/D6). `classify_input` é para **artefato em arquivo** (path em disco). A tool devolve `artifact_type` ∈ {`backlog`, `prd`, `plan`, `idea`, `unknown`} (verdade forte = TC de plano passa) e um `banner` de roteamento já pronto. **O tipo de input é fato e prevalece sobre o modo pedido** (intenção). Aplicar o roteamento:
    - **`plan` em `direct`/`full`** → auto-rotear para **`execute`** (executa o plano pronto; nunca gera plano de plano, mesmo com arquivo renomeado — PRD D6). **Não bloqueia**: ecoar o banner de troca `▸ atlas: roteamento · pediu={x} mas input={y} → modo=execute`.
    - **`execute` sobre `backlog`/`prd`** → auto-rotear para **`full`** (ou `direct` conforme o pedido), pois não há plano a executar. **Não bloqueia**: ecoar o banner de troca correspondente.
@@ -80,7 +80,7 @@ Executar **antes** de iniciar o pipeline. Se qualquer item falhar, **parar e rep
    - **`unknown`** (arquivo existe mas não classifica) → **não adivinhar**: ecoar o banner de input ilegível e **pedir esclarecimento** ao usuário (qual arquivo/tipo). Não inventa modo.
    - Tipo coincide com o modo → segue sem troca (ecoar o banner `roteia` simples).
    O `banner` vem do MCP; o orquestrador **só ecoa** (ver "Protocolo de banner").
-3. **Chamar MCP `atlas_preflight`** com `run_id`, `<mode>`, `host`, `expected_version` (quando o host reportar versão) e `host_capabilities` (a disponibilidade real apurada no passo 2a — ex.: `{"subagent_available":false}` se a dep do subagente faltar). O resultado é a fonte obrigatória de pré-requisitos, modo, versão, lock e ids oficiais `atlas-*`.
+3. **Chamar MCP `atlas_preflight`** com `run_id`, `<mode>`, `input_type`/`artifact_type` quando conhecidos, `host`, `expected_version` (quando o host reportar versão) e `host_capabilities` (a disponibilidade real apurada no passo 2a — ex.: `{"subagent_available":false}` se a dep do subagente faltar; `{"dispatch_mutable":true}` se um host `unknown` foi verificado como mutável). O resultado é a fonte obrigatória de pré-requisitos, modo, versão, lock, ids oficiais `atlas-*` e `routing.document_flow`.
    - **Gate `PREREQ` (DEC-004): pré-requisito essencial ausente é hard-fail.** Se `gate:"PREREQ"`/`status:"blocked"`, **abortar em `ready`** (antes de qualquer fase/dispatch) com `missing_prerequisites`, causa, impacto e `next_action`. **Proibido degradar, rodar validator inline ou prosseguir sem isolamento, em qualquer tamanho de tarefa.** Só capability não-essencial (`todo`) segue sem o recurso.
    ```text
    ⛔ Pré-flight falhou (PREREQ)
@@ -88,12 +88,26 @@ Executar **antes** de iniciar o pipeline. Se qualquer item falhar, **parar e rep
       Motivo: host sem pré-requisito essencial de determinismo (subagente/MCP)
       Ação: <next_action> (ex.: instalar pi-mcp-adapter + pi-subagents; ou usar host com subagente+MCP nativos)
    ```
+   - **Gate `DISPATCH` (DEC-008): subagente sem mutação verificada é hard-fail em execução.** Se `gate:"DISPATCH"`/`status:"blocked"`, **abortar em `ready`** com causa, impacto e `next_action`. Proibido executar código no fio principal para compensar sub-agent read-only. Modos read-only (`audit`, `interview-only`) não exigem `dispatch_mutable`.
+   ```text
+   ⛔ Pré-flight falhou (DISPATCH)
+      Host: <host>   Dispatch: <dispatch_capability>
+      Motivo: subagente sem Write/Edit/Bash verificado para execução
+      Ação: <next_action>
+   ```
 3b. **Gate DEP — dependência de backlog (só `backlog-item`).** Se o item declara `Dependências` no backlog/registro de origem, ler o status de cada dependência **no mesmo backlog**. Se alguma não estiver `done`, **abortar em `ready`** com `unmet_dependencies`, causa e `next_action` — determinístico, sem pergunta. Todas `done` (ou sem dependências) → segue. Decisão em aberto **não** entra aqui (não é dependência de execução).
    ```text
    ⛔ Pré-flight falhou (DEP)
       Item: <id>   Dependência não satisfeita: <dep> (status: <status>)
       Motivo: dependência de backlog não está `done`
       Ação: executar <dep> antes de <id>
+   ```
+3c. **Gate Backlog/Sprint — índice e recorte vivo obrigatórios (`full`/`direct` com `backlog-item` ou `backlog_first`).** Quando houver backlog, chamar `atlas_verify_backlog_index`; para macro input, chamar também `atlas_select_next_sprint` e usar somente o `selected` retornado pelo MCP. Resolver o `Sprint file` linkado/selecionado e chamar `atlas_verify_sprint_file`. Se backlog inválido, seleção ausente, sprint file `pendente`, inexistente, divergente do Sprint ID, sem seções mínimas (`Metadados`, `Escopo`, `Definition of Ready`, `eval_manifest`, `policy_manifest`) ou com gate bloqueado/indisponível, **abortar antes do PRD** com causa e `next_action`.
+   ```text
+   ⛔ Pré-flight falhou (SPRINT_FILE)
+      Item: <id>   Sprint file: <path|pendente>
+      Motivo: sprint file ausente/inválido; PRD não nasce direto do backlog
+      Ação: criar/atualizar SPRINT_S<NN>_<slug>.md via SPRINT_TEMPLATE.md
    ```
 4. **Usar a cadeia única `atlas-*`.** Cliente (Claude Code, Cursor, Codex App, Antigravity, ZCode, OpenCode, Pi CLI) é host de execução, não família de skills. Não existe roteamento por cliente.
 5. **Carregar defaults do pacote do plugin** (`defaults/paths.md` e `references/subagent_dispatch.md`). Não exigir config na raiz do repositório usuário.
@@ -124,6 +138,8 @@ O pipeline é **fire-and-continue**: uma vez iniciado, o orquestrador avança fa
 - Parar por decisão em aberto. Decisão pendente de **qualquer fonte** (scan de PRD, entrevista, `PERGUNTAS_EM_ABERTO.md`, doc de discussão/decisões como `DISCUSSAO_*.md`, ou o próprio backlog) **não é blockage**: gera o PRD se ainda não existe, dispara `atlas-prd-interview` sobre ele, propaga e **continua**. Nunca oferecer "responda só: seguir com recomendação ou D=...". Ver "Decisão em aberto ≠ parada".
 
 **PRD ausente em `full`/`direct`** = o passo "Generate PRD" **gera o PRD automaticamente** (invoca o id resolvido para `prd_generator` / autoria documental no fio principal). Nunca perguntar "quer que eu gere?".
+
+**Backlog ausente em macro input (`routing.document_flow.priority = backlog_first`)** = antes de gerar PRD, invocar `atlas-backlog-generator` no fio principal para criar/atualizar `BACKLOG_MESTRE_*.md` e `SPRINT_S<NN>_*.md`, validar artefatos em disco, chamar `atlas_verify_backlog_index` e escolher a próxima sprint executável via `atlas_select_next_sprint`. Em seguida, gerar PRD somente a partir do sprint file dessa sprint. Isto preserva o escopo pequeno de execução: macro fica no backlog mestre; sprint file fecha recorte vivo; PRD/plano/executor recebem apenas a sprint selecionada.
 
 **Após entrevista**: reexecuta os gates afetados (`atlas_verify_artifact`/`atlas_scan_prd`/TC) e **retoma o pipeline (plano→execução) automaticamente**, sem nova confirmação.
 
@@ -176,13 +192,17 @@ Regras inegociáveis. Violação = parar, não contornar.
 | G3 | **Skills invocadas de verdade — autoria documental no fio principal, execução de código em sub-agent.** **Fases documentais ANTES do plano validado** (gerar/maturar PRD, entrevistar, redigir `PLAN_*.md`) podem ser conduzidas pelo orquestrador (agente principal) carregando a skill correspondente; não exigem despacho de sub-agent (autoria não muta código). **Fases de execução de código** invocam a skill via **sub-agent despachado** (verbo nativo do host de `atlas_capabilities` — não necessariamente "Agent tool"), que carrega o `SKILL.md` do id resolvido antes de agir — prompt "aja como X" não basta. Sempre proibido absorver o artefato "implicitamente" (ex: plano dentro do §6 do PRD não substitui `PLAN_*.md`): o artefato exigido pelo modo tem que existir em disco e passar G1/TC. | todas |
 | G4 | **Validador frio é sempre sub-agent irmão (sibling), em todos os hosts.** O executor escreve `state_path` e para (retorna `validator_handoff_required`); o orquestrador abre o slot com `atlas_lock_validator`, despacha `task_validator` como irmão isolado e só aceita output cujo `dispatch_token` corresponda ao `validator_recovery.expected_dispatch_token`. Em caso de `fail`, roda `repair_start`, passa ao **`atlas-findings-repair`** o pacote `{state_path, findings, validator_attempt, repair_run_id, repair_budget: 1}`, exige atualização do mesmo `state_path`, fecha o repair e executa o **2º e último** validator. `validator_run_id`, `dispatch_token` e `repair_run_id` são obrigatórios para fechar slots ativos. O executor nunca valida o próprio trabalho nem despacha o validador no mesmo contexto. **A topologia é sempre sibling** — host sem join síncrono é rejeitado no preflight (gate JOIN). **Recovery de orquestrador re-spun:** antes de aceitar qualquer retorno, ler `atlas_run_state(get)` e usar `validator_recovery` para reconhecer o slot ativo; retornos divergentes voltam `stale_discarded: true` e devem ser descartados. **Falha de dispatch do validador em runtime = `blocked`, nunca inline (R17).** Se o despacho do `task_validator` (verbo nativo do host) **errar ou não retornar** — Agent/spawn/subagent que falha, host sem sub-agent disponível em runtime — a slice **bloqueia** com causa e `next_action`; é **proibido** validar inline, no contexto do orquestrador, ou relatar um veredito que o irmão frio não produziu. Não existe caminho de degradação: dispatch quebrado fecha a fase, não a contorna. **Proveniência do `dispatch_token` (R19):** o token submetido no `lock_validator(complete)` tem que ser o que **o próprio validador irmão devolveu no output dele** — não um valor que o orquestrador leu de `validator_recovery` e repassou sem o irmão ter rodado. O `validator_recovery` serve para *reconhecer/descartar* retornos stale, não para *fabricar* o token de um validador que não executou. **Proof-of-work (R20):** quando `lock_validator(start)` emite um `challenge` (sha256 de um arquivo do boundary), o `complete` exige `challenge_response` — também vindo **do output do validador irmão**, jamais preenchido pelo orquestrador. O MCP recomputa o hash do disco; divergência/ausência → `challenge_failed` (`blocked`), slot preservado, re-despachar o mesmo validador. Re-dispatch é **bounded**: após o teto de falhas por attempt o slot fecha terminal (`challenge_exhausted`, fail-closed) em vez de loopar. É atestação mecânica de leitura do boundary, **não** prova de isolamento não-forjável (MCP fala stdio com um único caller) — fecha o atalho preguiçoso de afirmar veredito sem ler código. | execução |
 | G5 | **Scan de ambiguidade determinístico e logado.** A decisão de pular a entrevista só é válida se `atlas_scan_prd` retornar **zero** padrões e esse resultado MCP estiver no ledger. Não existe "pular porque tenho certeza". `--interview` sempre força. | validação PRD |
-| TC | **Conformidade de template via MCP.** PRD e PLAN só avançam como artefatos documentais se `atlas_verify_template_conformance` retornar `passed` e `pending_count: 0`. Pendência bloqueia com `next_action`. | PRD + plano |
+| TC | **Conformidade de template via MCP.** PRD e PLAN só avançam como artefatos documentais se `atlas_verify_template_conformance` retornar `passed` e `pending_count: 0`. Em `full`/`direct` com sprint file, chamar com `require_sprint_file:true`. Pendência bloqueia com `next_action`. | PRD + plano |
 | G6 | **Status verificado, não auto-reportado.** O ✅ de cada item no output só pode ser marcado após confirmar o artefato em disco. Faltou artefato exigido pelo modo → status final `incomplete`, nunca `completed`. | output |
 | G7 | **Execução de código roda SEMPRE como sub-agent despachado (verbo nativo do host, lido de `atlas_capabilities`), nunca no contexto do orquestrador.** A **autoria** do `PLAN_*.md` pode ser feita pelo orquestrador no fio principal **enquanto o plano não foi validado** (autoria documental, PRD D10) — mas o plano só vira confiável após `atlas_verify_artifact` + TC `passed`. A **execução do plano** (`plan_execute`) e qualquer mutação de código vão obrigatoriamente a sub-agent. Antes de iniciar/concluir fase de execução, usar `atlas_lock_dispatch`; fase fora de ordem ou paralela bloqueia. Depois do plano validado, o orquestrador não edita mais o plano (mãos atadas fortes). | plano + execução |
-| G12 | **Executor vivo precisa provar progresso.** Ao iniciar `plan_execute`, `atlas_lock_dispatch(start)` cria liveness de bootstrap/progresso. O executor precisa emitir `atlas_lock_dispatch(checkpoint, phase=plan_execute, event=...)` cedo, começando por `executor_started`/`skill_loaded`, depois `plan_loaded`, `handoff_accepted`, `task_started`, `first_write` e `state_path_created` conforme avança. `state_path_created` exige `state_path` legível/parseável, e `atlas_lock_validator(start)` só abre validator se o último checkpoint for `state_path_created` para exatamente o mesmo `state_path`. Se o sub-agent não retornar, travar, ficar sem primeiro checkpoint, ou ficar com checkpoint antigo sem avanço, o orquestrador chama `atlas_lock_dispatch(action=status, phase=plan_execute)`: `executor_bootstrap_timeout`/`executor_progress_timeout` viram `stalled`, o lock é liberado para `retry_plan_execute`, e a execução não pode ser declarada completa. Sem checkpoint/progresso não há "em andamento" confiável. | execução |
+| G12 | **Executor vivo precisa provar progresso.** Ao iniciar `plan_execute`, `atlas_lock_dispatch(start)` cria liveness de bootstrap/progresso. O executor precisa emitir `atlas_lock_dispatch(checkpoint, phase=plan_execute, event=...)` cedo, começando por `executor_started`/`skill_loaded`, depois `plan_loaded`, `handoff_accepted`, `task_started`, `first_write` e `state_path_created` conforme avança. `state_path_created` exige `state_path` legível/parseável, põe o liveness em `handoff_ready` e não expira por timeout de progresso enquanto aguarda o orquestrador abrir `atlas_lock_validator(start)`. O validator só abre se o último checkpoint for `state_path_created` para exatamente o mesmo `state_path`. Se o sub-agent não retornar, travar, ficar sem primeiro checkpoint, ou ficar com checkpoint antigo sem avanço antes do handoff, o orquestrador chama `atlas_lock_dispatch(action=status, phase=plan_execute)`: `executor_bootstrap_timeout`/`executor_progress_timeout` viram `stalled`, o lock é liberado para `retry_plan_execute`, e a execução não pode ser declarada completa. Sem checkpoint/progresso antes do handoff não há "em andamento" confiável. | execução |
 | G8 | **Ordem fixa de validação: `task-validator` ANTES, `slice-review` POR ÚLTIMO. Nunca em paralelo.** Conclusão de `plan_execute` usa `atlas_lock_dispatch` com `validator_status: passed`; review só inicia após execução concluída. | validação + review |
 | PREREQ | **Pré-requisitos de determinismo (hard-fail, DEC-004).** `atlas_preflight` verifica, **antes de tudo**, se o host tem subagente + MCP (essenciais). Ausente (ex.: pi sem `pi-mcp-adapter`/`pi-subagents`, host MCP-only sem subagente) → aborta em `ready` com `missing_prerequisites`/`next_action`. Sem degradação, sem validator inline, qualquer tamanho. `todo` não-essencial segue sem mirror. | roteamento |
 | DEP | **Dependência de backlog não satisfeita = hard-fail determinístico.** Se o input é `backlog-item` e o item declara `Dependências` (ex.: S40 dep S39) cujo status, lido no mesmo backlog/registro de onde o item veio, **não** é `done`, abortar em `ready` com `unmet_dependencies`, causa e `next_action` (executar a dependência primeiro). Sem improviso e sem pergunta: ou a dep está `done` e segue, ou bloqueia com causa. Não confundir com decisão em aberto (que não bloqueia). | roteamento (backlog-item) |
+| BACKLOG_INDEX | **Backlog mestre é índice verificável.** Em `backlog_first` e `backlog-item`, chamar `atlas_verify_backlog_index` antes de escolher sprint ou gerar PRD. Link ausente, sprint file ilegível, dep interna inválida/cíclica ou status drift bloqueia. | roteamento |
+| SELECT_NEXT_SPRINT | **Próxima sprint vem do MCP.** Em `backlog_first`, chamar `atlas_select_next_sprint`; sem `selected` não há PRD. A seleção exige `state=ready`, deps internas `done`, sprint file válido e DoR verde. | roteamento |
+| SPRINT_STATUS_SYNC | **Fechamento de sprint é gate MCP, não prosa.** Quando a execução validada pertence a backlog/sprint file, chamar `atlas_update_sprint_status`: `done` exige `state_path` + `validator_verdict=pass|pass_with_observations`; `blocked` registra `fail`. O MCP sincroniza BACKLOG_MESTRE + SPRINT_SNN e bloqueia reabrir `done` sem autorização explícita. | pós-validação |
+| SPRINT_FILE | **Sprint file vivo obrigatório antes de PRD.** Em `full`/`direct` com `backlog-item` ou `backlog_first`, resolver o sprint file via backlog/saída do backlog-generator e validar com `atlas_verify_sprint_file`. Ausente/inválido/divergente/gate indisponível bloqueia antes do PRD. `audit --handoff`, `execute plan` e `interview-only brainstorm` ficam fora deste gate. | roteamento/PRD |
 | G10 | **Família única atlas-*, id exato.** Modo, versão, lock e ids oficiais vêm de `atlas_preflight`, nunca do host. Skill ausente, conflito de origem, lock ativo ou drift de versão → aborta com causa/impacto/próxima ação. | roteamento |
 | G9 | **Fronteira de determinismo pela mutação de código.** O orquestrador **NUNCA** escreve/edita **código** nem roda comando mutante (flutter/test/git write), em qualquer fase ou modo — execução de código é sempre do sub-agent. **Autoria documental** (PRD, entrevista, `PLAN_*.md`) é permitida no fio principal **somente ANTES do plano validado**; uma vez que o plano passa `atlas_verify_artifact` + TC, **mãos atadas fortes**: o orquestrador não edita mais PRD/plano/código, só coordena execução (despachar sub-agent, ler artefato para verificar gate, ecoar banner, montar output final). **NÃO** "ajuda" o sub-agent de execução. **Dispatch é blocking**: despacha **um** sub-agent por vez (verbo nativo do host de `atlas_capabilities`, em foreground), **espera o retorno**, só então segue. Proibido `run_in_background` para fases do pipeline e proibido implementar "em paralelo" enquanto um sub-agent roda. Se o orquestrador tocar em **código** = G9 violado, **inclusive rodar a mutação inline porque o host não tem "Agent tool"** (use o verbo daquele host). | orquestrador |
 | G11 | **`full` deve executar depois do plano.** Depois que `PLAN_*.md` passa G1/G2/G7/TC, chamar `atlas_assert_after_plan`; a próxima ação obrigatória é despachar `plan_execute` como sub-agent blocking. Proibido completed só com handoff. | `full` |
@@ -193,29 +213,31 @@ Regras inegociáveis. Violação = parar, não contornar.
 
 ### [EXEC] — passo comum de execução + validação
 
-`atlas_lock_dispatch(action=start, phase=plan_execute)` em todos os modos; despachar como sub-agent blocking o `routing.executor_skill` devolvido pelo preflight: `atlas-plan-execute` em `full`/`execute`, `atlas-direct-execute` em `direct`. O executor emite checkpoints G12; sem retorno/progresso, chamar `atlas_lock_dispatch(action=status, phase=plan_execute)` e tratar `executor_bootstrap_timeout`/`executor_progress_timeout` como `stalled`/retry — nunca como execução em andamento. O executor retorna `validator_handoff_required` com `state_path`; o MCP só abre o slot após o checkpoint `state_path_created` para esse mesmo `state_path`. Validação sempre **sibling**: `atlas_lock_validator(action=start)`, despachar **um** `task_validator`, exigir no output o `dispatch_token` do slot e fechar com `validator_run_id` + `dispatch_token`. Se o output do validator for persistido em arquivo (`validator-output.json` ou equivalente), passar `validator_output_path` no `atlas_lock_validator(action=complete)` ou validar o arquivo com `atlas_verify_artifact(artifact_kind=json)` antes de declarar closure; JSON inválido bloqueia. Em `fail`: `repair_start`, despachar `atlas-findings-repair` com `{state_path, findings, validator_attempt, repair_run_id, repair_budget: 1}`, exigir atualização do mesmo `state_path`, fechar com `repair_run_id` e rodar o **2º e último** validator. `passed`/`passed_with_observations` são terminais aprovados; status diferente bloqueia review e output completed.
+`atlas_lock_dispatch(action=start, phase=plan_execute)` em todos os modos; despachar como sub-agent blocking o `routing.executor_skill` devolvido pelo preflight: `atlas-plan-execute` em `full`/`execute`, `atlas-direct-execute` em `direct`. O executor emite checkpoints G12; antes do handoff, sem retorno/progresso exige `atlas_lock_dispatch(action=status, phase=plan_execute)` e `executor_bootstrap_timeout`/`executor_progress_timeout` viram `stalled`/retry — nunca execução em andamento. O executor retorna `validator_handoff_required` com `state_path`; o MCP só abre o slot após o checkpoint `state_path_created` para esse mesmo `state_path`, põe `handoff_ready` e não expira por timeout enquanto aguarda validator. Validação sempre **sibling**: `atlas_lock_validator(action=start)`, despachar **um** `task_validator`, exigir no output o `dispatch_token` do slot e fechar com `validator_run_id` + `dispatch_token`. Se o output do validator for persistido em arquivo (`validator-output.json` ou equivalente), passar `validator_output_path` no `atlas_lock_validator(action=complete)` ou validar o arquivo com `atlas_verify_artifact(artifact_kind=json)` antes de declarar closure; JSON inválido bloqueia. Em `fail`: `repair_start`, despachar `atlas-findings-repair` com `{state_path, findings, validator_attempt, repair_run_id, repair_budget: 1}`, exigir atualização do mesmo `state_path`, fechar com `repair_run_id` e rodar o **2º e último** validator. `passed`/`passed_with_observations` são terminais aprovados. Se a execução tem `backlog_path` + `sprint_id`, chamar `atlas_update_sprint_status` após o veredito terminal: `done` com `state_path`, `validator_verdict`, `prd_path`, `plan_path`; `blocked` se o veredito final for `fail`. Sem esse gate `passed`, não declarar sprint concluída nem avançar seleção. Status diferente bloqueia review e output completed.
 
 ### Full mode
 
-Artefatos esperados (em ordem): `PRD_*.md` → (`PRD_*.md` atualizado) → `PLAN_*.md` → diff de código → relatório do validador.
+Artefatos esperados (em ordem): `BACKLOG_MESTRE_*.md` (se macro) → `SPRINT_S<NN>_*.md` → `PRD_*.md` → (`PRD_*.md` atualizado) → `PLAN_*.md` → diff de código → relatório do validador.
 
 1. **Parse input** — resolve backlog-item/idea para contexto de sprint.
-2. **Generate PRD** — invocar o id resolvido para `prd_generator`, depois chamar `atlas_verify_artifact` no `PRD_*.md`.
-3. **Validate PRD** — chamar `atlas_scan_prd` e `atlas_verify_template_conformance(artifact_type=prd, required_status=Aprovado para implementação)` quando o PRD for avançar. G5 e TC entram no ledger com fonte MCP.
+1a. **Backlog first (condicional)** — se `routing.document_flow.priority = backlog_first`, invocar `atlas-backlog-generator`, produzir/atualizar `BACKLOG_MESTRE_*.md` + sprint file(s), chamar `atlas_verify_artifact`, `atlas_verify_backlog_index`, `atlas_select_next_sprint` e `atlas_verify_sprint_file`. Extrair `sprint_id` + `sprint_file_path` somente de `atlas_select_next_sprint.selected`. Não gerar PRD direto do macro input.
+1b. **Sprint file (obrigatório)** — para `backlog-item`, resolver/validar o sprint file antes do PRD. Se ausente/inválido, bloquear com `SPRINT_FILE`.
+2. **Generate PRD** — invocar o id resolvido para `prd_generator` com `sprint_id`, `sprint_file_path` e backlog autoritativo; depois chamar `atlas_verify_artifact` no `PRD_*.md`.
+3. **Validate PRD** — chamar `atlas_scan_prd` e `atlas_verify_template_conformance(artifact_type=prd, required_status=Aprovado para implementação, require_sprint_file=true)` quando o PRD for avançar. G5 e TC entram no ledger com fonte MCP.
 4. **Interview (condicional)** — se `atlas_scan_prd` retornar bloqueante, TC bloquear ou `--interview` → invocar o id resolvido para `prd_interview`, depois reexecutar `atlas_verify_artifact`, `atlas_scan_prd` e TC no PRD atualizado.
-5. **Plan** — `atlas_lock_dispatch(action=start, phase=plan_handoff)`, carregar/invocar `plan_handoff` no fio principal para redigir `PLAN_*.md`, depois chamar `atlas_verify_artifact` e `atlas_verify_template_conformance(artifact_type=plan)`. Concluir a fase com `atlas_lock_dispatch(action=complete, phase=plan_handoff)`. **Nenhuma linha de código pode ter sido escrita até aqui.**
+5. **Plan** — `atlas_lock_dispatch(action=start, phase=plan_handoff)`, carregar/invocar `plan_handoff` no fio principal para redigir `PLAN_*.md` a partir de PRD + sprint file + código real, depois chamar `atlas_verify_artifact` e `atlas_verify_template_conformance(artifact_type=plan, require_sprint_file=true)`. Concluir a fase com `atlas_lock_dispatch(action=complete, phase=plan_handoff)`. **Nenhuma linha de código pode ter sido escrita até aqui.**
    - **G11:** se `PLAN_*.md` foi validado, chamar `atlas_assert_after_plan`. Se a próxima ação não for `dispatch_plan_execute_blocking`, abortar.
 6. **Validate plan** — se há gaps → dispara entrevista, propaga e continua (ver "Decisão em aberto ≠ parada"). Não para pra pedir permissão.
 7. **Execute** — rodar o passo **[EXEC]** (lê `PLAN_*.md`).
 8. **Review (condicional)** — somente após execução concluída e se `--review` → `atlas_lock_dispatch(action=start, phase=slice_review)`, despachar `slice_review`, depois `atlas_lock_dispatch(action=complete, phase=slice_review)`.
-9. **Output** — ledger verificado com fonte MCP por gate/fase (ver "Output") + próximos passos.
+9. **Output** — ledger verificado com fonte MCP por gate/fase, incluindo `atlas_update_sprint_status` quando houver sprint/backlog, + próximos passos.
 
 ### Direct mode
 
 Artefatos esperados: `PRD_*.md` → (atualizado) → diff de código → relatório do validador. **Sem `PLAN_*.md`** — por design.
 
-1. Parse / Generate PRD (se necessário) + `atlas_verify_artifact`.
-2. Validate PRD → `atlas_scan_prd` + `atlas_verify_template_conformance`; entrevista condicional reexecuta os gates.
+1. Parse / Backlog first (condicional) / Sprint file / Generate PRD (se necessário) + `atlas_verify_artifact`. Se `routing.document_flow.priority = backlog_first`, gerar/atualizar `BACKLOG_MESTRE_*.md` + sprint file antes do PRD e recortar a execução para a próxima sprint executável. PRD nasce do sprint file, não do backlog macro.
+2. Validate PRD → `atlas_scan_prd` + `atlas_verify_template_conformance(require_sprint_file=true)`; entrevista condicional reexecuta os gates.
 3. **Execute** — rodar o passo **[EXEC]** (executor lê o PRD; sem `PLAN_*.md`).
 4. Review (condicional) — só após executor retornar 100% e dispatch MCP permitir.
 5. Output (ledger verificado).
@@ -266,7 +288,7 @@ O scan é **determinístico** e roda **dentro do MCP** (`atlas_scan_prd`): a lis
 
 Detalhe do caminho que a "Princípio de continuação automática" exige para decisão pendente de **qualquer fonte** (scan/entrevista/validação de plano/`PERGUNTAS_EM_ABERTO.md`/`DISCUSSAO_*.md`/backlog — a fonte não muda o tratamento):
 
-1. **Garantir o PRD primeiro.** Em `full`/`direct`, se o PRD não existe, **gerar o PRD draft** com as decisões marcadas. A entrevista é **PRD-scoped**: roda **sobre** o PRD, nunca antes. Detectar decisão não antecipa nem pula a geração do PRD.
+1. **Garantir sprint file + PRD primeiro.** Em `full`/`direct`, se o PRD não existe, validar/criar primeiro o sprint file (quando o fluxo exigir sprint), então **gerar o PRD draft** com as decisões marcadas. A entrevista é **PRD-scoped**: roda **sobre** o PRD, nunca antes. Detectar decisão não antecipa nem pula a geração do PRD.
 2. **Disparar `atlas-prd-interview`** sobre o PRD — resolve via `atlas_capabilities.question_prompt`, sem hardcode de host.
 3. **Persistir após cada rodada** no mesmo PRD, reindexar §3–§6 e não repetir D* fechada.
 4. **Propagar** ao PRD/plano/DEC/registro de origem.
@@ -349,14 +371,14 @@ Se `full` gerou `PLAN_*.md` mas não despachou `plan_execute`, o cabeçalho deve
 
 ## Skills envolvidas
 
-`atlas-backlog-generator` aparece apenas para descoberta do catálogo: é **explicit-only** e nunca integra `full`/`direct`/`execute`/`interview-only`/`audit`. A cadeia automática começa em PRD/input já fornecido.
+`atlas-backlog-generator` é a primeira fase documental para macro inputs em `full`/`direct` quando `routing.document_flow.priority = backlog_first`. Ele deve retornar `backlog_path`, `sprint_id` e `sprint_file_path`. Para `backlog-item`, o orquestrador resolve o sprint file existente via backlog. Para `prd`, `plan`, `execute`, `interview-only` e `audit`, não roda automaticamente; a cadeia continua a partir do artefato/input já recortado.
 
 | Skill | Entrada | Saída (artefato) |
 |-------|---------|------------------|
-| `atlas-backlog-generator` (**explicit-only**) | pedido explícito de backlog | `BACKLOG_MESTRE_*.md` |
-| `atlas-sprint-prd-generator` | sprint_id/indicação | `PRD_*.md`, decisions_found |
+| `atlas-backlog-generator` | macro input sem backlog canônico ou pedido explícito de backlog | `BACKLOG_MESTRE_*.md`, `SPRINT_S<NN>_*.md`, `sprint_id`, `sprint_file_path` |
+| `atlas-sprint-prd-generator` | `sprint_id`, `sprint_file_path`, backlog autoritativo | `PRD_*.md`, decisions_found |
 | `atlas-prd-interview` | prd_path, ambiguities | `PRD_*.md` atualizado, decisions |
-| `atlas-plan-handoff` | prd_path | `PLAN_*.md` |
+| `atlas-plan-handoff` | `prd_path`, `sprint_file_path`, código real | `PLAN_*.md` |
 | `atlas-audit` | target, flags (`--handoff`, `--scope`) | relatório de auditoria; `.atlas/plans/PLAN_AUDIT_*.md` opcional sem execução |
 | `atlas-plan-execute` | plan_path (`full` / `execute`) | diff de código, evidência, `state_path` |
 | `atlas-direct-execute` | prd_path/spec/task (`direct`) | diff de código, evidência, `state_path` |
@@ -383,9 +405,11 @@ Se o MCP não responder ou reportar drift, o pacote está inválido: abortar no 
 ```
 orquestrador
  ├─ MCP ping + preflight                         → atlas_ping + atlas_preflight (G10)
- ├─ PRD        → autoria documental no pai       → atlas_verify_artifact (G1)
+ ├─ BACKLOG    → se macro, autoria documental    → atlas-backlog-generator + atlas_verify_artifact
+ ├─ SPRINT     → resolve/valida sprint file      → atlas_verify_sprint_file
+ ├─ PRD        → autoria documental no pai       → atlas-sprint-prd-generator + atlas_verify_artifact (G1)
  ├─ scan       → atlas_scan_prd (G5) + TC        → entrevista se bloqueado ou --interview
- ├─ PLANO      → autoria documental no pai       → atlas_verify_artifact + atlas_verify_template_conformance
+ ├─ PLANO      → PRD + sprint file + código real → atlas_verify_artifact + atlas_verify_template_conformance
  ├─ G11        → atlas_assert_after_plan         → próxima ação obrigatória = plan_execute
  ├─ EXECUÇÃO   → atlas_lock_dispatch + sub-agent atlas-plan-execute
  ├─ VALIDAÇÃO  → lock_validator + task-validator irmão

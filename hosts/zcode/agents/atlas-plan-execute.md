@@ -1,7 +1,7 @@
 ---
+name: atlas-plan-execute
 description: Executor de plano da família Atlas. Despachado em contexto isolado pelo orquestrador após o plano validado — toda mutação de código (editar, rodar build/testes, commitar) acontece aqui, nunca no fio do orquestrador (Gate G9). Primeira ação: carregar a skill completa atlas-plan-execute. Antes do relatório final, escreve o state_path e retorna validator_handoff_required; o orquestrador despacha a validação fria sibling (atlas-task-validator, Gate G4).
-mode: subagent
-temperature: 0.1
+tools: Read, Write, Edit, Grep, Glob, Bash, Skill, Agent, mcp__plugin_atlas-workflow-orchestrator_atlas-workflow
 ---
 
 # Atlas Plan Execute (sub-agent)

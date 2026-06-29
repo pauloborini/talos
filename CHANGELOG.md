@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.10.0 - 2026-06-29
+
+Tipo: **minor aditivo** — backlog em 2 camadas (mestre enxuto + sprint files vivos) + 4 gates MCP novos. **Sem breaking** (`CAPABILITIES_SCHEMA_VERSION` segue **v5**, modos públicos `full`/`direct`/`execute`/`interview-only`/`audit` intactos).
+
+Resumo: O Atlas adota arquitetura de backlog em duas camadas: o backlog mestre passa a ser índice estratégico enxuto (fases, tabela de sprints, dependências, MoSCoW, prioridade, links), e cada sprint ganha um arquivo vivo dedicado (`sprints/SNN_<slug>.md`) como fonte de verdade contextual. Quatro gates MCP novos tornam a seleção e a atualização de sprints determinísticas. Skills atualizadas para priorizar o arquivo vivo de sprint como fonte primária.
+
+Mudanças:
+- **4 novos gates MCP** (`packages/mcp-server/server.js`):
+  - `atlas_verify_sprint_file` — valida conformidade do arquivo vivo de sprint contra `SPRINT_TEMPLATE.md`: seções obrigatórias, link bidirecional ao backlog, DoR, eval_manifest, status espelhado. Fail-closed (artefato ausente ou vazio = blocked).
+  - `atlas_verify_backlog_index` — valida o backlog mestre como índice: §7 Registro de sprints presente, enums MoSCoW/prioridade/status válidos, links para sprint files reais, sem sprint duplicada, detecção de ciclo de dependência, status drift backlog↔sprint file bloqueante.
+  - `atlas_select_next_sprint` — seleção determinística da próxima sprint executável: filtra por `state=ready` + deps done + sprint file válido + DoR verde; ordena por MoSCoW→prioridade→ganho→esforço→ID. Resultado único, sem ambiguidade.
+  - `atlas_update_sprint_status` — atualiza status de sprint em backlog e sprint file atomicamente: pré-condição (enum, transição FSM, `done` exige validator terminal + `state_path`), escrita com rollback (se o write do sprint file falhar após o backlog ser escrito, backlog é restaurado ao estado original — sem drift), pós-validação antes de retornar `passed`.
+- **`SPRINT_TEMPLATE.md`** — template canônico do arquivo vivo de sprint com 16 seções (ID imutável, links bidirecionais, objetivo, DoR/DoD, `eval_manifest` com `acceptance_criteria`/`regression_cases`/`thresholds`, `policy_manifest`, §14 Execução e validação, §16 Histórico).
+- **`BACKLOG_MESTRE_TEMPLATE.md` refatorado** — índice enxuto: sem critérios completos por sprint, sem plano técnico, sem tasks detalhadas. Aponta para sprint files. Tabela §7 com colunas `sprint_file`, `prd`, `plan`, `state_file` como links rastreáveis.
+- **`STATE_FILE_SCHEMA.md`** adicionado — schema formal do arquivo de state da execução.
+- **`document_quality.mjs`** estendido — validação de conformidade de sprint file (`validateSprintFileConformance`), parsing de rows do backlog (`parseSprintRows`), enums MoSCoW/prioridade/status/veredito exportados.
+- **Skills atualizadas**: `atlas-backlog-generator` (cria sprint files + links bidirecionais), `atlas-sprint-prd-generator` (prioriza arquivo vivo de sprint, backlog mestre só para deps/ordem), `atlas-plan-handoff` (gate `atlas_verify_sprint_file` obrigatório), `atlas-plan-execute`/`atlas-direct-execute` (verificam sprint file antes de iniciar), `atlas-task-validator` (critérios de aceite do sprint file como fonte adicional).
+- **`BOUNDARY_PRD_PLAN.md`** atualizado — instrução de sprint file como fonte de contexto de execução.
+- **Codex agent handling** — tratamento de agente Codex atualizado no orquestrador; doc Codex alinhada.
+- **Rollback P2** (`updateSprintStatus`) — fix de confiabilidade: write do sprint file dentro de try/catch com restauração do backlog em caso de erro de FS.
+
+Impacto:
+- Sprint pequena continua sendo a unidade de execução; o backlog mestre deixa de carregar contexto completo e passa a ser índice navegável.
+- `atlas_select_next_sprint` elimina seleção manual/ambígua de próxima sprint — determinismo por gate, não por prosa.
+- `atlas_update_sprint_status` fecha o loop de atualização: status espelhado backlog↔sprint file, rastreável e validado antes de qualquer write.
+- Skill `atlas-sprint-prd-generator` lê o arquivo vivo de sprint como fonte primária — contexto menor, foco correto, sem carregar backlog inteiro.
+
+Arquivos/artefatos:
+- `packages/mcp-server/server.js`, `packages/mcp-server/server.test.js` (190 testes, +1 caso rollback P2), `packages/templates/SPRINT_TEMPLATE.md`, `packages/templates/BACKLOG_MESTRE_TEMPLATE.md`, `packages/templates/BOUNDARY_PRD_PLAN.md`, `packages/templates/PLAN_TEMPLATE.md`, `packages/templates/PRD_TEMPLATE.md`, `packages/templates/STATE_FILE_SCHEMA.md`, `packages/skills/_shared/scripts/document_quality.mjs`, `packages/skills/atlas-backlog-generator/SKILL.md`, `packages/skills/atlas-sprint-prd-generator/SKILL.md`, `packages/skills/atlas-plan-handoff/SKILL.md`, `packages/skills/atlas-plan-execute/SKILL.md`, `packages/skills/atlas-direct-execute/SKILL.md`, `packages/skills/atlas-task-validator/SKILL.md`, `packages/skills/atlas-findings-repair/SKILL.md`, `packages/orchestrator/skills/atlas-workflow-orchestrator/SKILL.md`, `packages/orchestrator/README.md`, `packages/orchestrator/commands/workflow.md`, `packages/orchestrator/references/host-adapters.md`, `packages/orchestrator/references/subagent_dispatch.md` — replicados em `plugins/` e `hosts/{opencode,pi,zcode}/` via build.
+
+Validação:
+- `packages/mcp-server/server.test.js`: 190/190 pass (189 existentes + 1 novo caso rollback P2).
+- `build/check-consistency.mjs`: ok (validator sincronizado cross-host; catálogos presentes+versão; sem hardcode; sem regressão A1/A2).
+- `build/conformance-matrix.mjs`: ok (6 hosts × 10 cenários verdes).
+- `claude plugin validate ./ --strict`: passed.
+- Sincronização cross-host: 5 cópias de `server.js` com hash idêntico.
+
 ## 0.9.4 - 2026-06-27
 
 Tipo: **runtime** (sem breaking; `CAPABILITIES_SCHEMA_VERSION` segue **v5**, modos públicos `full`/`direct`/`execute`/`interview-only`/`audit` intactos). Endurecimento do modo `audit` e expansão dos perfis de stack das skills.

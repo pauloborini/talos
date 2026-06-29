@@ -35,14 +35,17 @@ Read the JSON file at `.atlas/state/<run_id>/<slice>.json` using the schema in `
 4. **Boundary refs** — `boundary_refs`.
 5. **Explicit cold-review note** — you did not observe implementation; read current code only.
 6. **Deterministic boundary** — `base_sha`, `head_sha`, `contract_kind`, and all evidence/probe arrays.
-7. **Working-tree delta** — compare `worktree_baseline`/`worktree_final` and current tree; unchanged preexisting dirt stays outside, later mutations must be evidenced.
-8. **Repair correlation** — on attempt 2, correlate every target finding id with `repair_evidence` in the same state path.
+7. **Sprint evidence** — when present, load `sprint_id`, `sprint_file_path`, `prd_path`, `eval_results`, `evidence_to_claim` and `policy_scope`; verify all `EVAL-*` from `Sprint §9` are proved by current code/check evidence and no file violates `Sprint §10`.
+8. **Working-tree delta** — compare `worktree_baseline`/`worktree_final` and current tree; unchanged preexisting dirt stays outside, later mutations must be evidenced.
+9. **Repair correlation** — on attempt 2, correlate every target finding id with `repair_evidence` in the same state path.
 
 Do not accept inline contract, copied diff, or pasted task lists as the validation boundary. If `state_path` is missing, unreadable, or lacks any required field, return JSON with `verdict: "fail"` and one P1 finding for `Input insuficiente: <missing item>`.
 
 Compatibilidade: state legado mínimo sem `contract_kind` só é aceito quando `executor_skill=atlas-plan-execute`; nesse caso o plano continua autoritativo. State de `atlas-direct-execute` exige extensão completa e `obligations` não vazio.
 
 Antes de validar código, compare `base_sha...head_sha`, `HEAD`, snapshot final atual e delta `worktree_baseline→worktree_final` com `files_changed`/evidências. Não infira base pelo nome da branch. Divergência gera `boundary_violations` e finding P1 estruturado.
+
+Se o state declara sprint file, trate `eval_results` ausente, `evidence_to_claim` ausente, EVAL não `passed`, sprint file inválido ou mutação em `policy_scope.forbidden_scope` como falha P1 de boundary. Não rebaixe claim de sprint não provada para observação.
 
 ---
 
@@ -67,8 +70,8 @@ Antes de validar código, compare `base_sha...head_sha`, `HEAD`, snapshot final 
 
 | Target Concept | PLAN Section |
 |----------------|--------------|
-| Executive translation, PRD link | Section 1 (Tradução executiva) |
-| Execution invariants (`PRD §3` D* cited) | Section 2 (Invariantes de execução) |
+| Executive translation, PRD link, Sprint file link | Section 1 / header |
+| Execution invariants (`PRD §3` D* + `Sprint §9 EVAL-*` cited) | Section 2 (Invariantes de execução) |
 | Pitfalls | Section 3 |
 | Codebase state at opening | Section 4 (Estado na abertura da sprint) |
 | Tasks, done criteria, local validation | Section 5 (Tarefas de execução) |

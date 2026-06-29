@@ -131,6 +131,16 @@ for (const rel of [
   }
 }
 
+const zcodeValidatorAgent = read('hosts/zcode/agents/atlas-task-validator.md');
+if (zcodeValidatorAgent != null) {
+  if (!/^name:\s*atlas-task-validator$/m.test(zcodeValidatorAgent) || !/^tools:\s*Read, Grep, Glob, Bash$/m.test(zcodeValidatorAgent)) {
+    errors.push('zcode packaging-regressão: agents/atlas-task-validator.md deve manter frontmatter Claude/ZCode canônico');
+  }
+  if (/^mode:\s*subagent$/m.test(zcodeValidatorAgent)) {
+    errors.push('zcode packaging-regressão: agents/atlas-task-validator.md não pode usar frontmatter opencode (mode: subagent)');
+  }
+}
+
 // Contrato do validator por host (S10): o bloco JSON de veredito dos agentes
 // gerados (opencode/pi/zcode) deve ser idêntico ao canônico — catálogo stale = drift.
 for (const rel of [
@@ -146,21 +156,24 @@ for (const rel of [
   }
 }
 
-// Codex validator precisa ser custom agent explícito e pinado. Sem isso, o host
-// pode cair em agent default/skill in-context, quebrando a validação fria G4.
+// Codex validator precisa ser custom agent explícito. Não pinamos modelo: contas
+// ChatGPT-backed podem rejeitar modelos fixos; isolamento sibling + gates MCP
+// sustentam G4.
 const codexValidatorRel = 'plugins/atlas-workflow-orchestrator/.codex/agents/atlas-task-validator.toml';
 const codexValidatorRaw = read(codexValidatorRel);
 if (codexValidatorRaw != null) {
   const expected = {
     name: 'atlas-task-validator',
-    model: 'gpt-5.4',
-    model_reasoning_effort: 'high',
   };
   for (const [key, want] of Object.entries(expected)) {
     const got = tomlStringValue(codexValidatorRaw, key);
     if (got !== want) {
       errors.push(`Codex validator config: ${codexValidatorRel} ${key} (${got ?? 'ausente'}) != ${want}`);
     }
+  }
+  for (const forbidden of ['model', 'model_reasoning_effort']) {
+    const got = tomlStringValue(codexValidatorRaw, forbidden);
+    if (got != null) errors.push(`Codex validator config: ${codexValidatorRel} não deve pinçar ${forbidden} (${got})`);
   }
 }
 for (const rel of [
@@ -255,15 +268,15 @@ if (fs.existsSync(skillsDir)) {
   }
 }
 
-// Anti-regressão de prosa (S10/DEC-004 hardening): o fail-closed de PREREQ para hosts
-// must_report (pi/generic) depende do orquestrador apurar e reportar host_capabilities
-// no preflight. Se esse passo sumir do SKILL, a garantia de determinismo se perde
-// silenciosamente. O SKILL DEVE citar host_capabilities E atlas_preflight.
+// Anti-regressão de prosa (S10/DEC-004/DEC-008 hardening): o fail-closed de PREREQ
+// e DISPATCH depende do orquestrador apurar e reportar host_capabilities no preflight.
+// Se esse passo sumir do SKILL, a garantia de determinismo se perde silenciosamente.
+// O SKILL DEVE citar host_capabilities, dispatch_mutable e atlas_preflight.
 const orchestratorSkill = read('packages/orchestrator/skills/atlas-workflow-orchestrator/SKILL.md');
 if (orchestratorSkill != null) {
-  for (const token of ['host_capabilities', 'atlas_preflight']) {
+  for (const token of ['host_capabilities', 'dispatch_mutable', 'atlas_preflight']) {
     if (!orchestratorSkill.includes(token)) {
-      errors.push(`PREREQ prosa-regressão: SKILL do orquestrador não cita '${token}' (passo de report sustenta o fail-closed)`);
+      errors.push(`preflight prosa-regressão: SKILL do orquestrador não cita '${token}' (passo de report sustenta o fail-closed)`);
     }
   }
   for (const token of ['dispatch_token', 'repair_run_id', 'repair_budget: 1', 'challenge_response']) {
@@ -295,7 +308,8 @@ if (findingsRepairSkill != null) {
   }
 }
 
-// Etapa 3: gate da review é Node canônico; entrevista usa adapter; backlog segue opt-in.
+// Etapa 3: gate da review é Node canônico; entrevista usa adapter; backlog é prioridade
+// documental para macro input e permanece fora de execução mutante.
 const sliceReviewSkill = read('packages/skills/atlas-slice-review/SKILL.md');
 const nodeFindingsGate = read('packages/skills/atlas-slice-review/scripts/classify_findings.mjs');
 if (sliceReviewSkill != null && !/node scripts\/classify_findings\.mjs/.test(sliceReviewSkill)) {
@@ -311,11 +325,52 @@ if (interviewSkill != null) {
   }
 }
 const backlogSkill = read('packages/skills/atlas-backlog-generator/SKILL.md');
-if (backlogSkill != null && !/explicit-only/.test(backlogSkill)) {
-  errors.push('backlog-regressão: atlas-backlog-generator perdeu trigger explicit-only');
+if (backlogSkill != null) {
+  for (const token of ['routing.document_flow.priority = backlog_first', 'próxima sprint executável', 'atlas_verify_backlog_index', 'atlas_select_next_sprint', 'Não gerar PRD/plano/código']) {
+    if (!backlogSkill.includes(token)) {
+      errors.push(`backlog-regressão: atlas-backlog-generator não cita '${token}'`);
+    }
+  }
 }
-if (orchestratorSkill != null && !/atlas-backlog-generator` \(\*\*explicit-only\*\*\)/.test(orchestratorSkill)) {
-  errors.push('backlog-regressão: orquestrador não marca backlog generator como explicit-only');
+if (orchestratorSkill != null) {
+  for (const token of ['routing.document_flow.priority = backlog_first', 'atlas-backlog-generator', 'atlas_verify_backlog_index', 'atlas_select_next_sprint', 'atlas_update_sprint_status', 'Não gerar PRD direto do macro input']) {
+    if (!orchestratorSkill.includes(token)) {
+      errors.push(`backlog-regressão: orquestrador não cita '${token}'`);
+    }
+  }
+}
+
+const sprintTemplate = read('packages/templates/SPRINT_TEMPLATE.md');
+if (sprintTemplate != null) {
+  for (const token of ['eval_manifest:', 'policy_manifest:', 'Evidence-to-claim', 'Backlog mestre', 'State / evidência']) {
+    if (!sprintTemplate.includes(token)) {
+      errors.push(`sprint-template-regressão: SPRINT_TEMPLATE.md não contém '${token}'`);
+    }
+  }
+}
+const documentQuality = read('packages/skills/_shared/scripts/document_quality.mjs');
+if (documentQuality != null) {
+  for (const token of ['validateSprintFileConformance', 'sprint_file:', 'state_file:', 'policy_manifest']) {
+    if (!documentQuality.includes(token)) {
+      errors.push(`sprint-harness-regressão: document_quality.mjs não contém '${token}'`);
+    }
+  }
+}
+const mcpServer = read('packages/mcp-server/server.js');
+if (mcpServer != null) {
+  for (const token of ['atlas_verify_sprint_file', 'verifySprintFile', 'sprint_file_conformance', 'atlas_verify_backlog_index', 'atlas_select_next_sprint', 'atlas_update_sprint_status', 'verifyBacklogIndex', 'selectNextSprint', 'updateSprintStatus', 'require_sprint_file', 'eval_results', 'evidence_to_claim', 'policy_scope']) {
+    if (!mcpServer.includes(token)) {
+      errors.push(`sprint-harness-regressão: server.js não contém '${token}'`);
+    }
+  }
+}
+const stateSchema = read('packages/templates/STATE_FILE_SCHEMA.md');
+if (stateSchema != null) {
+  for (const token of ['sprint_file_path', 'eval_results', 'evidence_to_claim', 'policy_scope']) {
+    if (!stateSchema.includes(token)) {
+      errors.push(`state-schema-regressão: STATE_FILE_SCHEMA.md não contém '${token}'`);
+    }
+  }
 }
 
 // Codex custom agents não podem depender apenas do bundle do plugin: o instalador
@@ -331,7 +386,7 @@ if (atlasInit != null) {
 }
 const smokeInstall = read('build/smoke-install.mjs');
 if (smokeInstall != null) {
-  for (const token of ['makeCodexMock', 'CODEX_HOME', 'agents/atlas-plan-execute.toml', 'model = "gpt-5.4"']) {
+  for (const token of ['makeCodexMock', 'CODEX_HOME', 'agents/atlas-plan-execute.toml', 'sem model pinado']) {
     if (!smokeInstall.includes(token)) {
       errors.push(`Codex smoke-regressão: smoke-install.mjs não cobre '${token}'`);
     }

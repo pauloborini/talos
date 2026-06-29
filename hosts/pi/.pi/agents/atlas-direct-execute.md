@@ -99,6 +99,8 @@ First, emit `executor_started`, then `skill_loaded`, before doing any long scan.
 
 Read the user-provided PRD/spec/task and any directly referenced files needed to resolve scope. If the input names repo artifacts, verify those artifacts exist before editing.
 
+If the PRD/spec references a sprint file, call `atlas_verify_sprint_file` before implementation. Extract `sprint_id`, `sprint_file_path`, `eval_manifest` (`EVAL-*`) and `policy_manifest`; these become mandatory state evidence. If the sprint file is absent, invalid, or policy forbids the required change, return `blocked`.
+
 Extract only execution-relevant items:
 
 - in scope / out of scope
@@ -210,6 +212,8 @@ After tasks and local gates pass, write `.atlas/state/<run_id>/<slice>.json` fol
 For direct execution, the state file is still the only validator input. Use the user-provided PRD/spec path as `plan_path` when no handoff plan exists, and include direct-contract anchors in `boundary_refs` such as `direct.O1`, `direct.invariant.permissions`, or `direct.risk.partial_failure`.
 
 Persist the full direct contract using the additive state extension: `base_sha`, `head_sha`, `contract_kind: direct`, non-empty `obligations`, `invariants`, `scenario_probes`, `risk_probes`, `validation_map`, `task_evidence`, empty `repair_evidence`, `worktree_baseline` and `worktree_final`. Capture baseline before the first mutation and final immediately before handoff; `files_changed`/evidence must equal `base_sha...head_sha` + snapshot delta. Capture base from an explicit task/spec anchor or execution-start `HEAD`; never infer it from branch name. Recompute `head_sha` and `diff_stat` immediately before handoff. A direct state without obligations is invalid and must block.
+
+When a sprint file is in scope, also persist `sprint_id`, `sprint_file_path`, optional `prd_path`, `eval_results`, `evidence_to_claim` and `policy_scope`. Every `EVAL-*` in the sprint file must have `eval_results.status="passed"` plus evidence; missing/failed/blocked claims make the state invalid for cold validation.
 
 The state file is the only validator input. Validation is always **sibling**, on every host: this executor **never** dispatches `atlas-task-validator` itself and never validates its own work in the same context. After tasks and local gates pass and the state file is written, this executor **stops mutation** and returns `validator_handoff_required` with the `state_path`. The orchestrator then dispatches `atlas-task-validator` as the next isolated sibling phase, locks it via `atlas_lock_validator`, and — if the verdict is `fail` — dispatches `atlas-findings-repair` (not this executor) before the **2nd and last** validator.
 

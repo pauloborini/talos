@@ -4,7 +4,7 @@
 >
 > Comportamento **alvo** da entrega. Se a feature já estiver no app, use como contrato de aceite e regressão.
 >
-> Implementação: `PLAN_<ID>_<slug>.md` (gerado após PRD aprovado). Política: [BOUNDARY_PRD_PLAN.md](./BOUNDARY_PRD_PLAN.md).
+> Fonte da sprint: `SPRINT_S<NN>_<slug>.md`. Implementação: `PLAN_<ID>_<slug>.md` (gerado após PRD aprovado). Política: [BOUNDARY_PRD_PLAN.md](./BOUNDARY_PRD_PLAN.md).
 >
 > **Regra de ouro (anti-repetição):** cada verdade tem **uma casa**; as demais seções **referenciam** por `§`/`D-id` em vez de re-enumerar. Enxugar conteúdo nunca remove a demarcação (separadores, rótulos, subcabeçalhos).
 
@@ -15,17 +15,21 @@
 | **Responsável** | <Papel ou nome> |
 | **Data** | <YYYY-MM-DD> |
 | **Dependências de negócio** | <Entregas anteriores necessárias — ex.: “dashboard com lista”> |
-| **Relacionado** | <Regras de negócio, MVP, backlog §X, DEC-*, Q-* — links> |
-| **Fonte da sprint** | <path explícito do backlog autoritativo + anchor único SNN> |
+| **Relacionado** | <Regras de negócio, MVP, backlog §7 SNN, sprint file, DEC-*, Q-* — links> |
+| **Backlog mestre** | <path explícito do backlog autoritativo + anchor único SNN> |
+| **Sprint file** | <path explícito para SPRINT_SNN_slug.md + anchor relevante> |
 
 ### Metadados de execução
 
 - Plan prefix: `<atlas>` · Planner: `<atlas-plan-handoff>` · Executor: `<atlas-plan-execute>`
 - Internal validator: `<atlas-task-validator>` · External review: `<atlas-slice-review>` (optional)
+- Eval source: `<SPRINT_SNN_slug.md §9 eval_manifest>`
 
 ---
 
 ## 1. Contexto e objetivo
+
+**Fonte de recorte:** <SPRINT_SNN_slug.md §2–§4; backlog mestre §7 SNN>
 
 **Hoje:** <comportamento atual em linguagem de usuário/negócio>
 
@@ -45,11 +49,11 @@
 
 ### Em escopo
 
-- <capacidades fechadas, em linguagem de produto — referencie o conjunto de §3 D* quando aplicável>
+- <capacidades fechadas, em linguagem de produto — derivadas do sprint file §3 e referenciando §3 D* quando aplicável>
 
 ### Fora de escopo
 
-- <adjacentes tentadores que NÃO entram nesta entrega — previne scope creep>
+- <adjacentes tentadores que NÃO entram nesta entrega — alinhar com sprint file §3>
 - <anti-goal oportunista ("não aproveitar para fazer X"); invariante que é regra de negócio vai para §5, não aqui>
 
 ---
@@ -105,6 +109,8 @@
 
 ## 6. Critérios de aceite (negócio)
 
+> Derivar dos critérios candidatos do sprint file §7 e do `eval_manifest` §9. O PRD é a fonte de verdade final do aceite de produto.
+
 **Produto**
 
 - [ ] <observável>
@@ -135,7 +141,9 @@
 
 **Dependências:** <ID entrega — por que bloqueia ou alimenta> · <decisão externa, se houver>
 
-**Referências:** <PRD pai, regras de negócio, backlog autoritativo + anchor; anchors de contrato/código usados na validação, sem copiar implementação>
+**Referências:** <PRD pai, regras de negócio, backlog autoritativo §7 SNN, sprint file, anchors de contrato/código usados na validação, sem copiar implementação>
+
+**Eval manifest:** <SPRINT_SNN_slug.md §9 — listar só IDs EVAL-* relevantes, sem duplicar YAML inteiro>
 
 **Histórico:** <YYYY-MM-DD — evento>
 
@@ -144,7 +152,9 @@
 ## Checklist do autor (não publicar no PRD final — opcional)
 
 - [ ] Nenhum package, classe, rota ou migration neste arquivo
+- [ ] Backlog mestre e sprint file estão linkados no cabeçalho
 - [ ] Cada verdade tem UMA casa; demais seções referenciam por §/D-id (sem re-enumerar)
 - [ ] Todo critério de §6 tem correspondência em §4 (UX) ou §5 (dados)
+- [ ] Todo EVAL-* relevante do sprint file tem reflexo em §6 ou justificativa no Apêndice
 - [ ] "Fora de escopo" nomeia os adjacentes tentadores, não o complemento infinito
 - [ ] Demarcação preservada: `---`, `**Label:**`, `### N.x`, headers de tabela, grupos de aceite

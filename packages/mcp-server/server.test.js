@@ -2,7 +2,7 @@
 // Cobre: detecção de host (registry data-driven + precedência), contrato
 // atlas_capabilities (schema_version, flags, known_hosts) e hard-fail de
 // pré-requisitos (DEC-004). Rodar: node --test packages/mcp-server/
-import { test } from 'node:test';
+import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -19,7 +19,9 @@ import {
   capabilities,
   checkPrerequisites,
   checkJoinCapability,
+  checkDispatchCapability,
   expectedNextPhase,
+  documentFlowForRouting,
   expectedExecutorSkill,
   guaranteeLevelForMode,
   classifyArtifactContent,
@@ -29,6 +31,10 @@ import {
   verifyArtifact,
   scanPrd,
   verifyTemplateConformance,
+  verifySprintFile,
+  verifyBacklogIndex,
+  selectNextSprint,
+  updateSprintStatus,
   classifyInput,
   preflight,
   lockDispatch,
@@ -40,6 +46,7 @@ import {
   ping,
   toolsList,
 } from './server.js';
+import { parseSprintRows } from '../skills/_shared/scripts/document_quality.mjs';
 
 function lockValidator(args) {
   if (args.action === 'start' && args.state_path) {
@@ -215,8 +222,8 @@ test('capabilities: perfil codex usa subagent nativo, não $skill in-context', (
   assert.equal(cap.capabilities_flags.subagent_available, true);
   assert.equal(cap.validator_dispatch.dispatcher, 'orchestrator');
   assert.equal(cap.validator_dispatch.required_agent_type, 'atlas-task-validator');
-  assert.equal(cap.validator_dispatch.required_codex_model, 'gpt-5.4');
-  assert.equal(cap.validator_dispatch.required_codex_model_reasoning_effort, 'high');
+  assert.equal(cap.validator_dispatch.required_codex_model, undefined);
+  assert.equal(cap.validator_dispatch.required_codex_model_reasoning_effort, undefined);
 });
 
 test('checkPrerequisites: opencode qualificado passa', () => {
@@ -471,7 +478,7 @@ test('preflight: gate JOIN — pi com prereq+join reportados passa', () => {
   const r = preflight({
     run_id: 'rjoin-pi-ok', project_root: root, mode: 'execute',
     host: 'pi',
-    host_capabilities: { subagent_available: true, mcp_available: true, join_sync_available: true },
+    host_capabilities: { subagent_available: true, mcp_available: true, join_sync_available: true, dispatch_mutable: true },
   });
   assert.equal(r.status, 'passed');
 });
@@ -487,7 +494,7 @@ test('preflight: gate JOIN — generic sem join → blocked; com subagent+mcp+jo
   const ok = preflight({
     run_id: 'rjoin-gen-ok', project_root: root, mode: 'execute',
     host: 'generic',
-    host_capabilities: { subagent_available: true, mcp_available: true, join_sync_available: true },
+    host_capabilities: { subagent_available: true, mcp_available: true, join_sync_available: true, dispatch_mutable: true },
   });
   assert.equal(ok.status, 'passed');
 });
@@ -538,6 +545,178 @@ test('preflight: self_evident — codex/claude/opencode passam sem reportar join
   }
 });
 
+// ── Gate DISPATCH_CAPABILITY (DEC-008) ─────────────────────────────────────
+
+test('checkDispatchCapability: modo audit passa independente de dispatch_capability', () => {
+  // Modos read-only (audit, interview-only) não exigem mutação.
+  for (const host of ['zcode', 'claude', 'generic']) {
+    const r = checkDispatchCapability({ host }, 'audit');
+    assert.equal(r.status, 'passed', `host ${host} audit`);
+    assert.equal(r.reason, 'modo_readonly_nao_exige_mutacao');
+  }
+});
+
+test('checkDispatchCapability: modo interview-only passa independente de dispatch_capability', () => {
+  for (const mode of ['interview-only', 'interview_only']) {
+    const r = checkDispatchCapability({ host: 'zcode' }, mode);
+    assert.equal(r.status, 'passed');
+    assert.equal(r.reason, 'modo_readonly_nao_exige_mutacao');
+  }
+});
+
+test('checkDispatchCapability: host mutable (claude/codex/opencode) passa para modos de execução', () => {
+  for (const host of ['claude', 'codex', 'opencode']) {
+    for (const mode of ['full', 'direct', 'execute']) {
+      const r = checkDispatchCapability({ host }, mode);
+      assert.equal(r.status, 'passed', `host ${host} mode ${mode}`);
+      assert.equal(r.capability, 'mutable');
+    }
+  }
+});
+
+test('checkDispatchCapability: host unknown (zcode) sem dispatch_mutable → blocked para execução', () => {
+  for (const mode of ['full', 'direct', 'execute']) {
+    const r = checkDispatchCapability({ host: 'zcode' }, mode);
+    assert.equal(r.status, 'blocked', `zcode ${mode}`);
+    assert.equal(r.capability, 'unknown');
+    assert.equal(r.cause, 'dispatch_capability_nao_verificada');
+    assert.ok(r.next_action.includes('dispatch_mutable'), `next_action deve mencionar dispatch_mutable: ${r.next_action}`);
+  }
+});
+
+test('checkDispatchCapability: host unknown (zcode) com dispatch_mutable:true → passa', () => {
+  for (const mode of ['full', 'direct', 'execute']) {
+    const r = checkDispatchCapability(
+      { host: 'zcode', host_capabilities: { dispatch_mutable: true } },
+      mode,
+    );
+    assert.equal(r.status, 'passed', `zcode ${mode} com dispatch_mutable`);
+    assert.equal(r.capability, 'reported_mutable');
+    assert.equal(r.reported, true);
+  }
+});
+
+test('checkDispatchCapability: nenhum host atual declara readonly', () => {
+  // Branch readonly fica reservada para adapter futuro; hoje nenhum host deve cair nela.
+  for (const host of HOST_NAMES) {
+    assert.notEqual(capabilities({ host }).dispatch_capability, 'readonly', `host ${host}`);
+  }
+});
+
+test('checkDispatchCapability: generic/pi unknown sem report → blocked', () => {
+  for (const host of ['generic', 'pi']) {
+    const r = checkDispatchCapability({ host }, 'execute');
+    assert.equal(r.status, 'blocked', `host ${host}`);
+    assert.equal(r.capability, 'unknown');
+    assert.equal(r.cause, 'dispatch_capability_nao_verificada');
+  }
+});
+
+test('checkDispatchCapability: generic/pi unknown com dispatch_mutable:true → passa', () => {
+  for (const host of ['generic', 'pi']) {
+    const r = checkDispatchCapability(
+      { host, host_capabilities: { dispatch_mutable: true } },
+      'execute',
+    );
+    assert.equal(r.status, 'passed', `host ${host}`);
+    assert.equal(r.capability, 'reported_mutable');
+  }
+});
+
+test('checkDispatchCapability: dispatch_mutable não-booleano → ignorado (fail-closed)', () => {
+  // Apenas === true é aceito; strings ou números são ignorados.
+  for (const nonBool of ['true', 1, null]) {
+    const r = checkDispatchCapability(
+      { host: 'zcode', host_capabilities: { dispatch_mutable: nonBool } },
+      'execute',
+    );
+    assert.equal(r.status, 'blocked', `dispatch_mutable=${JSON.stringify(nonBool)} deveria ser blocked`);
+  }
+});
+
+test('preflight: gate DISPATCH — zcode modo execute sem dispatch_mutable → blocked', () => {
+  const root = tmpRoot();
+  const r = preflight({
+    run_id: 'rdispatch-zcode-fail', project_root: root, mode: 'execute',
+    host: 'zcode', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  assert.equal(r.status, 'blocked');
+  assert.equal(r.gate, 'DISPATCH');
+  assert.equal(r.dispatch_capability, 'unknown');
+  assert.equal(r.cause, 'dispatch_capability_nao_verificada');
+  assert.ok(r.next_action.includes('dispatch_mutable'));
+});
+
+test('preflight: gate DISPATCH — zcode modo audit passa (read-only, sem mutação)', () => {
+  const root = tmpRoot();
+  const r = preflight({
+    run_id: 'rdispatch-zcode-audit', project_root: root, mode: 'audit',
+    host: 'zcode',
+  });
+  assert.equal(r.status, 'passed');
+});
+
+test('preflight: gate DISPATCH — zcode modo execute com dispatch_mutable:true → passa', () => {
+  const root = tmpRoot();
+  const r = preflight({
+    run_id: 'rdispatch-zcode-ok', project_root: root, mode: 'execute',
+    host: 'zcode',
+    host_capabilities: { subagent_available: true, mcp_available: true, dispatch_mutable: true },
+  });
+  assert.equal(r.status, 'passed');
+  assert.equal(r.routing.dispatch_capability, 'reported_mutable');
+});
+
+test('preflight: gate DISPATCH — claude modo execute passa (mutable)', () => {
+  const root = tmpRoot();
+  const r = preflight({
+    run_id: 'rdispatch-claude-ok', project_root: root, mode: 'execute',
+    host: 'claude',
+  });
+  assert.equal(r.status, 'passed');
+  assert.equal(r.routing.dispatch_capability, 'mutable');
+});
+
+test('preflight: ordem determinística — DISPATCH após JOIN', () => {
+  const root = tmpRoot();
+  // JOIN bloqueia antes de DISPATCH (pi sem join_sync_available).
+  const r = preflight({
+    run_id: 'rdispatch-order', project_root: root, mode: 'execute',
+    host: 'pi', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  assert.equal(r.status, 'blocked');
+  assert.equal(r.gate, 'JOIN', 'JOIN deve preceder DISPATCH');
+});
+
+test('preflight: gate DISPATCH — pi com prereq+join+dispatch → passa', () => {
+  const root = tmpRoot();
+  const r = preflight({
+    run_id: 'rdispatch-pi-ok', project_root: root, mode: 'execute',
+    host: 'pi',
+    host_capabilities: {
+      subagent_available: true, mcp_available: true,
+      join_sync_available: true,
+      dispatch_mutable: true,
+    },
+  });
+  assert.equal(r.status, 'passed');
+});
+
+test('capabilities: dispatch_capability declarado em todos os hosts', () => {
+  for (const host of HOST_NAMES) {
+    const cap = capabilities({ host });
+    assert.ok(['mutable', 'unknown', 'readonly'].includes(cap.dispatch_capability),
+      `host ${host}: dispatch_capability=${cap.dispatch_capability} inválido`);
+  }
+  assert.equal(capabilities({ host: 'claude' }).dispatch_capability, 'mutable');
+  assert.equal(capabilities({ host: 'codex' }).dispatch_capability, 'mutable');
+  assert.equal(capabilities({ host: 'opencode' }).dispatch_capability, 'mutable');
+  assert.equal(capabilities({ host: 'zcode' }).dispatch_capability, 'unknown');
+  assert.equal(capabilities({ host: 'antigravity' }).dispatch_capability, 'unknown');
+  assert.equal(capabilities({ host: 'pi' }).dispatch_capability, 'unknown');
+  assert.equal(capabilities({ host: 'generic' }).dispatch_capability, 'unknown');
+});
+
 // ── Slice A: modo execute, classify_input, routing, guarantee_level ──────────
 
 test('WORKFLOW_CONFIG: modo execute presente; audit e interview-only/interview_only mantidos (T01)', () => {
@@ -548,7 +727,35 @@ test('WORKFLOW_CONFIG: modo execute presente; audit e interview-only/interview_o
   assert.ok(WORKFLOW_CONFIG.modes.includes('interview-only'));
   assert.ok(WORKFLOW_CONFIG.modes.includes('interview_only'));
   assert.ok(!WORKFLOW_CONFIG.modes.includes('plan'));
+  assert.equal(WORKFLOW_CONFIG.skills.backlog_generator, 'atlas-backlog-generator');
   assert.equal(WORKFLOW_CONFIG.skills.audit, 'atlas-audit');
+});
+
+test('documentFlowForRouting: macro input prioriza backlog antes de PRD/plano', () => {
+  const full = documentFlowForRouting('full', 'idea');
+  assert.equal(full.priority, 'backlog_first');
+  assert.deepEqual(full.skills, [
+    'atlas-backlog-generator',
+    'atlas-sprint-prd-generator',
+    'atlas-prd-interview',
+    'atlas-plan-handoff',
+  ]);
+  assert.deepEqual(full.artifacts, ['BACKLOG_MESTRE_*.md', 'SPRINT_S<NN>_*.md', 'PRD_*.md', 'PLAN_*.md']);
+
+  const direct = documentFlowForRouting('direct', 'roadmap');
+  assert.equal(direct.priority, 'backlog_first');
+  assert.deepEqual(direct.skills, [
+    'atlas-backlog-generator',
+    'atlas-sprint-prd-generator',
+    'atlas-prd-interview',
+  ]);
+});
+
+test('documentFlowForRouting: backlog existente preserva execução pequena por sprint', () => {
+  const flow = documentFlowForRouting('full', 'backlog-item', 'backlog');
+  assert.equal(flow.priority, 'sprint_from_backlog');
+  assert.ok(!flow.skills.includes('atlas-backlog-generator'));
+  assert.deepEqual(flow.artifacts, ['SPRINT_S<NN>_*.md', 'PRD_*.md', 'PLAN_*.md']);
 });
 
 test('expectedNextPhase: execute → plan_execute sem regredir full/direct/interview (T02)', () => {
@@ -588,6 +795,21 @@ test('atlas_preflight materializa executor efetivo por modo sem alterar phase/FS
     assert.equal(result.routing.executor_skill, executor);
     assert.equal(expectedNextPhase(result.routing, {}), mode === 'full' ? 'plan_handoff' : 'plan_execute');
   }
+});
+
+test('atlas_preflight materializa document_flow backlog_first para macro input', () => {
+  const result = preflight({
+    run_id: 'route-full-idea-backlog-first',
+    project_root: tmpRoot(),
+    mode: 'full',
+    input_type: 'idea',
+    artifact_type: 'idea',
+    host: 'codex',
+  });
+  assert.equal(result.status, 'passed');
+  assert.equal(result.routing.document_flow.priority, 'backlog_first');
+  assert.equal(result.routing.document_flow.skills[0], 'atlas-backlog-generator');
+  assert.equal(expectedNextPhase(result.routing, {}), 'plan_handoff');
 });
 
 test('contrato interview-only materializa PRD real e passa artifact+TC antes da entrevista (Etapa 1 T04)', () => {
@@ -668,6 +890,7 @@ const CONFORMANT_PLAN = [
   '| Campo | Valor |',
   '|-------|-------|',
   '| **PRD** | [PRD_x.md](./PRD_x.md) |',
+  '| **Sprint file** | [SPRINT_S01_runtime.md](./SPRINT_S01_runtime.md) — `eval_manifest` §9 |',
   '',
   'Política: [BOUNDARY_PRD_PLAN.md](./TEMPLATES/BOUNDARY_PRD_PLAN.md).',
   '',
@@ -677,6 +900,7 @@ const CONFORMANT_PLAN = [
   '## 4. Estado na abertura da sprint',
   '## 5. Tarefas de execução',
   '#### T01. Primeira tarefa',
+  '- **Eval/Policy:** Sprint §9 EVAL-001 / Sprint §10 policy.allowed_scope',
   '## 6. Contratos técnicos',
   '## 7. Slices',
   '## 8. Validação e checklist',
@@ -789,6 +1013,7 @@ const CONFORMANT_PLAN_DOC = [
   '| Campo | Valor |',
   '|-------|-------|',
   '| **PRD** | [PRD_x.md](./PRD_x.md) |',
+  '| **Sprint file** | [SPRINT_S01_runtime.md](./SPRINT_S01_runtime.md) — `eval_manifest` §9 |',
   '',
   'Política: [BOUNDARY_PRD_PLAN.md](./TEMPLATES/BOUNDARY_PRD_PLAN.md).',
   '',
@@ -798,9 +1023,154 @@ const CONFORMANT_PLAN_DOC = [
   '## 4. Estado na abertura da sprint',
   '## 5. Tarefas de execução',
   '#### T01. Primeira tarefa',
+  '- **Eval/Policy:** Sprint §9 EVAL-001 / Sprint §10 policy.allowed_scope',
   '## 6. Contratos técnicos',
   '## 7. Slices',
   '## 8. Validação e checklist',
+  '',
+].join('\n');
+
+const STRICT_PRD_DOC = [
+  '# PRD: sprint runtime',
+  '',
+  '| Campo | Valor |',
+  '|-------|-------|',
+  '| **Status** | Aprovado para implementação |',
+  '| **Sprint file** | [SPRINT_S01_runtime.md](./SPRINT_S01_runtime.md#9-eval-manifest) |',
+  '',
+  '- Eval source: `SPRINT_S01_runtime.md §9 eval_manifest`',
+  '',
+  '## 1. Contexto e objetivo',
+  'Objetivo.',
+  '## 2. Escopo',
+  'Escopo.',
+  '## 3. Decisões de produto',
+  '| ID | Decisão |',
+  '|---|---|',
+  '| D1 | Fechado |',
+  '## 4. Fluxos e cenários UX',
+  'Fluxo.',
+  '## 5. Contrato funcional e invariantes',
+  'Contrato.',
+  '## 6. Critérios de aceite',
+  '**Produto**',
+  '- [ ] EVAL-001 comprovado.',
+  '**UX**',
+  '- [ ] Fluxo ok.',
+  '**Dados**',
+  '- [ ] Dados ok.',
+  '**Regressão de produto**',
+  '- [ ] Regressão ok.',
+  '',
+].join('\n');
+
+function sprintDoc({
+  id = 'S01',
+  evalId = id,
+  includeEval = true,
+  backlog = 'BACKLOG.md#S01',
+  status = 'ready',
+  dorStatus = null,
+} = {}) {
+  return [
+    `# Sprint viva — ${id} — Runtime harness`,
+    '',
+    '## 1. Metadados',
+    '| Campo | Valor |',
+    '|---|---|',
+    `| Sprint ID | ${id} |`,
+    '| Nome | Runtime harness |',
+    `| Status | ${status} |`,
+    `| Backlog mestre | ${backlog} |`,
+    '| PRD | pendente |',
+    '| PLAN | pendente |',
+    '| State / evidência | pendente |',
+    '| Fase | F0 |',
+    '| MoSCoW | Must |',
+    '| Prioridade | P0 |',
+    '| Responsável | Atlas |',
+    '| Criado em | 2026-06-29 |',
+    '| Última atualização | 2026-06-29 |',
+    '',
+    '## 2. Objetivo e valor',
+    'Objetivo único.',
+    '## 3. Escopo da sprint',
+    '- [ ] Entrega',
+    '## 4. Contexto e fontes',
+    '| Tipo | Fonte | Uso nesta sprint |',
+    '|---|---|---|',
+    '| Backlog | BACKLOG.md#S01 | escopo |',
+    '## 5. Dependências e bloqueios',
+    '| ID | Tipo | Descrição | Status | Evidência |',
+    '|---|---|---|---|---|',
+    '| DEP-001 | interna | nada | done | link |',
+    '## 6. Decisões da sprint',
+    '| ID | Decisão | Fonte | Impacto | Status |',
+    '|---|---|---|---|---|',
+    '| SD-001 | seguir | backlog | baixo | aprovada |',
+    '## 7. Critérios candidatos para PRD',
+    '- [ ] Critério',
+    '## 8. Definition of Ready',
+    '- [ ] Próxima ação explícita.',
+    ...(dorStatus ? [`**Status DoR:** ${dorStatus}`] : []),
+    '## 9. Eval manifest',
+    ...(includeEval ? [
+      '```yaml',
+      'eval_manifest:',
+      `  sprint_id: "${evalId}"`,
+      '  objective: "runtime harness"',
+      '  must_prove:',
+      '    - id: "EVAL-001"',
+      '      claim: "gate passa"',
+      '      source: "SPRINT"',
+      '      evidence_required: "node --test"',
+      '  regression_guards:',
+      '    - "parser antigo preservado"',
+      '  negative_paths:',
+      '    - "manifest ausente falha"',
+      '```',
+    ] : ['sem manifest']),
+    '## 10. Policy manifest',
+    '```yaml',
+    'policy_manifest:',
+    '  allowed_scope:',
+    '    - "packages/mcp-server"',
+    '  forbidden_scope:',
+    '    - "hosts"',
+    '  required_gates:',
+    '    - "atlas_verify_sprint_file"',
+    '```',
+    '## 11. Guia e sensores',
+    '- [ ] Guia',
+    '## 12. Evidence-to-claim',
+    '| Claim | Onde foi prometido | Evidência esperada | Evidência real | Status |',
+    '|---|---|---|---|---|',
+    '| gate passa | sprint | node --test | pendente | pending |',
+    '## 13. PRD e PLAN',
+    '| Campo | Valor |',
+    '|---|---|',
+    '| Status | pendente |',
+    '## 14. Execução e validação',
+    '| Gate | Status | Evidência |',
+    '|---|---|---|',
+    '| Sprint file válido | pending | pendente |',
+    '## 15. Aprendizados e handoff para próximas sprints',
+    '| Tipo | Aprendizado | Afeta | Ação |',
+    '|---|---|---|---|',
+    '| técnico | nada | S02 | registrar |',
+    '## 16. Histórico',
+    '| Data | Autor | Mudança |',
+    '|---|---|---|',
+    '| 2026-06-29 | Atlas | Criação |',
+    '',
+  ].join('\n');
+}
+
+const BACKLOG_WITH_SPRINT_FILE = [
+  '## 7. Registro de sprints',
+  '| ID | Sprint | Fase-fonte | Objetivo (1 linha) | MoSCoW | Ganho | Esforço | Prioridade | PRD | Depende de | Estado | Gate | Sprint file | PLAN | State |',
+  '|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|',
+  '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | backlog | — | `.atlas/backlog/sprints/SPRINT_S01_runtime.md` | PLAN_S01.md | .atlas/state/S01.json |',
   '',
 ].join('\n');
 
@@ -845,12 +1215,300 @@ test('atlas_verify_template_conformance: plano conforme → banner plano (T07)',
   assert.equal(r.banner, '▸ atlas: plano · validado (TC pass)');
 });
 
+test('atlas_verify_template_conformance: modo sprint exige Sprint file/EVAL em PRD e PLAN', () => {
+  const root = tmpRoot();
+  fs.writeFileSync(path.join(root, 'PRD_ok.md'), STRICT_PRD_DOC);
+  fs.writeFileSync(path.join(root, 'PLAN_ok.md'), CONFORMANT_PLAN_DOC);
+  assert.equal(verifyTemplateConformance({
+    run_id: 'r1', project_root: root, artifact_path: 'PRD_ok.md', artifact_type: 'prd',
+    required_status: 'Aprovado para implementação', require_sprint_file: true,
+  }).status, 'passed');
+  assert.equal(verifyTemplateConformance({
+    run_id: 'r1', project_root: root, artifact_path: 'PLAN_ok.md', artifact_type: 'plan',
+    require_sprint_file: true,
+  }).status, 'passed');
+
+  fs.writeFileSync(path.join(root, 'PRD_sem_sprint.md'), STRICT_PRD_DOC.replace(/\| \*\*Sprint file\*\*.*\n/, '').replace(/EVAL-001/g, ''));
+  const prdBlocked = verifyTemplateConformance({
+    run_id: 'r1', project_root: root, artifact_path: 'PRD_sem_sprint.md', artifact_type: 'prd',
+    required_status: 'Aprovado para implementação', require_sprint_file: true,
+  });
+  assert.equal(prdBlocked.status, 'blocked');
+  assert.ok(prdBlocked.pendencies.some((p) => p.category === 'sprint_file'));
+
+  fs.writeFileSync(path.join(root, 'PLAN_sem_eval.md'), CONFORMANT_PLAN_DOC.replace(/\| \*\*Sprint file\*\*.*\n/, '').replace(/- \*\*Eval\/Policy:\*\*.*\n/, '').replace(/EVAL-001/g, ''));
+  const planBlocked = verifyTemplateConformance({
+    run_id: 'r1', project_root: root, artifact_path: 'PLAN_sem_eval.md', artifact_type: 'plan',
+    require_sprint_file: true,
+  });
+  assert.equal(planBlocked.status, 'blocked');
+  assert.ok(planBlocked.pendencies.some((p) => p.category === 'sprint_file'));
+});
+
 test('atlas_verify_template_conformance: plano não conforme → banner BLOCK (T07)', () => {
   const root = tmpRoot();
   fs.writeFileSync(path.join(root, 'ruim.md'), '# nada\n\nconteúdo solto');
   const r = verifyTemplateConformance({ run_id: 'r1', project_root: root, artifact_path: 'ruim.md', artifact_type: 'plan' });
   assert.equal(r.status, 'blocked');
   assert.match(r.banner, /^▸ atlas: preflight · BLOCK · /);
+});
+
+test('parseSprintRows: captura colunas novas sem quebrar legado', () => {
+  const rows = parseSprintRows(BACKLOG_WITH_SPRINT_FILE);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].id, 'S01');
+  assert.equal(rows[0].state, 'backlog');
+  assert.equal(rows[0].sprint_file, '`.atlas/backlog/sprints/SPRINT_S01_runtime.md`');
+  assert.equal(rows[0].plan, 'PLAN_S01.md');
+  assert.equal(rows[0].state_file, '.atlas/state/S01.json');
+});
+
+test('parseSprintRows: aceita sub-sprint decimal registrada no backlog', () => {
+  const rows = parseSprintRows(BACKLOG_WITH_SPRINT_FILE.replaceAll('S01', 'S17.1'));
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].id, 'S17.1');
+  assert.equal(rows[0].sprint_file, '`.atlas/backlog/sprints/SPRINT_S17.1_runtime.md`');
+});
+
+test('atlas_verify_sprint_file: válido passa com vínculo no backlog', () => {
+  const root = tmpRoot();
+  fs.mkdirSync(path.join(root, '.atlas/backlog/sprints'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.atlas/backlog/sprints/SPRINT_S01_runtime.md'), sprintDoc());
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), BACKLOG_WITH_SPRINT_FILE);
+  const r = verifySprintFile({
+    run_id: 'r1',
+    project_root: root,
+    sprint_path: '.atlas/backlog/sprints/SPRINT_S01_runtime.md',
+    sprint_id: 'S01',
+    backlog_path: 'BACKLOG.md',
+  });
+  assert.equal(r.status, 'passed');
+  assert.equal(r.pending_count, 0);
+});
+
+test('atlas_verify_sprint_file: aceita sub-sprint decimal registrada', () => {
+  const root = tmpRoot();
+  fs.mkdirSync(path.join(root, '.atlas/backlog/sprints'), { recursive: true });
+  const backlog = BACKLOG_WITH_SPRINT_FILE.replaceAll('S01', 'S17.1');
+  fs.writeFileSync(path.join(root, '.atlas/backlog/sprints/SPRINT_S17.1_runtime.md'), sprintDoc({ id: 'S17.1', evalId: 'S17.1', backlog: 'BACKLOG.md#S17.1' }));
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlog);
+  const r = verifySprintFile({
+    run_id: 'r1',
+    project_root: root,
+    sprint_path: '.atlas/backlog/sprints/SPRINT_S17.1_runtime.md',
+    sprint_id: 'S17.1',
+    backlog_path: 'BACKLOG.md',
+  });
+  assert.equal(r.status, 'passed');
+  assert.equal(r.pending_count, 0);
+});
+
+test('atlas_verify_sprint_file: falta eval_manifest falha', () => {
+  const root = tmpRoot();
+  fs.writeFileSync(path.join(root, 'SPRINT_S01.md'), sprintDoc({ includeEval: false }));
+  const r = verifySprintFile({ run_id: 'r1', project_root: root, sprint_path: 'SPRINT_S01.md', sprint_id: 'S01' });
+  assert.equal(r.status, 'blocked');
+  assert.ok(r.pendencies.some((p) => p.category === 'eval_manifest'));
+});
+
+test('atlas_verify_sprint_file: sprint_id divergente falha', () => {
+  const root = tmpRoot();
+  fs.writeFileSync(path.join(root, 'SPRINT_S01.md'), sprintDoc());
+  const r = verifySprintFile({ run_id: 'r1', project_root: root, sprint_path: 'SPRINT_S01.md', sprint_id: 'S02' });
+  assert.equal(r.status, 'blocked');
+  assert.ok(r.pendencies.some((p) => p.item === 'Sprint ID' || p.item === 'sprint_id'));
+});
+
+test('atlas_verify_sprint_file: backlog link ausente falha', () => {
+  const root = tmpRoot();
+  fs.writeFileSync(path.join(root, 'SPRINT_S01.md'), sprintDoc());
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), BACKLOG_WITH_SPRINT_FILE.replace('S01', 'S02'));
+  const r = verifySprintFile({
+    run_id: 'r1',
+    project_root: root,
+    sprint_path: 'SPRINT_S01.md',
+    sprint_id: 'S01',
+    backlog_path: 'BACKLOG.md',
+  });
+  assert.equal(r.status, 'blocked');
+  assert.ok(r.pendencies.some((p) => p.category === 'backlog_link'));
+});
+
+function backlogWithRows(rows) {
+  return [
+    '## 7. Registro de sprints',
+    '| ID | Sprint | Fase-fonte | Objetivo (1 linha) | MoSCoW | Ganho | Esforço | Prioridade | PRD | Depende de | Estado | Gate | Sprint file | PLAN | State |',
+    '|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|',
+    ...rows,
+    '',
+  ].join('\n');
+}
+
+function writeSprintFixture(root, id, { status = 'ready', dorStatus = 'verde' } = {}) {
+  fs.mkdirSync(path.join(root, '.atlas/backlog/sprints'), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, `.atlas/backlog/sprints/SPRINT_${id}_runtime.md`),
+    sprintDoc({ id, backlog: `BACKLOG.md#${id}`, status, dorStatus }),
+  );
+}
+
+test('atlas_verify_backlog_index: índice válido passa com sprint file e status espelhado', () => {
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S01', { status: 'ready', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | ready | — | `.atlas/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+  const r = verifyBacklogIndex({ run_id: 'r1', project_root: root, backlog_path: 'BACKLOG.md' });
+  assert.equal(r.status, 'passed');
+  assert.equal(r.sprint_count, 1);
+  assert.equal(r.sprints[0].sprint_file_status, 'valid');
+});
+
+test('atlas_verify_backlog_index: status drift backlog x sprint file bloqueia', () => {
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S01', { status: 'doing', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | ready | — | `.atlas/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+  const r = verifyBacklogIndex({ run_id: 'r1', project_root: root, backlog_path: 'BACKLOG.md' });
+  assert.equal(r.status, 'blocked');
+  assert.ok(r.pendencies.some((p) => p.category === 'status_drift'));
+});
+
+test('atlas_select_next_sprint: escolhe sprint ready com maior prioridade determinística', () => {
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S01', { status: 'ready', dorStatus: 'verde' });
+  writeSprintFixture(root, 'S02', { status: 'ready', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime A | F0 | objetivo | Should | Alto | Baixo | P0 | pendente | — | ready | — | `.atlas/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+    '| S02 | Runtime B | F0 | objetivo | Must | Médio | Alto | P1 | pendente | — | ready | — | `.atlas/backlog/sprints/SPRINT_S02_runtime.md` | pendente | pendente |',
+  ]));
+  const r = selectNextSprint({ run_id: 'r1', project_root: root, backlog_path: 'BACKLOG.md' });
+  assert.equal(r.status, 'passed');
+  assert.equal(r.selected.sprint_id, 'S02');
+  assert.deepEqual(r.candidates, ['S02', 'S01']);
+});
+
+test('atlas_select_next_sprint: dependência interna não done bloqueia seleção', () => {
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S01', { status: 'backlog', dorStatus: 'verde' });
+  writeSprintFixture(root, 'S02', { status: 'ready', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Base | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | backlog | — | `.atlas/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+    '| S02 | Depende | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | S01 | ready | — | `.atlas/backlog/sprints/SPRINT_S02_runtime.md` | pendente | pendente |',
+  ]));
+  const r = selectNextSprint({ run_id: 'r1', project_root: root, backlog_path: 'BACKLOG.md' });
+  assert.equal(r.status, 'blocked');
+  assert.equal(r.selected, null);
+  assert.ok(r.rejected.some((item) => item.id === 'S02' && item.reasons.some((reason) => /unmet_dependencies=S01:backlog/.test(reason))));
+});
+
+test('atlas_update_sprint_status: sincroniza done no backlog e sprint file com evidência', () => {
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S01', { status: 'ready', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | ready | ready | `.atlas/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+  const r = updateSprintStatus({
+    run_id: 'r1',
+    project_root: root,
+    backlog_path: 'BACKLOG.md',
+    sprint_id: 'S01',
+    status: 'done',
+    validator_verdict: 'pass',
+    prd_path: 'PRD_S01.md',
+    plan_path: 'PLAN_S01.md',
+    state_path: '.atlas/state/S01.json',
+    evidence: 'validator pass',
+  });
+  assert.equal(r.status, 'passed');
+  assert.equal(r.previous_status, 'ready');
+  assert.equal(r.next_status, 'done');
+  const backlog = fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8');
+  const row = parseSprintRows(backlog)[0];
+  assert.equal(row.state, 'done');
+  assert.equal(row.gate, 'validator:pass');
+  assert.equal(row.prd, 'PRD_S01.md');
+  assert.equal(row.plan, 'PLAN_S01.md');
+  assert.equal(row.state_file, '.atlas/state/S01.json');
+  const sprint = fs.readFileSync(path.join(root, '.atlas/backlog/sprints/SPRINT_S01_runtime.md'), 'utf8');
+  assert.match(sprint, /^\| Status \| done \|$/m);
+  assert.match(sprint, /\| Sprint status update \| validator:pass \| validator pass \|/);
+  assert.match(sprint, /\| Atlas MCP \| Status -> done; validator=pass; evidence=validator pass \|/);
+  assert.equal(verifyBacklogIndex({ run_id: 'r1', project_root: root, backlog_path: 'BACKLOG.md' }).status, 'passed');
+});
+
+test('atlas_update_sprint_status: done sem validator terminal bloqueia e não muta', () => {
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S01', { status: 'ready', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | ready | ready | `.atlas/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+  const before = fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8');
+  const r = updateSprintStatus({
+    run_id: 'r1',
+    project_root: root,
+    backlog_path: 'BACKLOG.md',
+    sprint_id: 'S01',
+    status: 'done',
+    state_path: '.atlas/state/S01.json',
+  });
+  assert.equal(r.status, 'blocked');
+  assert.ok(r.pendencies.some((p) => p.category === 'validator_verdict'));
+  assert.equal(fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8'), before);
+});
+
+test('atlas_update_sprint_status: reabrir done bloqueia por padrão', () => {
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S01', { status: 'done', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | PRD_S01.md | — | done | validator:pass | `.atlas/backlog/sprints/SPRINT_S01_runtime.md` | PLAN_S01.md | .atlas/state/S01.json |',
+  ]));
+  const r = updateSprintStatus({
+    run_id: 'r1',
+    project_root: root,
+    backlog_path: 'BACKLOG.md',
+    sprint_id: 'S01',
+    status: 'doing',
+  });
+  assert.equal(r.status, 'blocked');
+  assert.ok(r.pendencies.some((p) => p.category === 'status_transition'));
+});
+
+test('atlas_update_sprint_status: falha de FS no sprint file faz rollback do backlog (P2)', () => {
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S01', { status: 'ready', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | ready | ready | `.atlas/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+  const before = fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8');
+  const sprintAbs = path.resolve(root, '.atlas/backlog/sprints/SPRINT_S01_runtime.md');
+  // Injeta falha de FS determinística só no write do sprint file: o backlog já foi
+  // escrito quando o sprint file falha (EACCES), exercitando o caminho de rollback.
+  const realWrite = fs.writeFileSync;
+  mock.method(fs, 'writeFileSync', (target, data, ...rest) => {
+    if (path.resolve(target) === sprintAbs) {
+      throw Object.assign(new Error('EACCES: simulated'), { code: 'EACCES' });
+    }
+    return realWrite(target, data, ...rest);
+  });
+  try {
+    const r = updateSprintStatus({
+      run_id: 'r1',
+      project_root: root,
+      backlog_path: 'BACKLOG.md',
+      sprint_id: 'S01',
+      status: 'done',
+      validator_verdict: 'pass',
+      state_path: '.atlas/state/S01.json',
+      evidence: 'validator pass',
+    });
+    assert.equal(r.status, 'blocked');
+    // Backlog restaurado ao original — sem drift backlog↔sprint.
+    assert.equal(fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8'), before);
+  } finally {
+    mock.restoreAll();
+  }
 });
 
 test('atlas_classify_input: plano → banner roteia com modo=execute (T07)', () => {
@@ -1008,6 +1666,40 @@ test('atlas_lock_dispatch: status marca checkpoint antigo sem progresso como sta
   assert.equal(status.cause, 'executor_progress_timeout');
   assert.equal(status.next_action, 'retry_plan_execute');
   assert.equal(readRunJson(root, 'g12progress').data.dispatch.executor_liveness.status, 'stalled');
+});
+
+test('atlas_lock_dispatch: handoff_ready não expira enquanto aguarda validator', () => {
+  const root = tmpRoot();
+  preflight({
+    run_id: 'g12handoff', project_root: root, mode: 'execute',
+    host: 'codex', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: 'g12handoff', project_root: root, action: 'start', phase: 'plan_execute' });
+  const stateRel = '.atlas/state/g12handoff/slice.json';
+  const abs = path.join(root, stateRel);
+  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  fs.writeFileSync(abs, JSON.stringify({
+    ...fixtureState('state-legacy-plan.json'), run_id: 'g12handoff',
+  }, null, 2));
+  lockDispatch({
+    run_id: 'g12handoff',
+    project_root: root,
+    action: 'checkpoint',
+    phase: 'plan_execute',
+    event: 'state_path_created',
+    state_path: stateRel,
+  });
+
+  const runFile = path.join(root, '.atlas', 'state', 'g12handoff', 'run.json');
+  const raw = JSON.parse(fs.readFileSync(runFile, 'utf8'));
+  raw.data.dispatch.active.liveness.last_progress_at = '2000-01-01T00:00:00.000Z';
+  raw.data.dispatch.active.liveness.next_progress_deadline_at = '2000-01-01T00:05:00.000Z';
+  fs.writeFileSync(runFile, JSON.stringify(raw, null, 2));
+
+  const status = lockDispatch({ run_id: 'g12handoff', project_root: root, action: 'status', phase: 'plan_execute' });
+  assert.equal(status.status, 'passed');
+  assert.equal(status.executor_liveness, 'handoff_ready');
+  assert.equal(readRunJson(root, 'g12handoff').data.dispatch.active.phase, 'plan_execute');
 });
 
 test('atlas_lock_dispatch: state_path_created exige state_path legível', () => {
@@ -3062,6 +3754,78 @@ function planStateForBoundary(root, head, baseline, files) {
   state.repair_evidence = [];
   return withSnapshot(state, root, baseline);
 }
+
+function attachSprintEvidence(state, { id = 'S01', sprintPath = '.atlas/backlog/sprints/SPRINT_S01_runtime.md' } = {}) {
+  state.sprint_id = id;
+  state.sprint_file_path = sprintPath;
+  state.prd_path = '.atlas/prd/PRD_S01_runtime.md';
+  state.eval_results = [{
+    id: 'EVAL-001',
+    claim: 'gate passa',
+    status: 'passed',
+    evidence: ['node --test packages/mcp-server/server.test.js'],
+    checks: ['node --test packages/mcp-server/server.test.js'],
+  }];
+  state.evidence_to_claim = [{
+    claim_id: 'EVAL-001',
+    source: `${sprintPath} §9`,
+    evidence: ['node --test packages/mcp-server/server.test.js'],
+    status: 'passed',
+  }];
+  state.policy_scope = {
+    allowed_scope: ['src'],
+    forbidden_scope: ['secrets'],
+    required_gates: ['atlas_verify_sprint_file', 'atlas-task-validator'],
+  };
+  return state;
+}
+
+function setupSprintEvidenceBoundary(runId = 'sprint-state-ok') {
+  const { root, head } = initGitFixture();
+  fs.mkdirSync(path.join(root, '.atlas/backlog/sprints'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.atlas/backlog/sprints/SPRINT_S01_runtime.md'), sprintDoc());
+  const baseline = captureWorktreeSnapshot(root);
+  fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'src/initial.js'), 'export const initial = true;\n');
+  const state = attachSprintEvidence(planStateForBoundary(root, head, baseline, ['src/initial.js']));
+  const statePath = writeSliceState(root, runId, state);
+  return { root, statePath, state };
+}
+
+test('state boundary: sprint/eval/policy completos passam', () => {
+  const { root, statePath } = setupSprintEvidenceBoundary();
+  assert.equal(validateStateBoundary(statePath, { project_root: root }).ok, true);
+});
+
+test('state boundary: sprint declarado exige todos EVAL-* como passed e evidence_to_claim', () => {
+  const missing = setupSprintEvidenceBoundary('sprint-state-missing-eval');
+  missing.state.eval_results = [];
+  fs.writeFileSync(path.join(missing.root, missing.statePath), JSON.stringify({ ...missing.state, run_id: 'sprint-state-missing-eval' }, null, 2));
+  let result = validateStateBoundary(missing.statePath, { project_root: missing.root });
+  assert.equal(result.ok, false);
+  assert.match(result.violations.join(' '), /EVAL sem resultado/);
+
+  const failed = setupSprintEvidenceBoundary('sprint-state-failed-eval');
+  failed.state.eval_results[0].status = 'failed';
+  fs.writeFileSync(path.join(failed.root, failed.statePath), JSON.stringify({ ...failed.state, run_id: 'sprint-state-failed-eval' }, null, 2));
+  result = validateStateBoundary(failed.statePath, { project_root: failed.root });
+  assert.equal(result.ok, false);
+  assert.match(result.violations.join(' '), /EVAL não comprovado como passed/);
+});
+
+test('state boundary: policy_scope.forbidden_scope bloqueia arquivo tocado', () => {
+  const { root, head } = initGitFixture();
+  fs.mkdirSync(path.join(root, '.atlas/backlog/sprints'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.atlas/backlog/sprints/SPRINT_S01_runtime.md'), sprintDoc());
+  const baseline = captureWorktreeSnapshot(root);
+  fs.mkdirSync(path.join(root, 'secrets'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'secrets/token.txt'), 'nope\n');
+  const state = attachSprintEvidence(planStateForBoundary(root, head, baseline, ['secrets/token.txt']));
+  const statePath = writeSliceState(root, 'sprint-state-policy-block', state);
+  const result = validateStateBoundary(statePath, { project_root: root });
+  assert.equal(result.ok, false);
+  assert.match(result.violations.join(' '), /forbidden_scope/);
+});
 
 test('F-003: dirty preexistente intacto não contamina; mutação posterior entra no boundary', () => {
   const { root, head } = initGitFixture();
