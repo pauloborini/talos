@@ -131,6 +131,16 @@ for (const rel of [
   }
 }
 
+const zcodeValidatorAgent = read('hosts/zcode/agents/atlas-task-validator.md');
+if (zcodeValidatorAgent != null) {
+  if (!/^name:\s*atlas-task-validator$/m.test(zcodeValidatorAgent) || !/^tools:\s*Read, Grep, Glob, Bash$/m.test(zcodeValidatorAgent)) {
+    errors.push('zcode packaging-regressão: agents/atlas-task-validator.md deve manter frontmatter Claude/ZCode canônico');
+  }
+  if (/^mode:\s*subagent$/m.test(zcodeValidatorAgent)) {
+    errors.push('zcode packaging-regressão: agents/atlas-task-validator.md não pode usar frontmatter opencode (mode: subagent)');
+  }
+}
+
 // Contrato do validator por host (S10): o bloco JSON de veredito dos agentes
 // gerados (opencode/pi/zcode) deve ser idêntico ao canônico — catálogo stale = drift.
 for (const rel of [
@@ -255,15 +265,15 @@ if (fs.existsSync(skillsDir)) {
   }
 }
 
-// Anti-regressão de prosa (S10/DEC-004 hardening): o fail-closed de PREREQ para hosts
-// must_report (pi/generic) depende do orquestrador apurar e reportar host_capabilities
-// no preflight. Se esse passo sumir do SKILL, a garantia de determinismo se perde
-// silenciosamente. O SKILL DEVE citar host_capabilities E atlas_preflight.
+// Anti-regressão de prosa (S10/DEC-004/DEC-008 hardening): o fail-closed de PREREQ
+// e DISPATCH depende do orquestrador apurar e reportar host_capabilities no preflight.
+// Se esse passo sumir do SKILL, a garantia de determinismo se perde silenciosamente.
+// O SKILL DEVE citar host_capabilities, dispatch_mutable e atlas_preflight.
 const orchestratorSkill = read('packages/orchestrator/skills/atlas-workflow-orchestrator/SKILL.md');
 if (orchestratorSkill != null) {
-  for (const token of ['host_capabilities', 'atlas_preflight']) {
+  for (const token of ['host_capabilities', 'dispatch_mutable', 'atlas_preflight']) {
     if (!orchestratorSkill.includes(token)) {
-      errors.push(`PREREQ prosa-regressão: SKILL do orquestrador não cita '${token}' (passo de report sustenta o fail-closed)`);
+      errors.push(`preflight prosa-regressão: SKILL do orquestrador não cita '${token}' (passo de report sustenta o fail-closed)`);
     }
   }
   for (const token of ['dispatch_token', 'repair_run_id', 'repair_budget: 1', 'challenge_response']) {

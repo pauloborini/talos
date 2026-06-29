@@ -19,6 +19,7 @@ import {
   capabilities,
   checkPrerequisites,
   checkJoinCapability,
+  checkDispatchCapability,
   expectedNextPhase,
   expectedExecutorSkill,
   guaranteeLevelForMode,
@@ -471,7 +472,7 @@ test('preflight: gate JOIN — pi com prereq+join reportados passa', () => {
   const r = preflight({
     run_id: 'rjoin-pi-ok', project_root: root, mode: 'execute',
     host: 'pi',
-    host_capabilities: { subagent_available: true, mcp_available: true, join_sync_available: true },
+    host_capabilities: { subagent_available: true, mcp_available: true, join_sync_available: true, dispatch_mutable: true },
   });
   assert.equal(r.status, 'passed');
 });
@@ -487,7 +488,7 @@ test('preflight: gate JOIN — generic sem join → blocked; com subagent+mcp+jo
   const ok = preflight({
     run_id: 'rjoin-gen-ok', project_root: root, mode: 'execute',
     host: 'generic',
-    host_capabilities: { subagent_available: true, mcp_available: true, join_sync_available: true },
+    host_capabilities: { subagent_available: true, mcp_available: true, join_sync_available: true, dispatch_mutable: true },
   });
   assert.equal(ok.status, 'passed');
 });
@@ -536,6 +537,178 @@ test('preflight: self_evident — codex/claude/opencode passam sem reportar join
     });
     assert.equal(r.status, 'passed', `host ${host}`);
   }
+});
+
+// ── Gate DISPATCH_CAPABILITY (DEC-008) ─────────────────────────────────────
+
+test('checkDispatchCapability: modo audit passa independente de dispatch_capability', () => {
+  // Modos read-only (audit, interview-only) não exigem mutação.
+  for (const host of ['zcode', 'claude', 'generic']) {
+    const r = checkDispatchCapability({ host }, 'audit');
+    assert.equal(r.status, 'passed', `host ${host} audit`);
+    assert.equal(r.reason, 'modo_readonly_nao_exige_mutacao');
+  }
+});
+
+test('checkDispatchCapability: modo interview-only passa independente de dispatch_capability', () => {
+  for (const mode of ['interview-only', 'interview_only']) {
+    const r = checkDispatchCapability({ host: 'zcode' }, mode);
+    assert.equal(r.status, 'passed');
+    assert.equal(r.reason, 'modo_readonly_nao_exige_mutacao');
+  }
+});
+
+test('checkDispatchCapability: host mutable (claude/codex/opencode) passa para modos de execução', () => {
+  for (const host of ['claude', 'codex', 'opencode']) {
+    for (const mode of ['full', 'direct', 'execute']) {
+      const r = checkDispatchCapability({ host }, mode);
+      assert.equal(r.status, 'passed', `host ${host} mode ${mode}`);
+      assert.equal(r.capability, 'mutable');
+    }
+  }
+});
+
+test('checkDispatchCapability: host unknown (zcode) sem dispatch_mutable → blocked para execução', () => {
+  for (const mode of ['full', 'direct', 'execute']) {
+    const r = checkDispatchCapability({ host: 'zcode' }, mode);
+    assert.equal(r.status, 'blocked', `zcode ${mode}`);
+    assert.equal(r.capability, 'unknown');
+    assert.equal(r.cause, 'dispatch_capability_nao_verificada');
+    assert.ok(r.next_action.includes('dispatch_mutable'), `next_action deve mencionar dispatch_mutable: ${r.next_action}`);
+  }
+});
+
+test('checkDispatchCapability: host unknown (zcode) com dispatch_mutable:true → passa', () => {
+  for (const mode of ['full', 'direct', 'execute']) {
+    const r = checkDispatchCapability(
+      { host: 'zcode', host_capabilities: { dispatch_mutable: true } },
+      mode,
+    );
+    assert.equal(r.status, 'passed', `zcode ${mode} com dispatch_mutable`);
+    assert.equal(r.capability, 'reported_mutable');
+    assert.equal(r.reported, true);
+  }
+});
+
+test('checkDispatchCapability: nenhum host atual declara readonly', () => {
+  // Branch readonly fica reservada para adapter futuro; hoje nenhum host deve cair nela.
+  for (const host of HOST_NAMES) {
+    assert.notEqual(capabilities({ host }).dispatch_capability, 'readonly', `host ${host}`);
+  }
+});
+
+test('checkDispatchCapability: generic/pi unknown sem report → blocked', () => {
+  for (const host of ['generic', 'pi']) {
+    const r = checkDispatchCapability({ host }, 'execute');
+    assert.equal(r.status, 'blocked', `host ${host}`);
+    assert.equal(r.capability, 'unknown');
+    assert.equal(r.cause, 'dispatch_capability_nao_verificada');
+  }
+});
+
+test('checkDispatchCapability: generic/pi unknown com dispatch_mutable:true → passa', () => {
+  for (const host of ['generic', 'pi']) {
+    const r = checkDispatchCapability(
+      { host, host_capabilities: { dispatch_mutable: true } },
+      'execute',
+    );
+    assert.equal(r.status, 'passed', `host ${host}`);
+    assert.equal(r.capability, 'reported_mutable');
+  }
+});
+
+test('checkDispatchCapability: dispatch_mutable não-booleano → ignorado (fail-closed)', () => {
+  // Apenas === true é aceito; strings ou números são ignorados.
+  for (const nonBool of ['true', 1, null]) {
+    const r = checkDispatchCapability(
+      { host: 'zcode', host_capabilities: { dispatch_mutable: nonBool } },
+      'execute',
+    );
+    assert.equal(r.status, 'blocked', `dispatch_mutable=${JSON.stringify(nonBool)} deveria ser blocked`);
+  }
+});
+
+test('preflight: gate DISPATCH — zcode modo execute sem dispatch_mutable → blocked', () => {
+  const root = tmpRoot();
+  const r = preflight({
+    run_id: 'rdispatch-zcode-fail', project_root: root, mode: 'execute',
+    host: 'zcode', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  assert.equal(r.status, 'blocked');
+  assert.equal(r.gate, 'DISPATCH');
+  assert.equal(r.dispatch_capability, 'unknown');
+  assert.equal(r.cause, 'dispatch_capability_nao_verificada');
+  assert.ok(r.next_action.includes('dispatch_mutable'));
+});
+
+test('preflight: gate DISPATCH — zcode modo audit passa (read-only, sem mutação)', () => {
+  const root = tmpRoot();
+  const r = preflight({
+    run_id: 'rdispatch-zcode-audit', project_root: root, mode: 'audit',
+    host: 'zcode',
+  });
+  assert.equal(r.status, 'passed');
+});
+
+test('preflight: gate DISPATCH — zcode modo execute com dispatch_mutable:true → passa', () => {
+  const root = tmpRoot();
+  const r = preflight({
+    run_id: 'rdispatch-zcode-ok', project_root: root, mode: 'execute',
+    host: 'zcode',
+    host_capabilities: { subagent_available: true, mcp_available: true, dispatch_mutable: true },
+  });
+  assert.equal(r.status, 'passed');
+  assert.equal(r.routing.dispatch_capability, 'reported_mutable');
+});
+
+test('preflight: gate DISPATCH — claude modo execute passa (mutable)', () => {
+  const root = tmpRoot();
+  const r = preflight({
+    run_id: 'rdispatch-claude-ok', project_root: root, mode: 'execute',
+    host: 'claude',
+  });
+  assert.equal(r.status, 'passed');
+  assert.equal(r.routing.dispatch_capability, 'mutable');
+});
+
+test('preflight: ordem determinística — DISPATCH após JOIN', () => {
+  const root = tmpRoot();
+  // JOIN bloqueia antes de DISPATCH (pi sem join_sync_available).
+  const r = preflight({
+    run_id: 'rdispatch-order', project_root: root, mode: 'execute',
+    host: 'pi', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  assert.equal(r.status, 'blocked');
+  assert.equal(r.gate, 'JOIN', 'JOIN deve preceder DISPATCH');
+});
+
+test('preflight: gate DISPATCH — pi com prereq+join+dispatch → passa', () => {
+  const root = tmpRoot();
+  const r = preflight({
+    run_id: 'rdispatch-pi-ok', project_root: root, mode: 'execute',
+    host: 'pi',
+    host_capabilities: {
+      subagent_available: true, mcp_available: true,
+      join_sync_available: true,
+      dispatch_mutable: true,
+    },
+  });
+  assert.equal(r.status, 'passed');
+});
+
+test('capabilities: dispatch_capability declarado em todos os hosts', () => {
+  for (const host of HOST_NAMES) {
+    const cap = capabilities({ host });
+    assert.ok(['mutable', 'unknown', 'readonly'].includes(cap.dispatch_capability),
+      `host ${host}: dispatch_capability=${cap.dispatch_capability} inválido`);
+  }
+  assert.equal(capabilities({ host: 'claude' }).dispatch_capability, 'mutable');
+  assert.equal(capabilities({ host: 'codex' }).dispatch_capability, 'mutable');
+  assert.equal(capabilities({ host: 'opencode' }).dispatch_capability, 'mutable');
+  assert.equal(capabilities({ host: 'zcode' }).dispatch_capability, 'unknown');
+  assert.equal(capabilities({ host: 'antigravity' }).dispatch_capability, 'unknown');
+  assert.equal(capabilities({ host: 'pi' }).dispatch_capability, 'unknown');
+  assert.equal(capabilities({ host: 'generic' }).dispatch_capability, 'unknown');
 });
 
 // ── Slice A: modo execute, classify_input, routing, guarantee_level ──────────

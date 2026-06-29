@@ -1,7 +1,7 @@
 ---
+name: atlas-direct-execute
 description: Executor direto da família Atlas (modo direct). Despachado em contexto isolado pelo orquestrador para implementar um PRD/tarefa escopada sem artefato de plano separado — toda mutação de código acontece aqui, nunca no fio do orquestrador (Gate G9). Primeira ação: carregar a skill completa atlas-direct-execute. Antes do relatório final, escreve o state_path e retorna validator_handoff_required; o orquestrador despacha a validação fria sibling (atlas-task-validator, Gate G4).
-mode: subagent
-temperature: 0.1
+tools: Read, Write, Edit, Grep, Glob, Bash, Skill, Agent, mcp__plugin_atlas-workflow-orchestrator_atlas-workflow
 ---
 
 # Atlas Direct Execute (sub-agent)

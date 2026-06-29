@@ -201,6 +201,10 @@ const HOST_ADAPTERS = {
     todo_tool: 'TodoWrite',
     hooks: { supported: true, mechanism: 'hooks/claude/settings.snippet.json' },
     capabilities_flags: { subagent_available: true, mcp_available: true, todo_available: true },
+    // Claude Code é o host de referência: subagente mutável confirmado em produção
+    // (Write/Edit/Bash disponíveis no Agent nativo). dispatch_capability 'mutable'
+    // garante que modos de execução (full/direct/execute) passam sem report adicional.
+    dispatch_capability: 'mutable',
   },
   codex: {
     label: 'Codex App',
@@ -227,6 +231,8 @@ const HOST_ADAPTERS = {
     // the current host tool surface. Validator runs as an isolated sibling
     // dispatched by the orchestrator after the executor writes state_path.
     capabilities_flags: { subagent_available: true, mcp_available: true, todo_available: true },
+    // Codex spawn_agent confirmado em produção com capacidade de mutação.
+    dispatch_capability: 'mutable',
   },
   opencode: {
     label: 'opencode',
@@ -252,6 +258,8 @@ const HOST_ADAPTERS = {
     hooks: { supported: true, mechanism: '.opencode/plugins/' },
     // Nativo compatível: subagente (.opencode/agents) + MCP local (opencode.json) + todo (todowrite).
     capabilities_flags: { subagent_available: true, mcp_available: true, todo_available: true },
+    // opencode @<name> confirmado em produção com capacidade de mutação.
+    dispatch_capability: 'mutable',
   },
   pi: {
     label: 'pi cli',
@@ -281,6 +289,9 @@ const HOST_ADAPTERS = {
     // must_report: essenciais dependem de deps externas não-sondáveis pelo servidor.
     // Fail-closed — só passam se o caller reportar disponibilidade real (não otimismo do perfil).
     prereq_policy: 'must_report',
+    // dispatch_capability 'unknown' — subagente depende de pi-subagents (dep externa).
+    // Exige host_capabilities.dispatch_mutable === true para modos de execução.
+    dispatch_capability: 'unknown',
   },
   antigravity: {
     label: 'Antigravity',
@@ -335,6 +346,9 @@ const HOST_ADAPTERS = {
     // self_evident: MCP nativo + invoke_subagent bloqueante provados pelo boot do host.
     // Não exige host_capabilities report (igual claude/codex/opencode).
     prereq_policy: 'self_evident',
+    // dispatch_capability 'unknown' — não verificado em produção com mutação real.
+    // Exige host_capabilities.dispatch_mutable === true para modos de execução.
+    dispatch_capability: 'unknown',
   },
   zcode: {
     label: 'ZCode',
@@ -359,6 +373,11 @@ const HOST_ADAPTERS = {
     // ZCode é clone estrutural do Claude Code (Claude Agent SDK): subagente +
     // MCP-local + TodoWrite nativos. Perfil self_evident — passa PREREQ/JOIN sem report.
     capabilities_flags: { subagent_available: true, mcp_available: true, todo_available: true },
+    // dispatch_capability 'unknown' — o harness ZCode pode restringir subagent_type
+    // a um enum fechado (ex.: apenas "Explore" read-only). Exige verificação do
+    // orquestrador (host_capabilities.dispatch_mutable) para modos de execução.
+    // Modos read-only (audit, interview-only) passam sem report.
+    dispatch_capability: 'unknown',
   },
   generic: {
     label: 'Host genérico',
@@ -384,6 +403,8 @@ const HOST_ADAPTERS = {
     // must_report: host desconhecido — o servidor não pode presumir subagente+MCP.
     // Fail-closed — exige report afirmativo de disponibilidade.
     prereq_policy: 'must_report',
+    // dispatch_capability 'unknown' — host desconhecido, sem verificação possível.
+    dispatch_capability: 'unknown',
   },
 };
 
@@ -412,6 +433,8 @@ const PREREQUISITE_FLAGS = [...PREREQUISITES.essential, ...PREREQUISITES.non_ess
 //   (campo novo; nenhum campo removido nesta etapa). O input do preflight ganha
 //   host_capabilities.join_sync_available (opcional, gate JOIN separado — NÃO é
 //   flag de prereq). Consumidores que ignoram campos desconhecidos seguem compatíveis.
+// v5 + DEC-008: adiciona campo aditivo dispatch_capability e input opcional
+//   host_capabilities.dispatch_mutable para gate DISPATCH em modos de execução.
 const CAPABILITIES_SCHEMA_VERSION = 5;
 
 // Nomes de host derivados do registry — única fonte de verdade para enums de schema.
@@ -467,6 +490,9 @@ function capabilities(args = {}) {
     // 'must_report' avisa o orquestrador que DEVE apurar e reportar host_capabilities
     // (subagente/MCP reais) no preflight — sem isso, o gate PREREQ falha-fechado.
     prereq_policy: adapter.prereq_policy ?? 'self_evident',
+    // dispatch_capability (DEC-008): 'mutable' (verificado), 'unknown' (exige report),
+    // ou 'readonly' (hard-fail para modos de execução).
+    dispatch_capability: adapter.dispatch_capability ?? 'unknown',
     plan_paths: {
       write: '.atlas/plans/',
       read_order: ['.atlas/plans/', '.cursor/plans/', '.codex/plans/'],
@@ -561,6 +587,66 @@ function checkJoinCapability(args = {}) {
   }
   // self_evident: passa sem report (host nativo). confidence preservado p/ observabilidade.
   return { status: 'passed', host, confidence: join.confidence };
+}
+
+// Gate DISPATCH_CAPABILITY (DEC-008). Valida se o sub-agent do host tem capacidade
+// de mutação (Write/Edit/Bash) quando o modo exige execução de código.
+//
+// dispatch_capability por host (campo novo em HOST_ADAPTERS):
+//   - 'mutable' (claude/codex/opencode): verificado em produção — passa direto.
+//   - 'unknown' (zcode/antigravity/pi/generic): não verificado ou depende de dep
+//     externa. Fail-closed para modos de execução: exige que o caller reporte
+//     host_capabilities.dispatch_mutable === true.
+//   - 'readonly' (nenhum host atual; reservado): hard-fail incondicional.
+//
+// Modos sem execução de código (audit, interview-only) são read-only por natureza
+// e passam sem verificar dispatch_capability.
+function checkDispatchCapability(args = {}, mode) {
+  const { host } = detectHost(args);
+  const adapter = HOST_ADAPTERS[host];
+  const capability = adapter.dispatch_capability ?? 'unknown';
+
+  // Modos read-only não exigem mutação — passam direto.
+  const MUTATION_MODES = new Set(['full', 'direct', 'execute']);
+  if (!MUTATION_MODES.has(mode)) {
+    return { status: 'passed', host, capability, reason: 'modo_readonly_nao_exige_mutacao' };
+  }
+
+  if (capability === 'mutable') {
+    return { status: 'passed', host, capability };
+  }
+
+  if (capability === 'readonly') {
+    return {
+      status: 'blocked',
+      host,
+      capability,
+      error: `host '${host}' tem subagente readonly; modo '${mode}' exige mutação (Write/Edit/Bash)`,
+      cause: 'dispatch_capability_readonly',
+      impact: 'execucao_de_codigo_impossivel_sem_subagente_mutavel',
+      next_action: 'usar_host_com_subagente_mutavel_ou_executar_modo_audit_ou_interview_only',
+    };
+  }
+
+  // capability === 'unknown': fail-closed — exige report afirmativo.
+  const reported = args.host_capabilities && typeof args.host_capabilities === 'object'
+    ? args.host_capabilities
+    : {};
+  if (reported.dispatch_mutable === true) {
+    return { status: 'passed', host, capability: 'reported_mutable', reported: true };
+  }
+
+  return {
+    status: 'blocked',
+    host,
+    capability,
+    error: `host '${host}' não verificou capacidade de mutação do subagente; modo '${mode}' exige Write/Edit/Bash no sub-agent`,
+    cause: 'dispatch_capability_nao_verificada',
+    impact: 'subagente_readonly_nao_consegue_executar_plano_ou_reparo',
+    next_action: host === 'pi'
+      ? 'verificar_pi-subagents_instalado_e_reportar_host_capabilities_com_dispatch_mutable_true'
+      : 'verificar_se_subagente_do_host_tem_Write_Edit_Bash_e_reportar_host_capabilities_com_dispatch_mutable_true',
+  };
 }
 
 const LEGACY_ROUTE_KEY = ['fam', 'ily'].join('');
@@ -1720,6 +1806,7 @@ function preflight(args = {}) {
 
   const prereq = checkPrerequisites(args);
   const join = checkJoinCapability(args);
+  const dispatchCap = checkDispatchCapability(args, mode);
   if (prereq.status === 'blocked') {
     result = {
       gate: 'PREREQ',
@@ -1746,6 +1833,21 @@ function preflight(args = {}) {
       cause: join.cause,
       impact: join.impact,
       next_action: join.next_action,
+    };
+  } else if (dispatchCap.status === 'blocked') {
+    // Gate DISPATCH_CAPABILITY após JOIN (DEC-008). Bloqueia modos de execução quando
+    // o subagente do host não tem capacidade de mutação verificada.
+    result = {
+      gate: 'DISPATCH',
+      status: 'blocked',
+      timestamp,
+      mode,
+      host: dispatchCap.host,
+      dispatch_capability: dispatchCap.capability,
+      error: dispatchCap.error,
+      cause: dispatchCap.cause,
+      impact: dispatchCap.impact,
+      next_action: dispatchCap.next_action,
     };
   } else if (version.status === 'blocked') {
     result = {
@@ -1823,6 +1925,7 @@ function preflight(args = {}) {
         locked_at: currentRouting?.locked_at ?? timestamp,
         config_path: config.path,
         supported_modes: config.modes,
+        dispatch_capability: dispatchCap.capability,
       },
       next_action: 'avançar',
     };
@@ -3735,7 +3838,7 @@ function toolsList() {
             // delimita defensivamente o override a PREREQUISITE_FLAGS em checkPrerequisites.
             host_capabilities: {
               type: 'object',
-              description: 'Disponibilidade real reportada pelo host (override das flags do perfil). Ex.: pi sem deps → {"subagent_available":false}.',
+              description: 'Disponibilidade real reportada pelo host (override das flags do perfil). Ex.: pi sem deps → {"subagent_available":false}. dispatch_mutable reporta capacidade de mutação (Write/Edit/Bash) do subagente para gate DISPATCH (DEC-008).',
               additionalProperties: false,
               properties: {
                 subagent_available: { type: 'boolean' },
@@ -3744,6 +3847,10 @@ function toolsList() {
                 // Gate JOIN separado (DEC-SIB-003): report afirmativo de join síncrono
                 // para hosts must_report (pi/generic). NÃO entra em PREREQUISITE_FLAGS.
                 join_sync_available: { type: 'boolean' },
+                // Gate DISPATCH (DEC-008): report afirmativo de capacidade de mutação
+                // do subagente. Exigido para hosts com dispatch_capability 'unknown'
+                // em modos de execução (full/direct/execute).
+                dispatch_mutable: { type: 'boolean' },
               },
             },
           },
@@ -3940,6 +4047,7 @@ export {
   capabilities,
   checkPrerequisites,
   checkJoinCapability,
+  checkDispatchCapability,
   expectedNextPhase,
   expectedExecutorSkill,
   guaranteeLevelForMode,

@@ -72,7 +72,7 @@ Executar **antes** de iniciar o pipeline. Se qualquer item falhar, **parar e rep
 
 1. **Parse** dos argumentos `<mode> <input-type|target> [input] [flags]`. Se inválido ou `--help` → mostrar sintaxe e parar. Em `audit`, o segundo argumento é `target`, não `input-type`.
 2. **Chamar MCP `atlas_ping`.** Se não responder, versão vier vazia, `version_check.status` vier bloqueado ou capacidades não listarem os gates exigidos pelo modo → abortar com erro de MCP indisponível/drift. Não seguir por prosa.
-2a. **Chamar MCP `atlas_capabilities`.** Ler `host`, `subagent_dispatch`, `validator_dispatch`, `capabilities_flags` e `required_deps`. Determinar a **disponibilidade real** dos pré-requisitos essenciais neste host: o subagente do plugin é despachável? o MCP está vivo (ping ok)? Em hosts com `required_deps` (ex.: pi: `pi-mcp-adapter` + `pi-subagents`), confirmar que cada dep está presente; se faltar, o pré-requisito correspondente é `false`.
+2a. **Chamar MCP `atlas_capabilities`.** Ler `host`, `subagent_dispatch`, `validator_dispatch`, `capabilities_flags`, `required_deps` e `dispatch_capability`. Determinar a **disponibilidade real** dos pré-requisitos essenciais neste host: o subagente do plugin é despachável? o MCP está vivo (ping ok)? Em hosts com `required_deps` (ex.: pi: `pi-mcp-adapter` + `pi-subagents`), confirmar que cada dep está presente; se faltar, o pré-requisito correspondente é `false`. Para modos com execução (`full`, `direct`, `execute`), determinar também `host_capabilities.dispatch_mutable`: se `dispatch_capability:"mutable"`, não precisa reportar; se `dispatch_capability:"unknown"` (zcode/pi/generic/antigravity), reporte `dispatch_mutable:true` **somente** quando o sub-agent do host aceitar os agentes atlas-* e tiver ferramentas mutáveis equivalentes a Write/Edit/Bash. Se não for verificável ou for read-only (ex.: schema restrito a `Explore`), não reporte `true`; deixe o `atlas_preflight` bloquear no gate `DISPATCH`.
 2b. **Chamar MCP `atlas_classify_input`** no input informado (`input_path`), **antes de rotear** (PRD D3/D6). `classify_input` é para **artefato em arquivo** (path em disco). A tool devolve `artifact_type` ∈ {`backlog`, `prd`, `plan`, `idea`, `unknown`} (verdade forte = TC de plano passa) e um `banner` de roteamento já pronto. **O tipo de input é fato e prevalece sobre o modo pedido** (intenção). Aplicar o roteamento:
    - **`plan` em `direct`/`full`** → auto-rotear para **`execute`** (executa o plano pronto; nunca gera plano de plano, mesmo com arquivo renomeado — PRD D6). **Não bloqueia**: ecoar o banner de troca `▸ atlas: roteamento · pediu={x} mas input={y} → modo=execute`.
    - **`execute` sobre `backlog`/`prd`** → auto-rotear para **`full`** (ou `direct` conforme o pedido), pois não há plano a executar. **Não bloqueia**: ecoar o banner de troca correspondente.
@@ -80,13 +80,20 @@ Executar **antes** de iniciar o pipeline. Se qualquer item falhar, **parar e rep
    - **`unknown`** (arquivo existe mas não classifica) → **não adivinhar**: ecoar o banner de input ilegível e **pedir esclarecimento** ao usuário (qual arquivo/tipo). Não inventa modo.
    - Tipo coincide com o modo → segue sem troca (ecoar o banner `roteia` simples).
    O `banner` vem do MCP; o orquestrador **só ecoa** (ver "Protocolo de banner").
-3. **Chamar MCP `atlas_preflight`** com `run_id`, `<mode>`, `host`, `expected_version` (quando o host reportar versão) e `host_capabilities` (a disponibilidade real apurada no passo 2a — ex.: `{"subagent_available":false}` se a dep do subagente faltar). O resultado é a fonte obrigatória de pré-requisitos, modo, versão, lock e ids oficiais `atlas-*`.
+3. **Chamar MCP `atlas_preflight`** com `run_id`, `<mode>`, `host`, `expected_version` (quando o host reportar versão) e `host_capabilities` (a disponibilidade real apurada no passo 2a — ex.: `{"subagent_available":false}` se a dep do subagente faltar; `{"dispatch_mutable":true}` se um host `unknown` foi verificado como mutável). O resultado é a fonte obrigatória de pré-requisitos, modo, versão, lock e ids oficiais `atlas-*`.
    - **Gate `PREREQ` (DEC-004): pré-requisito essencial ausente é hard-fail.** Se `gate:"PREREQ"`/`status:"blocked"`, **abortar em `ready`** (antes de qualquer fase/dispatch) com `missing_prerequisites`, causa, impacto e `next_action`. **Proibido degradar, rodar validator inline ou prosseguir sem isolamento, em qualquer tamanho de tarefa.** Só capability não-essencial (`todo`) segue sem o recurso.
    ```text
    ⛔ Pré-flight falhou (PREREQ)
       Host: <host>   Faltando: <missing_prerequisites>
       Motivo: host sem pré-requisito essencial de determinismo (subagente/MCP)
       Ação: <next_action> (ex.: instalar pi-mcp-adapter + pi-subagents; ou usar host com subagente+MCP nativos)
+   ```
+   - **Gate `DISPATCH` (DEC-008): subagente sem mutação verificada é hard-fail em execução.** Se `gate:"DISPATCH"`/`status:"blocked"`, **abortar em `ready`** com causa, impacto e `next_action`. Proibido executar código no fio principal para compensar sub-agent read-only. Modos read-only (`audit`, `interview-only`) não exigem `dispatch_mutable`.
+   ```text
+   ⛔ Pré-flight falhou (DISPATCH)
+      Host: <host>   Dispatch: <dispatch_capability>
+      Motivo: subagente sem Write/Edit/Bash verificado para execução
+      Ação: <next_action>
    ```
 3b. **Gate DEP — dependência de backlog (só `backlog-item`).** Se o item declara `Dependências` no backlog/registro de origem, ler o status de cada dependência **no mesmo backlog**. Se alguma não estiver `done`, **abortar em `ready`** com `unmet_dependencies`, causa e `next_action` — determinístico, sem pergunta. Todas `done` (ou sem dependências) → segue. Decisão em aberto **não** entra aqui (não é dependência de execução).
    ```text
