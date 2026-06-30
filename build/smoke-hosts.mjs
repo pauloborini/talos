@@ -75,6 +75,16 @@ for (const c of CASES) {
   if (vd.topology !== undefined) errors.push(`${c.name}: validator_dispatch.topology presente ('${vd.topology}') — campo removido (sibling-only)`);
   if (!vd.join) errors.push(`${c.name}: validator_dispatch.join ausente`);
   if (vd.join && vd.join.sync !== c.join_sync) errors.push(`${c.name}: validator_dispatch.join.sync '${vd.join?.sync}' != '${c.join_sync}'`);
+  // Fallback de subagente (v0.11.0): só zcode declara fallback.enabled=true
+  // (limitação do host: sub-agentes de plugin não herdam MCP).
+  const sd = cap.subagent_dispatch ?? {};
+  const fb = sd.fallback;
+  if (c.host === 'zcode') {
+    if (!fb || fb.enabled !== true) errors.push(`${c.name}: esperado subagent_dispatch.fallback.enabled=true (limitação do host)`);
+    if (fb && fb.subagent_type !== 'general-purpose') errors.push(`${c.name}: fallback.subagent_type '${fb.subagent_type}' != 'general-purpose'`);
+  } else {
+    if (fb && fb.enabled === true) errors.push(`${c.name}: NÃO deveria ter fallback.enabled=true (regressão de adapter)`);
+  }
   if (!r.ping || r.ping.status !== 'alive') errors.push(`${c.name}: atlas_ping status '${r.ping?.status}' != 'alive'`);
   if (!errors.some((e) => e.startsWith(c.name))) console.log(`  ✓ ${c.name} → host=${cap.host} sv=${cap.schema_version} ping=ok`);
 }

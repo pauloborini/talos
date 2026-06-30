@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.11.0 - 2026-06-30
+
+Tipo: **feature de compatibilidade (não-breaking, schema aditivo)** — workaround para a limitação do host ZCode onde sub-agentes de plugin não herdam conexões MCP, mesmo com `mcp__...` declarado no frontmatter `tools:`. Confirmado empiricamente (v0.10.1) para os 5 sub-agentes Atlas. Bug do host (ZCode), não do plugin.
+
+Resumo: O adapter zcode ganha `subagent_dispatch.fallback` (campo aditivo, `schema_version` segue **v5**). Quando `fallback.enabled:true`, o orquestrador despacha `general-purpose` (subagente nativo, que herda MCP + tools nativas) em vez de `atlas-*` (plugin), passando um prompt que aponta o `agents/<name>.md` canônico como system prompt. O contrato continua sendo a fonte única `agents/<name>.md`; mudou quem carrega (nativo vs plugin), não a topologia. Isolamento sibling (Gate G4) preservado — ainda é um subagente irmão isolado, despachado blocking, com `dispatch_token`/`challenge_response` ecoados do output do irmão. Aplica-se aos 5 dispatches (validator, findings-repair, slice-review, plan-execute, direct-execute). Hosts sem `fallback` (claude/codex/opencode/pi/antigravity/generic) seguem o verbo nominal exato — zero mudança de comportamento.
+
+Mudanças:
+- **Adapter zcode** — `packages/mcp-server/server.js`: adicionado `subagent_dispatch.fallback { enabled, reason, subagent_type, prompt_template }` ao perfil zcode, com comentário documentando a limitação do host.
+- **Skill orquestradora** — `packages/orchestrator/skills/atlas-workflow-orchestrator/SKILL.md`: nova seção "Fallback de subagente" com o branch condicional (`fallback.enabled === true` → despachar `general-purpose`).
+- **Doc de dispatch** — `packages/orchestrator/references/subagent_dispatch.md`: seção ZCode reescrita documentando a limitação (sub-agentes de plugin não herdam MCP) e o workaround, com justificativa de por que o Gate G4/sibling permanece válido.
+- **Matriz de adapters** — `packages/orchestrator/references/host-adapters.md`: nova linha "Fallback de subagente" (zcode) e campo `fallback?` documentado no schema `subagent_dispatch`.
+- **AGENTS.md** — parágrafo zcode atualizado com a limitação e o workaround (registrado como limitação do host).
+- **Versionamento sincronizado** — `VERSION`, `package.json`, `packages/mcp-server/package.json`, `.claude-plugin/plugin.json` e os bundles host em `0.11.0`.
+
+Não incluído: mudança de `dispatch_capability` do zcode (continua `unknown` — o gate DISPATCH ainda exige `dispatch_mutable:true`, correto e seguro) ou "validador inline no fio do orquestrador" (violaria G9/R17; o fallback preserva o isolamento sibling).
+
+Validação:
+- `build/check-consistency.mjs` e `build/build-plugins.sh` a regenerar bundles/católogos.
+- Teste em `packages/mcp-server/server.test.js`: asserção de `capabilities({host:'zcode'}).subagent_dispatch.fallback.enabled === true` e ausência de `fallback` em claude/pi.
+- Validação empírica: despachar `general-purpose` com o `prompt_template` e confirmar MCP disponível dentro do subagente.
+
 ## 0.10.1 - 2026-06-29
 
 Tipo: **patch de contrato e distribuição** — `sprint` vira alias canônico para `backlog-item` em `full`/`direct`, com docs, bundles e launchers alinhados. **Sem breaking** (`CAPABILITIES_SCHEMA_VERSION` segue **v5** e o comportamento legado continua aceito).
