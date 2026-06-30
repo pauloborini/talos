@@ -33,6 +33,7 @@ const HOST_ALIASES = {
   pi: 'pi',
   zcode: 'zcode', zai: 'zcode',
   antigravity: 'antigravity', gemini: 'antigravity', antigravitycode: 'antigravity',
+  all: 'all',
 };
 
 function log(msg) { process.stdout.write(`${msg}\n`); }
@@ -656,6 +657,99 @@ function uninstallZcode(opts) {
   log('ok — ZCode: cache e registry removidos.');
 }
 
+// --- host virtual `all` -------------------------------------------------------
+// Detecta automaticamente quais hosts estão presentes no sistema e retorna
+// uma lista de descritores para `runAll()`. Cada entrada tem:
+//   { host, label, detect: fn→bool, install: fn(opts), uninstall: fn(opts) }
+// `detect` é chamado em runtime; resultado false → skip com aviso.
+function allHostDescriptors(opts) {
+  return [
+    {
+      host: 'claude',
+      label: 'Claude Code / Cursor',
+      detect: () => which('claude'),
+      install: (o) => installClaude(o),
+      uninstall: (o) => uninstallClaude(o),
+    },
+    {
+      host: 'codex',
+      label: 'Codex',
+      detect: () => which('codex'),
+      install: (o) => installCodex(o),
+      uninstall: (o) => uninstallCodex(o),
+    },
+    {
+      host: 'antigravity',
+      label: 'Antigravity (Gemini)',
+      // Antigravity não precisa de CLI — sempre detectado.
+      detect: () => true,
+      install: (o) => installAntigravity(o),
+      uninstall: (o) => uninstallAntigravity(o),
+    },
+    {
+      host: 'zcode',
+      label: 'ZCode',
+      // ZCode não tem CLI no PATH — detecta pela pasta do cache.
+      detect: () => fs.existsSync(path.join(homedir(), '.zcode', 'cli')),
+      install: (o) => installZcode(o),
+      uninstall: (o) => uninstallZcode(o),
+    },
+    {
+      host: 'opencode',
+      label: 'opencode (global)',
+      detect: () => which('opencode') || fs.existsSync(opencodeGlobalRoot()),
+      install: (o) => installOpencodeGlobal(o),
+      uninstall: (o) => uninstallOpencodeGlobal(o),
+    },
+    {
+      host: 'pi',
+      label: 'pi CLI (global)',
+      detect: () => which('pi'),
+      // `--yes` é sempre propagado no `all` para não bloquear a instalação em lote.
+      install: (o) => installPiGlobal({ ...o, yes: true }),
+      uninstall: (o) => uninstallPiGlobal(o),
+    },
+  ];
+}
+
+function runAll(cmd, opts) {
+  const descriptors = allHostDescriptors(opts);
+  const results = [];
+
+  log(`\n== ${cmd} all — detectando hosts ==`);
+  for (const d of descriptors) {
+    if (!d.detect()) {
+      log(`  [skip] ${d.label}: não detectado`);
+      results.push({ label: d.label, status: 'skip' });
+      continue;
+    }
+    log(`\n-- ${d.label} --`);
+    try {
+      if (cmd === 'init') d.install(opts);
+      else d.uninstall(opts);
+      results.push({ label: d.label, status: 'ok' });
+    } catch (err) {
+      const msg = err?.message ?? String(err);
+      process.stderr.write(`  [erro] ${d.label}: ${msg}\n`);
+      results.push({ label: d.label, status: 'erro', msg });
+    }
+  }
+
+  // Resumo final
+  log(`\n== ${cmd} all — resumo ==`);
+  for (const r of results) {
+    const icon = r.status === 'ok' ? '✓' : r.status === 'skip' ? '-' : '✗';
+    const detail = r.status === 'erro' ? `: ${r.msg}` : r.status === 'skip' ? ' (não detectado)' : '';
+    log(`  ${icon} ${r.label}${detail}`);
+  }
+
+  const failed = results.filter((r) => r.status === 'erro');
+  if (failed.length) {
+    process.stderr.write(`\n${failed.length} host(s) falharam. Veja mensagens acima.\n`);
+    process.exit(1);
+  }
+}
+
 function usage() {
   log(`atlas-workflow v${VERSION} — instalador multi-host
 
@@ -664,6 +758,7 @@ uso:
   npx github:${REPO_SLUG} uninstall <host> [dir] [flags]
 
 hosts:
+  all                   detecta e opera em TODOS os hosts presentes no sistema
   claudecode | cursor   via \`claude plugin\` (marketplace from-source; já global)
   codex                 via \`codex plugin\` + custom agents em CODEX_HOME/agents
   antigravity           via plugin nativo em ~/.gemini/config/ (já global)
@@ -676,11 +771,14 @@ hosts:
 flags:
   --dir <d>    diretório alvo (opencode/pi por-projeto); default: diretório atual
   --global,-g  instalação global (opencode/pi); claude/codex/antigravity já são globais
-  --yes,-y     auto-instala deps faltantes (pi, no init)
+  --yes,-y     auto-instala deps faltantes (pi, no init); sempre ativo com host=all
   --dry-run    mostra o que faria, sem alterar nada
   -h,--help    esta ajuda
 
 exemplos:
+  npx github:${REPO_SLUG} init all                    # instala em todos os hosts detectados
+  npx github:${REPO_SLUG} init all --dry-run          # simulação sem alterar nada
+  npx github:${REPO_SLUG} uninstall all               # remove de todos os hosts detectados
   npx github:${REPO_SLUG} init claudecode
   npx github:${REPO_SLUG} init antigravity
   npx github:${REPO_SLUG} init opencode               # projeto atual
@@ -722,12 +820,20 @@ function main() {
     fail(`comando desconhecido: ${cmd} (use \`init <host>\` ou \`uninstall <host>\`)`, 2);
   }
 
-  if (!rawHost) fail('informe o host: claudecode | cursor | codex | antigravity | zcode | opencode | pi', 2);
+  if (!rawHost) fail('informe o host: all | claudecode | cursor | codex | antigravity | zcode | opencode | pi', 2);
   if (extra.length) fail(`argumentos extras não suportados: ${extra.join(' ')}`, 2);
   const host = HOST_ALIASES[rawHost.toLowerCase()];
-  if (!host) fail(`host inválido: ${rawHost} (use claudecode|cursor|codex|antigravity|zcode|opencode|pi)`, 2);
+  if (!host) fail(`host inválido: ${rawHost} (use all|claudecode|cursor|codex|antigravity|zcode|opencode|pi)`, 2);
 
   const opts = parsed.opts;
+
+  // Host virtual `all`: detecta e opera em todos os hosts presentes no sistema.
+  if (host === 'all') {
+    if (rawDir) fail('host `all` não suporta [dir] posicional (opencode/pi usam --global)', 2);
+    runAll(cmd, opts);
+    return;
+  }
+
   const targetDir = path.resolve(opts.dir || rawDir || process.cwd());
   const actions = {
     init: { claude: installClaude, codex: installCodex, antigravity: installAntigravity, zcode: installZcode, opencode: installOpencode, pi: installPi },

@@ -34,6 +34,9 @@ Smoke pós-update: `atlas_ping` → `version: 0.11.1`; `atlas_capabilities` → 
 ## Instalar
 
 ```bash
+# Todos os hosts de uma vez (detecta automaticamente quais estão instalados)
+npx github:pauloborini/atlas-workflow init all
+
 # Claude Code / Cursor  (global por natureza — registro da CLI)
 npx github:pauloborini/atlas-workflow init claudecode
 npx github:pauloborini/atlas-workflow init cursor
@@ -59,6 +62,9 @@ npx github:pauloborini/atlas-workflow init pi --yes
 ## Desinstalar
 
 ```bash
+# Todos os hosts de uma vez (detecta automaticamente quais estão instalados)
+npx github:pauloborini/atlas-workflow uninstall all
+
 # Claude Code / Cursor / Codex / Antigravity / ZCode (sempre globais)
 npx github:pauloborini/atlas-workflow uninstall claudecode   
 npx github:pauloborini/atlas-workflow uninstall codex
