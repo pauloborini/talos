@@ -1,32 +1,46 @@
 # NAMING — Decisão de Marca do Ecossistema Atlas
 
 > Decisão de produto cross-repo. Registrada aqui (raiz de `atlas-workflow`) por ser
-> o repo onde a conversa aconteceu; deve ser copiada/linkada no repo `atlas-cortex`
-> (e, no futuro, no repo de Athena) para que qualquer sessão/agente que trabalhe em
+> o repo onde a conversa aconteceu; deve ser copiada/linkada nos repos `atlas-cortex`,
+> `atlas-brain` e `atlas-agents` para que qualquer sessão/agente que trabalhe em
 > qualquer um dos repos veja a mesma convenção.
 
-## DEC-ECO-001 — Atlas é guarda-chuva, não nome de produto técnico
+## DEC-ECO-001 — Atlas Agents é o produto; Argus/Talos/Athena são módulos que ele absorve
 
 **Data**: 2026-06-30
 **Dono**: Paulo
 
-**Decisão**: "Atlas" é o nome do **ecossistema** (marca/guarda-chuva), não aparece
-mais nos nomes técnicos dos produtos individuais (server name, tool prefix, skill
-prefix, bin CLI, nome de pacote npm, nome de plugin). Cada subproduto recebe um
-codinome mitológico próprio.
+**Decisão**: "Atlas" deixa de ser repetido como prefixo nos nomes técnicos dos
+produtos que hoje são MCPs satélites (server name, tool prefix, skill prefix, bin
+CLI, nome de pacote npm, nome de plugin) — eles ganham codinome mitológico
+próprio. **Exceção: `atlas-agents` mantém o nome.** Ele não é um peer dos outros —
+é o app final (Electron, single-user, já v3.0) que a visão de produto prevê
+**absorver** Argus/Talos/Athena como módulos internos no futuro. Não existe
+ambiguidade em manter "Atlas" só nele: a partir desta decisão há um único produto
+chamado Atlas (o hub), e os módulos que ele consome têm identidade própria — não
+dois+ produtos disputando o mesmo nome.
 
-**Motivo**: dois MCPs com "Atlas" no nome (e um terceiro a caminho) faziam agentes
-confundirem qual produto usar — não havia colisão técnica de tool name (cada um já
-namespaceava diferente), mas colisão conceitual: "Atlas" repetido em todo lugar
-não dá ao agente (nem ao humano) um gancho de memória para diferenciar produto.
+**Motivo**: múltiplos MCPs com "Atlas" no nome faziam agentes confundirem qual
+produto usar — não havia colisão técnica de tool name (cada um já namespaceava
+diferente), mas colisão conceitual: "Atlas" repetido em todo lugar não dá ao
+agente (nem ao humano) um gancho de memória para diferenciar produto. Renomear os
+módulos satélites reforça a relação hierárquica real (módulo → hub) em vez de
+mascará-la atrás de nomes parecidos.
 
 **Mapeamento fechado**:
 
-| Codinome | Produto | Função | Repo |
-|---|---|---|---|
-| **Argus** | code retrieval / context packing local | gigante de 100 olhos, nunca dorme — fit com daemon de auto-sync e indexação contínua | `atlas-cortex` (a renomear) |
-| **Talos** | pipeline determinística PRD→plano→execução→validação | autômato de bronze, executa regra fixa sem desvio — fit com determinismo/gates duros, sem improviso | `atlas-workflow` (este repo) |
-| **Athena** | documentação contínua / dossiês de feature (futuro, ainda não existe) | deusa da sabedoria/estratégia — fit com conhecimento acumulado do projeto | a criar |
+| Codinome | Produto | Função | Repo | Status |
+|---|---|---|---|---|
+| **Atlas Agents** | hub/app final — assistente pessoal de IA desktop, orquestra MCPs locais e agentes especializados | sem codinome — é o produto que absorve os demais | `atlas-agents` | já v3.0, mantém nome |
+| **Argus** | code retrieval / context packing local | gigante de 100 olhos, nunca dorme — fit com daemon de auto-sync e indexação contínua | `atlas-cortex` (a renomear) | código maduro, sem usuário externo |
+| **Talos** | pipeline determinística PRD→plano→execução→validação | autômato de bronze, executa regra fixa sem desvio — fit com determinismo/gates duros, sem improviso | `atlas-workflow` (este repo) | v0.11.1, com usuário (mesmo que só o Paulo) |
+| **Athena** | documentação/conhecimento contínuo do projeto | deusa da sabedoria/estratégia — fit com conhecimento acumulado | `atlas-brain` (a renomear) | repo existe, fase de pesquisa (`_analysis/gbrain` — referência arquitetural de memória/graph/synthesis, não é fonte a copiar) |
+
+**Nota sobre o app Flutter `atlas`** (`/Volumes/Dados/projetos/atlas`, monorepo
+"Atlas Monorepo" com `apps/atlas`): produto de consumo final completamente
+não-relacionado a este ecossistema de dev tooling — mesmo nome, domínio
+diferente. Fora do escopo desta decisão; mencionado aqui só para não confundir
+buscas futuras por "atlas" no disco.
 
 **Impacto**: rename técnico em 2 repos existentes (planos abaixo) + reserva de nome
 para o terceiro produto quando ele nascer.
@@ -135,21 +149,41 @@ real em `packages/cortex/` (não na raiz).
 
 ---
 
-## Athena (reservado, não iniciado)
+## Plano de rename 3 — `atlas-brain` → Athena
 
-Nome reservado para o futuro produto de documentação contínua/dossiês. Sem repo,
-sem código — só a reserva de nome registrada aqui para não colidir com Argus/Talos
-quando o produto nascer. Quando for criado, copiar este documento (ou linkar) no
-novo repo.
+Repo existe mas está em fase de pesquisa: só `README.md` (1 linha) +
+`_analysis/gbrain/` (clone de terceiro, GBrain by Garry Tan/YC, estudado como
+**referência arquitetural** — memória/graph traversal/synthesis — não é código a
+herdar literalmente, e não deve ser commitado como histórico do projeto se for
+só material de estudo). Sem código próprio ainda → menor custo de rename dos 3,
+mas ações concretas:
+
+1. Renomear o próprio repo GitHub: `atlas-brain` → `argus`... **não**, → `athena` (atenção ao rename certo na hora de executar).
+2. Decidir e documentar no novo README se `_analysis/gbrain/` fica versionado (referência viva) ou vira nota/link externo (mais limpo — é código de terceiro, não dá pra confundir com fonte própria).
+3. Ao escrever o primeiro código real, já nascer com a convenção: nome de pacote/bin/MCP server `athena`, sem prefixo `atlas-`/`atlas_`, mesmo padrão aplicado a Argus e Talos.
+4. Quando a skill `atlas-prd-interview`/docs deste repo (`atlas-workflow`/Talos) referenciarem o futuro produto de documentação, usar "Athena", não "Atlas Brain".
 
 ---
 
-## Ordem recomendada entre os dois rename
+## Atlas Agents — sem plano de rename
 
-**Talos primeiro ou Argus primeiro?** Argus tem custo de execução menor (sem
-migração de usuário, sem necessidade de bump de versão coordenado com invariantes
-de não-regressão) — é o rename "barato" para validar o processo (find-replace +
-scripts de release) antes de aplicar a versão mais arriscada (Talos, que mexe em
-gates de build, duplicação 5x e compat de instalações existentes). Recomendação:
-**Argus primeiro**, Talos depois, cada um em branch feature próprio, smoke real
-antes de merge em `main` (invariantes 2 e 6 do CLAUDE.md deste repo).
+`atlas-agents` mantém nome e estrutura como estão. Não há ação de rename aqui —
+está registrado neste documento só para a relação ficar explícita: é o hub que,
+na visão de produto, vai **consumir** Argus/Talos/Athena (provavelmente via MCP,
+o mesmo padrão de integração que esses 3 já usam com outros hosts) à medida que
+cada um amadurecer. Não é prerequisito dos 3 rename acima — eles seguem
+independentes e standalone até que a unificação seja decidida e planejada à parte.
+
+---
+
+## Ordem recomendada entre os três rename
+
+Por custo de execução, do mais barato ao mais caro:
+
+1. **Athena** (`atlas-brain`) — sem código próprio, é praticamente só renomear o repo e decidir o destino do material de pesquisa.
+2. **Argus** (`atlas-cortex`) — código maduro mas sem usuário externo, sem migração necessária.
+3. **Talos** (`atlas-workflow`) — tem invariante de não-regressão, duplicação física 5x, e instalações existentes a migrar; é o mais arriscado, deixar por último para aplicar o processo já validado nos outros dois.
+
+Cada um em branch feature próprio, smoke real antes de merge em `main` (onde
+aplicável — invariantes 2 e 6 do CLAUDE.md deste repo valem para `atlas-workflow`;
+os outros repos podem ter sua própria política, a confirmar lá).
