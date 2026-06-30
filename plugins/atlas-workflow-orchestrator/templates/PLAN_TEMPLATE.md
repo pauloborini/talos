@@ -3,7 +3,7 @@
 | Campo | Valor |
 |-------|-------|
 | **PRD** | [PRD_<ID>_<slug>.md](./<caminho-relativo>) — decisões **PRD §3** (D*) |
-| **Sprint file** | [SPRINT_S<NN>_<slug>.md](./<caminho-relativo>) — `eval_manifest` §9 |
+| **Sprint file** | [SPRINT_S<NN>_<slug>.md](./<caminho-relativo>) — `eval_manifest` §9 — ou `Não aplicável (standalone)` quando `Source mode: standalone` |
 | **Package / app** | `<packages/... \| apps/...>` |
 | **Tipo** | `<feature \| ui \| navigation \| …>` |
 | **execution_mode** | `<sequencial (T01→TN) \| orchestrated-per-slice>` |
@@ -36,10 +36,10 @@ Política: [BOUNDARY_PRD_PLAN.md](./BOUNDARY_PRD_PLAN.md). Exemplos: [PRD/GARANT
 ## 2. Invariantes de execução (derivados do PRD)
 
 - <invariante técnico derivado de PRD §3/§5 — ex.: sem refetch ao filtrar>
-- <invariante/gate derivado de sprint file §9/§10 — ex.: preservar boundary X>
+- <`sprint-bound`: invariante/gate derivado de sprint file §9/§10 — ex.: preservar boundary X. `standalone`: invariante/gate derivado direto de PRD §5>
 - <…>
 
-> Não recopiar a tabela de decisões do PRD nem o YAML do sprint file; referenciar `PRD §3 D12` e `Sprint §9 EVAL-001`.
+> Não recopiar a tabela de decisões do PRD nem o YAML do sprint file; referenciar `PRD §3 D12` e, em `sprint-bound`, `Sprint §9 EVAL-001`. Em `standalone`, referenciar só `PRD §3`/`PRD §5`.
 
 ---
 
@@ -70,7 +70,7 @@ Política: [BOUNDARY_PRD_PLAN.md](./BOUNDARY_PRD_PLAN.md). Exemplos: [PRD/GARANT
 - **Pré-condições:** <nenhuma \| T0X>
 - **Mudança esperada:** <o que muda de forma concreta>
 - **Invariantes preservados:** <§2 ou PRD>
-- **Eval/Policy:** <Sprint §9 EVAL-* / §10 policy relevante>
+- **Eval/Policy:** <`sprint-bound`: Sprint §9 EVAL-* / §10 policy relevante. `standalone`: PRD §6 relevante>
 - **Não mudar:** <…>
 - **Não fazer:** <atalhos proibidos>
 - **Dependências:** <nenhuma \| T0X>
@@ -89,7 +89,7 @@ Política: [BOUNDARY_PRD_PLAN.md](./BOUNDARY_PRD_PLAN.md). Exemplos: [PRD/GARANT
 
 #### TNN. Validação final
 
-- **Objetivo:** gates locais + regressão de entregas dependentes + aceite manual mínimo (PRD §6 + Sprint §9).
+- **Objetivo:** gates locais + regressão de entregas dependentes + aceite manual mínimo (PRD §6; em `sprint-bound` também Sprint §9).
 - **Dependências:** T01–T(N-1)
 - **Critério de done:** zero issues; testes verdes
 - **Validação local:**
@@ -131,7 +131,7 @@ Ordem: **A → B → …**. Validator: boundary do diff por slice + §2 e §7.
 
 ## 8. Validação e checklist (validator)
 
-Referência **PRD §6** + invariantes **§2** deste plano + `eval_manifest` do sprint file §9.
+Referência **PRD §6** + invariantes **§2** deste plano. Em `sprint-bound`, soma `eval_manifest` do sprint file §9. Em `standalone`, declarar `Eval source: PRD §6` — sem manifest de sprint.
 
 ```bash
 cd <package> && flutter analyze

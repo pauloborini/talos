@@ -125,7 +125,7 @@ Se você quiser começar fora do fluxo principal, as skills listadas abaixo são
 |------|-------------|-----------|
 | **`full`** | Sprint/backlog novo ou feature do zero | Gera PRD → valida/entrevista se preciso → **plano** (`.atlas/plans/`) → **executa** o plano → review opcional |
 | **`direct`** | PRD já existe e está maduro | Valida PRD → entrevista só se houver gap → **executa direto** (sem fase de plan handoff) → review opcional |
-| **`execute`** | Já tenho um `PLAN_*.md` pronto | Reverifica o plano (artefato + conformidade) → **executa o plano existente** → review opcional. **Não regera plano.** |
+| **`execute`** | Já tenho um `PLAN_*.md` pronto | Reverifica o plano (artefato + conformidade) → **executa o plano existente** → review opcional. **Não regera plano.** Único modo que aceita plano `Source mode: standalone` (sem sprint) — `full`/`direct` exigem sprint na entrada e rejeitam esse plano. |
 | `interview-only` | Só fechar decisões / brainstorm | Entrevista; não implementa |
 | **`audit`** | Quero diagnóstico sem patch | Audita target/boundary contra regras locais + stack detectada + Ponytail pass; `--handoff` grava `.atlas/plans/PLAN_AUDIT_*.md` sem executar |
 
@@ -193,6 +193,19 @@ Só alinhar decisões antes de planejar:
 /workflow interview-only brainstorm "dark mode só no web ou mobile também?"
 ```
 
+PRD avulso (sem sprint/backlog) até execução, sem passar por `full`/`direct`:
+
+```
+/workflow interview-only brainstorm "ideia direto de conversa"
+→ matura o PRD; campo Sprint file fica "Não aplicável (standalone)"
+
+atlas-plan-handoff (uso direto, fora do /workflow)
+→ lê o PRD, detecta source_mode: standalone, escreve PLAN_*.md com Source mode: standalone
+
+/workflow execute plan "./.atlas/plans/PLAN_<ID>_<slug>.md"
+→ único modo que aceita plano standalone; full/direct exigem sprint e rejeitam esse plano na entrada
+```
+
 ### Dicas práticas
 
 1. Confirme o MCP antes de começar (`atlas_ping`); sem MCP o orquestrador para no pré-flight.
@@ -217,7 +230,7 @@ Além da cadeia automática, estas skills também podem ser chamadas diretamente
 - `atlas-sprint-prd-generator` — transforma um sprint ID como `S01`/`S02` em PRD de sprint. Use quando o escopo já está amarrado ao roadmap e você quer o PRD da rodada.
 - `atlas-prd-interview` — valida e amadurece um PRD antes de planejar. Use quando você quer fechar ambiguidades, dependências ou decisões de produto.
 - `atlas-audit` — audita arquivo, diretório, pacote, módulo, feature ou boundary localizável sem corrigir código. Lê regras locais reais, detecta stack por manifests/configs, analisa arquitetura/contratos/erros/segurança/testes/observabilidade, faz Ponytail pass final e só promove achado com evidência `arquivo:linha`. Com `--handoff`, grava `.atlas/plans/PLAN_AUDIT_*.md` TC-conforme para correção posterior; não chama executor.
-- `atlas-plan-handoff` — converte um PRD validado em plano executável. Use quando a intenção é preparar a execução, não ainda codar.
+- `atlas-plan-handoff` — converte um PRD validado em plano executável. Use quando a intenção é preparar a execução, não ainda codar. Aceita PRD `sprint-bound` (com sprint file) ou `standalone` (PRD declara explicitamente `Sprint file: Não aplicável (standalone)`); plano `standalone` só é executável via modo `execute` — `full`/`direct` exigem sprint na entrada.
 - `atlas-direct-execute` — executa diretamente quando o PRD já está maduro. Use quando você quer pular a fase de plan handoff.
 - `atlas-task-validator` — faz a validação fria da slice executada. Use como veredito final de conformidade, nunca como ação manual de rotina.
 - `atlas-findings-repair` — corrige findings P0/P1/P2 depois de um `fail` do validator sem reabrir a execução completa. Use só no caminho de retry.

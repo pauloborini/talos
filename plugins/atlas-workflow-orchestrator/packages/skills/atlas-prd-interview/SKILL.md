@@ -41,6 +41,8 @@ Ataque principalmente as seguintes seções do template de PRD:
 * **§5 Contrato funcional e invariantes:** `❌` se campos críticos não possuírem regras de formato (ex: decimais) ou se a regra de negócio for ambígua/impossível de verificar na codebase.
 * **§6 Critérios de aceite (negócio):** `❌` se o critério for subjetivo, não observável ou não testável.
 
+**Standalone (`Sprint file: Não aplicável (standalone)`):** sem sprint de apoio, §3/§5/§6 são a única fonte de Eval/Policy que `atlas-plan-handoff` vai ter. Eleve o critério de `❌` nessas seções: gap que em PRD sprint-bound seria `⚠️` (porque o sprint file cobriria) é `❌` em standalone se afetar Eval/Policy do plano. Não rebaixar rigor por não ter sprint.
+
 3. **Resolver mecanismo estruturado:** chame `atlas_capabilities`, leia `question_prompt` e use seu `mechanism`/shape. Nunca hardcode nome de ferramenta de host. Se o descriptor estiver ausente ou indisponível, bloqueie a rodada; não degrade para pergunta livre sem correlação.
 4. **Perguntas por rodada:** formule no máximo 4 perguntas concisas, exatamente 3 opções, recomendada explícita e `decision_id` D* estável. Antes de perguntar, use `pendingInterviewQuestions` de `../_shared/scripts/document_quality.mjs` para excluir decisões já fechadas.
 5. **Persistência imediata:** ao receber respostas, grave-as no mesmo PRD antes de qualquer nova pergunta, preservando IDs/anchors e acrescentando histórico. Use `persistInterviewRound(prd_path, answers)`, que escreve via arquivo temporário + rename e valida readback; falha bloqueia. Nunca acumule respostas apenas no chat.

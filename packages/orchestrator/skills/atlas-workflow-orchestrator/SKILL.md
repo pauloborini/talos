@@ -275,11 +275,13 @@ Entrada: um **`PLAN_*.md` pronto**. Artefatos esperados: (plano já existe) → 
 
 ### Interview-only mode
 
-1. Se a entrada já for PRD válido, usar seu path. Se for `brainstorm`, criar primeiro um draft mínimo em disco com `packages/templates/PRD_TEMPLATE.md`, preservando as 6 seções canônicas e registrando o brainstorm em contexto/objetivo.
-2. Verificar o draft com `atlas_verify_artifact` e `atlas_verify_template_conformance(artifact_type=prd)`; path ausente/inválido bloqueia.
+1. Se a entrada já for PRD válido, usar seu path. Se for `brainstorm`, criar primeiro um draft mínimo em disco com `packages/templates/PRD_TEMPLATE.md`, preservando as 6 seções canônicas e registrando o brainstorm em contexto/objetivo. Sem sprint vinculada (caso típico de brainstorm), preencher `**Sprint file**: Não aplicável (standalone)` e `Eval source: PRD §6 (standalone)` — nunca deixar o placeholder genérico do template sem resolver.
+2. Verificar o draft com `atlas_verify_artifact` e `atlas_verify_template_conformance(artifact_type=prd)` (sem `require_sprint_file` — `interview-only` nunca exige sprint); path ausente/inválido bloqueia.
 3. Invocar `prd_interview` no fio principal com `prd_path` válido; persistir respostas no mesmo artefato e reverificar.
 
 > `interview-only` é entrevista **sem execução**: não há fase `plan_execute` nem `guarantee_level` no fluxo (nada de código a garantir). A autoria do esboço é documental e livre.
+
+> **Próximo passo após PRD standalone maturo:** `interview-only` não planeja nem executa. Para implementar, o usuário invoca `atlas-plan-handoff` standalone sobre esse PRD (fora do pipeline `full`/`direct`, que exigem sprint — ver `atlas-plan-handoff` §"Fontes obrigatórias"), produzindo um `PLAN_*.md` com `Source mode: standalone`, e então roda `/workflow execute plan "<path>"` para executar. `full`/`direct` rejeitam esse PRD na entrada por falta de sprint file (por design).
 
 ### Audit mode
 

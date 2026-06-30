@@ -9,13 +9,14 @@ Use esta skill quando o usuário pedir um plano executável da cadeia `atlas-*`.
 
 O artefato segue `PLAN_TEMPLATE.md` e `BOUNDARY_PRD_PLAN.md` — **localize ambos em `<raiz-do-plugin>/packages/templates/`**. O plano **não** depende de memória do chat para prefixo, modo ou executor.
 
-Fontes obrigatórias do PLAN:
+Fontes obrigatórias do PLAN — duas combinações válidas, conforme `source_mode`:
 
-1. PRD aprovado/conforme.
-2. Sprint file vivo referenciado pelo PRD/backlog.
-3. Código real do repo no boundary da sprint.
+- **`sprint-bound`** (PRD referencia sprint file): PRD aprovado/conforme + sprint file vivo referenciado pelo PRD/backlog + código real do repo no boundary da sprint.
+- **`standalone`** (PRD declara explicitamente ausência de sprint file): PRD aprovado/conforme, com §2 escopo, §3 decisões, §5 invariantes, §6 aceite suficientes para derivar Eval/Policy + código real do repo no boundary da entrega.
 
-Sem uma dessas fontes, não gerar plano executável. Backlog mestre é índice/status; não substitui sprint file nem PRD.
+Sem PRD aprovado e código real, não gerar plano executável. Backlog mestre é índice/status; não substitui sprint file nem PRD. Sprint file é obrigatório apenas em `source_mode: sprint-bound`.
+
+Um plano `standalone` só é consumível pelo modo `execute` do orquestrador (lê plano pronto, sem gate `SPRINT_FILE`, TC sem `require_sprint_file`). Os modos `full`/`direct` exigem `require_sprint_file=true` na entrada — um plano `standalone` reentrando por `full` será re-gateado e bloqueado por design (PRD D11, "autoria é livre, execução é gateada"). Se um plano `standalone` precisar virar sprint formal, o caminho é gerar o sprint file e reescrever o plano como `sprint-bound`, não forçar passagem por `full`.
 
 ## Resolução Canônica de Templates
 
@@ -56,7 +57,13 @@ No workflow `full`, `atlas-plan-handoff` é autoria documental do agente princip
 ## Fluxo obrigatório
 
 1. **Classificação da tarefa:** feature, ui, contract, navigation, shared, security, diagnostic, refactoring, testing. Leia instruções reais aplicáveis do repo; `project-rules/` é apenas um formato possível, nunca requisito universal.
-2. **Validar fontes documentais:** ler o PRD, resolver o sprint file declarado no cabeçalho/referências e confirmar backlink/status no backlog mestre quando disponível. Chamar `atlas_verify_sprint_file`; se sprint file estiver ausente, inválido, divergente do PRD, sem `eval_manifest`/`policy_manifest` ou com gate bloqueado/indisponível, bloquear com ação corretiva.
+2. **Validar fontes documentais e detectar `source_mode`:**
+   - Ler o PRD. Detecção é mecânica, por campo explícito no cabeçalho — nunca por inferência de prosa:
+     - Campo `**Sprint file**` no PRD aponta para um path real → `source_mode: sprint-bound`.
+     - Campo `**Sprint file**` ausente ou com valor literal `Não aplicável (standalone)` → `source_mode: standalone`.
+     - Nenhum dos dois padrões reconhecível → bloquear: PRD precisa declarar explicitamente um dos dois.
+   - Se `sprint-bound`: resolver o sprint file declarado e confirmar backlink/status no backlog mestre quando disponível. Chamar `atlas_verify_sprint_file`; se sprint file estiver ausente, inválido, divergente do PRD, sem `eval_manifest`/`policy_manifest` ou com gate bloqueado/indisponível, bloquear com ação corretiva.
+   - Se `standalone`: não chamar `atlas_verify_sprint_file`. Validar que o PRD tem §2 escopo, §3 decisões, §5 invariantes, §6 aceite com critérios observáveis suficientes para derivar Eval/Policy direto do PRD. PRD insuficiente nessas seções bloqueia com ação corretiva.
 3. **Grounding no código:** confirme padrões, contratos, manifests e comandos reais antes de inferir. Resolva baseline/perfis via `../_shared/references/stack-profiles.md` + `detectStackProfiles(project_root, declared_commands, boundary_paths)`; não presuma Flutter nem aplique perfil fora do package correspondente.
 4. **Decisões estáveis:** sanar bloqueios com perguntas ao usuário; registrar no plano (não recopiar tabela D* do PRD — referenciar `PRD §3`; não copiar YAML integral do sprint file — referenciar `Sprint §9/§10` e IDs).
 5. **Escrita:** artefato markdown no path canônico `.atlas/plans/`. Teto orientativo ~250–350 linhas (até ~450 com slices).
@@ -68,6 +75,7 @@ No workflow `full`, `atlas-plan-handoff` é autoria documental do agente princip
 ```md
 ## Metadados de execução
 - Plan prefix: `atlas`
+- Source mode: `sprint-bound` | `standalone`
 - Execution mode: `sequencial (T01→TN)` | `orchestrated-per-slice`
 - Executor skill: `atlas-plan-execute`
 - Internal validator: `atlas-task-validator`
@@ -77,8 +85,10 @@ No workflow `full`, `atlas-plan-handoff` é autoria documental do agente princip
 Regras:
 
 - `Plan prefix` é sempre `atlas`.
+- `Source mode` reflete a detecção do passo 2 do fluxo obrigatório. `standalone` é destinado a entrar em execução pelo modo `execute` do orquestrador — não pelo pipeline `full`/`direct`.
 - Se o modo não estiver decidido, o plano **não** está pronto para execução.
-- O topo do plano deve linkar PRD e Sprint file; `eval_manifest`/`policy_manifest` entram por referência, não por cópia integral.
+- Em `sprint-bound`, o topo do plano deve linkar PRD e Sprint file; `eval_manifest`/`policy_manifest` entram por referência, não por cópia integral.
+- Em `standalone`, o topo do plano linka PRD e declara `Eval source: PRD §6` no lugar de Sprint §9/§10; a seção 8 (Validação e checklist) deriva diretamente de `PRD §6`, não de manifests de sprint.
 - Deixe explícito por que o modo escolhido é adequado, checks por task vs fechamento de slice e quando parar em `blocked`.
 
 ---
@@ -94,8 +104,8 @@ Regras:
 ### 2. Invariantes de execução (derivados do PRD)
 
 - Invariantes técnicos inegociáveis (ex.: sem refetch ao filtrar).
-- Invariantes/gates derivados de `Sprint §9 eval_manifest` e `Sprint §10 policy_manifest`.
-- Referenciar IDs: `PRD §3 D12`, `Sprint §9 EVAL-001`, `Sprint §10 policy.allowed_scope` — não colar a tabela D* nem YAML inteiro.
+- Em `sprint-bound`: invariantes/gates derivados de `Sprint §9 eval_manifest` e `Sprint §10 policy_manifest`. Referenciar IDs: `PRD §3 D12`, `Sprint §9 EVAL-001`, `Sprint §10 policy.allowed_scope` — não colar a tabela D* nem YAML inteiro.
+- Em `standalone`: invariantes/gates derivados direto de `PRD §5`. Referenciar `PRD §3 D12`, `PRD §5` — sem citar Sprint §9/§10 (não aplicável).
 
 ### 3. Pitfalls
 
@@ -115,7 +125,7 @@ Tarefas `#### T01.` … `#### TNN.` com schema de `BOUNDARY_PRD_PLAN.md` canôni
 - **Pré-condições**
 - **Mudança esperada**
 - **Invariantes preservados**
-- **Eval/Policy** (`Sprint §9 EVAL-*` / `Sprint §10 policy` relevante)
+- **Eval/Policy** (`Sprint §9 EVAL-*` / `Sprint §10 policy` relevante em `sprint-bound`; `PRD §6` relevante em `standalone`)
 - **Não mudar** / **Não fazer**
 - **Dependências**
 - **Riscos** (se não óbvio)
@@ -126,7 +136,7 @@ Tarefas `#### T01.` … `#### TNN.` com schema de `BOUNDARY_PRD_PLAN.md` canôni
 
 **Regra de minimalismo estrutural (autoria de task):** ao redigir `Mudança esperada`, prefira a forma mínima viável que cumpre o `Critério de done` — reusar módulo/símbolo já existente no repo antes de introduzir nova abstração; usar stdlib/feature nativa antes de dependência nova; evitar indireção, factory, wrapper, camada ou opção de config não exigida por PRD/invariante. A regra recai **somente** sobre abstração/indireção/arquivo/dependência nova. **Nunca** reduz: validação de trust-boundary, error-handling, data-loss, invariantes §2, cobertura de cenário/teste e negative paths. Em dúvida entre enxuto e seguro, escolha seguro.
 
-Toda task que prova claim ou toca boundary sensível deve trazer `Eval/Policy`. Última task típica: **Validação final** (checks reais da stack ativa e passos manuais alinhados a **PRD §4–6** + `Sprint §9`). Flutter usa `flutter analyze/test`; Node e Python usam somente scripts/ferramentas declarados no repo/plano.
+Toda task que prova claim ou toca boundary sensível deve trazer `Eval/Policy`. Última task típica: **Validação final** (checks reais da stack ativa e passos manuais alinhados a **PRD §4–6**; em `sprint-bound` também a `Sprint §9`). Flutter usa `flutter analyze/test`; Node e Python usam somente scripts/ferramentas declarados no repo/plano.
 
 ### 6. Contratos técnicos (só ambiguidade PRD → código)
 
@@ -138,7 +148,7 @@ Toda task que prova claim ou toca boundary sensível deve trazer `Eval/Policy`. 
 
 ### 8. Validação e checklist (validator)
 
-- Critérios derivados de **PRD §6** + invariantes **§2** deste plano + `eval_manifest` do sprint file.
+- Critérios derivados de **PRD §6** + invariantes **§2** deste plano. Em `sprint-bound`, soma `eval_manifest` do sprint file. Em `standalone`, declarar explicitamente `Eval source: PRD §6` — checklist deriva só do PRD, sem manifest de sprint.
 - Título recomendado: `## 8. Validação e checklist (validator)`.
 - Comandos globais aplicáveis ao package, derivados de manifests/scripts reais; nunca inventar `flutter`, `npm` ou `pytest`.
 
@@ -173,11 +183,13 @@ Você pode invocar `atlas-plan-handoff` diretamente, fora do pipeline, para escr
 
 ### (b) O artefato NÃO é confiável só por existir
 
-Um plano escrito standalone **não vale como gate aprovado** só porque existe — nem mesmo com nome `PLAN_*.md`. Ao entrar em execução (modos `full`/`direct`/`execute`), o plano é **re-gateado obrigatoriamente** por `atlas_verify_artifact` + `atlas_verify_template_conformance` (TC); em fluxo de sprint, TC usa `require_sprint_file=true`. No modo `execute` legado, essa reverificação na entrada é o equivalente ao gate pós-plano (PRD D13) e pode continuar sem sprint file se o plano já for autossuficiente. Plano velho, manual, renomeado ou fora de conformidade **trava na entrada da execução**, não na autoria. Esta skill não declara o plano "executável de forma determinística" só por tê-lo escrito.
+Um plano escrito standalone **não vale como gate aprovado** só porque existe — nem mesmo com nome `PLAN_*.md`. Ao entrar em execução, o plano é **re-gateado obrigatoriamente** por `atlas_verify_artifact` + `atlas_verify_template_conformance` (TC). Em `full`/`direct`, TC usa `require_sprint_file=true` — um plano com `Source mode: standalone` reentrando por esses modos **trava aqui**, por design. No modo `execute`, TC roda sem exigir sprint file (gate `SPRINT_FILE` não se aplica a `execute plan`) — é o destino natural de um plano `Source mode: standalone`, e essa reverificação na entrada é o equivalente ao gate pós-plano (PRD D13). Plano velho, manual, renomeado ou fora de conformidade **trava na entrada da execução**, não na autoria. Esta skill não declara o plano "executável de forma determinística" só por tê-lo escrito.
 
 ### (c) Standalone vs protocolo interno no workflow
 
-- **Standalone:** o usuário conduz a skill diretamente; o produto é o `PLAN_*.md`, sujeito a re-validação na entrada de execução.
+> Atenção: "standalone" aqui descreve **quem conduz a autoria** (fora do orquestrador) — conceito distinto de `Source mode: standalone` nos metadados do plano (que descreve a **fonte documental**, ausência de sprint file). Os dois são ortogonais: dá para ter autoria conduzida pelo usuário com `Source mode: sprint-bound` (plano fora do pipeline mas referenciando sprint real), assim como `Source mode: standalone` nasce tipicamente de autoria standalone (não faz sentido dentro de `full`, que força `sprint-bound`).
+
+- **Standalone (condução):** o usuário conduz a skill diretamente; o produto é o `PLAN_*.md`, sujeito a re-validação na entrada de execução.
 - **No workflow:** quem conduz a fase de plano é o **orquestrador principal** (agente principal), que despacha/autora o plano antes de validá-lo e roda os gates MCP. Uma vez que o plano passa `atlas_verify_artifact` + TC, o orquestrador fica de mãos atadas (não edita mais o plano). A skill é a mesma; o que muda é quem orquestra e os gates que cercam a fase.
 
 > **Invariante:** autoria é livre, execução é gateada. Um plano só vira confiável para execução após `atlas_verify_artifact` + TC na entrada (PRD D11).

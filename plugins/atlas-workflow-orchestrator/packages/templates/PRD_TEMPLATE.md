@@ -16,14 +16,14 @@
 | **Data** | <YYYY-MM-DD> |
 | **Dependências de negócio** | <Entregas anteriores necessárias — ex.: “dashboard com lista”> |
 | **Relacionado** | <Regras de negócio, MVP, backlog §7 SNN, sprint file, DEC-*, Q-* — links> |
-| **Backlog mestre** | <path explícito do backlog autoritativo + anchor único SNN> |
-| **Sprint file** | <path explícito para SPRINT_SNN_slug.md + anchor relevante> |
+| **Backlog mestre** | <path explícito do backlog autoritativo + anchor único SNN — `Não aplicável (standalone)` se não houver backlog> |
+| **Sprint file** | <path explícito para SPRINT_SNN_slug.md + anchor relevante — ou literal `Não aplicável (standalone)` se este PRD não nasce de sprint formal> |
 
 ### Metadados de execução
 
 - Plan prefix: `<atlas>` · Planner: `<atlas-plan-handoff>` · Executor: `<atlas-plan-execute>`
 - Internal validator: `<atlas-task-validator>` · External review: `<atlas-slice-review>` (optional)
-- Eval source: `<SPRINT_SNN_slug.md §9 eval_manifest>`
+- Eval source: `<SPRINT_SNN_slug.md §9 eval_manifest>` — ou `<PRD §6 (standalone)>` quando `Sprint file = Não aplicável (standalone)`
 
 ---
 
@@ -110,6 +110,8 @@
 ## 6. Critérios de aceite (negócio)
 
 > Derivar dos critérios candidatos do sprint file §7 e do `eval_manifest` §9. O PRD é a fonte de verdade final do aceite de produto.
+>
+> **PRD standalone** (`Sprint file: Não aplicável (standalone)`): não há sprint/eval_manifest de apoio — os critérios abaixo nascem só de §2/§3/§5 deste PRD e precisam ser observáveis e binários sozinhos, sem referência a `Sprint §9/§10`.
 
 **Produto**
 
@@ -152,9 +154,9 @@
 ## Checklist do autor (não publicar no PRD final — opcional)
 
 - [ ] Nenhum package, classe, rota ou migration neste arquivo
-- [ ] Backlog mestre e sprint file estão linkados no cabeçalho
+- [ ] Backlog mestre e sprint file estão linkados no cabeçalho **ou** ambos marcados `Não aplicável (standalone)` — nunca um preenchido e outro vago
 - [ ] Cada verdade tem UMA casa; demais seções referenciam por §/D-id (sem re-enumerar)
 - [ ] Todo critério de §6 tem correspondência em §4 (UX) ou §5 (dados)
-- [ ] Todo EVAL-* relevante do sprint file tem reflexo em §6 ou justificativa no Apêndice
+- [ ] Se sprint-bound: todo EVAL-* relevante do sprint file tem reflexo em §6 ou justificativa no Apêndice. Se standalone: §2/§3/§5/§6 estão completos o bastante para servir de Eval/Policy sozinhos, sem sprint de apoio
 - [ ] "Fora de escopo" nomeia os adjacentes tentadores, não o complemento infinito
 - [ ] Demarcação preservada: `---`, `**Label:**`, `### N.x`, headers de tabela, grupos de aceite
