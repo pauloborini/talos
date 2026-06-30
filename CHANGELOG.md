@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.11.1 - 2026-06-30
+
+Tipo: **packaging**. **Sem breaking**. Schema MCP: v5 (inalterado).
+
+Resumo: Corrige a instalação global do host Antigravity (Gemini) no instalador unificado. O instalador agora copia recursivamente o diretório `packages/` inteiro (incluindo `skills` e `templates`), resolvendo a ausência de scripts internos compartilhados (como `document_quality.mjs`) e templates canônicos de execução.
+
+Mudanças:
+- **Instalador unificado** — `build/cli/atlas-init.mjs`: alterada a função `installAntigravity` para fazer a cópia recursiva de `SRC/packages` para `packagesDir` em vez de criar e copiar apenas a subpasta `mcp-server`.
+- **Correção de drifts** — Sincronizadas as referências estáticas de versão (que haviam restado em `0.10.1` nos READMEs, `COMMANDS.md`, `CLAUDE.md` e `AGENTS.md`) para `0.11.0` antes de rodar o bump determinístico para `0.11.1`.
+- **Versionamento** — `VERSION`, `package.json`, manifests e catálogos regenerados e sincronizados na versão `0.11.1`.
+
+Validação:
+- Execução local do instalador corrigido para o host Antigravity confirmando presença de `packages/skills` e `packages/templates`.
+- Execução bem-sucedida de `bash build/test-all.sh` (todos os testes verdes, consistência de versão e integridade dos plugins em dia).
+
 ## 0.11.0 - 2026-06-30
 
 Tipo: **feature de compatibilidade (não-breaking, schema aditivo)** — workaround para a limitação do host ZCode onde sub-agentes de plugin não herdam conexões MCP, mesmo com `mcp__...` declarado no frontmatter `tools:`. Confirmado empiricamente (v0.10.1) para os 5 sub-agentes Atlas. Bug do host (ZCode), não do plugin.
