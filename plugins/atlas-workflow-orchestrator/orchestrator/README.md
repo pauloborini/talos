@@ -249,9 +249,20 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `atlas-*` para o
 
 ---
 
-**Plugin version:** 0.10.1
+**Plugin version:** 0.11.1
 **Author:** Paulo Borini
-**Last updated:** 2026-06-29
+**Last updated:** 2026-06-30
+
+### Novidades v0.11.1 — correção do instalador Antigravity (Gemini)
+
+- **Instalação do Antigravity global completa** — O instalador unificado (`init antigravity`) agora copia a pasta `packages/` inteira recursivamente, incluindo as subpastas `skills` e `templates`, em vez de apenas a subpasta `mcp-server`.
+- **Sem erros de inicialização** — Resolve o erro de módulo ausente (`document_quality.mjs`) que ocorria no setup global do Antigravity.
+- **Drifts de versão resolvidos** — Ajustadas referências em READMEs e documentações operacionais para refletirem as versões de releases corretas.
+
+### Novidades v0.11.0 — fallback de subagente para host ZCode
+
+- **Workaround de Dispatch no ZCode** — O host ZCode tem uma limitação onde sub-agentes de plugin (`subagent_type: "atlas-*"`) não herdam conexões MCP. Implementado o adapter `fallback` que despacha `general-purpose` (agente nativo, herda MCP) apontando para o MD do agente canônico como prompt do sistema.
+- **Isolamento Sibling Preservado** — O validador frio irmão (Gate G4) permanece isolado e executado em subagente separado, mantendo os invariantes de arquitetura.
 
 ### Novidades v0.10.1 — alias `sprint` canônico e Raycast alinhado
 

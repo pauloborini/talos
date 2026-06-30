@@ -268,6 +268,49 @@ if (versionFile != null) {
       errors.push(`Drift de versão: ${rel} (${raw.trim()}) != VERSION (${want})`);
     }
   }
+
+  // Validação de versão estática nos READMEs, docs e comandos para evitar drift
+  const readme = read('README.md');
+  if (readme != null) {
+    if (!readme.includes(`v${want}`) || !readme.includes(`(\`${want}\`)`)) {
+      errors.push(`Drift de versão em README.md: deve conter "v${want}" e "(\`${want}\`)"`);
+    }
+  }
+
+  const commands = read('COMMANDS.md');
+  if (commands != null) {
+    if (!commands.includes(`version: ${want}`)) {
+      errors.push(`Drift de versão em COMMANDS.md: deve conter "version: ${want}"`);
+    }
+  }
+
+  const mcpReadme = read('packages/mcp-server/README.md');
+  if (mcpReadme != null) {
+    if (!mcpReadme.includes(`v${want}`)) {
+      errors.push(`Drift de versão em packages/mcp-server/README.md: deve conter "v${want}"`);
+    }
+  }
+
+  const orchestratorReadme = read('packages/orchestrator/README.md');
+  if (orchestratorReadme != null) {
+    if (!orchestratorReadme.includes(`**Plugin version:** ${want}`)) {
+      errors.push(`Drift de versão em packages/orchestrator/README.md: deve conter "**Plugin version:** ${want}"`);
+    }
+  }
+
+  const agentsMd = read('AGENTS.md');
+  if (agentsMd != null) {
+    if (!agentsMd.includes(`Versão: \`${want}\``)) {
+      errors.push(`Drift de versão em AGENTS.md: deve conter "Versão: \`${want}\`"`);
+    }
+  }
+
+  const claudeMd = read('CLAUDE.md');
+  if (claudeMd != null) {
+    if (!claudeMd.includes(`Versão: \`${want}\``)) {
+      errors.push(`Drift de versão em CLAUDE.md: deve conter "Versão: \`${want}\`"`);
+    }
+  }
 }
 
 // Skills host-agnósticas (S10/F4-A4): se uma skill nomear um verbo nativo de host
