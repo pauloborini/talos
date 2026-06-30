@@ -252,6 +252,28 @@ test('capabilities: hosts sem deps externas têm required_deps vazio', () => {
   }
 });
 
+test('capabilities: perfil zcode declara fallback de subagente (limitação do host, v0.11.0)', () => {
+  const cap = capabilities({ host: 'zcode' });
+  assert.equal(cap.host, 'zcode');
+  const fb = cap.subagent_dispatch.fallback;
+  assert.ok(fb, 'zcode deve ter subagent_dispatch.fallback');
+  assert.equal(fb.enabled, true);
+  assert.equal(fb.subagent_type, 'general-purpose');
+  assert.equal(fb.reason, 'plugin_subagents_do_not_inherit_mcp');
+  assert.ok(typeof fb.prompt_template === 'string' && fb.prompt_template.length > 0);
+  // O prompt_template referencia o agent .md canônico (fonte única) e ZCODE_PLUGIN_ROOT.
+  assert.match(fb.prompt_template, /agents\/<name>\.md/);
+  assert.match(fb.prompt_template, /ZCODE_PLUGIN_ROOT/);
+});
+
+test('capabilities: hosts não-zcode NÃO declaram fallback (schema aditivo, sem regressão)', () => {
+  for (const h of ['claude', 'codex', 'opencode', 'pi', 'antigravity', 'generic']) {
+    const sd = capabilities({ host: h }).subagent_dispatch;
+    const fb = sd.fallback;
+    assert.ok(!fb || fb.enabled !== true, `${h} não deve ter fallback.enabled:true (regressão de adapter)`);
+  }
+});
+
 test('checkPrerequisites: pi sem pi-subagents é hard-fail com next_action pi', () => {
   const r = checkPrerequisites({ host: 'pi', host_capabilities: { subagent_available: false } });
   assert.equal(r.status, 'blocked');

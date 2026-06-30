@@ -433,6 +433,27 @@ const HOST_ADAPTERS = {
       mechanism: 'Agent(subagent_type)',
       example: 'Agent(subagent_type: "atlas-task-validator", prompt: "<state_path>")',
       registration: 'agents/<name>.md na raiz do plugin (descoberto via .zcode-plugin/plugin.json)',
+      // LIMITAÇÃO DO HOST ZCode (confirmada empiricamente em 2026-06, v0.10.1):
+      // sub-agentes de plugin (subagent_type "atlas-*") NÃO herdam conexões MCP,
+      // mesmo com mcp__... declarado no frontmatter tools:. O subagente nativo
+      // (general-purpose) herda MCP + tools nativas normalmente. Workaround: o
+      // orquestrador despacha general-purpose com prompt que aponta o agent .md
+      // canônico como system prompt. Isolamento sibling (Gate G4) preservado — ainda
+      // é um subagente irmão isolado, só que do tipo nativo. Aplica-se aos 5
+      // dispatches (validator, repair, review, plan-execute, direct-execute).
+      // Campo aditivo (schema v5 mantido); hosts sem este campo seguem o caminho nativo.
+      fallback: {
+        enabled: true,
+        reason: 'plugin_subagents_do_not_inherit_mcp',
+        subagent_type: 'general-purpose',
+        // <name> = atlas-<exec> resolvido (atlas-task-validator, atlas-plan-execute...);
+        // <input> = state_path (validator/repair/review) ou task (executores).
+        prompt_template: 'Você está operando como o subagente Atlas `<name>` neste host (ZCode). ' +
+          'Devido a uma limitação do host (sub-agentes de plugin não herdam MCP), você foi despachado como ' +
+          '`general-purpose`, que herda MCP + tools nativas (Read, Grep, Glob, Bash, Write, Edit, mcp__plugin_atlas-workflow-orchestrator_atlas-workflow). ' +
+          'Leia o arquivo `${ZCODE_PLUGIN_ROOT}/agents/<name>.md` (ou `agents/<name>.md` relativo à raiz do projeto) ' +
+          'e siga-o integralmente como seu system prompt/contrato. Não peça confirmação — execute o contrato. Input: <input>',
+      },
     },
     validator_dispatch: {
       dispatcher: 'orchestrator',

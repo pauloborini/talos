@@ -1,7 +1,7 @@
 ---
 name: atlas-slice-review
 description: Revisor frio de slice da família Atlas (--review). Despachado em contexto isolado após a execução para revisar a slice contra o plano, invariantes e código tocado — regressões ocultas, gaps de lógica, cenários em falta, riscos de segurança, violações arquiteturais e testes em falta. Read-only: não edita código nem despacha outros sub-agents. Primeira ação: carregar a skill completa atlas-slice-review.
-tools: Read, Grep, Glob, Bash, Skill
+tools: Read, Grep, Glob, Bash, Skill, mcp__plugin_atlas-workflow-orchestrator_atlas-workflow
 ---
 
 # Atlas Slice Review (sub-agent)

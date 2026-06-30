@@ -1,7 +1,7 @@
 ---
 name: atlas-findings-repair
 description: Reparador enxuto da família Atlas. Despachado pelo orquestrador apenas após `atlas-task-validator` retornar `fail` em topologia sibling. Corrige findings P0/P1/P2 dentro do boundary da slice sem carregar `atlas-plan-execute`/`atlas-direct-execute` e sem despachar novo validator.
-tools: Read, Write, Edit, Grep, Glob, Bash, Skill
+tools: Read, Write, Edit, Grep, Glob, Bash, Skill, mcp__plugin_atlas-workflow-orchestrator_atlas-workflow
 ---
 
 # Atlas Findings Repair (sub-agent)

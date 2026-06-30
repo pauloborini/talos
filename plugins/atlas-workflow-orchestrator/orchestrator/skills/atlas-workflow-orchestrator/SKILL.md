@@ -173,6 +173,19 @@ O **mecanismo** varia por host — leia `subagent_dispatch.mechanism`, `.example
 
 > Ausência de "Agent tool" (host ≠ Claude) **não** é licença pra executar inline — é sinal pra usar o verbo daquele host (Gate G9, qualquer host). Host sem mecanismo de sub-agent já abortou em PREREQ; você nunca chega aqui sem isolamento.
 
+### Fallback de subagente (limitação do host ZCode)
+
+Se `atlas_capabilities.subagent_dispatch.fallback.enabled === true` (hoje só no perfil **zcode**), despache usando o fallback em vez do verbo nominal — para **todos** os 5 dispatches (validator, findings-repair, slice-review, plan-execute, direct-execute):
+
+- `subagent_type`: `fallback.subagent_type` (`"general-purpose"`)
+- `prompt`: `fallback.prompt_template` com `<name>` substituído por `atlas-<exec>` (ex.: `atlas-task-validator`) e `<input>` substituído por `state_path` (validator/repair/review) ou `task` (executores).
+
+**Por que existe:** o ZCode não propaga MCP para sub-agentes de plugin (mesmo com `mcp__...` no frontmatter `tools:`), mas propaga para o subagente nativo `general-purpose`. O fallback despacha `general-purpose`, que herda MCP + tools nativas; o contrato do subagente Atlas vem do `agents/<name>.md` apontado pelo prompt (fonte única preservada).
+
+**Gate G4/sibling preservado:** ainda é um subagente irmão isolado, despachado blocking, com `dispatch_token`/`challenge_response` ecoados do output. Mudou o `subagent_type` (nativo vs plugin), não a topologia. Os gates R17/R19/R20 continuam válidos: o token provém do output do irmão, não fabricado pelo orquestrador. `lock_validator(start→complete)` opera no mesmo ciclo de vida.
+
+**Hosts sem o campo `fallback`** (claude/codex/opencode/pi/antigravity/generic) seguem o verbo nominal exato do mapeamento acima — zero mudança de comportamento.
+
 
 ## Protocolo de banner (única comunicação de progresso)
 
