@@ -133,11 +133,29 @@ for (const rel of [
 
 const zcodeValidatorAgent = read('hosts/zcode/agents/atlas-task-validator.md');
 if (zcodeValidatorAgent != null) {
-  if (!/^name:\s*atlas-task-validator$/m.test(zcodeValidatorAgent) || !/^tools:\s*Read, Grep, Glob, Bash$/m.test(zcodeValidatorAgent)) {
-    errors.push('zcode packaging-regressão: agents/atlas-task-validator.md deve manter frontmatter Claude/ZCode canônico');
+  if (!/^name:\s*atlas-task-validator$/m.test(zcodeValidatorAgent) || !/^tools:\s*Read, Grep, Glob, Bash, mcp__plugin_atlas-workflow-orchestrator_atlas-workflow$/m.test(zcodeValidatorAgent)) {
+    errors.push('zcode packaging-regressão: agents/atlas-task-validator.md deve manter frontmatter Claude/ZCode canônico (tools com MCP)');
   }
   if (/^mode:\s*subagent$/m.test(zcodeValidatorAgent)) {
     errors.push('zcode packaging-regressão: agents/atlas-task-validator.md não pode usar frontmatter opencode (mode: subagent)');
+  }
+}
+
+// M4: todo agente cuja SKILL chama atlas_* precisa do servidor MCP declarado em
+// tools: (hosts que respeitam frontmatter — Claude Code — restringem ao declarar;
+// sem o MCP no frontmatter, o subagente perde acesso ao state/lock e quebra em G4).
+// Não cobre opencode (não lista tools) nem pi (formato próprio, sem mcp em tools).
+const MCP_SERVER = 'mcp__plugin_atlas-workflow-orchestrator_atlas-workflow';
+for (const agentName of ['atlas-task-validator', 'atlas-findings-repair', 'atlas-slice-review']) {
+  const skillPath = `packages/skills/${agentName}/SKILL.md`;
+  const skillText = read(skillPath);
+  const agentPath = `agents/${agentName}.md`;
+  const agentTextRaw = read(agentPath);
+  if (skillText && agentTextRaw && /\batlas_[a-z_]+\b/.test(skillText)) {
+    const toolsLine = (agentTextRaw.match(/^tools:\s*(.+)$/m) || [])[1] || '';
+    if (!toolsLine.includes(MCP_SERVER)) {
+      errors.push(`M4 regressão: ${agentPath} lista tools: sem ${MCP_SERVER}, mas packages/skills/${agentName}/SKILL.md chama atlas_* (frontmatter precisa do MCP)`);
+    }
   }
 }
 

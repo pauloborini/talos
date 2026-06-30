@@ -1,7 +1,7 @@
 ---
 name: atlas-task-validator
 description: Validador frio de slice executada por atlas-plan-execute ou atlas-direct-execute. Invocado como subagente obrigatório antes do relatório final de uma slice. Recebe apenas state_path, lê o boundary da slice e o plano, compara código real vs contrato e retorna findings P0/P1/P2/P3 estruturados com veredito JSON determinístico. Não corrige código. Não propõe diff.
-tools: Read, Grep, Glob, Bash
+tools: Read, Grep, Glob, Bash, mcp__plugin_atlas-workflow-orchestrator_atlas-workflow
 model: sonnet
 effort: high
 ---

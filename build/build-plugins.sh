@@ -170,10 +170,11 @@ build_opencode() {
   echo "montando opencode"
   mkdir -p "$stage/.opencode/agents" "$stage/.opencode/skills" "$stage/.opencode/atlas/packages"
 
-  # Runtime bundlado sob .opencode/atlas/ (server lê ../../VERSION = .opencode/atlas/VERSION)
-  copy_mcp_runtime "$stage/.opencode/atlas/packages"
-  cp -R "$ROOT/packages/templates" "$stage/.opencode/atlas/packages/"
-  cp -R "$ROOT/packages/orchestrator" "$stage/.opencode/atlas/"
+	  # Runtime bundlado sob .opencode/atlas/ (server lê ../../VERSION = .opencode/atlas/VERSION)
+	  copy_mcp_runtime "$stage/.opencode/atlas/packages"
+	  cp -R "$ROOT/packages/skills" "$stage/.opencode/atlas/packages/"
+	  cp -R "$ROOT/packages/templates" "$stage/.opencode/atlas/packages/"
+	  cp -R "$ROOT/packages/orchestrator" "$stage/.opencode/atlas/"
   cp "$ROOT/VERSION" "$stage/.opencode/atlas/VERSION"
 
   # Skills (SKILL.md) sob .opencode/skills/
@@ -212,9 +213,10 @@ build_pi() {
   # (paths reais das deps, verificados no pi real — não 'agents/'/'mcp.json' no root).
   mkdir -p "$stage/.pi/agents" "$stage/skills" "$stage/atlas/packages"
 
-  copy_mcp_runtime "$stage/atlas/packages"
-  cp -R "$ROOT/packages/templates" "$stage/atlas/packages/"
-  cp -R "$ROOT/packages/orchestrator" "$stage/atlas/"
+	  copy_mcp_runtime "$stage/atlas/packages"
+	  cp -R "$ROOT/packages/skills" "$stage/atlas/packages/"
+	  cp -R "$ROOT/packages/templates" "$stage/atlas/packages/"
+	  cp -R "$ROOT/packages/orchestrator" "$stage/atlas/"
   cp "$ROOT/VERSION" "$stage/atlas/VERSION"
 
   cp -R "$ROOT/packages/skills/." "$stage/skills/"
@@ -262,11 +264,12 @@ build_zcode() {
   cp -R "$ROOT/packages/orchestrator/skills/atlas-workflow-orchestrator" \
     "$stage/skills/atlas-workflow-orchestrator"
 
-  # Runtime + templates + orchestrator
-  copy_mcp_runtime "$stage/packages"
-  cp -R "$ROOT/packages/templates" "$stage/packages/"
-  cp -R "$ROOT/packages/orchestrator" "$stage/packages/"
-  cp "$ROOT/VERSION" "$stage/packages/mcp-server/VERSION"
+	  # Runtime + templates + orchestrator + skills (MCP server importa de ../skills/)
+	  copy_mcp_runtime "$stage/packages"
+	  cp -R "$ROOT/packages/skills" "$stage/packages/"
+	  cp -R "$ROOT/packages/templates" "$stage/packages/"
+	  cp -R "$ROOT/packages/orchestrator" "$stage/packages/"
+	  cp "$ROOT/VERSION" "$stage/packages/mcp-server/VERSION"
 
   # Manifest .zcode-plugin (com VERSION injetada)
   local manifest_src="$ROOT/plugin-manifests/zcode/plugin.json"
