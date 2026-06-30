@@ -10,7 +10,7 @@ import {
   validateSprintFileConformance,
 } from '../skills/_shared/scripts/document_quality.mjs';
 
-const SERVER_NAME = 'atlas-workflow-orchestrator';
+const SERVER_NAME = 'talos';
 const RUN_DIR = path.join('.atlas', 'state');
 const SENSITIVE_KEY = /(authorization|credential|password|secret|token|api[_-]?key)/i;
 // S04: chaves cujo nome casa com SENSITIVE_KEY (substring `token`) mas NÃO são
@@ -60,18 +60,18 @@ const REQUIRED_PLAN_SECTIONS = [
   ['8', 'Validação e checklist'],
 ];
 const WORKFLOW_CONFIG = {
-  path: 'builtin:atlas-workflow',
+  path: 'builtin:talos',
   skills: {
-    backlog_generator: 'atlas-backlog-generator',
-    prd_generator: 'atlas-sprint-prd-generator',
-    prd_interview: 'atlas-prd-interview',
-    plan_handoff: 'atlas-plan-handoff',
-    plan_execute: 'atlas-plan-execute',
-    direct_execute: 'atlas-direct-execute',
-    audit: 'atlas-audit',
-    findings_repair: 'atlas-findings-repair',
-    slice_review: 'atlas-slice-review',
-    task_validator: 'atlas-task-validator',
+    backlog_generator: 'talos-backlog-generator',
+    prd_generator: 'talos-sprint-prd-generator',
+    prd_interview: 'talos-prd-interview',
+    plan_handoff: 'talos-plan-handoff',
+    plan_execute: 'talos-plan-execute',
+    direct_execute: 'talos-direct-execute',
+    audit: 'talos-audit',
+    findings_repair: 'talos-findings-repair',
+    slice_review: 'talos-slice-review',
+    task_validator: 'talos-task-validator',
   },
   modes: ['full', 'direct', 'execute', 'interview-only', 'interview_only', 'audit'],
 };
@@ -250,7 +250,7 @@ function renderBanner(event, slots = {}) {
   ));
 }
 // Camada de adapter: conhecimento host-específico centralizado em código.
-// Skills consultam atlas_capabilities e usam o descritor retornado em vez de
+// Skills consultam talos_capabilities e usam o descritor retornado em vez de
 // hardcodar nome de host. Adicionar host novo = adicionar entrada aqui.
 // Contrato HostAdapter (DEC-007): entrada runtime data-driven. Campos:
 //   subagent_dispatch, question_prompt, todo_tool, hooks, capabilities_flags. plan_paths/state são
@@ -263,7 +263,7 @@ const HOST_ADAPTERS = {
     label: 'Claude Code',
     subagent_dispatch: {
       mechanism: 'Agent(subagent_type)',
-      example: 'Agent(subagent_type: "atlas-task-validator", prompt: "<state_path>")',
+      example: 'Agent(subagent_type: "talos-task-validator", prompt: "<state_path>")',
       registration: 'agents/<name>.md na raiz do plugin',
     },
     validator_dispatch: {
@@ -287,16 +287,16 @@ const HOST_ADAPTERS = {
     label: 'Codex App',
     subagent_dispatch: {
       mechanism: 'spawn_agent(agent_type)',
-      example: 'spawn_agent(agent_type: "atlas-task-validator", items: [{ type: "text", text: "<state_path>" }])',
-      registration: 'CODEX_HOME/agents/<name>.toml via `npx github:pauloborini/atlas-workflow init codex` (custom agent nativo; developer_instructions carrega o SKILL.md; modelo herdado do host/conta)',
+      example: 'spawn_agent(agent_type: "talos-task-validator", items: [{ type: "text", text: "<state_path>" }])',
+      registration: 'CODEX_HOME/agents/<name>.toml via `npx github:pauloborini/talos init codex` (custom agent nativo; developer_instructions carrega o SKILL.md; modelo herdado do host/conta)',
     },
     validator_dispatch: {
       dispatcher: 'orchestrator',
-      required_agent_type: 'atlas-task-validator',
+      required_agent_type: 'talos-task-validator',
       join: {
         sync: 'self_evident',
         confidence: 'confirmed',
-        mechanism: 'spawn_agent bloqueante; retorno via state_path + veredito; no Codex deve usar explicitamente agent_type="atlas-task-validator"',
+        mechanism: 'spawn_agent bloqueante; retorno via state_path + veredito; no Codex deve usar explicitamente agent_type="talos-task-validator"',
       },
     },
     question_prompt: { mechanism: 'request_user_input', mode: 'structured', max_questions: 3, options_per_question: 3, persistence: 'prd_after_each_round' },
@@ -313,7 +313,7 @@ const HOST_ADAPTERS = {
     label: 'opencode',
     subagent_dispatch: {
       mechanism: '@<name> (ou auto por description)',
-      example: 'invocar @atlas-task-validator passando <state_path>',
+      example: 'invocar @talos-task-validator passando <state_path>',
       registration: '.opencode/agents/<name>.md (frontmatter description + mode: subagent)',
     },
     validator_dispatch: {
@@ -340,9 +340,9 @@ const HOST_ADAPTERS = {
     label: 'pi cli',
     subagent_dispatch: {
       // pi-subagents dispara pela tool `subagent({agent, task})` — NÃO por @name nem via MCP.
-      // As tools MCP do Atlas chegam proxiadas/prefixadas pelo pi-mcp-adapter (atlas_workflow_<tool>).
+      // As tools MCP do Talos chegam proxiadas/prefixadas pelo pi-mcp-adapter (talos_<tool>).
       mechanism: 'subagent({ agent, task }) — tool do pi-subagents',
-      example: 'subagent({ agent: "atlas-task-validator", task: "<state_path>", context: "fresh" })',
+      example: 'subagent({ agent: "talos-task-validator", task: "<state_path>", context: "fresh" })',
       registration: '.pi/agents/<name>.md (pi-subagents; frontmatter name + description + tools)',
     },
     validator_dispatch: {
@@ -376,8 +376,8 @@ const HOST_ADAPTERS = {
     // injetado, pois o subagente não carregará o contrato e o pipeline vai impasse.
     //
     // Fluxo para fases de execução/validação (executor, validator, repair, review):
-    //   1. define_subagent(name: "<atlas-exec>", system_prompt: "<SKILL.MD completo>")
-    //   2. invoke_subagent(Subagents: [{TypeName: "<atlas-exec>", Role: "<papel>",
+    //   1. define_subagent(name: "<talos-exec>", system_prompt: "<SKILL.MD completo>")
+    //   2. invoke_subagent(Subagents: [{TypeName: "<talos-exec>", Role: "<papel>",
     //                                   Prompt: "<state_path ou plan_path>",
     //                                   Workspace: "branch"}])
     //   — invoke_subagent é BLOQUEANTE por design: não polling, não background.
@@ -387,7 +387,7 @@ const HOST_ADAPTERS = {
     // conduz no fio principal; define_subagent não é chamado para essas fases.
     subagent_dispatch: {
       mechanism: 'define_subagent(name, system_prompt) + invoke_subagent(Subagents: [{TypeName, Role, Prompt, Workspace}])',
-      example: 'define_subagent(name: "atlas-task-validator", system_prompt: "<SKILL.MD completo do atlas-task-validator>") seguido de invoke_subagent(Subagents: [{TypeName: "atlas-task-validator", Role: "Validador frio", Prompt: "<state_path>", Workspace: "branch"}])',
+      example: 'define_subagent(name: "talos-task-validator", system_prompt: "<SKILL.MD completo do talos-task-validator>") seguido de invoke_subagent(Subagents: [{TypeName: "talos-task-validator", Role: "Validador frio", Prompt: "<state_path>", Workspace: "branch"}])',
       registration: 'define_subagent dinâmico por sessão — o SKILL.md canônico é passado como system_prompt; sem pré-registro persistente',
       // Sem loader nativo: o SKILL.md DEVE ser embutido no system_prompt do define_subagent.
       // Não usar TypeName: "self" sem injetar o SKILL.md — o subagente herdaria o contexto
@@ -402,7 +402,7 @@ const HOST_ADAPTERS = {
         mechanism: 'invoke_subagent bloqueante por design do host — sem polling, sem callback',
       },
     },
-    // question_prompt: usado pela atlas-prd-interview para fazer perguntas ao usuário.
+    // question_prompt: usado pela talos-prd-interview para fazer perguntas ao usuário.
     // No Antigravity, usar ask_question (ferramenta nativa de perguntas interativas).
     // IMPORTANTE — resume_after_interview: após receber respostas via ask_question,
     // persistir no PRD e RETOMAR O PIPELINE IMEDIATAMENTE sem nova confirmação.
@@ -431,10 +431,10 @@ const HOST_ADAPTERS = {
       // ZCode roda no Claude Agent SDK: Agent(subagent_type) nativo e bloqueante.
       // Skills/agents do plugin vivem no bundle (.zcode-plugin) carregado pelo host.
       mechanism: 'Agent(subagent_type)',
-      example: 'Agent(subagent_type: "atlas-task-validator", prompt: "<state_path>")',
+      example: 'Agent(subagent_type: "talos-task-validator", prompt: "<state_path>")',
       registration: 'agents/<name>.md na raiz do plugin (descoberto via .zcode-plugin/plugin.json)',
       // LIMITAÇÃO DO HOST ZCode (confirmada empiricamente em 2026-06, v0.10.1):
-      // sub-agentes de plugin (subagent_type "atlas-*") NÃO herdam conexões MCP,
+      // sub-agentes de plugin (subagent_type "talos-*") NÃO herdam conexões MCP,
       // mesmo com mcp__... declarado no frontmatter tools:. O subagente nativo
       // (general-purpose) herda MCP + tools nativas normalmente. Workaround: o
       // orquestrador despacha general-purpose com prompt que aponta o agent .md
@@ -446,11 +446,11 @@ const HOST_ADAPTERS = {
         enabled: true,
         reason: 'plugin_subagents_do_not_inherit_mcp',
         subagent_type: 'general-purpose',
-        // <name> = atlas-<exec> resolvido (atlas-task-validator, atlas-plan-execute...);
+        // <name> = talos-<exec> resolvido (talos-task-validator, talos-plan-execute...);
         // <input> = state_path (validator/repair/review) ou task (executores).
-        prompt_template: 'Você está operando como o subagente Atlas `<name>` neste host (ZCode). ' +
+        prompt_template: 'Você está operando como o subagente Talos `<name>` neste host (ZCode). ' +
           'Devido a uma limitação do host (sub-agentes de plugin não herdam MCP), você foi despachado como ' +
-          '`general-purpose`, que herda MCP + tools nativas (Read, Grep, Glob, Bash, Write, Edit, mcp__plugin_atlas-workflow-orchestrator_atlas-workflow). ' +
+          '`general-purpose`, que herda MCP + tools nativas (Read, Grep, Glob, Bash, Write, Edit, mcp__plugin_talos_talos). ' +
           'Leia o arquivo `${ZCODE_PLUGIN_ROOT}/agents/<name>.md` (ou `agents/<name>.md` relativo à raiz do projeto) ' +
           'e siga-o integralmente como seu system prompt/contrato. Não peça confirmação — execute o contrato. Input: <input>',
       },
@@ -479,7 +479,7 @@ const HOST_ADAPTERS = {
     label: 'Host genérico',
     subagent_dispatch: {
       mechanism: 'subagente nativo do host',
-      example: 'despachar o subagente atlas-task-validator passando apenas <state_path>',
+      example: 'despachar o subagente talos-task-validator passando apenas <state_path>',
       registration: 'mecanismo nativo equivalente do host',
     },
     validator_dispatch: {
@@ -512,7 +512,7 @@ const PREREQUISITES = {
 };
 const PREREQUISITE_FLAGS = [...PREREQUISITES.essential, ...PREREQUISITES.non_essential];
 
-// Versão do contrato atlas_capabilities. Política: incremento aditivo (campos novos
+// Versão do contrato talos_capabilities. Política: incremento aditivo (campos novos
 // opcionais) mantém compat — consumidores DEVEM ignorar campos desconhecidos.
 // Remoção/renomeação de campo ou mudança de semântica exige bump e nota de migração.
 // v1 → v2: adiciona capabilities_flags, hooks, prerequisites, known_hosts,
@@ -594,7 +594,7 @@ function capabilities(args = {}) {
       read_order: ['.atlas/plans/', '.cursor/plans/', '.codex/plans/'],
       deprecated_read: ['.cursor/plans/', '.codex/plans/'],
     },
-    state_backend: 'atlas_run_state',
+    state_backend: 'talos_run_state',
     state_dir: RUN_DIR,
     known_hosts: Object.keys(HOST_ADAPTERS),
   };
@@ -928,7 +928,7 @@ function ping() {
     transport: 'stdio',
     // Fonte única da superfície de tools: derivado de toolsList() para nunca
     // divergir do dispatcher/schema. Lista manual paralela já omitiu
-    // atlas_classify_input no passado (drift silencioso) — o orquestrador
+    // talos_classify_input no passado (drift silencioso) — o orquestrador
     // (Fase 0) aborta se uma capability exigida pelo modo não aparece aqui,
     // então a divergência travava run válida. Guard cruzado em server.test.js.
     capabilities: toolsList().tools.map((tool) => tool.name),
@@ -1081,7 +1081,7 @@ function upsertState(args) {
     summary: summary ?? previous?.summary ?? null,
     // P2/S22: upsert parcial DEVE preservar chaves irmãs do estado (dispatch,
     // validator_cycle, routing, gates). O executor escreve o handoff via
-    // atlas_run_state(upsert) com um `data` parcial; um replace cego apagava
+    // talos_run_state(upsert) com um `data` parcial; um replace cego apagava
     // `data.dispatch.active={plan_execute}`, fazendo o lock_validator(start)
     // seguinte bloquear ("current_phase null"). Merge top-level: o caller adiciona
     // chaves novas sem derrubar as existentes. Sem `data` no payload → mantém o
@@ -1090,7 +1090,7 @@ function upsertState(args) {
     created_at: previous?.created_at ?? timestamp,
     updated_at: timestamp,
     last_call: {
-      tool: 'atlas_run_state',
+      tool: 'talos_run_state',
       action: 'upsert',
       timestamp,
     },
@@ -1340,7 +1340,7 @@ function runState(args = {}) {
     return { ...state, validator_recovery: deriveValidatorRecovery(state) };
   }
   if (action === 'upsert') return upsertState(args);
-  throw rpcError(-32602, `Ação inválida para atlas_run_state: ${action}`);
+  throw rpcError(-32602, `Ação inválida para talos_run_state: ${action}`);
 }
 
 function validateJsonArtifactFile(absolutePath) {
@@ -2197,7 +2197,7 @@ function updatedSprintMarkdown(markdown, {
   ]);
   next = appendToMarkdownSectionTable(next, /^##\s+16\.\s+Histórico\s*$/i, [
     timestamp.slice(0, 10),
-    'Atlas MCP',
+    'Talos MCP',
     `Status -> ${status}; validator=${validatorVerdict}; evidence=${evidenceText}`,
   ]);
   return next;
@@ -2685,7 +2685,7 @@ function getDispatchState(runId, args = {}) {
   const state = readState(runId, args);
   const routing = state.data?.routing;
   if (!routing) {
-    throw rpcError(-32011, 'Preflight não executado: execute atlas_preflight antes do dispatch', {
+    throw rpcError(-32011, 'Preflight não executado: execute talos_preflight antes do dispatch', {
       run_id: runId,
     });
   }
@@ -3145,7 +3145,7 @@ function lockDispatch(args = {}) {
   }
   const action = args.action ?? 'start';
   if (!['start', 'checkpoint', 'status', 'complete', 'abort'].includes(action)) {
-    throw rpcError(-32602, `Ação inválida para atlas_lock_dispatch: ${action}`);
+    throw rpcError(-32602, `Ação inválida para talos_lock_dispatch: ${action}`);
   }
 
   const context = getDispatchState(runId, args);
@@ -3467,11 +3467,11 @@ function validateStateBoundary(statePathValue, args = {}) {
   for (const field of ['tasks', 'files_changed', 'boundary_refs']) {
     if (!Array.isArray(state[field])) violations.push(`${field} deve ser array`);
   }
-  const isDirect = state.executor_skill === 'atlas-direct-execute';
+  const isDirect = state.executor_skill === 'talos-direct-execute';
   const hasExtension = state.contract_kind !== undefined;
-  if (!hasExtension && state.executor_skill !== 'atlas-plan-execute') violations.push('schema legado permitido somente para atlas-plan-execute');
-  if (isDirect && state.contract_kind !== 'direct') violations.push('atlas-direct-execute exige contract_kind=direct');
-  if (hasExtension && state.executor_skill === 'atlas-plan-execute' && state.contract_kind !== 'plan') violations.push('atlas-plan-execute exige contract_kind=plan');
+  if (!hasExtension && state.executor_skill !== 'talos-plan-execute') violations.push('schema legado permitido somente para talos-plan-execute');
+  if (isDirect && state.contract_kind !== 'direct') violations.push('talos-direct-execute exige contract_kind=direct');
+  if (hasExtension && state.executor_skill === 'talos-plan-execute' && state.contract_kind !== 'plan') violations.push('talos-plan-execute exige contract_kind=plan');
   if (hasExtension && !['plan', 'direct'].includes(state.contract_kind)) violations.push('contract_kind deve ser plan ou direct');
   if (hasExtension || isDirect) {
     for (const field of ['base_sha', 'head_sha']) {
@@ -4431,7 +4431,7 @@ function lockValidator(args = {}) {
   const runId = validateRunId(args.run_id);
   const action = args.action ?? 'start';
   if (!['start', 'complete', 'repair_start', 'repair_complete'].includes(action)) {
-    throw rpcError(-32602, `Ação inválida para atlas_lock_validator: ${action}`);
+    throw rpcError(-32602, `Ação inválida para talos_lock_validator: ${action}`);
   }
   const context = getDispatchState(runId, args);
   const result = action === 'start'
@@ -4566,8 +4566,8 @@ function toolsList() {
   return {
     tools: [
       {
-        name: 'atlas_ping',
-        description: 'Retorna saúde, identidade, versão e capacidades mínimas do MCP Atlas Workflow.',
+        name: 'talos_ping',
+        description: 'Retorna saúde, identidade, versão e capacidades mínimas do MCP Talos.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
@@ -4575,7 +4575,7 @@ function toolsList() {
         },
       },
       {
-        name: 'atlas_capabilities',
+        name: 'talos_capabilities',
         description: 'Adapter de host: detecta o host (Claude/Codex/genérico) e retorna descritores canônicos de disparo de subagente, todo nativo e paths de plano. Skills consultam isto em vez de hardcodar nome de host.',
         inputSchema: {
           type: 'object',
@@ -4586,7 +4586,7 @@ function toolsList() {
         },
       },
       {
-        name: 'atlas_run_state',
+        name: 'talos_run_state',
         description: 'Cria, atualiza ou consulta estado de run em .atlas/state/ no cwd do projeto consumidor.',
         inputSchema: {
           type: 'object',
@@ -4604,7 +4604,7 @@ function toolsList() {
         },
       },
       {
-        name: 'atlas_verify_artifact',
+        name: 'talos_verify_artifact',
         description: 'Gate G1: verifica se artefato obrigatório existe em disco e é legível.',
         inputSchema: {
           type: 'object',
@@ -4619,7 +4619,7 @@ function toolsList() {
         },
       },
       {
-        name: 'atlas_scan_prd',
+        name: 'talos_scan_prd',
         description: 'Gate G5: escaneia PRD por padrões determinísticos de ambiguidade bloqueante.',
         inputSchema: {
           type: 'object',
@@ -4633,7 +4633,7 @@ function toolsList() {
         },
       },
       {
-        name: 'atlas_verify_template_conformance',
+        name: 'talos_verify_template_conformance',
         description: 'Gate de conformidade: valida PRD ou plano contra o template canônico aplicável e registra pendências acionáveis.',
         inputSchema: {
           type: 'object',
@@ -4650,7 +4650,7 @@ function toolsList() {
         },
       },
       {
-        name: 'atlas_verify_sprint_file',
+        name: 'talos_verify_sprint_file',
         description: 'Gate de conformidade: valida sprint file vivo contra SPRINT_TEMPLATE e, se fornecido, vínculo lexical com backlog mestre.',
         inputSchema: {
           type: 'object',
@@ -4666,7 +4666,7 @@ function toolsList() {
         },
       },
       {
-        name: 'atlas_verify_backlog_index',
+        name: 'talos_verify_backlog_index',
         description: 'Gate de conformidade: valida BACKLOG_MESTRE como índice macro, links para sprint files, deps internas, status espelhado e drift básico.',
         inputSchema: {
           type: 'object',
@@ -4680,7 +4680,7 @@ function toolsList() {
         },
       },
       {
-        name: 'atlas_select_next_sprint',
+        name: 'talos_select_next_sprint',
         description: 'Gate determinístico: seleciona a próxima sprint executável a partir do backlog indexado, exigindo deps done, sprint file válido e DoR verde.',
         inputSchema: {
           type: 'object',
@@ -4694,7 +4694,7 @@ function toolsList() {
         },
       },
       {
-        name: 'atlas_update_sprint_status',
+        name: 'talos_update_sprint_status',
         description: 'Gate determinístico: sincroniza status da sprint viva no BACKLOG_MESTRE e no SPRINT_SNN, exigindo evidência/validator para done.',
         inputSchema: {
           type: 'object',
@@ -4717,7 +4717,7 @@ function toolsList() {
         },
       },
       {
-        name: 'atlas_classify_input',
+        name: 'talos_classify_input',
         description: 'Classifica o input em backlog|prd|plan|unknown (PRD D4/D5). Verdade forte = conformidade de template de plano passa; depois cabeçalho canônico; nome PLAN_*.md é só dica fraca. Devolve artifact_type + banner de roteamento. Alimenta o guardrail anti plano-de-plano.',
         inputSchema: {
           type: 'object',
@@ -4731,7 +4731,7 @@ function toolsList() {
         },
       },
       {
-        name: 'atlas_preflight',
+        name: 'talos_preflight',
         description: 'Gate PREREQ+G10: hard-fail de pré-requisitos de determinismo (subagente/MCP do host, DEC-004), depois valida modo, versão e lock ativo, travando a rota da run. Output declara guarantee_level só em modos com execução.',
         inputSchema: {
           type: 'object',
@@ -4768,7 +4768,7 @@ function toolsList() {
         },
       },
       {
-        name: 'atlas_lock_dispatch',
+        name: 'talos_lock_dispatch',
         description: 'Gates G7/G8/G12: controla fase ativa, checkpoints de liveness do executor, transições de dispatch, validator antes de review e concorrência 1.',
         inputSchema: {
           type: 'object',
@@ -4792,7 +4792,7 @@ function toolsList() {
         },
       },
       {
-        name: 'atlas_lock_validator',
+        name: 'talos_lock_validator',
         description: 'Gate G4/G8 sibling: enforça um validator por vez em todos os hosts, dispatch_token obrigatório no retorno, proof-of-work (challenge sha256 do boundary recomputado no complete), máximo de 2 attempts, repair obrigatório entre fail e retry e bloqueio explícito do terceiro validator.',
         inputSchema: {
           type: 'object',
@@ -4815,7 +4815,7 @@ function toolsList() {
         },
       },
       {
-        name: 'atlas_assert_after_plan',
+        name: 'talos_assert_after_plan',
         description: 'Gate G11: bloqueia encerramento prematuro do modo full após plano validado e antes da execução.',
         inputSchema: {
           type: 'object',
@@ -4850,21 +4850,21 @@ function handleRequest(message) {
     const args = params.arguments ?? {};
     try {
       const value =
-        name === 'atlas_ping' ? ping() :
-        name === 'atlas_capabilities' ? capabilities(args) :
-        name === 'atlas_run_state' ? runState(args) :
-        name === 'atlas_verify_artifact' ? verifyArtifact(args) :
-        name === 'atlas_scan_prd' ? scanPrd(args) :
-        name === 'atlas_verify_template_conformance' ? verifyTemplateConformance(args) :
-        name === 'atlas_verify_sprint_file' ? verifySprintFile(args) :
-        name === 'atlas_verify_backlog_index' ? verifyBacklogIndex(args) :
-        name === 'atlas_select_next_sprint' ? selectNextSprint(args) :
-        name === 'atlas_update_sprint_status' ? updateSprintStatus(args) :
-        name === 'atlas_classify_input' ? classifyInput(args) :
-        name === 'atlas_preflight' ? preflight(args) :
-        name === 'atlas_lock_dispatch' ? lockDispatch(args) :
-        name === 'atlas_lock_validator' ? lockValidator(args) :
-        name === 'atlas_assert_after_plan' ? assertAfterPlan(args) :
+        name === 'talos_ping' ? ping() :
+        name === 'talos_capabilities' ? capabilities(args) :
+        name === 'talos_run_state' ? runState(args) :
+        name === 'talos_verify_artifact' ? verifyArtifact(args) :
+        name === 'talos_scan_prd' ? scanPrd(args) :
+        name === 'talos_verify_template_conformance' ? verifyTemplateConformance(args) :
+        name === 'talos_verify_sprint_file' ? verifySprintFile(args) :
+        name === 'talos_verify_backlog_index' ? verifyBacklogIndex(args) :
+        name === 'talos_select_next_sprint' ? selectNextSprint(args) :
+        name === 'talos_update_sprint_status' ? updateSprintStatus(args) :
+        name === 'talos_classify_input' ? classifyInput(args) :
+        name === 'talos_preflight' ? preflight(args) :
+        name === 'talos_lock_dispatch' ? lockDispatch(args) :
+        name === 'talos_lock_validator' ? lockValidator(args) :
+        name === 'talos_assert_after_plan' ? assertAfterPlan(args) :
         (() => { throw rpcError(-32601, `Tool desconhecida: ${name}`); })();
       logCall({ tool: name, run: args.run_id ?? null, status: 'ok' }, args);
       return { id, result: toolResult(value) };

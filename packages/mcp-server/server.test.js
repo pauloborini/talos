@@ -1,6 +1,6 @@
 // Testes de unidade do núcleo portável do MCP (S04 / F2-A6).
 // Cobre: detecção de host (registry data-driven + precedência), contrato
-// atlas_capabilities (schema_version, flags, known_hosts) e hard-fail de
+// talos_capabilities (schema_version, flags, known_hosts) e hard-fail de
 // pré-requisitos (DEC-004). Rodar: node --test packages/mcp-server/
 import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
@@ -63,7 +63,7 @@ function lockValidator(args) {
           plan_path: '.atlas/plans/test.md',
           boundary_refs: [],
           executed_at: new Date().toISOString(),
-          executor_skill: 'atlas-plan-execute',
+          executor_skill: 'talos-plan-execute',
         }, null, 2));
       }
       lockDispatch({
@@ -121,11 +121,11 @@ test('ping: capabilities cobre exatamente a superfície de tools (sem drift)', (
   // Guard cruzado do P0: ping().capabilities é derivado de toolsList() — qualquer
   // tool nova ou removida propaga sozinha. Este teste falha se alguém reintroduzir
   // uma lista manual paralela que omita uma tool (regressão histórica:
-  // atlas_classify_input ficou fora do ping e podia abortar run válida).
+  // talos_classify_input ficou fora do ping e podia abortar run válida).
   const toolNames = toolsList().tools.map((tool) => tool.name).sort();
   const capList = [...ping().capabilities].sort();
   assert.deepEqual(capList, toolNames);
-  assert.ok(capList.includes('atlas_classify_input'), 'atlas_classify_input deve estar nas capabilities');
+  assert.ok(capList.includes('talos_classify_input'), 'talos_classify_input deve estar nas capabilities');
 });
 
 test('detectHost: arg host explícito tem prioridade máxima', () => {
@@ -221,7 +221,7 @@ test('capabilities: perfil codex usa subagent nativo, não $skill in-context', (
   assert.doesNotMatch(cap.subagent_dispatch.example, /\$atlas/);
   assert.equal(cap.capabilities_flags.subagent_available, true);
   assert.equal(cap.validator_dispatch.dispatcher, 'orchestrator');
-  assert.equal(cap.validator_dispatch.required_agent_type, 'atlas-task-validator');
+  assert.equal(cap.validator_dispatch.required_agent_type, 'talos-task-validator');
   assert.equal(cap.validator_dispatch.required_codex_model, undefined);
   assert.equal(cap.validator_dispatch.required_codex_model_reasoning_effort, undefined);
 });
@@ -749,46 +749,46 @@ test('WORKFLOW_CONFIG: modo execute presente; audit e interview-only/interview_o
   assert.ok(WORKFLOW_CONFIG.modes.includes('interview-only'));
   assert.ok(WORKFLOW_CONFIG.modes.includes('interview_only'));
   assert.ok(!WORKFLOW_CONFIG.modes.includes('plan'));
-  assert.equal(WORKFLOW_CONFIG.skills.backlog_generator, 'atlas-backlog-generator');
-  assert.equal(WORKFLOW_CONFIG.skills.audit, 'atlas-audit');
+  assert.equal(WORKFLOW_CONFIG.skills.backlog_generator, 'talos-backlog-generator');
+  assert.equal(WORKFLOW_CONFIG.skills.audit, 'talos-audit');
 });
 
 test('documentFlowForRouting: macro input prioriza backlog antes de PRD/plano', () => {
   const full = documentFlowForRouting('full', 'idea');
   assert.equal(full.priority, 'backlog_first');
   assert.deepEqual(full.skills, [
-    'atlas-backlog-generator',
-    'atlas-sprint-prd-generator',
-    'atlas-prd-interview',
-    'atlas-plan-handoff',
+    'talos-backlog-generator',
+    'talos-sprint-prd-generator',
+    'talos-prd-interview',
+    'talos-plan-handoff',
   ]);
   assert.deepEqual(full.artifacts, ['BACKLOG_MESTRE_*.md', 'SPRINT_S<NN>_*.md', 'PRD_*.md', 'PLAN_*.md']);
 
   const direct = documentFlowForRouting('direct', 'roadmap');
   assert.equal(direct.priority, 'backlog_first');
   assert.deepEqual(direct.skills, [
-    'atlas-backlog-generator',
-    'atlas-sprint-prd-generator',
-    'atlas-prd-interview',
+    'talos-backlog-generator',
+    'talos-sprint-prd-generator',
+    'talos-prd-interview',
   ]);
 });
 
 test('documentFlowForRouting: backlog existente preserva execução pequena por sprint', () => {
   const flow = documentFlowForRouting('full', 'backlog-item', 'backlog');
   assert.equal(flow.priority, 'sprint_from_backlog');
-  assert.ok(!flow.skills.includes('atlas-backlog-generator'));
+  assert.ok(!flow.skills.includes('talos-backlog-generator'));
   assert.deepEqual(flow.artifacts, ['SPRINT_S<NN>_*.md', 'PRD_*.md', 'PLAN_*.md']);
 });
 
 test('documentFlowForRouting: input sprint é alias estrito de backlog-item', () => {
   const full = documentFlowForRouting('full', 'sprint');
   assert.equal(full.priority, 'sprint_from_backlog');
-  assert.ok(!full.skills.includes('atlas-backlog-generator'));
+  assert.ok(!full.skills.includes('talos-backlog-generator'));
   assert.deepEqual(full.artifacts, ['SPRINT_S<NN>_*.md', 'PRD_*.md', 'PLAN_*.md']);
 
   const direct = documentFlowForRouting('direct', 'sprint');
   assert.equal(direct.priority, 'sprint_from_backlog');
-  assert.ok(!direct.skills.includes('atlas-backlog-generator'));
+  assert.ok(!direct.skills.includes('talos-backlog-generator'));
   assert.deepEqual(direct.artifacts, ['SPRINT_S<NN>_*.md', 'PRD_*.md']);
 });
 
@@ -803,9 +803,9 @@ test('expectedNextPhase: execute → plan_execute sem regredir full/direct/inter
 });
 
 test('matriz modo → executor preserva phase plan_execute compartilhada (Etapa 1 T01)', () => {
-  assert.equal(expectedExecutorSkill('full'), 'atlas-plan-execute');
-  assert.equal(expectedExecutorSkill('execute'), 'atlas-plan-execute');
-  assert.equal(expectedExecutorSkill('direct'), 'atlas-direct-execute');
+  assert.equal(expectedExecutorSkill('full'), 'talos-plan-execute');
+  assert.equal(expectedExecutorSkill('execute'), 'talos-plan-execute');
+  assert.equal(expectedExecutorSkill('direct'), 'talos-direct-execute');
   assert.equal(expectedExecutorSkill('interview-only'), null);
   assert.equal(expectedExecutorSkill('audit'), null);
   for (const mode of ['direct', 'execute']) {
@@ -813,11 +813,11 @@ test('matriz modo → executor preserva phase plan_execute compartilhada (Etapa 
   }
 });
 
-test('atlas_preflight materializa executor efetivo por modo sem alterar phase/FSM (Etapa 1 T01)', () => {
+test('talos_preflight materializa executor efetivo por modo sem alterar phase/FSM (Etapa 1 T01)', () => {
   for (const [mode, executor] of [
-    ['full', 'atlas-plan-execute'],
-    ['direct', 'atlas-direct-execute'],
-    ['execute', 'atlas-plan-execute'],
+    ['full', 'talos-plan-execute'],
+    ['direct', 'talos-direct-execute'],
+    ['execute', 'talos-plan-execute'],
   ]) {
     const result = preflight({
       run_id: `route-${mode}`,
@@ -831,7 +831,7 @@ test('atlas_preflight materializa executor efetivo por modo sem alterar phase/FS
   }
 });
 
-test('atlas_preflight materializa document_flow backlog_first para macro input', () => {
+test('talos_preflight materializa document_flow backlog_first para macro input', () => {
   const result = preflight({
     run_id: 'route-full-idea-backlog-first',
     project_root: tmpRoot(),
@@ -842,7 +842,7 @@ test('atlas_preflight materializa document_flow backlog_first para macro input',
   });
   assert.equal(result.status, 'passed');
   assert.equal(result.routing.document_flow.priority, 'backlog_first');
-  assert.equal(result.routing.document_flow.skills[0], 'atlas-backlog-generator');
+  assert.equal(result.routing.document_flow.skills[0], 'talos-backlog-generator');
   assert.equal(expectedNextPhase(result.routing, {}), 'plan_handoff');
 });
 
@@ -903,7 +903,7 @@ test('guaranteeLevelForMode: modos sem execução (interview) → null (campo om
   assert.equal(guaranteeLevelForMode('desconhecido'), null);
 });
 
-test('atlas_preflight: audit passa sem executor/guarantee_level e expõe atlas-audit', () => {
+test('talos_preflight: audit passa sem executor/guarantee_level e expõe talos-audit', () => {
   const result = preflight({
     run_id: 'route-audit',
     project_root: tmpRoot(),
@@ -913,7 +913,7 @@ test('atlas_preflight: audit passa sem executor/guarantee_level e expõe atlas-a
   assert.equal(result.status, 'passed');
   assert.equal(result.routing.executor_skill, undefined);
   assert.equal(result.routing.guarantee_level, undefined);
-  assert.equal(result.routing.skills.audit, 'atlas-audit');
+  assert.equal(result.routing.skills.audit, 'talos-audit');
   assert.equal(expectedNextPhase(result.routing, {}), 'audit_report');
 });
 
@@ -1172,7 +1172,7 @@ function sprintDoc({
     '  forbidden_scope:',
     '    - "hosts"',
     '  required_gates:',
-    '    - "atlas_verify_sprint_file"',
+    '    - "talos_verify_sprint_file"',
     '```',
     '## 11. Guia e sensores',
     '- [ ] Guia',
@@ -1208,7 +1208,7 @@ const BACKLOG_WITH_SPRINT_FILE = [
   '',
 ].join('\n');
 
-test('atlas_verify_artifact: gate retorna banner não-vazio (passed → plano) (T07)', () => {
+test('talos_verify_artifact: gate retorna banner não-vazio (passed → plano) (T07)', () => {
   const root = tmpRoot();
   const file = path.join(root, 'PLAN_x.md');
   fs.writeFileSync(file, CONFORMANT_PLAN_DOC);
@@ -1218,14 +1218,14 @@ test('atlas_verify_artifact: gate retorna banner não-vazio (passed → plano) (
   assert.equal(r.banner, '▸ atlas: plano · validado (TC pass)');
 });
 
-test('atlas_verify_artifact: ausente → banner de BLOCK não-vazio (T07)', () => {
+test('talos_verify_artifact: ausente → banner de BLOCK não-vazio (T07)', () => {
   const root = tmpRoot();
   const r = verifyArtifact({ run_id: 'r1', project_root: root, artifact_path: 'nao_existe.md' });
   assert.equal(r.status, 'blocked');
   assert.match(r.banner, /^▸ atlas: preflight · BLOCK · /);
 });
 
-test('atlas_scan_prd: 0 bloqueantes → banner prd · ok (T07)', () => {
+test('talos_scan_prd: 0 bloqueantes → banner prd · ok (T07)', () => {
   const root = tmpRoot();
   fs.writeFileSync(path.join(root, 'PRD.md'), VALID_PRD);
   const r = scanPrd({ run_id: 'r1', project_root: root, prd_path: 'PRD.md' });
@@ -1233,7 +1233,7 @@ test('atlas_scan_prd: 0 bloqueantes → banner prd · ok (T07)', () => {
   assert.equal(r.banner, '▸ atlas: prd · ok');
 });
 
-test('atlas_scan_prd: PRD vazio → banner prd · {n} lacunas (T07)', () => {
+test('talos_scan_prd: PRD vazio → banner prd · {n} lacunas (T07)', () => {
   const root = tmpRoot();
   fs.writeFileSync(path.join(root, 'PRD.md'), '   ');
   const r = scanPrd({ run_id: 'r1', project_root: root, prd_path: 'PRD.md' });
@@ -1241,7 +1241,7 @@ test('atlas_scan_prd: PRD vazio → banner prd · {n} lacunas (T07)', () => {
   assert.match(r.banner, /^▸ atlas: prd · \d+ lacunas$/);
 });
 
-test('atlas_verify_template_conformance: plano conforme → banner plano (T07)', () => {
+test('talos_verify_template_conformance: plano conforme → banner plano (T07)', () => {
   const root = tmpRoot();
   fs.writeFileSync(path.join(root, 'PLAN_x.md'), CONFORMANT_PLAN_DOC);
   const r = verifyTemplateConformance({ run_id: 'r1', project_root: root, artifact_path: 'PLAN_x.md', artifact_type: 'plan' });
@@ -1249,7 +1249,7 @@ test('atlas_verify_template_conformance: plano conforme → banner plano (T07)',
   assert.equal(r.banner, '▸ atlas: plano · validado (TC pass)');
 });
 
-test('atlas_verify_template_conformance: modo sprint exige Sprint file/EVAL em PRD e PLAN', () => {
+test('talos_verify_template_conformance: modo sprint exige Sprint file/EVAL em PRD e PLAN', () => {
   const root = tmpRoot();
   fs.writeFileSync(path.join(root, 'PRD_ok.md'), STRICT_PRD_DOC);
   fs.writeFileSync(path.join(root, 'PLAN_ok.md'), CONFORMANT_PLAN_DOC);
@@ -1279,7 +1279,7 @@ test('atlas_verify_template_conformance: modo sprint exige Sprint file/EVAL em P
   assert.ok(planBlocked.pendencies.some((p) => p.category === 'sprint_file'));
 });
 
-test('atlas_verify_template_conformance: plano não conforme → banner BLOCK (T07)', () => {
+test('talos_verify_template_conformance: plano não conforme → banner BLOCK (T07)', () => {
   const root = tmpRoot();
   fs.writeFileSync(path.join(root, 'ruim.md'), '# nada\n\nconteúdo solto');
   const r = verifyTemplateConformance({ run_id: 'r1', project_root: root, artifact_path: 'ruim.md', artifact_type: 'plan' });
@@ -1304,7 +1304,7 @@ test('parseSprintRows: aceita sub-sprint decimal registrada no backlog', () => {
   assert.equal(rows[0].sprint_file, '`.atlas/backlog/sprints/SPRINT_S17.1_runtime.md`');
 });
 
-test('atlas_verify_sprint_file: válido passa com vínculo no backlog', () => {
+test('talos_verify_sprint_file: válido passa com vínculo no backlog', () => {
   const root = tmpRoot();
   fs.mkdirSync(path.join(root, '.atlas/backlog/sprints'), { recursive: true });
   fs.writeFileSync(path.join(root, '.atlas/backlog/sprints/SPRINT_S01_runtime.md'), sprintDoc());
@@ -1320,7 +1320,7 @@ test('atlas_verify_sprint_file: válido passa com vínculo no backlog', () => {
   assert.equal(r.pending_count, 0);
 });
 
-test('atlas_verify_sprint_file: aceita sub-sprint decimal registrada', () => {
+test('talos_verify_sprint_file: aceita sub-sprint decimal registrada', () => {
   const root = tmpRoot();
   fs.mkdirSync(path.join(root, '.atlas/backlog/sprints'), { recursive: true });
   const backlog = BACKLOG_WITH_SPRINT_FILE.replaceAll('S01', 'S17.1');
@@ -1337,7 +1337,7 @@ test('atlas_verify_sprint_file: aceita sub-sprint decimal registrada', () => {
   assert.equal(r.pending_count, 0);
 });
 
-test('atlas_verify_sprint_file: falta eval_manifest falha', () => {
+test('talos_verify_sprint_file: falta eval_manifest falha', () => {
   const root = tmpRoot();
   fs.writeFileSync(path.join(root, 'SPRINT_S01.md'), sprintDoc({ includeEval: false }));
   const r = verifySprintFile({ run_id: 'r1', project_root: root, sprint_path: 'SPRINT_S01.md', sprint_id: 'S01' });
@@ -1345,7 +1345,7 @@ test('atlas_verify_sprint_file: falta eval_manifest falha', () => {
   assert.ok(r.pendencies.some((p) => p.category === 'eval_manifest'));
 });
 
-test('atlas_verify_sprint_file: sprint_id divergente falha', () => {
+test('talos_verify_sprint_file: sprint_id divergente falha', () => {
   const root = tmpRoot();
   fs.writeFileSync(path.join(root, 'SPRINT_S01.md'), sprintDoc());
   const r = verifySprintFile({ run_id: 'r1', project_root: root, sprint_path: 'SPRINT_S01.md', sprint_id: 'S02' });
@@ -1353,7 +1353,7 @@ test('atlas_verify_sprint_file: sprint_id divergente falha', () => {
   assert.ok(r.pendencies.some((p) => p.item === 'Sprint ID' || p.item === 'sprint_id'));
 });
 
-test('atlas_verify_sprint_file: backlog link ausente falha', () => {
+test('talos_verify_sprint_file: backlog link ausente falha', () => {
   const root = tmpRoot();
   fs.writeFileSync(path.join(root, 'SPRINT_S01.md'), sprintDoc());
   fs.writeFileSync(path.join(root, 'BACKLOG.md'), BACKLOG_WITH_SPRINT_FILE.replace('S01', 'S02'));
@@ -1386,7 +1386,7 @@ function writeSprintFixture(root, id, { status = 'ready', dorStatus = 'verde' } 
   );
 }
 
-test('atlas_verify_backlog_index: índice válido passa com sprint file e status espelhado', () => {
+test('talos_verify_backlog_index: índice válido passa com sprint file e status espelhado', () => {
   const root = tmpRoot();
   writeSprintFixture(root, 'S01', { status: 'ready', dorStatus: 'verde' });
   fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
@@ -1398,7 +1398,7 @@ test('atlas_verify_backlog_index: índice válido passa com sprint file e status
   assert.equal(r.sprints[0].sprint_file_status, 'valid');
 });
 
-test('atlas_verify_backlog_index: status drift backlog x sprint file bloqueia', () => {
+test('talos_verify_backlog_index: status drift backlog x sprint file bloqueia', () => {
   const root = tmpRoot();
   writeSprintFixture(root, 'S01', { status: 'doing', dorStatus: 'verde' });
   fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
@@ -1409,7 +1409,7 @@ test('atlas_verify_backlog_index: status drift backlog x sprint file bloqueia', 
   assert.ok(r.pendencies.some((p) => p.category === 'status_drift'));
 });
 
-test('atlas_select_next_sprint: escolhe sprint ready com maior prioridade determinística', () => {
+test('talos_select_next_sprint: escolhe sprint ready com maior prioridade determinística', () => {
   const root = tmpRoot();
   writeSprintFixture(root, 'S01', { status: 'ready', dorStatus: 'verde' });
   writeSprintFixture(root, 'S02', { status: 'ready', dorStatus: 'verde' });
@@ -1423,7 +1423,7 @@ test('atlas_select_next_sprint: escolhe sprint ready com maior prioridade determ
   assert.deepEqual(r.candidates, ['S02', 'S01']);
 });
 
-test('atlas_select_next_sprint: dependência interna não done bloqueia seleção', () => {
+test('talos_select_next_sprint: dependência interna não done bloqueia seleção', () => {
   const root = tmpRoot();
   writeSprintFixture(root, 'S01', { status: 'backlog', dorStatus: 'verde' });
   writeSprintFixture(root, 'S02', { status: 'ready', dorStatus: 'verde' });
@@ -1437,7 +1437,7 @@ test('atlas_select_next_sprint: dependência interna não done bloqueia seleçã
   assert.ok(r.rejected.some((item) => item.id === 'S02' && item.reasons.some((reason) => /unmet_dependencies=S01:backlog/.test(reason))));
 });
 
-test('atlas_update_sprint_status: sincroniza done no backlog e sprint file com evidência', () => {
+test('talos_update_sprint_status: sincroniza done no backlog e sprint file com evidência', () => {
   const root = tmpRoot();
   writeSprintFixture(root, 'S01', { status: 'ready', dorStatus: 'verde' });
   fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
@@ -1468,11 +1468,11 @@ test('atlas_update_sprint_status: sincroniza done no backlog e sprint file com e
   const sprint = fs.readFileSync(path.join(root, '.atlas/backlog/sprints/SPRINT_S01_runtime.md'), 'utf8');
   assert.match(sprint, /^\| Status \| done \|$/m);
   assert.match(sprint, /\| Sprint status update \| validator:pass \| validator pass \|/);
-  assert.match(sprint, /\| Atlas MCP \| Status -> done; validator=pass; evidence=validator pass \|/);
+  assert.match(sprint, /\| Talos MCP \| Status -> done; validator=pass; evidence=validator pass \|/);
   assert.equal(verifyBacklogIndex({ run_id: 'r1', project_root: root, backlog_path: 'BACKLOG.md' }).status, 'passed');
 });
 
-test('atlas_update_sprint_status: done sem validator terminal bloqueia e não muta', () => {
+test('talos_update_sprint_status: done sem validator terminal bloqueia e não muta', () => {
   const root = tmpRoot();
   writeSprintFixture(root, 'S01', { status: 'ready', dorStatus: 'verde' });
   fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
@@ -1492,7 +1492,7 @@ test('atlas_update_sprint_status: done sem validator terminal bloqueia e não mu
   assert.equal(fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8'), before);
 });
 
-test('atlas_update_sprint_status: reabrir done bloqueia por padrão', () => {
+test('talos_update_sprint_status: reabrir done bloqueia por padrão', () => {
   const root = tmpRoot();
   writeSprintFixture(root, 'S01', { status: 'done', dorStatus: 'verde' });
   fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
@@ -1509,7 +1509,7 @@ test('atlas_update_sprint_status: reabrir done bloqueia por padrão', () => {
   assert.ok(r.pendencies.some((p) => p.category === 'status_transition'));
 });
 
-test('atlas_update_sprint_status: falha de FS no sprint file faz rollback do backlog (P2)', () => {
+test('talos_update_sprint_status: falha de FS no sprint file faz rollback do backlog (P2)', () => {
   const root = tmpRoot();
   writeSprintFixture(root, 'S01', { status: 'ready', dorStatus: 'verde' });
   fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
@@ -1545,7 +1545,7 @@ test('atlas_update_sprint_status: falha de FS no sprint file faz rollback do bac
   }
 });
 
-test('atlas_classify_input: plano → banner roteia com modo=execute (T07)', () => {
+test('talos_classify_input: plano → banner roteia com modo=execute (T07)', () => {
   const root = tmpRoot();
   fs.writeFileSync(path.join(root, 'PLAN_x.md'), CONFORMANT_PLAN_DOC);
   const r = classifyInput({ run_id: 'r1', project_root: root, input_path: 'PLAN_x.md' });
@@ -1554,7 +1554,7 @@ test('atlas_classify_input: plano → banner roteia com modo=execute (T07)', () 
   assert.equal(r.banner, '▸ atlas: roteamento · input=plan → modo=execute');
 });
 
-test('atlas_classify_input: unknown → banner BLOCK não-vazio (T07)', () => {
+test('talos_classify_input: unknown → banner BLOCK não-vazio (T07)', () => {
   const root = tmpRoot();
   fs.writeFileSync(path.join(root, 'notas.md'), 'texto solto sem estrutura');
   const r = classifyInput({ run_id: 'r1', project_root: root, input_path: 'notas.md' });
@@ -1562,7 +1562,7 @@ test('atlas_classify_input: unknown → banner BLOCK não-vazio (T07)', () => {
   assert.match(r.banner, /^▸ atlas: preflight · BLOCK · /);
 });
 
-test('atlas_classify_input: idea (texto livre, não arquivo) → not_a_file/direct, sem BLOCK (A6)', () => {
+test('talos_classify_input: idea (texto livre, não arquivo) → not_a_file/direct, sem BLOCK (A6)', () => {
   const root = tmpRoot();
   const r = classifyInput({
     run_id: 'r1',
@@ -1576,14 +1576,14 @@ test('atlas_classify_input: idea (texto livre, não arquivo) → not_a_file/dire
   assert.doesNotMatch(r.banner, /BLOCK/);
 });
 
-test('atlas_classify_input: path com cara de arquivo mas ausente → BLOCK (erro real, não idea) (A6)', () => {
+test('talos_classify_input: path com cara de arquivo mas ausente → BLOCK (erro real, não idea) (A6)', () => {
   const root = tmpRoot();
   const r = classifyInput({ run_id: 'r1', project_root: root, input_path: 'PLAN_inexistente.md' });
   assert.equal(r.status, 'blocked');
   assert.match(r.banner, /^▸ atlas: preflight · BLOCK · /);
 });
 
-test('atlas_preflight: execute qualificado → banner preflight · ok (T07)', () => {
+test('talos_preflight: execute qualificado → banner preflight · ok (T07)', () => {
   const root = tmpRoot();
   const r = preflight({
     run_id: 'rpf', project_root: root, mode: 'execute',
@@ -1593,7 +1593,7 @@ test('atlas_preflight: execute qualificado → banner preflight · ok (T07)', ()
   assert.equal(r.banner, '▸ atlas: preflight · ok (subagent+mcp)');
 });
 
-test('atlas_preflight: modo inválido → banner BLOCK não-vazio (T07)', () => {
+test('talos_preflight: modo inválido → banner BLOCK não-vazio (T07)', () => {
   const root = tmpRoot();
   const r = preflight({
     run_id: 'rpf2', project_root: root, mode: 'modo_invalido',
@@ -1603,7 +1603,7 @@ test('atlas_preflight: modo inválido → banner BLOCK não-vazio (T07)', () => 
   assert.match(r.banner, /^▸ atlas: preflight · BLOCK · /);
 });
 
-test('atlas_lock_dispatch: start plan_execute em execute → banner exec não-vazio (T07)', () => {
+test('talos_lock_dispatch: start plan_execute em execute → banner exec não-vazio (T07)', () => {
   const root = tmpRoot();
   preflight({
     run_id: 'rld', project_root: root, mode: 'execute',
@@ -1614,7 +1614,7 @@ test('atlas_lock_dispatch: start plan_execute em execute → banner exec não-va
   assert.match(r.banner, /^▸ atlas: exec · slice \d+\/\d+$/);
 });
 
-test('atlas_lock_dispatch: plan_execute cria liveness G12 no start e aceita checkpoint', () => {
+test('talos_lock_dispatch: plan_execute cria liveness G12 no start e aceita checkpoint', () => {
   const root = tmpRoot();
   preflight({
     run_id: 'g12live', project_root: root, mode: 'execute',
@@ -1645,7 +1645,7 @@ test('atlas_lock_dispatch: plan_execute cria liveness G12 no start e aceita chec
   assert.equal(state.data.dispatch.active.liveness.checkpoints[0].plan_path, '.atlas/plans/PLAN_S41.md');
 });
 
-test('atlas_lock_dispatch: status marca bootstrap sem checkpoint como stalled e libera retry', () => {
+test('talos_lock_dispatch: status marca bootstrap sem checkpoint como stalled e libera retry', () => {
   const root = tmpRoot();
   preflight({
     run_id: 'g12stall', project_root: root, mode: 'execute',
@@ -1674,7 +1674,7 @@ test('atlas_lock_dispatch: status marca bootstrap sem checkpoint como stalled e 
   assert.equal(readRunJson(root, 'g12stall').data.dispatch.active.phase, 'plan_execute');
 });
 
-test('atlas_lock_dispatch: status marca checkpoint antigo sem progresso como stalled', () => {
+test('talos_lock_dispatch: status marca checkpoint antigo sem progresso como stalled', () => {
   const root = tmpRoot();
   preflight({
     run_id: 'g12progress', project_root: root, mode: 'execute',
@@ -1702,7 +1702,7 @@ test('atlas_lock_dispatch: status marca checkpoint antigo sem progresso como sta
   assert.equal(readRunJson(root, 'g12progress').data.dispatch.executor_liveness.status, 'stalled');
 });
 
-test('atlas_lock_dispatch: handoff_ready não expira enquanto aguarda validator', () => {
+test('talos_lock_dispatch: handoff_ready não expira enquanto aguarda validator', () => {
   const root = tmpRoot();
   preflight({
     run_id: 'g12handoff', project_root: root, mode: 'execute',
@@ -1736,7 +1736,7 @@ test('atlas_lock_dispatch: handoff_ready não expira enquanto aguarda validator'
   assert.equal(readRunJson(root, 'g12handoff').data.dispatch.active.phase, 'plan_execute');
 });
 
-test('atlas_lock_dispatch: state_path_created exige state_path legível', () => {
+test('talos_lock_dispatch: state_path_created exige state_path legível', () => {
   const root = tmpRoot();
   preflight({
     run_id: 'g12path', project_root: root, mode: 'execute',
@@ -1766,7 +1766,7 @@ test('atlas_lock_dispatch: state_path_created exige state_path legível', () => 
   assert.equal(unreadable.next_action, 'corrigir_state_path_antes_do_handoff');
 });
 
-test('atlas_lock_validator: G12 bloqueia start sem state_path_created correspondente', () => {
+test('talos_lock_validator: G12 bloqueia start sem state_path_created correspondente', () => {
   const root = tmpRoot();
   preflight({
     run_id: 'g12validator', project_root: root, mode: 'execute',
@@ -1826,7 +1826,7 @@ test('atlas_lock_validator: G12 bloqueia start sem state_path_created correspond
   assert.equal(ok.validator_status, 'running');
 });
 
-test('atlas_lock_dispatch: plan_execute aceita passed_with_observations como terminal aprovado', () => {
+test('talos_lock_dispatch: plan_execute aceita passed_with_observations como terminal aprovado', () => {
   const root = tmpRoot();
   preflight({
     run_id: 'rld-passobs', project_root: root, mode: 'execute',
@@ -1844,7 +1844,7 @@ test('atlas_lock_dispatch: plan_execute aceita passed_with_observations como ter
   assert.equal(r.validator_status, 'passed_with_observations');
 });
 
-test('atlas_lock_validator: codex sibling bloqueia validator concorrente e exige repair antes do retry', () => {
+test('talos_lock_validator: codex sibling bloqueia validator concorrente e exige repair antes do retry', () => {
   const root = tmpRoot();
   preflight({
     run_id: 'rv1', project_root: root, mode: 'execute',
@@ -1954,7 +1954,7 @@ test('atlas_lock_validator: codex sibling bloqueia validator concorrente e exige
   assert.equal(start2.validator_attempt, 2);
 });
 
-test('atlas_lock_validator: terceiro validator é impossível e segundo fail bloqueia a slice', () => {
+test('talos_lock_validator: terceiro validator é impossível e segundo fail bloqueia a slice', () => {
   const root = tmpRoot();
   preflight({
     run_id: 'rv2', project_root: root, mode: 'execute',
@@ -2301,7 +2301,7 @@ test('S11: attempts_used float/string/null → normalizado para 0, start permiti
   }
 });
 
-test('atlas_lock_validator: retorno stale do validator não fecha slot ativo', () => {
+test('talos_lock_validator: retorno stale do validator não fecha slot ativo', () => {
   const root = tmpRoot();
   preflight({
     run_id: 'rv4', project_root: root, mode: 'execute',
@@ -2342,7 +2342,7 @@ test('atlas_lock_validator: retorno stale do validator não fecha slot ativo', (
   assert.equal(good.validator_status, 'passed');
 });
 
-test('atlas_lock_validator: sibling é a única topologia; todos os hosts operam o lock sem gate', () => {
+test('talos_lock_validator: sibling é a única topologia; todos os hosts operam o lock sem gate', () => {
   const root = tmpRoot();
   preflight({
     run_id: 'rv3', project_root: root, mode: 'execute',
@@ -2518,7 +2518,7 @@ test('S04: validatorComplete sem dispatch_token bloqueia e preserva slot ativo',
   assert.notEqual(readRunJson(root, 'tok4').data.validator_cycle.active, null);
 });
 
-test('atlas_assert_after_plan: execute → banner plano não-vazio (T07)', () => {
+test('talos_assert_after_plan: execute → banner plano não-vazio (T07)', () => {
   const root = tmpRoot();
   preflight({
     run_id: 'raa', project_root: root, mode: 'execute',
@@ -2908,7 +2908,7 @@ test('S10(c): repair_complete duplicado → idempotente reconhecível', () => {
 });
 
 // (d) re-spun: ler estado de disco, obter validator_recovery determinístico.
-test('S10(d): atlas_run_state(get) expõe validator_recovery do slot ativo (recovery re-spun)', () => {
+test('S10(d): talos_run_state(get) expõe validator_recovery do slot ativo (recovery re-spun)', () => {
   const root = tmpRoot();
   preflight({
     run_id: 's10d', project_root: root, mode: 'execute',
@@ -3048,7 +3048,7 @@ test('S10(f): duplicado de attempt-1 (fail→repair_required) em repair_required
 //   ESTADO INICIAL          idle                  (ciclo não iniciado)
 //     --[validatorStart]-->  running              (attempt 1)
 //     --[complete(fail)]-->  repair_required      (attempt<max → reparo pendente)
-//     --[repair_start]-->    repair_running       (atlas-findings-repair ativo)
+//     --[repair_start]-->    repair_running       (talos-findings-repair ativo)
 //     --[repair_complete]--> ready_for_retry      (reparo concluído; retry autorizado)
 //     --[validatorStart]-->  running              (attempt 2, último dispatch)
 //     --[complete(pass)]-->  passed               (TERMINAL; active=null)
@@ -3430,7 +3430,7 @@ test('S12.2(e): reabrir slice que passou no attempt 2 (terminal no último attem
 // Regressões do lote de confiabilidade 0.7.1 (achados do smoke S18 multi-host).
 // ───────────────────────────────────────────────────────────────────────────
 
-// P2: `atlas_run_state(upsert)` com `data` parcial DEVE preservar dispatch.active.
+// P2: `talos_run_state(upsert)` com `data` parcial DEVE preservar dispatch.active.
 // O executor escreve o handoff via upsert parcial; antes do fix, o replace cego
 // apagava dispatch.active={plan_execute} e o lock_validator(start) seguinte
 // bloqueava ("current_phase null"). Confirmado em Codex + opencode @ 0.7.0.
@@ -3536,7 +3536,7 @@ function setupValidatorRun(runId, files = {}) {
   fs.writeFileSync(sliceAbs, JSON.stringify({
     run_id: runId, slice: 'A', tasks: ['T01'], files_changed: filesChanged,
     diff_stat: '1 files, +1 -0', plan_path: '.atlas/plans/x.plan.md',
-    boundary_refs: ['§2.I1'], executed_at: '2026-06-15T00:00:00Z', executor_skill: 'atlas-plan-execute',
+    boundary_refs: ['§2.I1'], executed_at: '2026-06-15T00:00:00Z', executor_skill: 'talos-plan-execute',
   }, null, 2));
   return { root, sliceRel };
 }
@@ -3570,7 +3570,7 @@ test('proof-of-work: complete com hash correto passa e marca challenge_verified'
   assert.equal(done.challenge_verified, 'verified');
 });
 
-test('atlas_lock_validator: validator_output_path inválido bloqueia complete sem fechar slot', () => {
+test('talos_lock_validator: validator_output_path inválido bloqueia complete sem fechar slot', () => {
   const runId = 'validator-json-output';
   const { root, sliceRel } = setupValidatorRun(runId, { 'src/foo.js': 'export const x = 1;\n' });
   const start = lockValidator({ run_id: runId, project_root: root, action: 'start', state_path: sliceRel });
@@ -3809,7 +3809,7 @@ function attachSprintEvidence(state, { id = 'S01', sprintPath = '.atlas/backlog/
   state.policy_scope = {
     allowed_scope: ['src'],
     forbidden_scope: ['secrets'],
-    required_gates: ['atlas_verify_sprint_file', 'atlas-task-validator'],
+    required_gates: ['talos_verify_sprint_file', 'talos-task-validator'],
   };
   return state;
 }

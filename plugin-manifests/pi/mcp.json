@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "atlas-workflow": {
+    "talos": {
       "command": "node",
       "args": ["atlas/packages/mcp-server/server.js"],
       "env": {

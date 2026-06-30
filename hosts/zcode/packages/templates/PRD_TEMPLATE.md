@@ -21,8 +21,8 @@
 
 ### Metadados de execução
 
-- Plan prefix: `<atlas>` · Planner: `<atlas-plan-handoff>` · Executor: `<atlas-plan-execute>`
-- Internal validator: `<atlas-task-validator>` · External review: `<atlas-slice-review>` (optional)
+- Plan prefix: `<talos>` · Planner: `<talos-plan-handoff>` · Executor: `<talos-plan-execute>`
+- Internal validator: `<talos-task-validator>` · External review: `<talos-slice-review>` (optional)
 - Eval source: `<SPRINT_SNN_slug.md §9 eval_manifest>` — ou `<PRD §6 (standalone)>` quando `Sprint file = Não aplicável (standalone)`
 
 ---

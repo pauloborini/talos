@@ -4,9 +4,9 @@
 
 # Atlas Workflow
 
-Plugin **Atlas Workflow Orchestrator** v0.11.1 — pipeline determinístico (PRD → plano → execução → validação) com skills `atlas-*`, templates e MCP. Um pacote, sete hosts: **Claude Code**, **Cursor**, **Codex App**, **Antigravity (Gemini)**, **ZCode**, **OpenCode** e **Pi CLI**.
+Plugin **Talos** v1.0.0 — pipeline determinístico (PRD → plano → execução → validação) com skills `atlas-*`, templates e MCP. Um pacote, sete hosts: **Claude Code**, **Cursor**, **Codex App**, **Antigravity (Gemini)**, **ZCode**, **OpenCode** e **Pi CLI**.
 
-**Versão:** [`VERSION`](VERSION) (`0.11.1`) · **Repo:** https://github.com/pauloborini/atlas-workflow
+**Versão:** [`VERSION`](VERSION) (`1.0.0`) · **Repo:** https://github.com/pauloborini/talos
 
 ## Hosts
 
@@ -33,12 +33,12 @@ Plugin **Atlas Workflow Orchestrator** v0.11.1 — pipeline determinístico (PRD
 Um instalador único cobre os hosts de forma **global** (recomendado para valer em todos os projetos) — não precisa clonar o repo:
 
 ```bash
-npx github:pauloborini/atlas-workflow init claudecode   # ou: cursor
-npx github:pauloborini/atlas-workflow init codex
-npx github:pauloborini/atlas-workflow init antigravity
-npx github:pauloborini/atlas-workflow init zcode
-npx github:pauloborini/atlas-workflow init opencode --global
-npx github:pauloborini/atlas-workflow init pi --global --yes  # --yes auto-instala as 2 deps
+npx github:pauloborini/talos init claudecode   # ou: cursor
+npx github:pauloborini/talos init codex
+npx github:pauloborini/talos init antigravity
+npx github:pauloborini/talos init zcode
+npx github:pauloborini/talos init opencode --global
+npx github:pauloborini/talos init pi --global --yes  # --yes auto-instala as 2 deps
 ```
 
 - **claudecode/cursor**: o instalador roda o `marketplace add` + `install` nativos da CLI por você. Já são globais por natureza.
@@ -55,8 +55,8 @@ No modo `--global` o runtime vai para um local estável (`~/.config/opencode/atl
 Caso prefira limitar a instalação de `opencode` ou `pi` a apenas um projeto específico, execute omitindo a flag `--global`:
 
 ```bash
-npx github:pauloborini/atlas-workflow init opencode      # no diretório do projeto (.opencode/ + opencode.json)
-npx github:pauloborini/atlas-workflow init pi --yes      # no diretório do projeto (.mcp.json + .pi/)
+npx github:pauloborini/talos init opencode      # no diretório do projeto (.opencode/ + opencode.json)
+npx github:pauloborini/talos init pi --yes      # no diretório do projeto (.mcp.json + .pi/)
 ```
 
 Neste caso, os caminhos serão salvos de forma relativa, exigindo que você execute a CLI a partir do diretório raiz onde o Atlas foi inicializado.
@@ -71,14 +71,14 @@ Se preferir não usar o `npx` ou necessitar de instalação offline, você pode 
 ### Claude Code e Cursor
 
 ```bash
-claude plugin marketplace add pauloborini/atlas-workflow
+claude plugin marketplace add pauloborini/talos
 claude plugin install atlas-workflow-orchestrator@atlas-workflow
 ```
 
 ### Codex App
 
 ```bash
-npx github:pauloborini/atlas-workflow init codex
+npx github:pauloborini/talos init codex
 ```
 
 Evite instalar Codex só com `codex plugin add`: o plugin expõe skills/MCP, mas custom agents podem não ser registrados como `agent_type` pelo host. O `init codex` instala ambos.
@@ -91,25 +91,25 @@ O desinstalador via `npx` remove apenas os artefatos e agentes do Atlas, preserv
 
 Se a instalação foi **global** (padrão recomendado):
 ```bash
-npx github:pauloborini/atlas-workflow uninstall claudecode   # ou: cursor
-npx github:pauloborini/atlas-workflow uninstall codex
-npx github:pauloborini/atlas-workflow uninstall antigravity
-npx github:pauloborini/atlas-workflow uninstall zcode
-npx github:pauloborini/atlas-workflow uninstall opencode --global
-npx github:pauloborini/atlas-workflow uninstall pi --global
+npx github:pauloborini/talos uninstall claudecode   # ou: cursor
+npx github:pauloborini/talos uninstall codex
+npx github:pauloborini/talos uninstall antigravity
+npx github:pauloborini/talos uninstall zcode
+npx github:pauloborini/talos uninstall opencode --global
+npx github:pauloborini/talos uninstall pi --global
 ```
 
 Se a instalação foi local **por-projeto**:
 ```bash
-npx github:pauloborini/atlas-workflow uninstall opencode
-npx github:pauloborini/atlas-workflow uninstall pi
+npx github:pauloborini/talos uninstall opencode
+npx github:pauloborini/talos uninstall pi
 ```
 
 > Para realizar a desinstalação manual (nativa de cada CLI) ou para entender os diretórios afetados, consulte o **[COMMANDS.md](COMMANDS.md)**.
 
 ## Artefato `.plugin` (opcional)
 
-Alternativa à instalação via GitHub: baixar o `.plugin` do host (`claude`, `codex`, `opencode`, `pi` ou `zcode`) na [release](https://github.com/pauloborini/atlas-workflow/releases) (tags `v*`), validar com `shasum -a 256 -c SHA256SUMS` e instalar pelo fluxo do host. Cursor usa o artefato Claude.
+Alternativa à instalação via GitHub: baixar o `.plugin` do host (`claude`, `codex`, `opencode`, `pi` ou `zcode`) na [release](https://github.com/pauloborini/talos/releases) (tags `v*`), validar com `shasum -a 256 -c SHA256SUMS` e instalar pelo fluxo do host. Cursor usa o artefato Claude.
 
 ## Como usar
 

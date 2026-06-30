@@ -1,15 +1,15 @@
 {
-  "name": "atlas-workflow",
+  "name": "talos",
   "interface": {
-    "displayName": "Atlas Workflow"
+    "displayName": "Talos"
   },
   "plugins": [
     {
-      "name": "atlas-workflow-orchestrator",
-      "description": "Atlas Workflow Orchestrator — pipeline determinístico orientado a artefato (PRD → plano → execução → validação fria) com família única atlas-* e MCP local.",
+      "name": "talos",
+      "description": "Talos — pipeline determinístico orientado a artefato (PRD → plano → execução → validação fria) com família única talos-* e MCP local.",
       "source": {
         "source": "local",
-        "path": "./plugins/atlas-workflow-orchestrator"
+        "path": "./plugins/talos"
       },
       "policy": {
         "installation": "AVAILABLE",

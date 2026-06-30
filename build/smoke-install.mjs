@@ -74,27 +74,28 @@ esac
 }
 
 // codex: plugin install não basta para garantir agent_type; init também copia os
-// custom agents Atlas para CODEX_HOME/agents, que é o caminho nativo do Codex.
+// custom agents Talos para CODEX_HOME/agents, que é o caminho nativo do Codex.
 {
   const codexHome = path.join(TMP, 'codex-home');
   const env = { ...makeCodexMock(), CODEX_HOME: codexHome };
   const r = run(['init', 'codex'], env);
   assert(r.status === 0, `codex init falhou: ${r.stderr || r.stdout}`);
-  assert(exists(path.join(codexHome, 'agents/atlas-task-validator.toml')), 'codex não instalou atlas-task-validator.toml em CODEX_HOME/agents');
-  assert(exists(path.join(codexHome, 'agents/atlas-plan-execute.toml')), 'codex não instalou atlas-plan-execute.toml em CODEX_HOME/agents');
-  assert(exists(path.join(codexHome, 'agents/atlas-findings-repair.toml')), 'codex não instalou atlas-findings-repair.toml em CODEX_HOME/agents');
-  const validator = fs.readFileSync(path.join(codexHome, 'agents/atlas-task-validator.toml'), 'utf8');
-  assert(validator.includes('name = "atlas-task-validator"'), 'codex validator sem name correto');
+  assert(exists(path.join(codexHome, 'agents/talos-task-validator.toml')), 'codex não instalou talos-task-validator.toml em CODEX_HOME/agents');
+  assert(exists(path.join(codexHome, 'agents/talos-plan-execute.toml')), 'codex não instalou talos-plan-execute.toml em CODEX_HOME/agents');
+  assert(exists(path.join(codexHome, 'agents/talos-findings-repair.toml')), 'codex não instalou talos-findings-repair.toml em CODEX_HOME/agents');
+  const validator = fs.readFileSync(path.join(codexHome, 'agents/talos-task-validator.toml'), 'utf8');
+  assert(validator.includes('name = "talos-task-validator"'), 'codex validator sem name correto');
   assert(!/^\s*model\s*=/.test(validator), 'codex validator deve ficar sem model pinado');
   assert(!/^\s*model_reasoning_effort\s*=/.test(validator), 'codex validator deve ficar sem reasoning pinado');
   assert(validator.includes('developer_instructions'), 'codex validator sem developer_instructions; sem model pinado ele ainda precisa carregar o shim');
   const u = run(['uninstall', 'codex'], env);
   assert(u.status === 0, `codex uninstall falhou: ${u.stderr || u.stdout}`);
-  assert(!exists(path.join(codexHome, 'agents/atlas-task-validator.toml')), 'codex uninstall manteve validator');
-  assert(!exists(path.join(codexHome, 'agents/atlas-plan-execute.toml')), 'codex uninstall manteve executor');
+  assert(!exists(path.join(codexHome, 'agents/talos-task-validator.toml')), 'codex uninstall manteve validator');
+  assert(!exists(path.join(codexHome, 'agents/talos-plan-execute.toml')), 'codex uninstall manteve executor');
 }
 
-// opencode local: update remove stale Atlas e preserva config/skills do usuário.
+// opencode local: update remove stale Talos (e nomes legados atlas-*) e preserva
+// config/skills do usuário.
 {
   const dir = path.join(TMP, 'opencode-local');
   fs.mkdirSync(path.join(dir, '.opencode/atlas'), { recursive: true });
@@ -107,21 +108,24 @@ esac
   const r = run(['init', 'opencode', '--dir', dir]);
   assert(r.status === 0, `opencode local init falhou: ${r.stderr || r.stdout}`);
   assert(!exists(path.join(dir, '.opencode/atlas/old.txt')), 'opencode local manteve stale em .opencode/atlas');
-  assert(!exists(path.join(dir, '.opencode/skills/atlas-old')), 'opencode local manteve skill atlas-* stale');
+  assert(!exists(path.join(dir, '.opencode/skills/atlas-old')), 'opencode local manteve skill atlas-* stale (nome legado pré-rename)');
+  assert(!exists(path.join(dir, '.opencode/agents/atlas-task-validator.md')), 'opencode local manteve agente atlas-* stale (nome legado pré-rename)');
   assert(exists(path.join(dir, '.opencode/skills/user-skill')), 'opencode local removeu skill do usuário');
   assert(json(path.join(dir, 'opencode.json')).mcp.other, 'opencode local perdeu mcp do usuário');
-  assert(json(path.join(dir, 'opencode.json')).mcp['atlas-workflow'], 'opencode local não registrou MCP Atlas');
+  assert(json(path.join(dir, 'opencode.json')).mcp['talos'], 'opencode local não registrou MCP Talos');
   // Sub-agents executores/review devem instalar junto (não só o validator) — senão G9.
-  assert(exists(path.join(dir, '.opencode/agents/atlas-plan-execute.md')), 'opencode local não instalou agente executor atlas-plan-execute');
-  assert(exists(path.join(dir, '.opencode/agents/atlas-slice-review.md')), 'opencode local não instalou agente atlas-slice-review');
+  assert(exists(path.join(dir, '.opencode/agents/talos-plan-execute.md')), 'opencode local não instalou agente executor talos-plan-execute');
+  assert(exists(path.join(dir, '.opencode/agents/talos-slice-review.md')), 'opencode local não instalou agente talos-slice-review');
   const u = run(['uninstall', 'opencode', '--dir', dir]);
   assert(u.status === 0, `opencode local uninstall falhou: ${u.stderr || u.stdout}`);
-  assert(!exists(path.join(dir, '.opencode/agents/atlas-plan-execute.md')), 'opencode uninstall manteve agente executor');
+  assert(!exists(path.join(dir, '.opencode/agents/talos-plan-execute.md')), 'opencode uninstall manteve agente executor');
   assert(exists(path.join(dir, '.opencode/skills/user-skill')), 'opencode uninstall removeu skill do usuário');
   assert(json(path.join(dir, 'opencode.json')).mcp.other, 'opencode uninstall perdeu mcp do usuário');
 }
 
-// opencode global: JSONC com comentário é preservado; Atlas vai para opencode.json.
+// opencode global: JSONC com comentário é preservado; Talos vai para opencode.json.
+// Também cobre migração: chave legada 'atlas-workflow' já presente é substituída
+// pela nova 'talos' (sem deixar duplicata nem entrada órfã).
 {
   const xdg = path.join(TMP, 'xdg-jsonc');
   const root = path.join(xdg, 'opencode');
@@ -131,11 +135,26 @@ esac
   const r = run(['init', 'opencode', '--global'], { XDG_CONFIG_HOME: xdg });
   assert(r.status === 0, `opencode global JSONC init falhou: ${r.stderr || r.stdout}`);
   assert(fs.readFileSync(jsonc, 'utf8').includes('// user comment'), 'opencode jsonc foi alterado/corrompido');
-  assert(json(path.join(root, 'opencode.json')).mcp['atlas-workflow'], 'opencode global não escreveu opencode.json fallback');
+  assert(json(path.join(root, 'opencode.json')).mcp['talos'], 'opencode global não escreveu opencode.json fallback');
   const u = run(['uninstall', 'opencode', '--global'], { XDG_CONFIG_HOME: xdg });
   assert(u.status === 0, `opencode global JSONC uninstall falhou: ${u.stderr || u.stdout}`);
   assert(fs.readFileSync(jsonc, 'utf8').includes('// user comment'), 'opencode jsonc foi alterado/corrompido no uninstall');
-  assert(!exists(path.join(root, 'opencode.json')) || !json(path.join(root, 'opencode.json')).mcp?.['atlas-workflow'], 'opencode global uninstall manteve MCP Atlas no fallback JSON');
+  assert(!exists(path.join(root, 'opencode.json')) || !json(path.join(root, 'opencode.json')).mcp?.['talos'], 'opencode global uninstall manteve MCP Talos no fallback JSON');
+}
+
+// Migração: config existente com a chave legada 'atlas-workflow' deve virar 'talos'
+// sem duplicata nem entrada órfã (mergeServerInto/mergeOpencodeJson).
+{
+  const root = path.join(TMP, 'opencode-legacy-key');
+  fs.mkdirSync(root, { recursive: true });
+  const cfgFile = path.join(root, 'opencode.json');
+  fs.writeFileSync(cfgFile, JSON.stringify({ mcp: { 'atlas-workflow': { type: 'local', command: ['node', 'old/path/server.js'] }, other: { type: 'local', command: ['node', 'x'] } } }));
+  const r = run(['init', 'opencode', '--dir', root]);
+  assert(r.status === 0, `opencode migração de chave legada falhou: ${r.stderr || r.stdout}`);
+  const cfg = json(cfgFile);
+  assert(!('atlas-workflow' in cfg.mcp), 'migração não removeu a chave legada mcp.atlas-workflow');
+  assert(cfg.mcp['talos'], 'migração não escreveu a chave nova mcp.talos');
+  assert(cfg.mcp.other, 'migração de chave legada perdeu mcp do usuário');
 }
 
 // pi sem deps e sem --yes: falha antes de copiar.
@@ -159,10 +178,10 @@ esac
   const r = run(['init', 'pi', '--dir', dir, '--yes'], env);
   assert(r.status === 0, `pi --yes init falhou: ${r.stderr || r.stdout}`);
   assert(!exists(path.join(dir, 'atlas/old.txt')), 'pi local manteve stale em atlas/');
-  assert(!exists(path.join(dir, 'skills/atlas-old')), 'pi local manteve skill atlas-* stale');
+  assert(!exists(path.join(dir, 'skills/atlas-old')), 'pi local manteve skill atlas-* stale (nome legado pré-rename)');
   assert(exists(path.join(dir, 'skills/user-skill')), 'pi local removeu skill do usuário');
   assert(json(path.join(dir, '.mcp.json')).mcpServers.other, 'pi local perdeu mcp do usuário');
-  assert(json(path.join(dir, '.mcp.json')).mcpServers['atlas-workflow'], 'pi local não registrou MCP Atlas');
+  assert(json(path.join(dir, '.mcp.json')).mcpServers['talos'], 'pi local não registrou MCP Talos');
   const state = fs.readFileSync(env.PI_MOCK_STATE, 'utf8');
   assert(state.includes('pi-mcp-adapter') && state.includes('pi-subagents'), 'pi --yes não instalou/revalidou deps');
   const u = run(['uninstall', 'pi', '--dir', dir], env);
@@ -186,14 +205,14 @@ esac
   const r = run(['init', 'pi', '--global', '--yes'], env);
   assert(r.status === 0, `pi global init falhou: ${r.stderr || r.stdout}`);
   assert(exists(path.join(agentDir, 'atlas/packages/mcp-server/server.js')), 'pi global não copiou runtime');
-  assert(exists(path.join(agentDir, 'agents/atlas-task-validator.md')), 'pi global não copiou agente');
-  assert(exists(path.join(agentDir, 'agents/atlas-plan-execute.md')), 'pi global não copiou agente executor atlas-plan-execute');
-  assert(exists(path.join(agentDir, 'agents/atlas-direct-execute.md')), 'pi global não copiou agente executor atlas-direct-execute');
-  assert(json(path.join(agentDir, 'mcp.json')).mcpServers['atlas-workflow'], 'pi global não registrou MCP');
+  assert(exists(path.join(agentDir, 'agents/talos-task-validator.md')), 'pi global não copiou agente');
+  assert(exists(path.join(agentDir, 'agents/talos-plan-execute.md')), 'pi global não copiou agente executor talos-plan-execute');
+  assert(exists(path.join(agentDir, 'agents/talos-direct-execute.md')), 'pi global não copiou agente executor talos-direct-execute');
+  assert(json(path.join(agentDir, 'mcp.json')).mcpServers['talos'], 'pi global não registrou MCP');
   const u = run(['uninstall', 'pi', '--global'], env);
   assert(u.status === 0, `pi global uninstall falhou: ${u.stderr || u.stdout}`);
   assert(!exists(path.join(agentDir, 'atlas')), 'pi global uninstall manteve runtime');
-  assert(!exists(path.join(agentDir, 'agents/atlas-plan-execute.md')), 'pi global uninstall manteve agente executor');
+  assert(!exists(path.join(agentDir, 'agents/talos-plan-execute.md')), 'pi global uninstall manteve agente executor');
 }
 
 // Parser de flags.

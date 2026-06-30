@@ -1,7 +1,0 @@
-interface:
-  display_name: "Atlas PRD Interview"
-  short_description: "Entrevista e saneia ambiguidades de PRD"
-  default_prompt: "Use $atlas-prd-interview para validar este PRD, cruzar com o código e fechar ambiguidades críticas em rodadas curtas de múltipla escolha."
-
-policy:
-  allow_implicit_invocation: true

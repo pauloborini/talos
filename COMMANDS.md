@@ -27,7 +27,7 @@ npx github:pauloborini/atlas-workflow init zcode
 
 ```
 
-Smoke pós-update: `atlas_ping` → `version: 0.11.1`; `atlas_capabilities` → `schema_version: 5` (sibling-only).
+Smoke pós-update: `talos_ping` → `version: 1.0.0`; `atlas_capabilities` → `schema_version: 5` (sibling-only).
 
 ---
 

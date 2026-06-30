@@ -1,10 +1,10 @@
 {
-  "name": "atlas-workflow",
-  "version": "0.11.1",
-  "description": "Instalador multi-host do Atlas Workflow Orchestrator (Claude Code, Cursor, Codex, opencode, pi). Roda via npx-from-GitHub.",
+  "name": "talos",
+  "version": "1.0.0",
+  "description": "Instalador multi-host do Talos (Claude Code, Cursor, Codex, opencode, pi). Roda via npx-from-GitHub.",
   "type": "module",
   "bin": {
-    "atlas-workflow": "./build/cli/atlas-init.mjs"
+    "talos": "./build/cli/atlas-init.mjs"
   },
   "engines": {
     "node": ">=18"
@@ -12,6 +12,6 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/pauloborini/atlas-workflow.git"
+    "url": "git+https://github.com/pauloborini/talos.git"
   }
 }

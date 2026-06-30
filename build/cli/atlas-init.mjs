@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Atlas Workflow — instalador unificado por host.
-//   npx github:pauloborini/atlas-workflow init <host> [dir] [flags]
+// Talos — instalador unificado por host.
+//   npx github:pauloborini/talos init <host> [dir] [flags]
 //
 // Hosts: claudecode|cursor (via `claude plugin`), codex (via `codex plugin` +
 //        custom agents globais),
@@ -18,8 +18,16 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-const REPO_SLUG = 'pauloborini/atlas-workflow';
-const PLUGIN_ID = 'atlas-workflow-orchestrator@atlas-workflow';
+const REPO_SLUG = 'pauloborini/talos';
+const PLUGIN_ID = 'talos@talos';
+// Chave legada de mcpServers (pré-rename). Usada só pela lógica de migração abaixo
+// para detectar e limpar instalações existentes — não usar para novas instalações.
+const LEGACY_SERVER_KEY = 'atlas-workflow';
+// Identificador pré-rename do plugin/marketplace nativo (claude/codex). Tentativa de
+// remoção é best-effort (ignora falha): se a instalação antiga não existir, a CLI
+// nativa retorna erro inofensivo; não usamos fail() aqui para não travar o install/
+// uninstall atual por causa de um nome que pode nem existir mais no sistema.
+const LEGACY_PLUGIN_ID = 'atlas-workflow-orchestrator@atlas-workflow';
 
 const VERSION = (() => {
   try { return fs.readFileSync(path.join(ROOT, 'VERSION'), 'utf8').trim(); }
@@ -62,27 +70,33 @@ function rmPath(p, { dryRun }) {
   return true;
 }
 
+// Prefixo legado (pré-rename) incluído só para que upgrade de instalações antigas
+// limpe skills/agentes órfãos com o nome velho — novas cópias usam só 'talos-'.
+const SKILL_PREFIXES = ['talos-', 'atlas-'];
+function hasSkillPrefix(name) { return SKILL_PREFIXES.some((p) => name.startsWith(p)); }
+
 function rmAtlasSkillsQuiet(skillsDir, opts) {
   if (!fs.existsSync(skillsDir)) return;
   for (const name of fs.readdirSync(skillsDir)) {
-    if (name.startsWith('atlas-')) rmPath(path.join(skillsDir, name), opts);
+    if (hasSkillPrefix(name)) rmPath(path.join(skillsDir, name), opts);
   }
 }
 
-// Remove todos os agentes Atlas despachados (validator + executores + review), não só
+// Remove todos os agentes Talos despachados (validator + executores + review), não só
 // o validator — senão upgrade deixa órfãos e install global só copia o validator.
+// Cobre o prefixo legado 'atlas-' para limpar agentes órfãos de instalações pré-rename.
 function rmAtlasAgentsQuiet(agentsDir, opts, exts = ['.md']) {
   if (!fs.existsSync(agentsDir)) return;
   for (const name of fs.readdirSync(agentsDir)) {
-    if (name.startsWith('atlas-') && exts.some((ext) => name.endsWith(ext))) rmPath(path.join(agentsDir, name), opts);
+    if (hasSkillPrefix(name) && exts.some((ext) => name.endsWith(ext))) rmPath(path.join(agentsDir, name), opts);
   }
 }
 
-// Copia todos os agentes atlas-*.md de srcDir para destDir (install global flatten).
+// Copia todos os agentes talos-*.md de srcDir para destDir (install global flatten).
 function copyAtlasAgents(srcDir, destDir, exts = ['.md']) {
   fs.mkdirSync(destDir, { recursive: true });
   for (const name of fs.readdirSync(srcDir)) {
-    if (name.startsWith('atlas-') && exts.some((ext) => name.endsWith(ext))) {
+    if (hasSkillPrefix(name) && exts.some((ext) => name.endsWith(ext))) {
       fs.copyFileSync(path.join(srcDir, name), path.join(destDir, name));
     }
   }
@@ -127,6 +141,16 @@ function copyInto(srcRel, destDir) {
   return dest;
 }
 
+// Remove a chave legada LEGACY_SERVER_KEY ('atlas-workflow') de um container de
+// servers MCP, em lugar, antes do merge da entry nova 'talos' — migração de
+// instalações anteriores ao rename (evita duplicata ou entrada órfã).
+function dropLegacyServerKey(container, label) {
+  if (container && LEGACY_SERVER_KEY in container) {
+    log(`  migrando ${label}.${LEGACY_SERVER_KEY} (nome antigo) -> ${label}.talos`);
+    delete container[LEGACY_SERVER_KEY];
+  }
+}
+
 function mergeOpencodeJson(targetDir) {
   const srcCfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'hosts/opencode/opencode.json'), 'utf8'));
   const dest = path.join(targetDir, 'opencode.json');
@@ -134,15 +158,16 @@ function mergeOpencodeJson(targetDir) {
   if (fs.existsSync(dest)) {
     try { cfg = JSON.parse(fs.readFileSync(dest, 'utf8')); }
     catch { fail(`opencode.json existente é JSON inválido: ${dest} (não sobrescrevo config do usuário)`); }
-    log(`  opencode.json já existe — mesclando a chave mcp.atlas-workflow (config do usuário preservada)`);
+    log(`  opencode.json já existe — mesclando a chave mcp.talos (config do usuário preservada)`);
   }
   cfg.$schema ??= srcCfg.$schema;
+  dropLegacyServerKey(cfg.mcp, 'mcp');
   cfg.mcp = { ...(cfg.mcp ?? {}), ...srcCfg.mcp };
   fs.writeFileSync(dest, JSON.stringify(cfg, null, 2) + '\n');
   return dest;
 }
 
-// pi: mesclar a chave mcpServers.atlas-workflow no .mcp.json existente em vez de
+// pi: mesclar a chave mcpServers.talos no .mcp.json existente em vez de
 // sobrescrever o arquivo. Preserva outros servers MCP e demais chaves do usuário.
 function mergePiMcpJson(targetDir) {
   const srcCfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'hosts/pi/.mcp.json'), 'utf8'));
@@ -151,8 +176,9 @@ function mergePiMcpJson(targetDir) {
   if (fs.existsSync(dest)) {
     try { cfg = JSON.parse(fs.readFileSync(dest, 'utf8')); }
     catch { fail(`.mcp.json existente é JSON inválido: ${dest} (não sobrescrevo config do usuário)`); }
-    log(`  .mcp.json já existe — mesclando mcpServers.atlas-workflow (config do usuário preservada)`);
+    log(`  .mcp.json já existe — mesclando mcpServers.talos (config do usuário preservada)`);
   }
+  dropLegacyServerKey(cfg.mcpServers, 'mcpServers');
   cfg.mcpServers = { ...(cfg.mcpServers ?? {}), ...srcCfg.mcpServers };
   fs.writeFileSync(dest, JSON.stringify(cfg, null, 2) + '\n');
   return dest;
@@ -185,7 +211,7 @@ function opencodeConfigFile(root) {
 function opencodeWritableConfigFile(root) {
   const jsonc = path.join(root, 'opencode.jsonc');
   if (fs.existsSync(jsonc) && !isStrictJson(jsonc)) {
-    log(`  opencode.jsonc contém JSONC/comentários — preservando arquivo e mesclando Atlas em ${path.join(root, 'opencode.json')}`);
+    log(`  opencode.jsonc contém JSONC/comentários — preservando arquivo e mesclando Talos em ${path.join(root, 'opencode.json')}`);
     return path.join(root, 'opencode.json');
   }
   return opencodeConfigFile(root);
@@ -208,21 +234,27 @@ function piGlobalAgentsDir() {
   return fs.existsSync(dotAgents) ? dotAgents : path.join(agentDir, 'agents');
 }
 
-// Lê a entry de server 'atlas-workflow' do catálogo bundled e reescreve o path do
+// Lê a entry de server 'talos' do catálogo bundled e reescreve o path do
 // server.js para ABSOLUTO (instalação global não tem cwd de projeto). Mantém shape
 // e env em sincronia com o bundle (mudou lá, muda aqui).
 function absServerEntry(host, atlasRootAbs) {
   const absServer = path.join(atlasRootAbs, 'packages/mcp-server/server.js');
   if (host === 'opencode') {
     const c = JSON.parse(fs.readFileSync(path.join(ROOT, 'hosts/opencode/opencode.json'), 'utf8'));
-    return { schema: c.$schema, entry: { ...c.mcp['atlas-workflow'], command: ['node', absServer] } };
+    return { schema: c.$schema, entry: { ...c.mcp['talos'], command: ['node', absServer] } };
   }
   const c = JSON.parse(fs.readFileSync(path.join(ROOT, 'hosts/pi/.mcp.json'), 'utf8'));
-  return { entry: { ...c.mcpServers['atlas-workflow'], args: [absServer] } };
+  return { entry: { ...c.mcpServers['talos'], args: [absServer] } };
 }
 
 // Merge genérico de uma entry de server num config JSON. Falha-cedo se o arquivo
 // existente for JSON inválido (não sobrescreve). Preserva outros servers e chaves.
+//
+// MIGRAÇÃO pós-rename (atlas-workflow -> talos): se o container já tiver a chave
+// legada LEGACY_SERVER_KEY ('atlas-workflow') de uma instalação anterior ao rename,
+// remove-a antes de escrever a nova entry 'talos' — evita ficar com as duas chaves
+// (duplicata apontando pro mesmo MCP) ou uma órfã apontando pra um path que não
+// existe mais no catálogo atual.
 function mergeServerInto(file, containerKey, serverName, entry, { dryRun, schema } = {}) {
   assertConfigParseable(file);
   let cfg = {};
@@ -231,16 +263,31 @@ function mergeServerInto(file, containerKey, serverName, entry, { dryRun, schema
     log(`  ${path.basename(file)} já existe — mesclando ${containerKey}.${serverName} (config do usuário preservada)`);
   }
   if (schema) cfg.$schema ??= schema;
-  cfg[containerKey] = { ...(cfg[containerKey] ?? {}), [serverName]: entry };
+  const container = { ...(cfg[containerKey] ?? {}) };
+  if (serverName !== LEGACY_SERVER_KEY && LEGACY_SERVER_KEY in container) {
+    log(`  ${path.basename(file)}: migrando ${containerKey}.${LEGACY_SERVER_KEY} (nome antigo) -> ${containerKey}.${serverName}`);
+    delete container[LEGACY_SERVER_KEY];
+  }
+  container[serverName] = entry;
+  cfg[containerKey] = container;
   if (dryRun) return file;
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify(cfg, null, 2) + '\n');
   return file;
 }
 
+// Migração best-effort (claude/codex): remove instalação nativa pré-rename antes de
+// instalar a nova. Ignora código de saída — se a instalação antiga não existir, a CLI
+// retorna erro inofensivo que não deve travar o install atual.
+function migrateLegacyNativePlugin(cmd, opts) {
+  run(cmd, ['plugin', 'uninstall', LEGACY_PLUGIN_ID], opts);
+  run(cmd, ['plugin', 'marketplace', 'remove', LEGACY_SERVER_KEY], opts);
+}
+
 function installClaude(opts) {
   if (!which('claude')) fail('CLI `claude` não encontrada no PATH. Instale o Claude Code primeiro.');
-  log(`instalando Atlas (claude/cursor) via marketplace from-source @ ${REPO_SLUG}`);
+  log(`instalando Talos (claude/cursor) via marketplace from-source @ ${REPO_SLUG}`);
+  migrateLegacyNativePlugin('claude', opts);
   if (run('claude', ['plugin', 'marketplace', 'add', REPO_SLUG], opts)) fail('falha no `claude plugin marketplace add`');
   // Atualiza snapshot do marketplace (add é idempotente mas não faz pull de commits novos).
   run('claude', ['plugin', 'marketplace', 'update'], opts);
@@ -250,15 +297,16 @@ function installClaude(opts) {
 
 function installCodex(opts) {
   if (!which('codex')) fail('CLI `codex` não encontrada no PATH. Instale o Codex primeiro.');
-  log(`instalando Atlas (codex) via marketplace from-source @ ${REPO_SLUG}`);
+  log(`instalando Talos (codex) via marketplace from-source @ ${REPO_SLUG}`);
+  migrateLegacyNativePlugin('codex', opts);
   if (run('codex', ['plugin', 'marketplace', 'add', REPO_SLUG], opts)) fail('falha no `codex plugin marketplace add`');
   // Atualiza snapshot do marketplace (add é idempotente mas não faz pull de commits novos).
   run('codex', ['plugin', 'marketplace', 'upgrade'], opts);
   if (run('codex', ['plugin', 'add', PLUGIN_ID], opts)) fail('falha no `codex plugin add`');
   const codexHome = process.env.CODEX_HOME?.trim() || path.join(homedir(), '.codex');
   const agentsDir = path.join(codexHome, 'agents');
-  const srcAgents = path.join(ROOT, 'plugins/atlas-workflow-orchestrator/.codex/agents');
-  if (!fs.existsSync(srcAgents)) fail('agentes Codex ausentes no catálogo: plugins/atlas-workflow-orchestrator/.codex/agents (rode build/build-plugins.sh)');
+  const srcAgents = path.join(ROOT, 'plugins/talos/.codex/agents');
+  if (!fs.existsSync(srcAgents)) fail('agentes Codex ausentes no catálogo: plugins/talos/.codex/agents (rode build/build-plugins.sh)');
   if (opts.dryRun) {
     log(`  [dry-run] copiaria custom agents Codex → ${agentsDir}`);
   } else {
@@ -269,7 +317,7 @@ function installCodex(opts) {
 }
 
 function installOpencode(targetDir, opts) {
-  log(`instalando Atlas (opencode v${VERSION}) em ${targetDir}`);
+  log(`instalando Talos (opencode v${VERSION}) em ${targetDir}`);
   assertConfigParseable(path.join(targetDir, 'opencode.json'));
   if (opts.dryRun) { log('  [dry-run] copiaria .opencode/ + mesclaria opencode.json'); return; }
   fs.mkdirSync(targetDir, { recursive: true });
@@ -277,8 +325,8 @@ function installOpencode(targetDir, opts) {
   copyInto('hosts/opencode/.opencode', targetDir);   // subagente + skills + runtime
   mergeOpencodeJson(targetDir);                       // MCP local (type:local, ATLAS_HOST=opencode)
   log('ok — opencode instalado (MCP + subagente + skills).');
-  log(`próximo: cd ${targetDir} && opencode  → confirme com as tools atlas_ping`);
-  log('  (deve retornar host=opencode) e atlas_capabilities.');
+  log(`próximo: cd ${targetDir} && opencode  → confirme com as tools talos_ping`);
+  log('  (deve retornar host=opencode) e talos_capabilities.');
 }
 
 function piDepsStatus() {
@@ -300,7 +348,7 @@ function ensurePiDeps(opts) {
   let status = piDepsStatus();
   if (!status.piPresent) {
     printPiDepsHelp();
-    fail('CLI `pi` não encontrada no PATH. Instale o pi antes de instalar o Atlas para pi.');
+    fail('CLI `pi` não encontrada no PATH. Instale o pi antes de instalar o Talos para pi.');
   }
   if (status.listFailed) {
     fail('`pi list` falhou; não consigo validar deps obrigatórias do pi.');
@@ -332,7 +380,7 @@ function ensurePiDeps(opts) {
 }
 
 function installPi(targetDir, opts) {
-  log(`instalando Atlas (pi v${VERSION}) em ${targetDir}`);
+  log(`instalando Talos (pi v${VERSION}) em ${targetDir}`);
   assertConfigParseable(path.join(targetDir, '.mcp.json'));
   ensurePiDeps(opts);
   if (opts.dryRun) { log('  [dry-run] copiaria atlas/ skills/ .pi/agents/ + .mcp.json'); }
@@ -342,12 +390,12 @@ function installPi(targetDir, opts) {
     copyInto('hosts/pi/atlas', targetDir);
     copyInto('hosts/pi/skills', targetDir);
     copyInto('hosts/pi/.pi', targetDir);                 // .pi/agents/<name>.md (descoberta pi-subagents)
-    mergePiMcpJson(targetDir);                            // mescla mcpServers.atlas-workflow (pi-mcp-adapter)
+    mergePiMcpJson(targetDir);                            // mescla mcpServers.talos (pi-mcp-adapter)
     log('ok — arquivos do pi instalados (.mcp.json + .pi/agents/ + atlas/ + skills/).');
   }
-  log(`próximo: cd ${targetDir} && pi  → confirme a instalação com as tools atlas_ping`);
-  log('  (deve retornar host=pi) e atlas_capabilities. NÃO dispare o validator à mão:');
-  log('  o atlas-task-validator roda automaticamente dentro do workflow, com um state');
+  log(`próximo: cd ${targetDir} && pi  → confirme a instalação com as tools talos_ping`);
+  log('  (deve retornar host=pi) e talos_capabilities. NÃO dispare o validator à mão:');
+  log('  o talos-task-validator roda automaticamente dentro do workflow, com um state');
   log('  file real (.atlas/state/<run_id>/<slice>.json) — não com placeholder.');
 }
 
@@ -357,12 +405,12 @@ function installOpencodeGlobal(opts) {
   const root = opencodeGlobalRoot();
   const atlasRoot = path.join(root, 'atlas');
   const cfgFile = opencodeWritableConfigFile(root);
-  log(`instalando Atlas (opencode v${VERSION}) GLOBAL em ${root}`);
+  log(`instalando Talos (opencode v${VERSION}) GLOBAL em ${root}`);
   assertConfigParseable(cfgFile);
   const { schema, entry } = absServerEntry('opencode', atlasRoot);
   if (opts.dryRun) {
     log(`  [dry-run] copiaria runtime → ${atlasRoot}, agente → ${path.join(root, 'agents')}, skills → ${path.join(root, 'skills')}`);
-    log(`  [dry-run] mesclaria mcp.atlas-workflow em ${cfgFile} (command absoluto)`);
+    log(`  [dry-run] mesclaria mcp.talos em ${cfgFile} (command absoluto)`);
     return;
   }
   fs.mkdirSync(root, { recursive: true });
@@ -373,11 +421,11 @@ function installOpencodeGlobal(opts) {
   copyAtlasAgents(path.join(ROOT, 'hosts/opencode/.opencode/agents'), path.join(root, 'agents'));
   const skillsSrc = path.join(ROOT, 'hosts/opencode/.opencode/skills');
   for (const name of fs.readdirSync(skillsSrc)) {
-    if (name.startsWith('atlas-')) fs.cpSync(path.join(skillsSrc, name), path.join(root, 'skills', name), { recursive: true });
+    if (name.startsWith('talos-')) fs.cpSync(path.join(skillsSrc, name), path.join(root, 'skills', name), { recursive: true });
   }
-  mergeServerInto(cfgFile, 'mcp', 'atlas-workflow', entry, { schema });
+  mergeServerInto(cfgFile, 'mcp', 'talos', entry, { schema });
   log('ok — opencode GLOBAL instalado (vale em todos os projetos).');
-  log('próximo: abra `opencode` em qualquer pasta  → atlas_ping (host=opencode) + atlas_capabilities.');
+  log('próximo: abra `opencode` em qualquer pasta  → talos_ping (host=opencode) + talos_capabilities.');
 }
 
 function installPiGlobal(opts) {
@@ -385,15 +433,15 @@ function installPiGlobal(opts) {
   const atlasRoot = path.join(agentDir, 'atlas');
   const agentsDir = piGlobalAgentsDir();
   const mcpFile = path.join(agentDir, 'mcp.json');
-  log(`instalando Atlas (pi v${VERSION}) GLOBAL em ${agentDir}`);
+  log(`instalando Talos (pi v${VERSION}) GLOBAL em ${agentDir}`);
   assertConfigParseable(mcpFile);
   ensurePiDeps(opts);
   const skillsDir = path.join(agentDir, 'skills'); // irmão de atlas/ — mantém o mesmo
   // offset relativo (../../../skills a partir do server) do install de projeto.
   const { entry } = absServerEntry('pi', atlasRoot);
   if (opts.dryRun) {
-    log(`  [dry-run] copiaria runtime → ${atlasRoot}, skills → ${skillsDir}, agente → ${path.join(agentsDir, 'atlas-task-validator.md')}`);
-    log(`  [dry-run] mesclaria mcpServers.atlas-workflow em ${mcpFile} (args absoluto)`);
+    log(`  [dry-run] copiaria runtime → ${atlasRoot}, skills → ${skillsDir}, agente → ${path.join(agentsDir, 'talos-task-validator.md')}`);
+    log(`  [dry-run] mesclaria mcpServers.talos em ${mcpFile} (args absoluto)`);
   } else {
     fs.mkdirSync(agentDir, { recursive: true });
     rmPath(atlasRoot, opts);
@@ -401,25 +449,28 @@ function installPiGlobal(opts) {
     rmAtlasSkillsQuiet(skillsDir, opts);
     fs.cpSync(path.join(ROOT, 'hosts/pi/atlas'), atlasRoot, { recursive: true });
     // skills/ canônicas (paridade com install de projeto e com opencode global): copia
-    // só os subdirs atlas-* para não tocar skills do usuário.
+    // só os subdirs talos-* para não tocar skills do usuário.
     const skillsSrc = path.join(ROOT, 'hosts/pi/skills');
     for (const name of fs.readdirSync(skillsSrc)) {
-      if (name.startsWith('atlas-')) fs.cpSync(path.join(skillsSrc, name), path.join(skillsDir, name), { recursive: true });
+      if (name.startsWith('talos-')) fs.cpSync(path.join(skillsSrc, name), path.join(skillsDir, name), { recursive: true });
     }
     copyAtlasAgents(path.join(ROOT, 'hosts/pi/.pi/agents'), agentsDir);
-    mergeServerInto(mcpFile, 'mcpServers', 'atlas-workflow', entry);
+    mergeServerInto(mcpFile, 'mcpServers', 'talos', entry);
     log(`ok — pi GLOBAL instalado (runtime + skills + agente em ${agentsDir} + mcp.json).`);
   }
-  log('próximo: abra `pi` em qualquer pasta  → atlas_ping (host=pi) + atlas_capabilities.');
+  log('próximo: abra `pi` em qualquer pasta  → talos_ping (host=pi) + talos_capabilities.');
 }
 
 function installAntigravity(opts) {
   const geminiConfig = path.join(homedir(), '.gemini', 'config');
-  const pluginDir = path.join(geminiConfig, 'plugins', 'atlas-workflow-orchestrator');
+  const pluginDir = path.join(geminiConfig, 'plugins', 'talos');
+  // Pasta da instalação pré-rename (nome de plugin antigo) — limpa para não deixar
+  // órfã ao lado da nova em plugins/talos/.
+  const legacyPluginDir = path.join(geminiConfig, 'plugins', 'atlas-workflow-orchestrator');
   const mcpFile = path.join(geminiConfig, 'mcp_config.json');
   const absServer = path.join(pluginDir, 'packages', 'mcp-server', 'server.js');
 
-  log(`instalando Atlas (antigravity v${VERSION}) GLOBAL em ${pluginDir}`);
+  log(`instalando Talos (antigravity v${VERSION}) GLOBAL em ${pluginDir}`);
   assertConfigParseable(mcpFile);
 
   const entry = {
@@ -434,15 +485,19 @@ function installAntigravity(opts) {
     log(`  [dry-run] criaria pasta do plugin → ${pluginDir}`);
     log(`  [dry-run] copiaria skills e mcp-server para a pasta do plugin`);
     log(`  [dry-run] criaria plugin.json na raiz do plugin`);
-    log(`  [dry-run] mesclaria mcpServers.atlas-workflow em ${mcpFile} (args absoluto)`);
+    log(`  [dry-run] mesclaria mcpServers.talos em ${mcpFile} (args absoluto)`);
   } else {
     fs.mkdirSync(pluginDir, { recursive: true });
 
-    // Fonte: bundle shipado `plugins/atlas-workflow-orchestrator/`. A cópia raiz
+    // Migração pós-rename: remove a pasta de plugin pré-rename inteira (nome antigo,
+    // dir irmão de pluginDir) — não fica órfã ao lado da nova instalação em plugins/talos/.
+    if (legacyPluginDir !== pluginDir) rmPath(legacyPluginDir, opts);
+
+    // Fonte: bundle shipado `plugins/talos/`. A cópia raiz
     // `/packages/` NÃO entra no tarball npm (ver .npmignore) — usá-la quebra o
     // install via npx-from-GitHub (ENOENT). O bundle já traz skills/ completo
-    // (inclui a skill atlas-workflow-orchestrator) + packages/mcp-server.
-    const SRC = path.join(ROOT, 'plugins/atlas-workflow-orchestrator');
+    // (inclui a skill talos) + packages/mcp-server.
+    const SRC = path.join(ROOT, 'plugins/talos');
 
     // Limpeza de instalações anteriores controladas por nós
     const skillsDir = path.join(pluginDir, 'skills');
@@ -450,7 +505,7 @@ function installAntigravity(opts) {
     rmPath(skillsDir, opts);
     rmPath(packagesDir, opts);
 
-    // Copia as skills (inclui a orquestradora atlas-workflow-orchestrator)
+    // Copia as skills (inclui a orquestradora talos)
     fs.cpSync(path.join(SRC, 'skills'), skillsDir, { recursive: true });
 
     // Copia a pasta packages inteira (que contém mcp-server, skills e templates)
@@ -460,11 +515,11 @@ function installAntigravity(opts) {
     fs.rmSync(path.join(packagesDir, 'mcp-server', 'server.test.js'), { force: true });
 
     // Cria o plugin.json
-    const pluginJson = { name: 'atlas-workflow-orchestrator' };
+    const pluginJson = { name: 'talos' };
     fs.writeFileSync(path.join(pluginDir, 'plugin.json'), JSON.stringify(pluginJson, null, 2) + '\n');
 
     // Mescla o MCP
-    mergeServerInto(mcpFile, 'mcpServers', 'atlas-workflow', entry);
+    mergeServerInto(mcpFile, 'mcpServers', 'talos', entry);
     log('ok — Antigravity GLOBAL instalado (skills + MCP server).');
   }
 }
@@ -478,16 +533,17 @@ function rmIfExists(p, { dryRun }) {
   return true;
 }
 
-// Remove apenas subdirs com prefixo atlas- (não toca skills do usuário).
+// Remove apenas subdirs com prefixo talos-/atlas- (não toca skills do usuário).
+// Cobre o prefixo legado 'atlas-' para uninstall limpo de instalações pré-rename.
 function rmAtlasSkills(skillsDir, opts) {
   if (!fs.existsSync(skillsDir)) return;
   for (const name of fs.readdirSync(skillsDir)) {
-    if (name.startsWith('atlas-')) rmIfExists(path.join(skillsDir, name), opts);
+    if (hasSkillPrefix(name)) rmIfExists(path.join(skillsDir, name), opts);
   }
 }
 
 // Remove uma chave de server MCP de um config JSON; reescreve. Remove o arquivo só
-// se ficou totalmente vazio (era exclusivo do Atlas). Preserva outros servers.
+// se ficou totalmente vazio (era exclusivo do Talos). Preserva outros servers.
 function dropMcpKey(file, containerKey, serverName, opts) {
   if (!fs.existsSync(file)) return;
   let cfg;
@@ -506,70 +562,79 @@ function dropMcpKey(file, containerKey, serverName, opts) {
 
 function uninstallClaude(opts) {
   if (!which('claude')) fail('CLI `claude` não encontrada no PATH.');
-  log('removendo Atlas (claude/cursor)');
+  log('removendo Talos (claude/cursor)');
   run('claude', ['plugin', 'uninstall', PLUGIN_ID], opts);
-  run('claude', ['plugin', 'marketplace', 'remove', 'atlas-workflow'], opts);
+  run('claude', ['plugin', 'marketplace', 'remove', 'talos'], opts);
+  // Migração: limpa instalação pré-rename remanescente, se houver (best-effort).
+  run('claude', ['plugin', 'uninstall', LEGACY_PLUGIN_ID], opts);
+  run('claude', ['plugin', 'marketplace', 'remove', LEGACY_SERVER_KEY], opts);
   log('ok — removido do Claude Code/Cursor.');
 }
 
 function uninstallCodex(opts) {
   if (!which('codex')) fail('CLI `codex` não encontrada no PATH.');
-  log('removendo Atlas (codex)');
+  log('removendo Talos (codex)');
   run('codex', ['plugin', 'remove', PLUGIN_ID], opts);
-  run('codex', ['plugin', 'marketplace', 'remove', 'atlas-workflow'], opts);
+  run('codex', ['plugin', 'marketplace', 'remove', 'talos'], opts);
+  // Migração: limpa instalação pré-rename remanescente, se houver (best-effort).
+  run('codex', ['plugin', 'remove', LEGACY_PLUGIN_ID], opts);
+  run('codex', ['plugin', 'marketplace', 'remove', LEGACY_SERVER_KEY], opts);
   const codexHome = process.env.CODEX_HOME?.trim() || path.join(homedir(), '.codex');
   rmAtlasAgentsQuiet(path.join(codexHome, 'agents'), opts, ['.toml']);
   log('ok — removido do Codex.');
 }
 
 function uninstallOpencode(targetDir, opts) {
-  log(`removendo Atlas (opencode) de ${targetDir}`);
+  log(`removendo Talos (opencode) de ${targetDir}`);
   rmIfExists(path.join(targetDir, '.opencode/atlas'), opts);
   rmAtlasAgentsQuiet(path.join(targetDir, '.opencode/agents'), opts);
   rmAtlasSkills(path.join(targetDir, '.opencode/skills'), opts);
-  dropMcpKey(path.join(targetDir, 'opencode.json'), 'mcp', 'atlas-workflow', opts);
-  log('ok — artefatos do Atlas removidos (config/skills do usuário preservados).');
+  dropMcpKey(path.join(targetDir, 'opencode.json'), 'mcp', 'talos', opts);
+  log('ok — artefatos do Talos removidos (config/skills do usuário preservados).');
 }
 
 function uninstallPi(targetDir, opts) {
-  log(`removendo Atlas (pi) de ${targetDir}`);
+  log(`removendo Talos (pi) de ${targetDir}`);
   rmIfExists(path.join(targetDir, 'atlas'), opts);
   rmAtlasAgentsQuiet(path.join(targetDir, '.pi/agents'), opts);
   rmAtlasSkills(path.join(targetDir, 'skills'), opts);
-  dropMcpKey(path.join(targetDir, '.mcp.json'), 'mcpServers', 'atlas-workflow', opts);
-  log('ok — artefatos do Atlas removidos. As deps pi-mcp-adapter/pi-subagents ficam (uso geral);');
+  dropMcpKey(path.join(targetDir, '.mcp.json'), 'mcpServers', 'talos', opts);
+  log('ok — artefatos do Talos removidos. As deps pi-mcp-adapter/pi-subagents ficam (uso geral);');
   log('  remova manualmente se quiser: pi remove pi-mcp-adapter && pi remove pi-subagents');
 }
 
 function uninstallOpencodeGlobal(opts) {
   const root = opencodeGlobalRoot();
-  log(`removendo Atlas (opencode) GLOBAL de ${root}`);
+  log(`removendo Talos (opencode) GLOBAL de ${root}`);
   rmIfExists(path.join(root, 'atlas'), opts);
   rmAtlasAgentsQuiet(path.join(root, 'agents'), opts);
   rmAtlasSkills(path.join(root, 'skills'), opts);
-  dropMcpKey(opencodeWritableConfigFile(root), 'mcp', 'atlas-workflow', opts);
-  log('ok — artefatos globais do Atlas removidos (config/skills do usuário preservados).');
+  dropMcpKey(opencodeWritableConfigFile(root), 'mcp', 'talos', opts);
+  log('ok — artefatos globais do Talos removidos (config/skills do usuário preservados).');
 }
 
 function uninstallPiGlobal(opts) {
   const agentDir = piAgentDir();
-  log(`removendo Atlas (pi) GLOBAL de ${agentDir}`);
+  log(`removendo Talos (pi) GLOBAL de ${agentDir}`);
   rmIfExists(path.join(agentDir, 'atlas'), opts);
   rmAtlasAgentsQuiet(piGlobalAgentsDir(), opts);
   rmAtlasSkills(path.join(agentDir, 'skills'), opts);
-  dropMcpKey(path.join(agentDir, 'mcp.json'), 'mcpServers', 'atlas-workflow', opts);
-  log('ok — artefatos globais do Atlas removidos. As deps pi-mcp-adapter/pi-subagents ficam (uso geral).');
+  dropMcpKey(path.join(agentDir, 'mcp.json'), 'mcpServers', 'talos', opts);
+  log('ok — artefatos globais do Talos removidos. As deps pi-mcp-adapter/pi-subagents ficam (uso geral).');
 }
 
 function uninstallAntigravity(opts) {
   const geminiConfig = path.join(homedir(), '.gemini', 'config');
-  const pluginDir = path.join(geminiConfig, 'plugins', 'atlas-workflow-orchestrator');
+  const pluginDir = path.join(geminiConfig, 'plugins', 'talos');
+  const legacyPluginDir = path.join(geminiConfig, 'plugins', 'atlas-workflow-orchestrator');
   const mcpFile = path.join(geminiConfig, 'mcp_config.json');
 
-  log(`removendo Atlas (antigravity) GLOBAL de ${pluginDir}`);
+  log(`removendo Talos (antigravity) GLOBAL de ${pluginDir}`);
   rmIfExists(pluginDir, opts);
-  dropMcpKey(mcpFile, 'mcpServers', 'atlas-workflow', opts);
-  log('ok — artefatos globais do Atlas para Antigravity removidos.');
+  rmIfExists(legacyPluginDir, opts); // limpa instalação pré-rename, se sobrou
+  dropMcpKey(mcpFile, 'mcpServers', 'talos', opts);
+  dropMcpKey(mcpFile, 'mcpServers', LEGACY_SERVER_KEY, opts); // chave pré-rename órfã
+  log('ok — artefatos globais do Talos para Antigravity removidos.');
 }
 
 // --- ZCode (cache-based install) ----------------------------------------------
@@ -581,7 +646,9 @@ function uninstallAntigravity(opts) {
 // boot a partir do scan; mantemos essa entry sincronizada para visualização imediata.
 
 const ZCODE_MARKETPLACE = 'zcode-plugins-official';
-const ZCODE_PLUGIN_NAME = 'atlas-workflow-orchestrator';
+const ZCODE_PLUGIN_NAME = 'talos';
+// Nome de plugin pré-rename no cache do ZCode — usado só para migração.
+const LEGACY_ZCODE_PLUGIN_NAME = 'atlas-workflow-orchestrator';
 
 function zcodeCacheDir() {
   return path.join(homedir(), '.zcode', 'cli', 'plugins', 'cache', ZCODE_MARKETPLACE, ZCODE_PLUGIN_NAME, VERSION);
@@ -599,7 +666,8 @@ function updateZcodeMarketplaceCacheEntry(cacheDir) {
     catch { log(`  aviso: ${path.basename(file)} é JSON inválido — reescrevendo do zero`); }
   }
   cfg.name = ZCODE_MARKETPLACE;
-  cfg.plugins = (cfg.plugins ?? []).filter((p) => p.name !== ZCODE_PLUGIN_NAME);
+  // Migração: remove também a entry pré-rename (nome de plugin antigo), se sobrou.
+  cfg.plugins = (cfg.plugins ?? []).filter((p) => p.name !== ZCODE_PLUGIN_NAME && p.name !== LEGACY_ZCODE_PLUGIN_NAME);
   cfg.plugins.push({ cachePath: cacheDir, name: ZCODE_PLUGIN_NAME, source: 'filesystem', version: VERSION });
   cfg.version = 1;
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -611,7 +679,7 @@ function removeZcodeMarketplaceCacheEntry() {
   if (!fs.existsSync(file)) return;
   try {
     const cfg = JSON.parse(fs.readFileSync(file, 'utf8'));
-    cfg.plugins = (cfg.plugins ?? []).filter((p) => p.name !== ZCODE_PLUGIN_NAME);
+    cfg.plugins = (cfg.plugins ?? []).filter((p) => p.name !== ZCODE_PLUGIN_NAME && p.name !== LEGACY_ZCODE_PLUGIN_NAME);
     fs.writeFileSync(file, JSON.stringify(cfg, null, 2) + '\n');
   } catch { log(`  aviso: ${path.basename(file)} é JSON inválido — não mexi`); }
 }
@@ -619,7 +687,7 @@ function removeZcodeMarketplaceCacheEntry() {
 function installZcode(opts) {
   const cacheDir = zcodeCacheDir();
   const catalogSrc = path.join(ROOT, 'hosts/zcode');
-  log(`instalando Atlas (zcode v${VERSION}) GLOBAL em ${cacheDir}`);
+  log(`instalando Talos (zcode v${VERSION}) GLOBAL em ${cacheDir}`);
   if (!fs.existsSync(catalogSrc)) fail(`catálogo zcode ausente: hosts/zcode/ (rode build/build-plugins.sh)`);
   if (opts.dryRun) {
     log(`  [dry-run] copiaria hosts/zcode/ → ${cacheDir}`);
@@ -629,6 +697,10 @@ function installZcode(opts) {
   // Limpa instalação anterior (pode haver versão stale)
   const parentDir = path.dirname(cacheDir);
   if (fs.existsSync(parentDir)) fs.rmSync(parentDir, { recursive: true, force: true });
+  // Migração: limpa cache da instalação pré-rename (nome de plugin antigo), que
+  // ficaria órfã ao lado da nova em cache/<marketplace>/talos/.
+  const legacyCacheDir = path.join(homedir(), '.zcode', 'cli', 'plugins', 'cache', ZCODE_MARKETPLACE, LEGACY_ZCODE_PLUGIN_NAME);
+  if (fs.existsSync(legacyCacheDir)) fs.rmSync(legacyCacheDir, { recursive: true, force: true });
   fs.mkdirSync(cacheDir, { recursive: true });
   fs.cpSync(catalogSrc, cacheDir, { recursive: true });
   // Gera o seed file no formato que o ZCode espera
@@ -645,14 +717,16 @@ function installZcode(opts) {
   // mantemos sincronizado para visualização imediata no `/plugins`).
   updateZcodeMarketplaceCacheEntry(cacheDir);
   log('ok — ZCode instalado no cache oficial.');
-  log('próximo: abra o ZCode e ative via /plugins enable atlas-workflow-orchestrator');
-  log('  confirme com a tool MCP atlas_ping (host=zcode, status=alive).');
+  log('próximo: abra o ZCode e ative via /plugins enable talos');
+  log('  confirme com a tool MCP talos_ping (host=zcode, status=alive).');
 }
 
 function uninstallZcode(opts) {
   const cacheParent = path.join(homedir(), '.zcode', 'cli', 'plugins', 'cache', ZCODE_MARKETPLACE, ZCODE_PLUGIN_NAME);
-  log(`removendo Atlas (zcode) GLOBAL de ${cacheParent}`);
+  const legacyCacheParent = path.join(homedir(), '.zcode', 'cli', 'plugins', 'cache', ZCODE_MARKETPLACE, LEGACY_ZCODE_PLUGIN_NAME);
+  log(`removendo Talos (zcode) GLOBAL de ${cacheParent}`);
   rmIfExists(cacheParent, opts);
+  rmIfExists(legacyCacheParent, opts); // limpa cache pré-rename, se sobrou
   removeZcodeMarketplaceCacheEntry();
   log('ok — ZCode: cache e registry removidos.');
 }
@@ -751,7 +825,7 @@ function runAll(cmd, opts) {
 }
 
 function usage() {
-  log(`atlas-workflow v${VERSION} — instalador multi-host
+  log(`talos v${VERSION} — instalador multi-host
 
 uso:
   npx github:${REPO_SLUG} init <host> [dir] [flags]

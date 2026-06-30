@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Atlas Workflow — build dos pacotes .plugin (Claude/Cursor + Codex).
-# Lê VERSION, monta bundle único (10 skills atlas-* + subagentes + orquestrador + templates), gera zips + checksums.
+# Talos — build dos pacotes .plugin (Claude/Cursor + Codex).
+# Lê VERSION, monta bundle único (10 skills talos-* + subagentes + orquestrador + templates), gera zips + checksums.
 # Idempotente; sem Node/npm. Aborta com exit != 0 em qualquer entrada faltante.
 
 set -euo pipefail
@@ -45,11 +45,11 @@ echo "lendo VERSION ($VERSION)"
 # review (--review). handoff/interview/generator/orchestrator NÃO entram (autoria
 # documental no fio principal). Fonte canônica: agents/<name>.md.
 DISPATCHED_AGENTS=(
-  atlas-task-validator
-  atlas-findings-repair
-  atlas-plan-execute
-  atlas-direct-execute
-  atlas-slice-review
+  talos-task-validator
+  talos-findings-repair
+  talos-plan-execute
+  talos-direct-execute
+  talos-slice-review
 )
 
 copy_mcp_runtime() {
@@ -80,7 +80,7 @@ mkdir -p "$STAGE"
 build_host() {
   local host="$1"
   local stage_host="$STAGE/$host"
-  local out="$DIST/atlas-workflow-${host}.plugin"
+  local out="$DIST/talos-${host}.plugin"
 
   echo "montando $host"
   mkdir -p "$stage_host"
@@ -90,9 +90,9 @@ build_host() {
   cp -R "$ROOT/packages/orchestrator" "$stage_host/"
   cp -R "$ROOT/hooks" "$stage_host/"
   cp -R "$ROOT/packages/skills" "$stage_host/skills"
-  rm -rf "$stage_host/skills/atlas-workflow-orchestrator"
-  cp -R "$ROOT/packages/orchestrator/skills/atlas-workflow-orchestrator" \
-    "$stage_host/skills/atlas-workflow-orchestrator"
+  rm -rf "$stage_host/skills/talos"
+  cp -R "$ROOT/packages/orchestrator/skills/talos" \
+    "$stage_host/skills/talos"
   # Subagentes do plugin (Claude/Cursor: agents/ na raiz do bundle)
   cp -R "$ROOT/agents" "$stage_host/agents"
 
@@ -116,7 +116,7 @@ build_host() {
     cat > "$stage_host/.mcp.json" <<'JSON'
 {
   "mcpServers": {
-    "atlas-workflow": {
+    "talos": {
       "command": "node",
       "cwd": ".",
       "args": [
@@ -147,8 +147,8 @@ JSON
   fi
 
   if [[ "$host" == "codex" ]]; then
-    local marketplace_plugin="$ROOT/plugins/atlas-workflow-orchestrator"
-    echo "sincronizando marketplace Codex em plugins/atlas-workflow-orchestrator"
+    local marketplace_plugin="$ROOT/plugins/talos"
+    echo "sincronizando marketplace Codex em plugins/talos"
     rm -rf "$marketplace_plugin"
     cp -R "$stage_host" "$marketplace_plugin"
   fi
@@ -166,7 +166,7 @@ JSON
 # commitado em hosts/opencode/ (install via GitHub público — DEC-008).
 build_opencode() {
   local stage="$STAGE/opencode"
-  local out="$DIST/atlas-workflow-opencode.plugin"
+  local out="$DIST/talos-opencode.plugin"
   echo "montando opencode"
   mkdir -p "$stage/.opencode/agents" "$stage/.opencode/skills" "$stage/.opencode/atlas/packages"
 
@@ -179,9 +179,9 @@ build_opencode() {
 
   # Skills (SKILL.md) sob .opencode/skills/
   cp -R "$ROOT/packages/skills/." "$stage/.opencode/skills/"
-  rm -rf "$stage/.opencode/skills/atlas-workflow-orchestrator"
-  cp -R "$ROOT/packages/orchestrator/skills/atlas-workflow-orchestrator" \
-    "$stage/.opencode/skills/atlas-workflow-orchestrator"
+  rm -rf "$stage/.opencode/skills/talos"
+  cp -R "$ROOT/packages/orchestrator/skills/talos" \
+    "$stage/.opencode/skills/talos"
 
   # Subagentes no formato opencode (gerados dos agentes canônicos — fonte única do corpo)
   for ag in "${DISPATCHED_AGENTS[@]}"; do
@@ -207,7 +207,7 @@ build_opencode() {
 # Requer as 2 deps obrigatórias no host (DEC-005); doc de integração cobre.
 build_pi() {
   local stage="$STAGE/pi"
-  local out="$DIST/atlas-workflow-pi.plugin"
+  local out="$DIST/talos-pi.plugin"
   echo "montando pi"
   # pi-subagents descobre agentes em .pi/agents/**/*.md; pi-mcp-adapter lê .mcp.json
   # (paths reais das deps, verificados no pi real — não 'agents/'/'mcp.json' no root).
@@ -220,9 +220,9 @@ build_pi() {
   cp "$ROOT/VERSION" "$stage/atlas/VERSION"
 
   cp -R "$ROOT/packages/skills/." "$stage/skills/"
-  rm -rf "$stage/skills/atlas-workflow-orchestrator"
-  cp -R "$ROOT/packages/orchestrator/skills/atlas-workflow-orchestrator" \
-    "$stage/skills/atlas-workflow-orchestrator"
+  rm -rf "$stage/skills/talos"
+  cp -R "$ROOT/packages/orchestrator/skills/talos" \
+    "$stage/skills/talos"
 
   # Subagentes no formato pi-subagents (gerados do canônico) em .pi/agents/ (path de descoberta)
   for ag in "${DISPATCHED_AGENTS[@]}"; do
@@ -250,7 +250,7 @@ build_pi() {
 # Catálogo from-source commitado em hosts/zcode/ (install via GitHub público — DEC-008).
 build_zcode() {
   local stage="$STAGE/zcode"
-  local out="$DIST/atlas-workflow-zcode.plugin"
+  local out="$DIST/talos-zcode.plugin"
   echo "montando zcode"
   mkdir -p "$stage/.zcode-plugin" "$stage/agents" "$stage/skills" "$stage/packages"
 
@@ -260,9 +260,9 @@ build_zcode() {
 
   # Skills
   cp -R "$ROOT/packages/skills/." "$stage/skills/"
-  rm -rf "$stage/skills/atlas-workflow-orchestrator"
-  cp -R "$ROOT/packages/orchestrator/skills/atlas-workflow-orchestrator" \
-    "$stage/skills/atlas-workflow-orchestrator"
+  rm -rf "$stage/skills/talos"
+  cp -R "$ROOT/packages/orchestrator/skills/talos" \
+    "$stage/skills/talos"
 
 	  # Runtime + templates + orchestrator + skills (MCP server importa de ../skills/)
 	  copy_mcp_runtime "$stage/packages"
@@ -304,7 +304,7 @@ build_zcode
 (
   cd "$DIST"
   rm -f SHA256SUMS
-  shasum -a 256 atlas-workflow-*.plugin | LC_ALL=C sort > SHA256SUMS
+  shasum -a 256 talos-*.plugin | LC_ALL=C sort > SHA256SUMS
 )
 
 rm -rf "$STAGE"
@@ -317,4 +317,4 @@ else
   echo "aviso: node ausente — pulando check-consistency" >&2
 fi
 
-echo "ok — dist/atlas-workflow-{claude,codex,opencode,pi,zcode}.plugin dist/SHA256SUMS + hosts/{opencode,pi,zcode}/"
+echo "ok — dist/talos-{claude,codex,opencode,pi,zcode}.plugin dist/SHA256SUMS + hosts/{opencode,pi,zcode}/"
