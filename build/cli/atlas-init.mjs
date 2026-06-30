@@ -452,9 +452,8 @@ function installAntigravity(opts) {
     // Copia as skills (inclui a orquestradora atlas-workflow-orchestrator)
     fs.cpSync(path.join(SRC, 'skills'), skillsDir, { recursive: true });
 
-    // Copia o mcp-server
-    fs.mkdirSync(path.join(packagesDir, 'mcp-server'), { recursive: true });
-    fs.cpSync(path.join(SRC, 'packages/mcp-server'), path.join(packagesDir, 'mcp-server'), { recursive: true });
+    // Copia a pasta packages inteira (que contém mcp-server, skills e templates)
+    fs.cpSync(path.join(SRC, 'packages'), packagesDir, { recursive: true });
 
     // Remove testes do mcp-server no bundle (defensivo; bundle shipado já não os traz)
     fs.rmSync(path.join(packagesDir, 'mcp-server', 'server.test.js'), { force: true });
