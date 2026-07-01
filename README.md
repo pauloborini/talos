@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/talos-logo-header-darktheme.png" alt="Talos" width="96" height="96">
+  <img src="docs/assets/atlas-logo.png" alt="Atlas" width="96" height="96">
 </p>
 
 # Talos
@@ -21,6 +21,8 @@ Plugin **Talos** v0.12.0 — pipeline determinístico (PRD → plano → execuç
 | Pi CLI | Catálogo from-source `hosts/pi/` | `talos-pi.plugin` | **`pi-mcp-adapter` + `pi-subagents`** |
 
 **Cursor:** não há pacote nem marketplace próprios — o plugin instalado via `claude plugin` no escopo do usuário já vale para o Cursor (mesmo manifest `.claude-plugin/`). Limitação de packaging, não do pipeline.
+
+**ZCode:** subagentes de plugin (`subagent_type: "talos-*"`) não herdam conexões MCP do processo pai — bug do host, não do Talos. O adapter zcode contorna isso com fallback automático: o orquestrador despacha `general-purpose` (nativo, herda MCP) lendo `agents/<name>.md` como system prompt. O isolamento sibling (Gate G4) é preservado — ainda é subagente irmão isolado.
 
 **Conceito:** todos são *hosts* (onde as skills rodam). O pipeline é o mesmo; diferenças nativas (subagente, todo, MCP, dispatch do validador frio) vivem em [`host-adapters.md`](packages/orchestrator/references/host-adapters.md) e na tool `talos_capabilities` (contrato `schema_version: 5` — `validator_dispatch` declara `dispatcher` + `join` por host; ver [Topologia do validador frio (G4)](#topologia-do-validador-frio-g4)). Host sem subagente+MCP é **rejeitado no preflight** (gate `PREREQ`, hard-fail); host sem join síncrono do validador é **rejeitado no preflight** (gate `JOIN`, hard-fail) — determinismo > alcance.
 
@@ -214,6 +216,19 @@ talos-plan-handoff (uso direto, fora do /workflow)
 4. Ambiguidades no PRD disparam entrevista automaticamente; use `--interview` se quiser forçar.
 5. Toda execução passa pelo validador frio (`talos-task-validator`) antes de declarar a slice pronta.
 
+### Princípio Fire-and-Continue
+
+O pipeline avança fase a fase **sem pedir permissão**. As únicas paradas são gates duros (`blocked`) ou bloqueios reais de ambiente. Decisões em aberto no PRD geram entrevista automática e o fluxo **continua** — o orquestrador não para para pedir confirmação. Isso vale para todos os modos e hosts.
+
+### Backlog em 2 camadas
+
+O Talos estrutura a demanda em duas camadas complementares:
+
+- **Backlog mestre** (`BACKLOG_MESTRE_*.md`): índice estratégico enxuto com fases, tabela de sprints, dependências, priorização MoSCoW e links para sprint files. É o mapa do produto.
+- **Sprint files**: arquivos vivos dedicados por sprint — a fonte de verdade contextual que o pipeline lê para gerar PRDs, planos e executar slices. Cada sprint file respeita o template canônico e é validado pelo gate `SPRINT_FILE`.
+
+Gates MCP dedicados (`talos_verify_backlog_index`, `talos_verify_sprint_file`, `talos_select_next_sprint`, `talos_update_sprint_status`) garantem consistência entre as duas camadas. O gate `DEP` bloqueia execução de sprints cujas dependências de backlog não estejam concluídas.
+
 ### Skills da cadeia
 
 Cadeia automática de execução: `talos-sprint-prd-generator` → `talos-prd-interview` → `talos-plan-handoff` → `talos-plan-execute` (full) ou `talos-direct-execute` (direct) → `talos-task-validator` → `talos-findings-repair` (só após `fail`, em qualquer host) → `talos-slice-review` (opcional)
@@ -229,7 +244,7 @@ Além da cadeia automática, estas skills também podem ser chamadas diretamente
 - `talos-backlog-generator` — cria `BACKLOG_MESTRE_*.md` a partir de uma conversa, briefing, roadmap ou lista solta de requisitos. Use quando o objetivo for organizar demanda antes de virar PRD.
 - `talos-sprint-prd-generator` — transforma um sprint ID como `S01`/`S02` em PRD de sprint. Use quando o escopo já está amarrado ao roadmap e você quer o PRD da rodada.
 - `talos-prd-interview` — valida e amadurece um PRD antes de planejar. Use quando você quer fechar ambiguidades, dependências ou decisões de produto.
-- `talos-audit` — audita arquivo, diretório, pacote, módulo, feature ou boundary localizável sem corrigir código. Lê regras locais reais, detecta stack por manifests/configs, analisa arquitetura/contratos/erros/segurança/testes/observabilidade, faz Ponytail pass final e só promove achado com evidência `arquivo:linha`. Com `--handoff`, grava `.talos/plans/PLAN_AUDIT_*.md` TC-conforme para correção posterior; não chama executor.
+- `talos-audit` — audita arquivo, diretório, pacote, módulo, feature ou boundary localizável sem corrigir código. Lê regras locais reais, **detecta stack deterministicamente** por manifests/configs (Flutter, Node, Python, Go, Rust, Java/Kotlin, Firebase, Supabase, REST/OpenAPI), analisa arquitetura/contratos/erros/segurança/testes/observabilidade, faz Ponytail pass final e só promove achado com evidência `arquivo:linha`. Regras só ativam com sinal real no boundary. Com `--handoff`, grava `.talos/plans/PLAN_AUDIT_*.md` TC-conforme para correção posterior; não chama executor.
 - `talos-plan-handoff` — converte um PRD validado em plano executável. Use quando a intenção é preparar a execução, não ainda codar. Aceita PRD `sprint-bound` (com sprint file) ou `standalone` (PRD declara explicitamente `Sprint file: Não aplicável (standalone)`); plano `standalone` só é executável via modo `execute` — `full`/`direct` exigem sprint na entrada.
 - `talos-direct-execute` — executa diretamente quando o PRD já está maduro. Use quando você quer pular a fase de plan handoff.
 - `talos-task-validator` — faz a validação fria da slice executada. Use como veredito final de conformidade, nunca como ação manual de rotina.
@@ -251,6 +266,33 @@ O validador frio (`talos-task-validator`) **sempre** roda isolado e **sempre** c
 
 **Smoke G9 — critério PASS:** o smoke do Gate G9 exige validator irmão disparado pelo orquestrador (sibling) em todos os hosts. Exigir que o executor dispare o validador (validador aninhado) é leitura errada do contrato.
 
+### Visão geral dos Gates
+
+Cada gate é uma verificação determinística de contrato. Se um gate retorna `blocked`, o pipeline para (hard-fail). Não há fallback inline — é isso que torna o Talos determinístico.
+
+| Gate | Descrição | Fase |
+|------|-----------|------|
+| **PREREQ** | Subagente + MCP disponíveis no host | Preflight |
+| **JOIN** | Join síncrono do validador frio | Preflight |
+| **DISPATCH** | Subagente capaz de mutação (Write/Edit/Bash) | Preflight |
+| **VERSION_DRIFT** | Versão do plugin consistente em todos os componentes | Preflight |
+| **LOCK_CONFLICT** | Sem conflito de lock com outra execução | Preflight |
+| **G1** | Artefato de entrada existe e é válido | Entrada |
+| **BACKLOG** | Backlog mestre é índice válido | Entrada |
+| **SPRINT_FILE** | Sprint file conforme template canônico | Entrada |
+| **DEP** | Dependências de backlog satisfeitas (não-done = hard-fail) | Entrada |
+| **TC** | Conformidade com template canônico | Documental |
+| **G5** | PRD sem ambiguidades não-resolvidas | Documental |
+| **G7** | Contrato pós-plano verificado | Documental |
+| **G4** | Validador frio isolado (sibling) + proof-of-work | Execução |
+| **G8** | Boundary de execução respeitado | Execução |
+| **G9** | Revisão de slice isolada | Execução |
+| **G10** | Skill exigida disponível (sem substituição silenciosa) | Execução |
+| **G11** | Contrato de repair (boundary, budget=1) | Repair |
+| **G12** | Liveness do executor (checkpoint/stall detection) | Execução |
+
+Gates documentais e de entrada rodam no orquestrador (fio principal). Gates de execução (G4, G8, G9, G10, G12) envolvem subagentes isolados. O validador frio (G4) é o gate terminal de cada slice.
+
 ## Estrutura do repo
 
 | Caminho | Conteúdo |
@@ -268,4 +310,22 @@ Templates canônicos em [`packages/templates/`](packages/templates/) — fonte �
 ## Referências
 
 - Adapters de host: [`host-adapters.md`](packages/orchestrator/references/host-adapters.md)
-- MCP: [`packages/mcp-server/`](packages/mcp-server/) (`talos_ping`, `talos_run_state`, `talos_capabilities`)
+- MCP: [`packages/mcp-server/`](packages/mcp-server/) — 15 ferramentas disponíveis:
+
+| Tool | Função |
+|------|--------|
+| `talos_ping` | Health check, versão, detecção de host |
+| `talos_capabilities` | Perfil runtime do host (schema v5) |
+| `talos_classify_input` | Classifica tipo de artefato do input |
+| `talos_preflight` | Pré-flight obrigatório (gates PREREQ, JOIN, DISPATCH, VERSION_DRIFT, LOCK_CONFLICT) |
+| `talos_verify_artifact` | Verifica existência e validade de artefato (G1) |
+| `talos_verify_template_conformance` | Conformidade com template canônico (TC) |
+| `talos_scan_prd` | Scaneia PRD por ambiguidades (G5) |
+| `talos_assert_after_plan` | Verifica contrato pós-plano (G7) |
+| `talos_run_state` | Persiste estado de execução em disco |
+| `talos_lock_dispatch` | Gerencia lock de dispatch (G12 — liveness) |
+| `talos_lock_validator` | Gerencia ciclo do validador frio (G4 — proof-of-work) |
+| `talos_verify_sprint_file` | Valida conformidade de sprint file |
+| `talos_verify_backlog_index` | Valida backlog mestre como índice |
+| `talos_select_next_sprint` | Seleção determinística da próxima sprint executável |
+| `talos_update_sprint_status` | Atualiza status atomicamente (backlog + sprint file) |
