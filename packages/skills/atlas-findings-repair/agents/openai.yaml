@@ -1,7 +1,0 @@
-interface:
-  display_name: "Atlas Findings Repair"
-  short_description: "Repair-only post-validator fixer for bounded findings"
-  default_prompt: "Use $atlas-findings-repair to fix the blocking validator findings inside the current slice boundary without reloading the full executor."
-
-policy:
-  allow_implicit_invocation: true

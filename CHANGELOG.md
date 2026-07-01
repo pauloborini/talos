@@ -1,5 +1,157 @@
 # Changelog
 
+## 0.12.0 - 2026-07-01
+
+Tipo: **major (rebranding completo)**. **BREAKING**: renomeação de `atlas-workflow` → `Talos`. Schema MCP: v5 (inalterado). Contrato de execução: preservado.
+
+Resumo: Lançamento público do **Talos** como pipeline determinístico independente. Renomeação completa do produto, skills e artefatos — de `atlas-workflow`/`atlas-*` para `talos`/`talos-*`. É a mesma pipeline, agora com identidade própria e instalável por qualquer pessoa.
+
+Mudanças:
+- **Rebranding integral** — 632 arquivos alterados: todas as skills renomeadas de `atlas-*` para `talos-*` (10 skills + orquestradora), CLI `atlas-init.mjs` → `talos-init.mjs`, MCP server, agentes, templates, bundles e documentação.
+- **Identidade visual** — Logo Talos, README, metadados de marketplace e plugin.json atualizados para o nome definitivo.
+- **Compatibilidade com legado** — `SKILL_PREFIXES` no instalador agora cobre `['talos-', 'atlas-']`: instalações antigas com prefixo `atlas-` são limpas automaticamente no upgrade.
+- **Correção de smoke test** — Testes de install/uninstall atualizados para validar tanto a limpeza do prefixo legado `atlas-` quanto a instalação correta do prefixo atual `talos-`.
+- **Docs** — `NAMING.md` registra a decisão de ecossistema (Atlas Agents como produto; Talos/Argus/Athena como módulos). `AGENTS.md` e `README.md` refletem a nova marca.
+
+Breaking changes:
+- **Paths e nomes** — Todos os caminhos `atlas-*` (skills, agentes, CLI, bundles) foram renomeados para `talos-*`. Scripts e automações que referenciem os nomes antigos precisam ser atualizados.
+- **Instalador** — O comando `npx github:pauloborini/atlas-workflow init ...` passa a ser `npx github:pauloborini/talos init ...`.
+
+Migração:
+- Para instalações existentes: `talos init <host>` detecta e limpa automaticamente artefatos com prefixo legado `atlas-*`.
+- Para scripts e CI: atualize referências de `atlas-workflow` para `talos` e de `atlas-*` para `talos-*`.
+
+Validação:
+- `build/check-consistency.mjs` — ok (validator sincronizado cross-host; catálogos presentes+versão; skills sem hardcode; sem regressão A1/A2).
+- `claude plugin validate ./ --strict` — ok.
+- `bash build/test-all.sh` — todos os testes verdes (11/11 unit, smoke hosts, conformance matrix 6×10, smoke install/uninstall, checksums 5/5).
+
+## 0.11.1 - 2026-06-30
+
+Tipo: **packaging**. **Sem breaking**. Schema MCP: v5 (inalterado).
+
+Resumo: Corrige a instalação global do host Antigravity (Gemini) no instalador unificado. O instalador agora copia recursivamente o diretório `packages/` inteiro (incluindo `skills` e `templates`), resolvendo a ausência de scripts internos compartilhados (como `document_quality.mjs`) e templates canônicos de execução.
+
+Mudanças:
+- **Instalador unificado** — `build/cli/atlas-init.mjs`: alterada a função `installAntigravity` para fazer a cópia recursiva de `SRC/packages` para `packagesDir` em vez de criar e copiar apenas a subpasta `mcp-server`.
+- **Correção de drifts** — Sincronizadas as referências estáticas de versão (que haviam restado em `0.10.1` nos READMEs, `COMMANDS.md`, `CLAUDE.md` e `AGENTS.md`) para `0.11.0` antes de rodar o bump determinístico para `0.11.1`.
+- **Versionamento** — `VERSION`, `package.json`, manifests e catálogos regenerados e sincronizados na versão `0.11.1`.
+
+Validação:
+- Execução local do instalador corrigido para o host Antigravity confirmando presença de `packages/skills` e `packages/templates`.
+- Execução bem-sucedida de `bash build/test-all.sh` (todos os testes verdes, consistência de versão e integridade dos plugins em dia).
+
+## 0.11.0 - 2026-06-30
+
+Tipo: **feature de compatibilidade (não-breaking, schema aditivo)** — workaround para a limitação do host ZCode onde sub-agentes de plugin não herdam conexões MCP, mesmo com `mcp__...` declarado no frontmatter `tools:`. Confirmado empiricamente (v0.10.1) para os 5 sub-agentes Atlas. Bug do host (ZCode), não do plugin.
+
+Resumo: O adapter zcode ganha `subagent_dispatch.fallback` (campo aditivo, `schema_version` segue **v5**). Quando `fallback.enabled:true`, o orquestrador despacha `general-purpose` (subagente nativo, que herda MCP + tools nativas) em vez de `atlas-*` (plugin), passando um prompt que aponta o `agents/<name>.md` canônico como system prompt. O contrato continua sendo a fonte única `agents/<name>.md`; mudou quem carrega (nativo vs plugin), não a topologia. Isolamento sibling (Gate G4) preservado — ainda é um subagente irmão isolado, despachado blocking, com `dispatch_token`/`challenge_response` ecoados do output do irmão. Aplica-se aos 5 dispatches (validator, findings-repair, slice-review, plan-execute, direct-execute). Hosts sem `fallback` (claude/codex/opencode/pi/antigravity/generic) seguem o verbo nominal exato — zero mudança de comportamento.
+
+Mudanças:
+- **Adapter zcode** — `packages/mcp-server/server.js`: adicionado `subagent_dispatch.fallback { enabled, reason, subagent_type, prompt_template }` ao perfil zcode, com comentário documentando a limitação do host.
+- **Skill orquestradora** — `packages/orchestrator/skills/atlas-workflow-orchestrator/SKILL.md`: nova seção "Fallback de subagente" com o branch condicional (`fallback.enabled === true` → despachar `general-purpose`).
+- **Doc de dispatch** — `packages/orchestrator/references/subagent_dispatch.md`: seção ZCode reescrita documentando a limitação (sub-agentes de plugin não herdam MCP) e o workaround, com justificativa de por que o Gate G4/sibling permanece válido.
+- **Matriz de adapters** — `packages/orchestrator/references/host-adapters.md`: nova linha "Fallback de subagente" (zcode) e campo `fallback?` documentado no schema `subagent_dispatch`.
+- **AGENTS.md** — parágrafo zcode atualizado com a limitação e o workaround (registrado como limitação do host).
+- **Versionamento sincronizado** — `VERSION`, `package.json`, `packages/mcp-server/package.json`, `.claude-plugin/plugin.json` e os bundles host em `0.11.0`.
+
+Não incluído: mudança de `dispatch_capability` do zcode (continua `unknown` — o gate DISPATCH ainda exige `dispatch_mutable:true`, correto e seguro) ou "validador inline no fio do orquestrador" (violaria G9/R17; o fallback preserva o isolamento sibling).
+
+Validação:
+- `build/check-consistency.mjs` e `build/build-plugins.sh` a regenerar bundles/católogos.
+- Teste em `packages/mcp-server/server.test.js`: asserção de `capabilities({host:'zcode'}).subagent_dispatch.fallback.enabled === true` e ausência de `fallback` em claude/pi.
+- Validação empírica: despachar `general-purpose` com o `prompt_template` e confirmar MCP disponível dentro do subagente.
+
+## 0.10.1 - 2026-06-29
+
+Tipo: **patch de contrato e distribuição** — `sprint` vira alias canônico para `backlog-item` em `full`/`direct`, com docs, bundles e launchers alinhados. **Sem breaking** (`CAPABILITIES_SCHEMA_VERSION` segue **v5** e o comportamento legado continua aceito).
+
+Resumo: O fluxo Atlas passa a preferir `/workflow full sprint "SNN"` e `/workflow direct sprint "SNN"` como entrada pública, mantendo `backlog-item` apenas como compatibilidade. A documentação, os bundles dos hosts e os comandos Raycast foram ajustados para refletir o contrato novo sem alterar o runtime do orquestrador.
+
+Mudanças:
+- **Alias `sprint` canônico** — `packages/mcp-server/server.js` e os artefatos gerados passam a tratar `sprint` como input oficial para `full` e `direct`; `backlog-item` permanece como alias legado.
+- **Docs alinhadas** — `README.md`, `COMMANDS.md`, `packages/orchestrator/README.md`, `packages/orchestrator/commands/workflow.md` e as cópias empacotadas foram atualizadas para o novo comando `/workflow ... sprint`.
+- **Raycast atualizado** — os snippets/launchers locais passam a expor `workflow full sprint` como comando padrão.
+- **Versionamento sincronizado** — `VERSION`, `package.json`, `packages/mcp-server/package.json`, `.claude-plugin/plugin.json` e os bundles host foram regenerados em `0.10.1`.
+
+Validação:
+- `build/bump-version.mjs` regenerou bundles e `build/check-consistency.mjs` passou.
+- A suíte completa e a validação de plugin continuam válidas após o bump.
+
+## 0.10.0 - 2026-06-29
+
+Tipo: **minor aditivo** — backlog em 2 camadas (mestre enxuto + sprint files vivos) + 4 gates MCP novos. **Sem breaking** (`CAPABILITIES_SCHEMA_VERSION` segue **v5**, modos públicos `full`/`direct`/`execute`/`interview-only`/`audit` intactos).
+
+Resumo: O Atlas adota arquitetura de backlog em duas camadas: o backlog mestre passa a ser índice estratégico enxuto (fases, tabela de sprints, dependências, MoSCoW, prioridade, links), e cada sprint ganha um arquivo vivo dedicado (`sprints/SNN_<slug>.md`) como fonte de verdade contextual. Quatro gates MCP novos tornam a seleção e a atualização de sprints determinísticas. Skills atualizadas para priorizar o arquivo vivo de sprint como fonte primária.
+
+Mudanças:
+- **4 novos gates MCP** (`packages/mcp-server/server.js`):
+  - `atlas_verify_sprint_file` — valida conformidade do arquivo vivo de sprint contra `SPRINT_TEMPLATE.md`: seções obrigatórias, link bidirecional ao backlog, DoR, eval_manifest, status espelhado. Fail-closed (artefato ausente ou vazio = blocked).
+  - `atlas_verify_backlog_index` — valida o backlog mestre como índice: §7 Registro de sprints presente, enums MoSCoW/prioridade/status válidos, links para sprint files reais, sem sprint duplicada, detecção de ciclo de dependência, status drift backlog↔sprint file bloqueante.
+  - `atlas_select_next_sprint` — seleção determinística da próxima sprint executável: filtra por `state=ready` + deps done + sprint file válido + DoR verde; ordena por MoSCoW→prioridade→ganho→esforço→ID. Resultado único, sem ambiguidade.
+  - `atlas_update_sprint_status` — atualiza status de sprint em backlog e sprint file atomicamente: pré-condição (enum, transição FSM, `done` exige validator terminal + `state_path`), escrita com rollback (se o write do sprint file falhar após o backlog ser escrito, backlog é restaurado ao estado original — sem drift), pós-validação antes de retornar `passed`.
+- **`SPRINT_TEMPLATE.md`** — template canônico do arquivo vivo de sprint com 16 seções (ID imutável, links bidirecionais, objetivo, DoR/DoD, `eval_manifest` com `acceptance_criteria`/`regression_cases`/`thresholds`, `policy_manifest`, §14 Execução e validação, §16 Histórico).
+- **`BACKLOG_MESTRE_TEMPLATE.md` refatorado** — índice enxuto: sem critérios completos por sprint, sem plano técnico, sem tasks detalhadas. Aponta para sprint files. Tabela §7 com colunas `sprint_file`, `prd`, `plan`, `state_file` como links rastreáveis.
+- **`STATE_FILE_SCHEMA.md`** adicionado — schema formal do arquivo de state da execução.
+- **`document_quality.mjs`** estendido — validação de conformidade de sprint file (`validateSprintFileConformance`), parsing de rows do backlog (`parseSprintRows`), enums MoSCoW/prioridade/status/veredito exportados.
+- **Skills atualizadas**: `atlas-backlog-generator` (cria sprint files + links bidirecionais), `atlas-sprint-prd-generator` (prioriza arquivo vivo de sprint, backlog mestre só para deps/ordem), `atlas-plan-handoff` (gate `atlas_verify_sprint_file` obrigatório), `atlas-plan-execute`/`atlas-direct-execute` (verificam sprint file antes de iniciar), `atlas-task-validator` (critérios de aceite do sprint file como fonte adicional).
+- **`BOUNDARY_PRD_PLAN.md`** atualizado — instrução de sprint file como fonte de contexto de execução.
+- **Codex agent handling** — tratamento de agente Codex atualizado no orquestrador; doc Codex alinhada.
+- **Rollback P2** (`updateSprintStatus`) — fix de confiabilidade: write do sprint file dentro de try/catch com restauração do backlog em caso de erro de FS.
+
+Impacto:
+- Sprint pequena continua sendo a unidade de execução; o backlog mestre deixa de carregar contexto completo e passa a ser índice navegável.
+- `atlas_select_next_sprint` elimina seleção manual/ambígua de próxima sprint — determinismo por gate, não por prosa.
+- `atlas_update_sprint_status` fecha o loop de atualização: status espelhado backlog↔sprint file, rastreável e validado antes de qualquer write.
+- Skill `atlas-sprint-prd-generator` lê o arquivo vivo de sprint como fonte primária — contexto menor, foco correto, sem carregar backlog inteiro.
+
+Arquivos/artefatos:
+- `packages/mcp-server/server.js`, `packages/mcp-server/server.test.js` (190 testes, +1 caso rollback P2), `packages/templates/SPRINT_TEMPLATE.md`, `packages/templates/BACKLOG_MESTRE_TEMPLATE.md`, `packages/templates/BOUNDARY_PRD_PLAN.md`, `packages/templates/PLAN_TEMPLATE.md`, `packages/templates/PRD_TEMPLATE.md`, `packages/templates/STATE_FILE_SCHEMA.md`, `packages/skills/_shared/scripts/document_quality.mjs`, `packages/skills/atlas-backlog-generator/SKILL.md`, `packages/skills/atlas-sprint-prd-generator/SKILL.md`, `packages/skills/atlas-plan-handoff/SKILL.md`, `packages/skills/atlas-plan-execute/SKILL.md`, `packages/skills/atlas-direct-execute/SKILL.md`, `packages/skills/atlas-task-validator/SKILL.md`, `packages/skills/atlas-findings-repair/SKILL.md`, `packages/orchestrator/skills/atlas-workflow-orchestrator/SKILL.md`, `packages/orchestrator/README.md`, `packages/orchestrator/commands/workflow.md`, `packages/orchestrator/references/host-adapters.md`, `packages/orchestrator/references/subagent_dispatch.md` — replicados em `plugins/` e `hosts/{opencode,pi,zcode}/` via build.
+
+Validação:
+- `packages/mcp-server/server.test.js`: 190/190 pass (189 existentes + 1 novo caso rollback P2).
+- `build/check-consistency.mjs`: ok (validator sincronizado cross-host; catálogos presentes+versão; sem hardcode; sem regressão A1/A2).
+- `build/conformance-matrix.mjs`: ok (6 hosts × 10 cenários verdes).
+- `claude plugin validate ./ --strict`: passed.
+- Sincronização cross-host: 5 cópias de `server.js` com hash idêntico.
+
+## 0.9.4 - 2026-06-27
+
+Tipo: **runtime** (sem breaking; `CAPABILITIES_SCHEMA_VERSION` segue **v5**, modos públicos `full`/`direct`/`execute`/`interview-only`/`audit` intactos). Endurecimento do modo `audit` e expansão dos perfis de stack das skills.
+
+Resumo: `/workflow audit --handoff` passa a emitir um plano **conforme ao `PLAN_TEMPLATE.md`** (passa no gate TC e é de fato consumível por `/workflow execute plan`), e os perfis de stack ganham 6 novas linguagens/plataformas detectáveis no validador frio e no baseline universal.
+
+Mudanças:
+- **Audit handoff TC-conforme** (`packages/skills/atlas-audit/SKILL.md`, replicado nos bundles) — a "Estrutura mínima" anterior (`Scope boundary`/`Non-goals`/`Stop conditions` + tasks soltas) era anunciada como consumível por `/workflow execute plan`/`atlas-plan-execute`, mas **falharia o gate TC** (`verifyPlanConformance` exige 8 seções nomeadas + linha `| **PRD** |` + ref a `BOUNDARY_PRD_PLAN.md` + tarefas `#### T01.`) e seria rejeitada pelo executor por substância ausente. Agora o `--handoff` escreve `.atlas/plans/PLAN_AUDIT_<slug>.md` espelhando o template canônico (cabeçalho com `| **PRD** | N/A — origem auditoria |` para declarar proveniência sem inventar PRD, `execution_mode: sequencial` que dispensa §7, §1–§6/§8 reancoradas em achados/regras locais, tasks `#### T01.` com `Referência ao achado: AUDIT-NNN — arquivo:linha`). Passo 5 do `atlas-workflow-orchestrator/SKILL.md` e `workflow.md` alinhados.
+- **6 novos perfis de stack** (`packages/skills/_shared/scripts/document_quality.mjs`, `_shared/references/stack-profiles.md`, `atlas-task-validator/SKILL.md`) — `go`, `rust`, `java_kotlin`, `firebase`, `supabase`, `rest_openapi`. Detecção determinística por manifests (`go.mod`, `Cargo.toml`, `pom.xml`/`build.gradle*`, `firebase.json`/`.firebaserc`, `openapi*`/`swagger*`), deps de `package.json`/`pubspec.yaml` reais e comandos declarados. Regra de perfil só ativa no boundary onde o sinal aparece; nada de finding fora do boundary.
+- **`audit`/`interview-only` sem `guarantee_level`** — descrição do `atlas_preflight` (`packages/mcp-server/server.js`, README) endurecida: o campo só aparece em modos com execução de código. Bate com a impl (`guaranteeLevelForMode('audit') → null`, campo omitido). Sem mudança de comportamento.
+
+Impacto:
+- Plano gerado por `audit --handoff` agora passa de fato pelo gate TC e entra em `/workflow execute plan` sem hard-fail — fecha promessa quebrada de consumibilidade.
+- Auditoria/validação cobrem stacks Go/Rust/Java-Kotlin/Firebase/Supabase/REST-OpenAPI sem regredir Flutter/Node/Python (perfis aditivos, gated por sinal real).
+
+Arquivos/artefatos:
+- `packages/skills/atlas-audit/SKILL.md`, `packages/skills/atlas-task-validator/SKILL.md`, `packages/skills/_shared/scripts/document_quality.mjs`, `packages/skills/_shared/references/stack-profiles.md`, `packages/orchestrator/skills/atlas-workflow-orchestrator/SKILL.md`, `packages/orchestrator/commands/workflow.md`, `packages/mcp-server/server.js` (+README) — replicados em `plugins/` e `hosts/{opencode,pi,zcode}/` via build; 4 `.plugin` + `SHA256SUMS` regenerados.
+
+Validação:
+- `build/check-consistency.mjs`: ok (cross-host sincronizado).
+- `build/tests/etapa3.test.mjs`: 11/11 (3 casos novos para os perfis adicionais).
+- `claude plugin validate ./ --strict`: passed.
+
+## 0.9.3 - 2026-06-27
+
+Tipo: **adição de host tier-1** (sem breaking; `CAPABILITIES_SCHEMA_VERSION` segue **v5**, modos públicos intactos). Integração do ZCode como novo host suportado do pipeline.
+
+Mudanças:
+- **Novo host: ZCode** — adicionada entrada `zcode` em `HOST_ADAPTERS` (`packages/mcp-server/server.js`) com perfil `self_evident` (subagente + MCP + TodoWrite nativos via Claude Agent SDK). Detector por env `ZCODE_PLUGIN_ROOT` injetado pelo host em `HOST_DETECTORS`. `validator_dispatch.join.sync: 'self_evident'`, `confidence: 'presumed'`. ZCode é clone estrutural do Claude Code (mesmo `Agent(subagent_type)` + mesmo formato `agents/<name>.md` no plugin root) — reusa o agente canônico sem geração extra. Smoke real (`build/smoke-hosts.mjs` + boot MCP com `ZCODE_PLUGIN_ROOT`) confirma `host=zcode`, `schema_version=5`, `atlas_ping status=alive` em v0.9.3.
+- **Installer `init zcode`** (`build/cli/atlas-init.mjs`) — copia o catálogo from-source `hosts/zcode/` para `~/.zcode/cli/plugins/cache/pauloborini/atlas-workflow-orchestrator/<version>/` e registra o plugin no `marketplace.json` do ZCode. Alias `zai` aceito. Ativação no host via `/plugins enable atlas-workflow-orchestrator`. `uninstall zcode` reversível.
+- **Packaging** — `build-plugins.sh`: nova função `build_zcode()` (cria `.zcode-plugin/plugin.json` com `${ZCODE_PLUGIN_ROOT}` injetado, copia `agents/`, `skills/`, `packages/`); `HOSTS`/dist include `zcode`. `install-host.sh`: case `zcode` adicionado. Novo manifest `plugin-manifests/zcode/plugin.json` (template com `__VERSION__`).
+- **Consistência** — `check-consistency.mjs`: checagens para `hosts/zcode/.zcode-plugin/plugin.json`, `hosts/zcode/agents/<despachados>`, `hosts/zcode/packages/mcp-server/{server.js,VERSION}`. `AGENT_DIRS` inclui zcode. Bloco de veredito M3 (sibling) cross-host agora cobre `hosts/zcode/agents/atlas-task-validator.md`.
+- **Smoke** — `build/smoke-hosts.mjs`: novo caso `zcode (ZCODE_PLUGIN_ROOT) → host=zcode sv=5 ping=ok`; env `ZCODE_PLUGIN_ROOT` adicionado à lista de variáveis limpas no boot do caso.
+- **Doc** — `host-adapters.md` (linha de detecção, coluna na matriz, checklist "adicionar host" + status multi-host) e `AGENTS.md` (cinco → seis hosts) atualizados. `README.md` ganha a 6ª linha de host + comando de instalação + nota de "Claude Agent SDK compat".
+
+Nota sobre o modelo de distribuição: ZCode não expõe uma CLI `zcode plugin marketplace add` no shell — o app Electron é o ponto de instalação. O caminho de install é cache-based (drop em `~/.zcode/cli/plugins/cache/` + registro no `marketplace.json`), análogo ao `init antigravity`. O `init zcode` é o `npx` wrapper que automatiza esse drop. Distribuição da release segue via catálogo from-source commitado em `hosts/zcode/` (DEC-008), e o artefato `.plugin` é gerado em `dist/` pelo build.
+
 ## 0.9.2 - 2026-06-22
 
 Tipo: **hardening contratual, determinismo e portabilidade** (sem breaking; `CAPABILITIES_SCHEMA_VERSION` segue **v5**, modos públicos `full`/`direct`/`execute`/`interview-only` intactos). Três frentes de melhoria das skills.

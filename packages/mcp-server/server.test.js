@@ -1,8 +1,8 @@
 // Testes de unidade do núcleo portável do MCP (S04 / F2-A6).
 // Cobre: detecção de host (registry data-driven + precedência), contrato
-// atlas_capabilities (schema_version, flags, known_hosts) e hard-fail de
+// talos_capabilities (schema_version, flags, known_hosts) e hard-fail de
 // pré-requisitos (DEC-004). Rodar: node --test packages/mcp-server/
-import { test } from 'node:test';
+import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -19,7 +19,9 @@ import {
   capabilities,
   checkPrerequisites,
   checkJoinCapability,
+  checkDispatchCapability,
   expectedNextPhase,
+  documentFlowForRouting,
   expectedExecutorSkill,
   guaranteeLevelForMode,
   classifyArtifactContent,
@@ -29,6 +31,10 @@ import {
   verifyArtifact,
   scanPrd,
   verifyTemplateConformance,
+  verifySprintFile,
+  verifyBacklogIndex,
+  selectNextSprint,
+  updateSprintStatus,
   classifyInput,
   preflight,
   lockDispatch,
@@ -40,6 +46,7 @@ import {
   ping,
   toolsList,
 } from './server.js';
+import { parseSprintRows } from '../skills/_shared/scripts/document_quality.mjs';
 
 function lockValidator(args) {
   if (args.action === 'start' && args.state_path) {
@@ -53,10 +60,10 @@ function lockValidator(args) {
           tasks: [],
           files_changed: [],
           diff_stat: '0 files',
-          plan_path: '.atlas/plans/test.md',
+          plan_path: '.talos/plans/test.md',
           boundary_refs: [],
           executed_at: new Date().toISOString(),
-          executor_skill: 'atlas-plan-execute',
+          executor_skill: 'talos-plan-execute',
         }, null, 2));
       }
       lockDispatch({
@@ -114,11 +121,11 @@ test('ping: capabilities cobre exatamente a superfície de tools (sem drift)', (
   // Guard cruzado do P0: ping().capabilities é derivado de toolsList() — qualquer
   // tool nova ou removida propaga sozinha. Este teste falha se alguém reintroduzir
   // uma lista manual paralela que omita uma tool (regressão histórica:
-  // atlas_classify_input ficou fora do ping e podia abortar run válida).
+  // talos_classify_input ficou fora do ping e podia abortar run válida).
   const toolNames = toolsList().tools.map((tool) => tool.name).sort();
   const capList = [...ping().capabilities].sort();
   assert.deepEqual(capList, toolNames);
-  assert.ok(capList.includes('atlas_classify_input'), 'atlas_classify_input deve estar nas capabilities');
+  assert.ok(capList.includes('talos_classify_input'), 'talos_classify_input deve estar nas capabilities');
 });
 
 test('detectHost: arg host explícito tem prioridade máxima', () => {
@@ -127,10 +134,10 @@ test('detectHost: arg host explícito tem prioridade máxima', () => {
   assert.equal(r.detected_via, 'arg');
 });
 
-test('detectHost: ATLAS_HOST sobrepõe sinais de env nativos', () => {
-  const r = detectHost({}, { ATLAS_HOST: 'codex', CLAUDE_PLUGIN_ROOT: '/x' });
+test('detectHost: TALOS_HOST sobrepõe sinais de env nativos', () => {
+  const r = detectHost({}, { TALOS_HOST: 'codex', CLAUDE_PLUGIN_ROOT: '/x' });
   assert.equal(r.host, 'codex');
-  assert.equal(r.detected_via, 'env:ATLAS_HOST');
+  assert.equal(r.detected_via, 'env:TALOS_HOST');
 });
 
 test('detectHost: env nativo Claude/Codex via registry', () => {
@@ -147,7 +154,7 @@ test('detectHost: sem sinal cai em generic', () => {
 
 test('detectHost: host inválido em arg/env é ignorado (cai em generic)', () => {
   assert.equal(detectHost({ host: 'inexistente' }, {}).host, 'generic');
-  assert.equal(detectHost({}, { ATLAS_HOST: 'inexistente' }).host, 'generic');
+  assert.equal(detectHost({}, { TALOS_HOST: 'inexistente' }).host, 'generic');
 });
 
 test('capabilities: schema_version atual e campos do contrato v5', () => {
@@ -187,10 +194,10 @@ test('capabilities: validator_dispatch de todos os hosts expõe dispatcher/join;
   }
 });
 
-test('detectHost: opencode via ATLAS_HOST injetado pelo packaging', () => {
-  const r = detectHost({}, { ATLAS_HOST: 'opencode' });
+test('detectHost: opencode via TALOS_HOST injetado pelo packaging', () => {
+  const r = detectHost({}, { TALOS_HOST: 'opencode' });
   assert.equal(r.host, 'opencode');
-  assert.equal(r.detected_via, 'env:ATLAS_HOST');
+  assert.equal(r.detected_via, 'env:TALOS_HOST');
 });
 
 test('capabilities: perfil opencode (subagente @, mcp local, todo nativo todowrite)', () => {
@@ -211,12 +218,12 @@ test('capabilities: perfil codex usa subagent nativo, não $skill in-context', (
   assert.equal(cap.subagent_dispatch.mechanism, 'spawn_agent(agent_type)');
   assert.match(cap.subagent_dispatch.registration, /CODEX_HOME\/agents/);
   assert.match(cap.subagent_dispatch.registration, /init codex/);
-  assert.doesNotMatch(cap.subagent_dispatch.example, /\$atlas/);
+  assert.doesNotMatch(cap.subagent_dispatch.example, /\$talos/);
   assert.equal(cap.capabilities_flags.subagent_available, true);
   assert.equal(cap.validator_dispatch.dispatcher, 'orchestrator');
-  assert.equal(cap.validator_dispatch.required_agent_type, 'atlas-task-validator');
-  assert.equal(cap.validator_dispatch.required_codex_model, 'gpt-5.4');
-  assert.equal(cap.validator_dispatch.required_codex_model_reasoning_effort, 'high');
+  assert.equal(cap.validator_dispatch.required_agent_type, 'talos-task-validator');
+  assert.equal(cap.validator_dispatch.required_codex_model, undefined);
+  assert.equal(cap.validator_dispatch.required_codex_model_reasoning_effort, undefined);
 });
 
 test('checkPrerequisites: opencode qualificado passa', () => {
@@ -227,8 +234,8 @@ test('HOST_NAMES inclui opencode', () => {
   assert.ok(HOST_NAMES.includes('opencode'));
 });
 
-test('detectHost: pi via ATLAS_HOST injetado pela config do pi-mcp-adapter', () => {
-  const r = detectHost({}, { ATLAS_HOST: 'pi' });
+test('detectHost: pi via TALOS_HOST injetado pela config do pi-mcp-adapter', () => {
+  const r = detectHost({}, { TALOS_HOST: 'pi' });
   assert.equal(r.host, 'pi');
 });
 
@@ -245,6 +252,28 @@ test('capabilities: hosts sem deps externas têm required_deps vazio', () => {
   }
 });
 
+test('capabilities: perfil zcode declara fallback de subagente (limitação do host, v0.11.0)', () => {
+  const cap = capabilities({ host: 'zcode' });
+  assert.equal(cap.host, 'zcode');
+  const fb = cap.subagent_dispatch.fallback;
+  assert.ok(fb, 'zcode deve ter subagent_dispatch.fallback');
+  assert.equal(fb.enabled, true);
+  assert.equal(fb.subagent_type, 'general-purpose');
+  assert.equal(fb.reason, 'plugin_subagents_do_not_inherit_mcp');
+  assert.ok(typeof fb.prompt_template === 'string' && fb.prompt_template.length > 0);
+  // O prompt_template referencia o agent .md canônico (fonte única) e ZCODE_PLUGIN_ROOT.
+  assert.match(fb.prompt_template, /agents\/<name>\.md/);
+  assert.match(fb.prompt_template, /ZCODE_PLUGIN_ROOT/);
+});
+
+test('capabilities: hosts não-zcode NÃO declaram fallback (schema aditivo, sem regressão)', () => {
+  for (const h of ['claude', 'codex', 'opencode', 'pi', 'antigravity', 'generic']) {
+    const sd = capabilities({ host: h }).subagent_dispatch;
+    const fb = sd.fallback;
+    assert.ok(!fb || fb.enabled !== true, `${h} não deve ter fallback.enabled:true (regressão de adapter)`);
+  }
+});
+
 test('checkPrerequisites: pi sem pi-subagents é hard-fail com next_action pi', () => {
   const r = checkPrerequisites({ host: 'pi', host_capabilities: { subagent_available: false } });
   assert.equal(r.status, 'blocked');
@@ -255,10 +284,10 @@ test('HOST_NAMES inclui pi', () => {
   assert.ok(HOST_NAMES.includes('pi'));
 });
 
-test('detectHost: antigravity via ATLAS_HOST injetado pelo mcp_config.json', () => {
-  const r = detectHost({}, { ATLAS_HOST: 'antigravity' });
+test('detectHost: antigravity via TALOS_HOST injetado pelo mcp_config.json', () => {
+  const r = detectHost({}, { TALOS_HOST: 'antigravity' });
   assert.equal(r.host, 'antigravity');
-  assert.equal(r.detected_via, 'env:ATLAS_HOST');
+  assert.equal(r.detected_via, 'env:TALOS_HOST');
 });
 
 test('capabilities: perfil antigravity (subagente define_subagent/invoke_subagent, mcp nativo, sem todo, self_evident)', () => {
@@ -266,6 +295,7 @@ test('capabilities: perfil antigravity (subagente define_subagent/invoke_subagen
   assert.equal(cap.host, 'antigravity');
   assert.equal(cap.host_label, 'Antigravity');
   assert.match(cap.subagent_dispatch.mechanism, /define_subagent.*invoke_subagent/);
+  assert.equal(cap.subagent_dispatch.skill_loading, 'embed_in_system_prompt');
   assert.equal(cap.validator_dispatch.dispatcher, 'orchestrator');
   assert.equal(cap.validator_dispatch.join.sync, 'self_evident');
   assert.equal(cap.todo_tool, null);
@@ -275,7 +305,11 @@ test('capabilities: perfil antigravity (subagente define_subagent/invoke_subagen
   // host nativo (subagente+MCP nativos) → self_evident, não exige host_capabilities
   assert.equal(cap.prereq_policy, 'self_evident');
   assert.deepEqual(cap.required_deps, []);
+  // question_prompt: ask_question nativo + retomada automática pós-entrevista
+  assert.equal(cap.question_prompt.mechanism, 'ask_question');
+  assert.equal(cap.question_prompt.resume_after_interview, 'automatic');
 });
+
 
 test('checkPrerequisites: antigravity (self_evident) passa sem report — host nativo', () => {
   assert.equal(checkPrerequisites({ host: 'antigravity' }).status, 'passed');
@@ -466,7 +500,7 @@ test('preflight: gate JOIN — pi com prereq+join reportados passa', () => {
   const r = preflight({
     run_id: 'rjoin-pi-ok', project_root: root, mode: 'execute',
     host: 'pi',
-    host_capabilities: { subagent_available: true, mcp_available: true, join_sync_available: true },
+    host_capabilities: { subagent_available: true, mcp_available: true, join_sync_available: true, dispatch_mutable: true },
   });
   assert.equal(r.status, 'passed');
 });
@@ -482,7 +516,7 @@ test('preflight: gate JOIN — generic sem join → blocked; com subagent+mcp+jo
   const ok = preflight({
     run_id: 'rjoin-gen-ok', project_root: root, mode: 'execute',
     host: 'generic',
-    host_capabilities: { subagent_available: true, mcp_available: true, join_sync_available: true },
+    host_capabilities: { subagent_available: true, mcp_available: true, join_sync_available: true, dispatch_mutable: true },
   });
   assert.equal(ok.status, 'passed');
 });
@@ -533,15 +567,229 @@ test('preflight: self_evident — codex/claude/opencode passam sem reportar join
   }
 });
 
+// ── Gate DISPATCH_CAPABILITY (DEC-008) ─────────────────────────────────────
+
+test('checkDispatchCapability: modo audit passa independente de dispatch_capability', () => {
+  // Modos read-only (audit, interview-only) não exigem mutação.
+  for (const host of ['zcode', 'claude', 'generic']) {
+    const r = checkDispatchCapability({ host }, 'audit');
+    assert.equal(r.status, 'passed', `host ${host} audit`);
+    assert.equal(r.reason, 'modo_readonly_nao_exige_mutacao');
+  }
+});
+
+test('checkDispatchCapability: modo interview-only passa independente de dispatch_capability', () => {
+  for (const mode of ['interview-only', 'interview_only']) {
+    const r = checkDispatchCapability({ host: 'zcode' }, mode);
+    assert.equal(r.status, 'passed');
+    assert.equal(r.reason, 'modo_readonly_nao_exige_mutacao');
+  }
+});
+
+test('checkDispatchCapability: host mutable (claude/codex/opencode) passa para modos de execução', () => {
+  for (const host of ['claude', 'codex', 'opencode']) {
+    for (const mode of ['full', 'direct', 'execute']) {
+      const r = checkDispatchCapability({ host }, mode);
+      assert.equal(r.status, 'passed', `host ${host} mode ${mode}`);
+      assert.equal(r.capability, 'mutable');
+    }
+  }
+});
+
+test('checkDispatchCapability: host unknown (zcode) sem dispatch_mutable → blocked para execução', () => {
+  for (const mode of ['full', 'direct', 'execute']) {
+    const r = checkDispatchCapability({ host: 'zcode' }, mode);
+    assert.equal(r.status, 'blocked', `zcode ${mode}`);
+    assert.equal(r.capability, 'unknown');
+    assert.equal(r.cause, 'dispatch_capability_nao_verificada');
+    assert.ok(r.next_action.includes('dispatch_mutable'), `next_action deve mencionar dispatch_mutable: ${r.next_action}`);
+  }
+});
+
+test('checkDispatchCapability: host unknown (zcode) com dispatch_mutable:true → passa', () => {
+  for (const mode of ['full', 'direct', 'execute']) {
+    const r = checkDispatchCapability(
+      { host: 'zcode', host_capabilities: { dispatch_mutable: true } },
+      mode,
+    );
+    assert.equal(r.status, 'passed', `zcode ${mode} com dispatch_mutable`);
+    assert.equal(r.capability, 'reported_mutable');
+    assert.equal(r.reported, true);
+  }
+});
+
+test('checkDispatchCapability: nenhum host atual declara readonly', () => {
+  // Branch readonly fica reservada para adapter futuro; hoje nenhum host deve cair nela.
+  for (const host of HOST_NAMES) {
+    assert.notEqual(capabilities({ host }).dispatch_capability, 'readonly', `host ${host}`);
+  }
+});
+
+test('checkDispatchCapability: generic/pi unknown sem report → blocked', () => {
+  for (const host of ['generic', 'pi']) {
+    const r = checkDispatchCapability({ host }, 'execute');
+    assert.equal(r.status, 'blocked', `host ${host}`);
+    assert.equal(r.capability, 'unknown');
+    assert.equal(r.cause, 'dispatch_capability_nao_verificada');
+  }
+});
+
+test('checkDispatchCapability: generic/pi unknown com dispatch_mutable:true → passa', () => {
+  for (const host of ['generic', 'pi']) {
+    const r = checkDispatchCapability(
+      { host, host_capabilities: { dispatch_mutable: true } },
+      'execute',
+    );
+    assert.equal(r.status, 'passed', `host ${host}`);
+    assert.equal(r.capability, 'reported_mutable');
+  }
+});
+
+test('checkDispatchCapability: dispatch_mutable não-booleano → ignorado (fail-closed)', () => {
+  // Apenas === true é aceito; strings ou números são ignorados.
+  for (const nonBool of ['true', 1, null]) {
+    const r = checkDispatchCapability(
+      { host: 'zcode', host_capabilities: { dispatch_mutable: nonBool } },
+      'execute',
+    );
+    assert.equal(r.status, 'blocked', `dispatch_mutable=${JSON.stringify(nonBool)} deveria ser blocked`);
+  }
+});
+
+test('preflight: gate DISPATCH — zcode modo execute sem dispatch_mutable → blocked', () => {
+  const root = tmpRoot();
+  const r = preflight({
+    run_id: 'rdispatch-zcode-fail', project_root: root, mode: 'execute',
+    host: 'zcode', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  assert.equal(r.status, 'blocked');
+  assert.equal(r.gate, 'DISPATCH');
+  assert.equal(r.dispatch_capability, 'unknown');
+  assert.equal(r.cause, 'dispatch_capability_nao_verificada');
+  assert.ok(r.next_action.includes('dispatch_mutable'));
+});
+
+test('preflight: gate DISPATCH — zcode modo audit passa (read-only, sem mutação)', () => {
+  const root = tmpRoot();
+  const r = preflight({
+    run_id: 'rdispatch-zcode-audit', project_root: root, mode: 'audit',
+    host: 'zcode',
+  });
+  assert.equal(r.status, 'passed');
+});
+
+test('preflight: gate DISPATCH — zcode modo execute com dispatch_mutable:true → passa', () => {
+  const root = tmpRoot();
+  const r = preflight({
+    run_id: 'rdispatch-zcode-ok', project_root: root, mode: 'execute',
+    host: 'zcode',
+    host_capabilities: { subagent_available: true, mcp_available: true, dispatch_mutable: true },
+  });
+  assert.equal(r.status, 'passed');
+  assert.equal(r.routing.dispatch_capability, 'reported_mutable');
+});
+
+test('preflight: gate DISPATCH — claude modo execute passa (mutable)', () => {
+  const root = tmpRoot();
+  const r = preflight({
+    run_id: 'rdispatch-claude-ok', project_root: root, mode: 'execute',
+    host: 'claude',
+  });
+  assert.equal(r.status, 'passed');
+  assert.equal(r.routing.dispatch_capability, 'mutable');
+});
+
+test('preflight: ordem determinística — DISPATCH após JOIN', () => {
+  const root = tmpRoot();
+  // JOIN bloqueia antes de DISPATCH (pi sem join_sync_available).
+  const r = preflight({
+    run_id: 'rdispatch-order', project_root: root, mode: 'execute',
+    host: 'pi', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  assert.equal(r.status, 'blocked');
+  assert.equal(r.gate, 'JOIN', 'JOIN deve preceder DISPATCH');
+});
+
+test('preflight: gate DISPATCH — pi com prereq+join+dispatch → passa', () => {
+  const root = tmpRoot();
+  const r = preflight({
+    run_id: 'rdispatch-pi-ok', project_root: root, mode: 'execute',
+    host: 'pi',
+    host_capabilities: {
+      subagent_available: true, mcp_available: true,
+      join_sync_available: true,
+      dispatch_mutable: true,
+    },
+  });
+  assert.equal(r.status, 'passed');
+});
+
+test('capabilities: dispatch_capability declarado em todos os hosts', () => {
+  for (const host of HOST_NAMES) {
+    const cap = capabilities({ host });
+    assert.ok(['mutable', 'unknown', 'readonly'].includes(cap.dispatch_capability),
+      `host ${host}: dispatch_capability=${cap.dispatch_capability} inválido`);
+  }
+  assert.equal(capabilities({ host: 'claude' }).dispatch_capability, 'mutable');
+  assert.equal(capabilities({ host: 'codex' }).dispatch_capability, 'mutable');
+  assert.equal(capabilities({ host: 'opencode' }).dispatch_capability, 'mutable');
+  assert.equal(capabilities({ host: 'zcode' }).dispatch_capability, 'unknown');
+  assert.equal(capabilities({ host: 'antigravity' }).dispatch_capability, 'unknown');
+  assert.equal(capabilities({ host: 'pi' }).dispatch_capability, 'unknown');
+  assert.equal(capabilities({ host: 'generic' }).dispatch_capability, 'unknown');
+});
+
 // ── Slice A: modo execute, classify_input, routing, guarantee_level ──────────
 
-test('WORKFLOW_CONFIG: modo execute presente; interview-only/interview_only mantidos (T01)', () => {
+test('WORKFLOW_CONFIG: modo execute presente; audit e interview-only/interview_only mantidos (T01)', () => {
   assert.ok(WORKFLOW_CONFIG.modes.includes('execute'));
   assert.ok(WORKFLOW_CONFIG.modes.includes('full'));
   assert.ok(WORKFLOW_CONFIG.modes.includes('direct'));
+  assert.ok(WORKFLOW_CONFIG.modes.includes('audit'));
   assert.ok(WORKFLOW_CONFIG.modes.includes('interview-only'));
   assert.ok(WORKFLOW_CONFIG.modes.includes('interview_only'));
   assert.ok(!WORKFLOW_CONFIG.modes.includes('plan'));
+  assert.equal(WORKFLOW_CONFIG.skills.backlog_generator, 'talos-backlog-generator');
+  assert.equal(WORKFLOW_CONFIG.skills.audit, 'talos-audit');
+});
+
+test('documentFlowForRouting: macro input prioriza backlog antes de PRD/plano', () => {
+  const full = documentFlowForRouting('full', 'idea');
+  assert.equal(full.priority, 'backlog_first');
+  assert.deepEqual(full.skills, [
+    'talos-backlog-generator',
+    'talos-sprint-prd-generator',
+    'talos-prd-interview',
+    'talos-plan-handoff',
+  ]);
+  assert.deepEqual(full.artifacts, ['BACKLOG_MESTRE_*.md', 'SPRINT_S<NN>_*.md', 'PRD_*.md', 'PLAN_*.md']);
+
+  const direct = documentFlowForRouting('direct', 'roadmap');
+  assert.equal(direct.priority, 'backlog_first');
+  assert.deepEqual(direct.skills, [
+    'talos-backlog-generator',
+    'talos-sprint-prd-generator',
+    'talos-prd-interview',
+  ]);
+});
+
+test('documentFlowForRouting: backlog existente preserva execução pequena por sprint', () => {
+  const flow = documentFlowForRouting('full', 'backlog-item', 'backlog');
+  assert.equal(flow.priority, 'sprint_from_backlog');
+  assert.ok(!flow.skills.includes('talos-backlog-generator'));
+  assert.deepEqual(flow.artifacts, ['SPRINT_S<NN>_*.md', 'PRD_*.md', 'PLAN_*.md']);
+});
+
+test('documentFlowForRouting: input sprint é alias estrito de backlog-item', () => {
+  const full = documentFlowForRouting('full', 'sprint');
+  assert.equal(full.priority, 'sprint_from_backlog');
+  assert.ok(!full.skills.includes('talos-backlog-generator'));
+  assert.deepEqual(full.artifacts, ['SPRINT_S<NN>_*.md', 'PRD_*.md', 'PLAN_*.md']);
+
+  const direct = documentFlowForRouting('direct', 'sprint');
+  assert.equal(direct.priority, 'sprint_from_backlog');
+  assert.ok(!direct.skills.includes('talos-backlog-generator'));
+  assert.deepEqual(direct.artifacts, ['SPRINT_S<NN>_*.md', 'PRD_*.md']);
 });
 
 test('expectedNextPhase: execute → plan_execute sem regredir full/direct/interview (T02)', () => {
@@ -549,25 +797,27 @@ test('expectedNextPhase: execute → plan_execute sem regredir full/direct/inter
   assert.equal(expectedNextPhase({ mode: 'full' }, {}), 'plan_handoff');
   assert.equal(expectedNextPhase({ mode: 'direct' }, {}), 'plan_execute');
   assert.equal(expectedNextPhase({ mode: 'interview-only' }, {}), 'prd_interview');
+  assert.equal(expectedNextPhase({ mode: 'audit' }, {}), 'audit_report');
   // next_phase explícito do dispatch sempre prevalece
   assert.equal(expectedNextPhase({ mode: 'execute' }, { next_phase: 'slice_review' }), 'slice_review');
 });
 
 test('matriz modo → executor preserva phase plan_execute compartilhada (Etapa 1 T01)', () => {
-  assert.equal(expectedExecutorSkill('full'), 'atlas-plan-execute');
-  assert.equal(expectedExecutorSkill('execute'), 'atlas-plan-execute');
-  assert.equal(expectedExecutorSkill('direct'), 'atlas-direct-execute');
+  assert.equal(expectedExecutorSkill('full'), 'talos-plan-execute');
+  assert.equal(expectedExecutorSkill('execute'), 'talos-plan-execute');
+  assert.equal(expectedExecutorSkill('direct'), 'talos-direct-execute');
   assert.equal(expectedExecutorSkill('interview-only'), null);
+  assert.equal(expectedExecutorSkill('audit'), null);
   for (const mode of ['direct', 'execute']) {
     assert.equal(expectedNextPhase({ mode }, {}), 'plan_execute');
   }
 });
 
-test('atlas_preflight materializa executor efetivo por modo sem alterar phase/FSM (Etapa 1 T01)', () => {
+test('talos_preflight materializa executor efetivo por modo sem alterar phase/FSM (Etapa 1 T01)', () => {
   for (const [mode, executor] of [
-    ['full', 'atlas-plan-execute'],
-    ['direct', 'atlas-direct-execute'],
-    ['execute', 'atlas-plan-execute'],
+    ['full', 'talos-plan-execute'],
+    ['direct', 'talos-direct-execute'],
+    ['execute', 'talos-plan-execute'],
   ]) {
     const result = preflight({
       run_id: `route-${mode}`,
@@ -579,6 +829,21 @@ test('atlas_preflight materializa executor efetivo por modo sem alterar phase/FS
     assert.equal(result.routing.executor_skill, executor);
     assert.equal(expectedNextPhase(result.routing, {}), mode === 'full' ? 'plan_handoff' : 'plan_execute');
   }
+});
+
+test('talos_preflight materializa document_flow backlog_first para macro input', () => {
+  const result = preflight({
+    run_id: 'route-full-idea-backlog-first',
+    project_root: tmpRoot(),
+    mode: 'full',
+    input_type: 'idea',
+    artifact_type: 'idea',
+    host: 'codex',
+  });
+  assert.equal(result.status, 'passed');
+  assert.equal(result.routing.document_flow.priority, 'backlog_first');
+  assert.equal(result.routing.document_flow.skills[0], 'talos-backlog-generator');
+  assert.equal(expectedNextPhase(result.routing, {}), 'plan_handoff');
 });
 
 test('contrato interview-only materializa PRD real e passa artifact+TC antes da entrevista (Etapa 1 T04)', () => {
@@ -634,7 +899,22 @@ test('guaranteeLevelForMode: execute/full/direct = full_pipeline (T04)', () => {
 test('guaranteeLevelForMode: modos sem execução (interview) → null (campo omitido)', () => {
   assert.equal(guaranteeLevelForMode('interview-only'), null);
   assert.equal(guaranteeLevelForMode('interview_only'), null);
+  assert.equal(guaranteeLevelForMode('audit'), null);
   assert.equal(guaranteeLevelForMode('desconhecido'), null);
+});
+
+test('talos_preflight: audit passa sem executor/guarantee_level e expõe talos-audit', () => {
+  const result = preflight({
+    run_id: 'route-audit',
+    project_root: tmpRoot(),
+    mode: 'audit',
+    host: 'codex',
+  });
+  assert.equal(result.status, 'passed');
+  assert.equal(result.routing.executor_skill, undefined);
+  assert.equal(result.routing.guarantee_level, undefined);
+  assert.equal(result.routing.skills.audit, 'talos-audit');
+  assert.equal(expectedNextPhase(result.routing, {}), 'audit_report');
 });
 
 // Fixture de plano conforme o template canônico (verifyPlanConformance → 0 pendências).
@@ -644,6 +924,7 @@ const CONFORMANT_PLAN = [
   '| Campo | Valor |',
   '|-------|-------|',
   '| **PRD** | [PRD_x.md](./PRD_x.md) |',
+  '| **Sprint file** | [SPRINT_S01_runtime.md](./SPRINT_S01_runtime.md) — `eval_manifest` §9 |',
   '',
   'Política: [BOUNDARY_PRD_PLAN.md](./TEMPLATES/BOUNDARY_PRD_PLAN.md).',
   '',
@@ -653,6 +934,7 @@ const CONFORMANT_PLAN = [
   '## 4. Estado na abertura da sprint',
   '## 5. Tarefas de execução',
   '#### T01. Primeira tarefa',
+  '- **Eval/Policy:** Sprint §9 EVAL-001 / Sprint §10 policy.allowed_scope',
   '## 6. Contratos técnicos',
   '## 7. Slices',
   '## 8. Validação e checklist',
@@ -689,7 +971,7 @@ test('classifyArtifactContent: input sem marcadores → unknown (T03)', () => {
 
 // ── Slice B: banco de templates de banner + campo banner nos gates ───────────
 
-const BANNER_RE = /^▸ atlas: /;
+const BANNER_RE = /^▸ talos: /;
 
 test('BANNER_TEMPLATES: banco tem exatamente os 11 eventos do PRD §4 (T06)', () => {
   // 12 entradas: os 11 eventos do banco + a variante preflight ok/fail conta como
@@ -713,20 +995,20 @@ test('BANNER_TEMPLATES: banco tem exatamente os 11 eventos do PRD §4 (T06)', ()
 test('renderBanner: preenche slots e devolve string pt-BR canônica (T06)', () => {
   assert.equal(
     renderBanner('roteia', { tipo: 'plan', modo: 'execute' }),
-    '▸ atlas: roteamento · input=plan → modo=execute',
+    '▸ talos: roteamento · input=plan → modo=execute',
   );
   assert.equal(
     renderBanner('roteia_troca', { x: 'direct', y: 'plan', z: 'execute' }),
-    '▸ atlas: roteamento · pediu=direct mas input=plan → modo=execute',
+    '▸ talos: roteamento · pediu=direct mas input=plan → modo=execute',
   );
-  assert.equal(renderBanner('preflight_ok', { caps: 'subagent+mcp' }), '▸ atlas: preflight · ok (subagent+mcp)');
-  assert.equal(renderBanner('preflight_fail', { motivo: 'x' }), '▸ atlas: preflight · BLOCK · x');
-  assert.equal(renderBanner('prd_lacunas', { n: 3 }), '▸ atlas: prd · 3 lacunas');
-  assert.equal(renderBanner('prd_ok', {}), '▸ atlas: prd · ok');
-  assert.equal(renderBanner('exec', { i: 2, n: 5 }), '▸ atlas: exec · slice 2/5');
-  assert.equal(renderBanner('validacao', { status: 'pass' }), '▸ atlas: validação · pass');
-  assert.equal(renderBanner('review', { status: 'ok' }), '▸ atlas: review · ok');
-  assert.equal(renderBanner('done', { resumo: 'feito' }), '▸ atlas: done · feito');
+  assert.equal(renderBanner('preflight_ok', { caps: 'subagent+mcp' }), '▸ talos: preflight · ok (subagent+mcp)');
+  assert.equal(renderBanner('preflight_fail', { motivo: 'x' }), '▸ talos: preflight · BLOCK · x');
+  assert.equal(renderBanner('prd_lacunas', { n: 3 }), '▸ talos: prd · 3 lacunas');
+  assert.equal(renderBanner('prd_ok', {}), '▸ talos: prd · ok');
+  assert.equal(renderBanner('exec', { i: 2, n: 5 }), '▸ talos: exec · slice 2/5');
+  assert.equal(renderBanner('validacao', { status: 'pass' }), '▸ talos: validação · pass');
+  assert.equal(renderBanner('review', { status: 'ok' }), '▸ talos: review · ok');
+  assert.equal(renderBanner('done', { resumo: 'feito' }), '▸ talos: done · feito');
 });
 
 test('renderBanner: evento desconhecido lança (T06)', () => {
@@ -735,7 +1017,7 @@ test('renderBanner: evento desconhecido lança (T06)', () => {
 
 // Fixtures e helper de isolamento por temp dir (project_root).
 function tmpRoot() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-sliceB-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'talos-sliceB-'));
   return dir;
 }
 
@@ -765,6 +1047,7 @@ const CONFORMANT_PLAN_DOC = [
   '| Campo | Valor |',
   '|-------|-------|',
   '| **PRD** | [PRD_x.md](./PRD_x.md) |',
+  '| **Sprint file** | [SPRINT_S01_runtime.md](./SPRINT_S01_runtime.md) — `eval_manifest` §9 |',
   '',
   'Política: [BOUNDARY_PRD_PLAN.md](./TEMPLATES/BOUNDARY_PRD_PLAN.md).',
   '',
@@ -774,120 +1057,553 @@ const CONFORMANT_PLAN_DOC = [
   '## 4. Estado na abertura da sprint',
   '## 5. Tarefas de execução',
   '#### T01. Primeira tarefa',
+  '- **Eval/Policy:** Sprint §9 EVAL-001 / Sprint §10 policy.allowed_scope',
   '## 6. Contratos técnicos',
   '## 7. Slices',
   '## 8. Validação e checklist',
   '',
 ].join('\n');
 
-test('atlas_verify_artifact: gate retorna banner não-vazio (passed → plano) (T07)', () => {
+const STRICT_PRD_DOC = [
+  '# PRD: sprint runtime',
+  '',
+  '| Campo | Valor |',
+  '|-------|-------|',
+  '| **Status** | Aprovado para implementação |',
+  '| **Sprint file** | [SPRINT_S01_runtime.md](./SPRINT_S01_runtime.md#9-eval-manifest) |',
+  '',
+  '- Eval source: `SPRINT_S01_runtime.md §9 eval_manifest`',
+  '',
+  '## 1. Contexto e objetivo',
+  'Objetivo.',
+  '## 2. Escopo',
+  'Escopo.',
+  '## 3. Decisões de produto',
+  '| ID | Decisão |',
+  '|---|---|',
+  '| D1 | Fechado |',
+  '## 4. Fluxos e cenários UX',
+  'Fluxo.',
+  '## 5. Contrato funcional e invariantes',
+  'Contrato.',
+  '## 6. Critérios de aceite',
+  '**Produto**',
+  '- [ ] EVAL-001 comprovado.',
+  '**UX**',
+  '- [ ] Fluxo ok.',
+  '**Dados**',
+  '- [ ] Dados ok.',
+  '**Regressão de produto**',
+  '- [ ] Regressão ok.',
+  '',
+].join('\n');
+
+function sprintDoc({
+  id = 'S01',
+  evalId = id,
+  includeEval = true,
+  backlog = 'BACKLOG.md#S01',
+  status = 'ready',
+  dorStatus = null,
+} = {}) {
+  return [
+    `# Sprint viva — ${id} — Runtime harness`,
+    '',
+    '## 1. Metadados',
+    '| Campo | Valor |',
+    '|---|---|',
+    `| Sprint ID | ${id} |`,
+    '| Nome | Runtime harness |',
+    `| Status | ${status} |`,
+    `| Backlog mestre | ${backlog} |`,
+    '| PRD | pendente |',
+    '| PLAN | pendente |',
+    '| State / evidência | pendente |',
+    '| Fase | F0 |',
+    '| MoSCoW | Must |',
+    '| Prioridade | P0 |',
+    '| Responsável | Talos |',
+    '| Criado em | 2026-06-29 |',
+    '| Última atualização | 2026-06-29 |',
+    '',
+    '## 2. Objetivo e valor',
+    'Objetivo único.',
+    '## 3. Escopo da sprint',
+    '- [ ] Entrega',
+    '## 4. Contexto e fontes',
+    '| Tipo | Fonte | Uso nesta sprint |',
+    '|---|---|---|',
+    '| Backlog | BACKLOG.md#S01 | escopo |',
+    '## 5. Dependências e bloqueios',
+    '| ID | Tipo | Descrição | Status | Evidência |',
+    '|---|---|---|---|---|',
+    '| DEP-001 | interna | nada | done | link |',
+    '## 6. Decisões da sprint',
+    '| ID | Decisão | Fonte | Impacto | Status |',
+    '|---|---|---|---|---|',
+    '| SD-001 | seguir | backlog | baixo | aprovada |',
+    '## 7. Critérios candidatos para PRD',
+    '- [ ] Critério',
+    '## 8. Definition of Ready',
+    '- [ ] Próxima ação explícita.',
+    ...(dorStatus ? [`**Status DoR:** ${dorStatus}`] : []),
+    '## 9. Eval manifest',
+    ...(includeEval ? [
+      '```yaml',
+      'eval_manifest:',
+      `  sprint_id: "${evalId}"`,
+      '  objective: "runtime harness"',
+      '  must_prove:',
+      '    - id: "EVAL-001"',
+      '      claim: "gate passa"',
+      '      source: "SPRINT"',
+      '      evidence_required: "node --test"',
+      '  regression_guards:',
+      '    - "parser antigo preservado"',
+      '  negative_paths:',
+      '    - "manifest ausente falha"',
+      '```',
+    ] : ['sem manifest']),
+    '## 10. Policy manifest',
+    '```yaml',
+    'policy_manifest:',
+    '  allowed_scope:',
+    '    - "packages/mcp-server"',
+    '  forbidden_scope:',
+    '    - "hosts"',
+    '  required_gates:',
+    '    - "talos_verify_sprint_file"',
+    '```',
+    '## 11. Guia e sensores',
+    '- [ ] Guia',
+    '## 12. Evidence-to-claim',
+    '| Claim | Onde foi prometido | Evidência esperada | Evidência real | Status |',
+    '|---|---|---|---|---|',
+    '| gate passa | sprint | node --test | pendente | pending |',
+    '## 13. PRD e PLAN',
+    '| Campo | Valor |',
+    '|---|---|',
+    '| Status | pendente |',
+    '## 14. Execução e validação',
+    '| Gate | Status | Evidência |',
+    '|---|---|---|',
+    '| Sprint file válido | pending | pendente |',
+    '## 15. Aprendizados e handoff para próximas sprints',
+    '| Tipo | Aprendizado | Afeta | Ação |',
+    '|---|---|---|---|',
+    '| técnico | nada | S02 | registrar |',
+    '## 16. Histórico',
+    '| Data | Autor | Mudança |',
+    '|---|---|---|',
+    '| 2026-06-29 | Talos | Criação |',
+    '',
+  ].join('\n');
+}
+
+const BACKLOG_WITH_SPRINT_FILE = [
+  '## 7. Registro de sprints',
+  '| ID | Sprint | Fase-fonte | Objetivo (1 linha) | MoSCoW | Ganho | Esforço | Prioridade | PRD | Depende de | Estado | Gate | Sprint file | PLAN | State |',
+  '|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|',
+  '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | backlog | — | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | PLAN_S01.md | .talos/state/S01.json |',
+  '',
+].join('\n');
+
+test('talos_verify_artifact: gate retorna banner não-vazio (passed → plano) (T07)', () => {
   const root = tmpRoot();
   const file = path.join(root, 'PLAN_x.md');
   fs.writeFileSync(file, CONFORMANT_PLAN_DOC);
   const r = verifyArtifact({ run_id: 'r1', project_root: root, artifact_path: 'PLAN_x.md' });
   assert.equal(r.status, 'passed');
   assert.match(r.banner, BANNER_RE);
-  assert.equal(r.banner, '▸ atlas: plano · validado (TC pass)');
+  assert.equal(r.banner, '▸ talos: plano · validado (TC pass)');
 });
 
-test('atlas_verify_artifact: ausente → banner de BLOCK não-vazio (T07)', () => {
+test('talos_verify_artifact: ausente → banner de BLOCK não-vazio (T07)', () => {
   const root = tmpRoot();
   const r = verifyArtifact({ run_id: 'r1', project_root: root, artifact_path: 'nao_existe.md' });
   assert.equal(r.status, 'blocked');
-  assert.match(r.banner, /^▸ atlas: preflight · BLOCK · /);
+  assert.match(r.banner, /^▸ talos: preflight · BLOCK · /);
 });
 
-test('atlas_scan_prd: 0 bloqueantes → banner prd · ok (T07)', () => {
+test('talos_scan_prd: 0 bloqueantes → banner prd · ok (T07)', () => {
   const root = tmpRoot();
   fs.writeFileSync(path.join(root, 'PRD.md'), VALID_PRD);
   const r = scanPrd({ run_id: 'r1', project_root: root, prd_path: 'PRD.md' });
   assert.equal(r.status, 'passed');
-  assert.equal(r.banner, '▸ atlas: prd · ok');
+  assert.equal(r.banner, '▸ talos: prd · ok');
 });
 
-test('atlas_scan_prd: PRD vazio → banner prd · {n} lacunas (T07)', () => {
+test('talos_scan_prd: PRD vazio → banner prd · {n} lacunas (T07)', () => {
   const root = tmpRoot();
   fs.writeFileSync(path.join(root, 'PRD.md'), '   ');
   const r = scanPrd({ run_id: 'r1', project_root: root, prd_path: 'PRD.md' });
   assert.equal(r.status, 'blocked');
-  assert.match(r.banner, /^▸ atlas: prd · \d+ lacunas$/);
+  assert.match(r.banner, /^▸ talos: prd · \d+ lacunas$/);
 });
 
-test('atlas_verify_template_conformance: plano conforme → banner plano (T07)', () => {
+test('talos_verify_template_conformance: plano conforme → banner plano (T07)', () => {
   const root = tmpRoot();
   fs.writeFileSync(path.join(root, 'PLAN_x.md'), CONFORMANT_PLAN_DOC);
   const r = verifyTemplateConformance({ run_id: 'r1', project_root: root, artifact_path: 'PLAN_x.md', artifact_type: 'plan' });
   assert.equal(r.status, 'passed');
-  assert.equal(r.banner, '▸ atlas: plano · validado (TC pass)');
+  assert.equal(r.banner, '▸ talos: plano · validado (TC pass)');
 });
 
-test('atlas_verify_template_conformance: plano não conforme → banner BLOCK (T07)', () => {
+test('talos_verify_template_conformance: modo sprint exige Sprint file/EVAL em PRD e PLAN', () => {
+  const root = tmpRoot();
+  fs.writeFileSync(path.join(root, 'PRD_ok.md'), STRICT_PRD_DOC);
+  fs.writeFileSync(path.join(root, 'PLAN_ok.md'), CONFORMANT_PLAN_DOC);
+  assert.equal(verifyTemplateConformance({
+    run_id: 'r1', project_root: root, artifact_path: 'PRD_ok.md', artifact_type: 'prd',
+    required_status: 'Aprovado para implementação', require_sprint_file: true,
+  }).status, 'passed');
+  assert.equal(verifyTemplateConformance({
+    run_id: 'r1', project_root: root, artifact_path: 'PLAN_ok.md', artifact_type: 'plan',
+    require_sprint_file: true,
+  }).status, 'passed');
+
+  fs.writeFileSync(path.join(root, 'PRD_sem_sprint.md'), STRICT_PRD_DOC.replace(/\| \*\*Sprint file\*\*.*\n/, '').replace(/EVAL-001/g, ''));
+  const prdBlocked = verifyTemplateConformance({
+    run_id: 'r1', project_root: root, artifact_path: 'PRD_sem_sprint.md', artifact_type: 'prd',
+    required_status: 'Aprovado para implementação', require_sprint_file: true,
+  });
+  assert.equal(prdBlocked.status, 'blocked');
+  assert.ok(prdBlocked.pendencies.some((p) => p.category === 'sprint_file'));
+
+  fs.writeFileSync(path.join(root, 'PLAN_sem_eval.md'), CONFORMANT_PLAN_DOC.replace(/\| \*\*Sprint file\*\*.*\n/, '').replace(/- \*\*Eval\/Policy:\*\*.*\n/, '').replace(/EVAL-001/g, ''));
+  const planBlocked = verifyTemplateConformance({
+    run_id: 'r1', project_root: root, artifact_path: 'PLAN_sem_eval.md', artifact_type: 'plan',
+    require_sprint_file: true,
+  });
+  assert.equal(planBlocked.status, 'blocked');
+  assert.ok(planBlocked.pendencies.some((p) => p.category === 'sprint_file'));
+});
+
+test('talos_verify_template_conformance: plano não conforme → banner BLOCK (T07)', () => {
   const root = tmpRoot();
   fs.writeFileSync(path.join(root, 'ruim.md'), '# nada\n\nconteúdo solto');
   const r = verifyTemplateConformance({ run_id: 'r1', project_root: root, artifact_path: 'ruim.md', artifact_type: 'plan' });
   assert.equal(r.status, 'blocked');
-  assert.match(r.banner, /^▸ atlas: preflight · BLOCK · /);
+  assert.match(r.banner, /^▸ talos: preflight · BLOCK · /);
 });
 
-test('atlas_classify_input: plano → banner roteia com modo=execute (T07)', () => {
+test('parseSprintRows: captura colunas novas sem quebrar legado', () => {
+  const rows = parseSprintRows(BACKLOG_WITH_SPRINT_FILE);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].id, 'S01');
+  assert.equal(rows[0].state, 'backlog');
+  assert.equal(rows[0].sprint_file, '`.talos/backlog/sprints/SPRINT_S01_runtime.md`');
+  assert.equal(rows[0].plan, 'PLAN_S01.md');
+  assert.equal(rows[0].state_file, '.talos/state/S01.json');
+});
+
+test('parseSprintRows: aceita sub-sprint decimal registrada no backlog', () => {
+  const rows = parseSprintRows(BACKLOG_WITH_SPRINT_FILE.replaceAll('S01', 'S17.1'));
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].id, 'S17.1');
+  assert.equal(rows[0].sprint_file, '`.talos/backlog/sprints/SPRINT_S17.1_runtime.md`');
+});
+
+test('talos_verify_sprint_file: válido passa com vínculo no backlog', () => {
+  const root = tmpRoot();
+  fs.mkdirSync(path.join(root, '.talos/backlog/sprints'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md'), sprintDoc());
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), BACKLOG_WITH_SPRINT_FILE);
+  const r = verifySprintFile({
+    run_id: 'r1',
+    project_root: root,
+    sprint_path: '.talos/backlog/sprints/SPRINT_S01_runtime.md',
+    sprint_id: 'S01',
+    backlog_path: 'BACKLOG.md',
+  });
+  assert.equal(r.status, 'passed');
+  assert.equal(r.pending_count, 0);
+});
+
+test('talos_verify_sprint_file: aceita sub-sprint decimal registrada', () => {
+  const root = tmpRoot();
+  fs.mkdirSync(path.join(root, '.talos/backlog/sprints'), { recursive: true });
+  const backlog = BACKLOG_WITH_SPRINT_FILE.replaceAll('S01', 'S17.1');
+  fs.writeFileSync(path.join(root, '.talos/backlog/sprints/SPRINT_S17.1_runtime.md'), sprintDoc({ id: 'S17.1', evalId: 'S17.1', backlog: 'BACKLOG.md#S17.1' }));
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlog);
+  const r = verifySprintFile({
+    run_id: 'r1',
+    project_root: root,
+    sprint_path: '.talos/backlog/sprints/SPRINT_S17.1_runtime.md',
+    sprint_id: 'S17.1',
+    backlog_path: 'BACKLOG.md',
+  });
+  assert.equal(r.status, 'passed');
+  assert.equal(r.pending_count, 0);
+});
+
+test('talos_verify_sprint_file: falta eval_manifest falha', () => {
+  const root = tmpRoot();
+  fs.writeFileSync(path.join(root, 'SPRINT_S01.md'), sprintDoc({ includeEval: false }));
+  const r = verifySprintFile({ run_id: 'r1', project_root: root, sprint_path: 'SPRINT_S01.md', sprint_id: 'S01' });
+  assert.equal(r.status, 'blocked');
+  assert.ok(r.pendencies.some((p) => p.category === 'eval_manifest'));
+});
+
+test('talos_verify_sprint_file: sprint_id divergente falha', () => {
+  const root = tmpRoot();
+  fs.writeFileSync(path.join(root, 'SPRINT_S01.md'), sprintDoc());
+  const r = verifySprintFile({ run_id: 'r1', project_root: root, sprint_path: 'SPRINT_S01.md', sprint_id: 'S02' });
+  assert.equal(r.status, 'blocked');
+  assert.ok(r.pendencies.some((p) => p.item === 'Sprint ID' || p.item === 'sprint_id'));
+});
+
+test('talos_verify_sprint_file: backlog link ausente falha', () => {
+  const root = tmpRoot();
+  fs.writeFileSync(path.join(root, 'SPRINT_S01.md'), sprintDoc());
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), BACKLOG_WITH_SPRINT_FILE.replace('S01', 'S02'));
+  const r = verifySprintFile({
+    run_id: 'r1',
+    project_root: root,
+    sprint_path: 'SPRINT_S01.md',
+    sprint_id: 'S01',
+    backlog_path: 'BACKLOG.md',
+  });
+  assert.equal(r.status, 'blocked');
+  assert.ok(r.pendencies.some((p) => p.category === 'backlog_link'));
+});
+
+function backlogWithRows(rows) {
+  return [
+    '## 7. Registro de sprints',
+    '| ID | Sprint | Fase-fonte | Objetivo (1 linha) | MoSCoW | Ganho | Esforço | Prioridade | PRD | Depende de | Estado | Gate | Sprint file | PLAN | State |',
+    '|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|',
+    ...rows,
+    '',
+  ].join('\n');
+}
+
+function writeSprintFixture(root, id, { status = 'ready', dorStatus = 'verde' } = {}) {
+  fs.mkdirSync(path.join(root, '.talos/backlog/sprints'), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, `.talos/backlog/sprints/SPRINT_${id}_runtime.md`),
+    sprintDoc({ id, backlog: `BACKLOG.md#${id}`, status, dorStatus }),
+  );
+}
+
+test('talos_verify_backlog_index: índice válido passa com sprint file e status espelhado', () => {
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S01', { status: 'ready', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | ready | — | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+  const r = verifyBacklogIndex({ run_id: 'r1', project_root: root, backlog_path: 'BACKLOG.md' });
+  assert.equal(r.status, 'passed');
+  assert.equal(r.sprint_count, 1);
+  assert.equal(r.sprints[0].sprint_file_status, 'valid');
+});
+
+test('talos_verify_backlog_index: status drift backlog x sprint file bloqueia', () => {
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S01', { status: 'doing', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | ready | — | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+  const r = verifyBacklogIndex({ run_id: 'r1', project_root: root, backlog_path: 'BACKLOG.md' });
+  assert.equal(r.status, 'blocked');
+  assert.ok(r.pendencies.some((p) => p.category === 'status_drift'));
+});
+
+test('talos_select_next_sprint: escolhe sprint ready com maior prioridade determinística', () => {
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S01', { status: 'ready', dorStatus: 'verde' });
+  writeSprintFixture(root, 'S02', { status: 'ready', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime A | F0 | objetivo | Should | Alto | Baixo | P0 | pendente | — | ready | — | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+    '| S02 | Runtime B | F0 | objetivo | Must | Médio | Alto | P1 | pendente | — | ready | — | `.talos/backlog/sprints/SPRINT_S02_runtime.md` | pendente | pendente |',
+  ]));
+  const r = selectNextSprint({ run_id: 'r1', project_root: root, backlog_path: 'BACKLOG.md' });
+  assert.equal(r.status, 'passed');
+  assert.equal(r.selected.sprint_id, 'S02');
+  assert.deepEqual(r.candidates, ['S02', 'S01']);
+});
+
+test('talos_select_next_sprint: dependência interna não done bloqueia seleção', () => {
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S01', { status: 'backlog', dorStatus: 'verde' });
+  writeSprintFixture(root, 'S02', { status: 'ready', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Base | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | backlog | — | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+    '| S02 | Depende | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | S01 | ready | — | `.talos/backlog/sprints/SPRINT_S02_runtime.md` | pendente | pendente |',
+  ]));
+  const r = selectNextSprint({ run_id: 'r1', project_root: root, backlog_path: 'BACKLOG.md' });
+  assert.equal(r.status, 'blocked');
+  assert.equal(r.selected, null);
+  assert.ok(r.rejected.some((item) => item.id === 'S02' && item.reasons.some((reason) => /unmet_dependencies=S01:backlog/.test(reason))));
+});
+
+test('talos_update_sprint_status: sincroniza done no backlog e sprint file com evidência', () => {
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S01', { status: 'ready', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | ready | ready | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+  const r = updateSprintStatus({
+    run_id: 'r1',
+    project_root: root,
+    backlog_path: 'BACKLOG.md',
+    sprint_id: 'S01',
+    status: 'done',
+    validator_verdict: 'pass',
+    prd_path: 'PRD_S01.md',
+    plan_path: 'PLAN_S01.md',
+    state_path: '.talos/state/S01.json',
+    evidence: 'validator pass',
+  });
+  assert.equal(r.status, 'passed');
+  assert.equal(r.previous_status, 'ready');
+  assert.equal(r.next_status, 'done');
+  const backlog = fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8');
+  const row = parseSprintRows(backlog)[0];
+  assert.equal(row.state, 'done');
+  assert.equal(row.gate, 'validator:pass');
+  assert.equal(row.prd, 'PRD_S01.md');
+  assert.equal(row.plan, 'PLAN_S01.md');
+  assert.equal(row.state_file, '.talos/state/S01.json');
+  const sprint = fs.readFileSync(path.join(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md'), 'utf8');
+  assert.match(sprint, /^\| Status \| done \|$/m);
+  assert.match(sprint, /\| Sprint status update \| validator:pass \| validator pass \|/);
+  assert.match(sprint, /\| Talos MCP \| Status -> done; validator=pass; evidence=validator pass \|/);
+  assert.equal(verifyBacklogIndex({ run_id: 'r1', project_root: root, backlog_path: 'BACKLOG.md' }).status, 'passed');
+});
+
+test('talos_update_sprint_status: done sem validator terminal bloqueia e não muta', () => {
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S01', { status: 'ready', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | ready | ready | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+  const before = fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8');
+  const r = updateSprintStatus({
+    run_id: 'r1',
+    project_root: root,
+    backlog_path: 'BACKLOG.md',
+    sprint_id: 'S01',
+    status: 'done',
+    state_path: '.talos/state/S01.json',
+  });
+  assert.equal(r.status, 'blocked');
+  assert.ok(r.pendencies.some((p) => p.category === 'validator_verdict'));
+  assert.equal(fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8'), before);
+});
+
+test('talos_update_sprint_status: reabrir done bloqueia por padrão', () => {
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S01', { status: 'done', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | PRD_S01.md | — | done | validator:pass | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | PLAN_S01.md | .talos/state/S01.json |',
+  ]));
+  const r = updateSprintStatus({
+    run_id: 'r1',
+    project_root: root,
+    backlog_path: 'BACKLOG.md',
+    sprint_id: 'S01',
+    status: 'doing',
+  });
+  assert.equal(r.status, 'blocked');
+  assert.ok(r.pendencies.some((p) => p.category === 'status_transition'));
+});
+
+test('talos_update_sprint_status: falha de FS no sprint file faz rollback do backlog (P2)', () => {
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S01', { status: 'ready', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | ready | ready | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+  const before = fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8');
+  const sprintAbs = path.resolve(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md');
+  // Injeta falha de FS determinística só no write do sprint file: o backlog já foi
+  // escrito quando o sprint file falha (EACCES), exercitando o caminho de rollback.
+  const realWrite = fs.writeFileSync;
+  mock.method(fs, 'writeFileSync', (target, data, ...rest) => {
+    if (path.resolve(target) === sprintAbs) {
+      throw Object.assign(new Error('EACCES: simulated'), { code: 'EACCES' });
+    }
+    return realWrite(target, data, ...rest);
+  });
+  try {
+    const r = updateSprintStatus({
+      run_id: 'r1',
+      project_root: root,
+      backlog_path: 'BACKLOG.md',
+      sprint_id: 'S01',
+      status: 'done',
+      validator_verdict: 'pass',
+      state_path: '.talos/state/S01.json',
+      evidence: 'validator pass',
+    });
+    assert.equal(r.status, 'blocked');
+    // Backlog restaurado ao original — sem drift backlog↔sprint.
+    assert.equal(fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8'), before);
+  } finally {
+    mock.restoreAll();
+  }
+});
+
+test('talos_classify_input: plano → banner roteia com modo=execute (T07)', () => {
   const root = tmpRoot();
   fs.writeFileSync(path.join(root, 'PLAN_x.md'), CONFORMANT_PLAN_DOC);
   const r = classifyInput({ run_id: 'r1', project_root: root, input_path: 'PLAN_x.md' });
   assert.equal(r.artifact_type, 'plan');
   assert.equal(r.routed_mode, 'execute');
-  assert.equal(r.banner, '▸ atlas: roteamento · input=plan → modo=execute');
+  assert.equal(r.banner, '▸ talos: roteamento · input=plan → modo=execute');
 });
 
-test('atlas_classify_input: unknown → banner BLOCK não-vazio (T07)', () => {
+test('talos_classify_input: unknown → banner BLOCK não-vazio (T07)', () => {
   const root = tmpRoot();
   fs.writeFileSync(path.join(root, 'notas.md'), 'texto solto sem estrutura');
   const r = classifyInput({ run_id: 'r1', project_root: root, input_path: 'notas.md' });
   assert.equal(r.artifact_type, 'unknown');
-  assert.match(r.banner, /^▸ atlas: preflight · BLOCK · /);
+  assert.match(r.banner, /^▸ talos: preflight · BLOCK · /);
 });
 
-test('atlas_classify_input: idea (texto livre, não arquivo) → not_a_file/direct, sem BLOCK (A6)', () => {
+test('talos_classify_input: idea (texto livre, não arquivo) → not_a_file/direct, sem BLOCK (A6)', () => {
   const root = tmpRoot();
   const r = classifyInput({
     run_id: 'r1',
     project_root: root,
-    input_path: 'criar .atlas-smoke/SMOKE_PROOF.md — smoke test G9',
+    input_path: 'criar .talos-smoke/SMOKE_PROOF.md — smoke test G9',
   });
   assert.equal(r.status, 'not_a_file');
   assert.equal(r.artifact_type, 'idea');
   assert.equal(r.routed_mode, 'direct');
-  assert.equal(r.banner, '▸ atlas: roteamento · input=idea → modo=direct');
+  assert.equal(r.banner, '▸ talos: roteamento · input=idea → modo=direct');
   assert.doesNotMatch(r.banner, /BLOCK/);
 });
 
-test('atlas_classify_input: path com cara de arquivo mas ausente → BLOCK (erro real, não idea) (A6)', () => {
+test('talos_classify_input: path com cara de arquivo mas ausente → BLOCK (erro real, não idea) (A6)', () => {
   const root = tmpRoot();
   const r = classifyInput({ run_id: 'r1', project_root: root, input_path: 'PLAN_inexistente.md' });
   assert.equal(r.status, 'blocked');
-  assert.match(r.banner, /^▸ atlas: preflight · BLOCK · /);
+  assert.match(r.banner, /^▸ talos: preflight · BLOCK · /);
 });
 
-test('atlas_preflight: execute qualificado → banner preflight · ok (T07)', () => {
+test('talos_preflight: execute qualificado → banner preflight · ok (T07)', () => {
   const root = tmpRoot();
   const r = preflight({
     run_id: 'rpf', project_root: root, mode: 'execute',
     host: 'claude', host_capabilities: { subagent_available: true, mcp_available: true },
   });
   assert.equal(r.status, 'passed');
-  assert.equal(r.banner, '▸ atlas: preflight · ok (subagent+mcp)');
+  assert.equal(r.banner, '▸ talos: preflight · ok (subagent+mcp)');
 });
 
-test('atlas_preflight: modo inválido → banner BLOCK não-vazio (T07)', () => {
+test('talos_preflight: modo inválido → banner BLOCK não-vazio (T07)', () => {
   const root = tmpRoot();
   const r = preflight({
     run_id: 'rpf2', project_root: root, mode: 'modo_invalido',
     host: 'claude', host_capabilities: { subagent_available: true, mcp_available: true },
   });
   assert.equal(r.status, 'blocked');
-  assert.match(r.banner, /^▸ atlas: preflight · BLOCK · /);
+  assert.match(r.banner, /^▸ talos: preflight · BLOCK · /);
 });
 
-test('atlas_lock_dispatch: start plan_execute em execute → banner exec não-vazio (T07)', () => {
+test('talos_lock_dispatch: start plan_execute em execute → banner exec não-vazio (T07)', () => {
   const root = tmpRoot();
   preflight({
     run_id: 'rld', project_root: root, mode: 'execute',
@@ -895,10 +1611,10 @@ test('atlas_lock_dispatch: start plan_execute em execute → banner exec não-va
   });
   const r = lockDispatch({ run_id: 'rld', project_root: root, action: 'start', phase: 'plan_execute' });
   assert.equal(r.status, 'passed');
-  assert.match(r.banner, /^▸ atlas: exec · slice \d+\/\d+$/);
+  assert.match(r.banner, /^▸ talos: exec · slice \d+\/\d+$/);
 });
 
-test('atlas_lock_dispatch: plan_execute cria liveness G12 no start e aceita checkpoint', () => {
+test('talos_lock_dispatch: plan_execute cria liveness G12 no start e aceita checkpoint', () => {
   const root = tmpRoot();
   preflight({
     run_id: 'g12live', project_root: root, mode: 'execute',
@@ -919,17 +1635,17 @@ test('atlas_lock_dispatch: plan_execute cria liveness G12 no start e aceita chec
     action: 'checkpoint',
     phase: 'plan_execute',
     event: 'executor_started',
-    plan_path: '.atlas/plans/PLAN_S41.md',
+    plan_path: '.talos/plans/PLAN_S41.md',
   });
   assert.equal(checkpoint.status, 'passed');
   assert.equal(checkpoint.executor_liveness, 'booting');
 
   state = readRunJson(root, 'g12live');
   assert.equal(state.data.dispatch.active.liveness.last_checkpoint, 'executor_started');
-  assert.equal(state.data.dispatch.active.liveness.checkpoints[0].plan_path, '.atlas/plans/PLAN_S41.md');
+  assert.equal(state.data.dispatch.active.liveness.checkpoints[0].plan_path, '.talos/plans/PLAN_S41.md');
 });
 
-test('atlas_lock_dispatch: status marca bootstrap sem checkpoint como stalled e libera retry', () => {
+test('talos_lock_dispatch: status marca bootstrap sem checkpoint como stalled e libera retry', () => {
   const root = tmpRoot();
   preflight({
     run_id: 'g12stall', project_root: root, mode: 'execute',
@@ -937,7 +1653,7 @@ test('atlas_lock_dispatch: status marca bootstrap sem checkpoint como stalled e 
   });
   lockDispatch({ run_id: 'g12stall', project_root: root, action: 'start', phase: 'plan_execute' });
 
-  const runFile = path.join(root, '.atlas', 'state', 'g12stall', 'run.json');
+  const runFile = path.join(root, '.talos', 'state', 'g12stall', 'run.json');
   const raw = JSON.parse(fs.readFileSync(runFile, 'utf8'));
   raw.data.dispatch.active.started_at = '2000-01-01T00:00:00.000Z';
   raw.data.dispatch.active.liveness.bootstrap_deadline_at = '2000-01-01T00:02:00.000Z';
@@ -958,7 +1674,7 @@ test('atlas_lock_dispatch: status marca bootstrap sem checkpoint como stalled e 
   assert.equal(readRunJson(root, 'g12stall').data.dispatch.active.phase, 'plan_execute');
 });
 
-test('atlas_lock_dispatch: status marca checkpoint antigo sem progresso como stalled', () => {
+test('talos_lock_dispatch: status marca checkpoint antigo sem progresso como stalled', () => {
   const root = tmpRoot();
   preflight({
     run_id: 'g12progress', project_root: root, mode: 'execute',
@@ -973,7 +1689,7 @@ test('atlas_lock_dispatch: status marca checkpoint antigo sem progresso como sta
     event: 'plan_loaded',
   });
 
-  const runFile = path.join(root, '.atlas', 'state', 'g12progress', 'run.json');
+  const runFile = path.join(root, '.talos', 'state', 'g12progress', 'run.json');
   const raw = JSON.parse(fs.readFileSync(runFile, 'utf8'));
   raw.data.dispatch.active.liveness.last_progress_at = '2000-01-01T00:00:00.000Z';
   raw.data.dispatch.active.liveness.next_progress_deadline_at = '2000-01-01T00:05:00.000Z';
@@ -986,7 +1702,41 @@ test('atlas_lock_dispatch: status marca checkpoint antigo sem progresso como sta
   assert.equal(readRunJson(root, 'g12progress').data.dispatch.executor_liveness.status, 'stalled');
 });
 
-test('atlas_lock_dispatch: state_path_created exige state_path legível', () => {
+test('talos_lock_dispatch: handoff_ready não expira enquanto aguarda validator', () => {
+  const root = tmpRoot();
+  preflight({
+    run_id: 'g12handoff', project_root: root, mode: 'execute',
+    host: 'codex', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: 'g12handoff', project_root: root, action: 'start', phase: 'plan_execute' });
+  const stateRel = '.talos/state/g12handoff/slice.json';
+  const abs = path.join(root, stateRel);
+  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  fs.writeFileSync(abs, JSON.stringify({
+    ...fixtureState('state-legacy-plan.json'), run_id: 'g12handoff',
+  }, null, 2));
+  lockDispatch({
+    run_id: 'g12handoff',
+    project_root: root,
+    action: 'checkpoint',
+    phase: 'plan_execute',
+    event: 'state_path_created',
+    state_path: stateRel,
+  });
+
+  const runFile = path.join(root, '.talos', 'state', 'g12handoff', 'run.json');
+  const raw = JSON.parse(fs.readFileSync(runFile, 'utf8'));
+  raw.data.dispatch.active.liveness.last_progress_at = '2000-01-01T00:00:00.000Z';
+  raw.data.dispatch.active.liveness.next_progress_deadline_at = '2000-01-01T00:05:00.000Z';
+  fs.writeFileSync(runFile, JSON.stringify(raw, null, 2));
+
+  const status = lockDispatch({ run_id: 'g12handoff', project_root: root, action: 'status', phase: 'plan_execute' });
+  assert.equal(status.status, 'passed');
+  assert.equal(status.executor_liveness, 'handoff_ready');
+  assert.equal(readRunJson(root, 'g12handoff').data.dispatch.active.phase, 'plan_execute');
+});
+
+test('talos_lock_dispatch: state_path_created exige state_path legível', () => {
   const root = tmpRoot();
   preflight({
     run_id: 'g12path', project_root: root, mode: 'execute',
@@ -1010,13 +1760,13 @@ test('atlas_lock_dispatch: state_path_created exige state_path legível', () => 
     action: 'checkpoint',
     phase: 'plan_execute',
     event: 'state_path_created',
-    state_path: '.atlas/state/g12path/slice.json',
+    state_path: '.talos/state/g12path/slice.json',
   });
   assert.equal(unreadable.status, 'blocked');
   assert.equal(unreadable.next_action, 'corrigir_state_path_antes_do_handoff');
 });
 
-test('atlas_lock_validator: G12 bloqueia start sem state_path_created correspondente', () => {
+test('talos_lock_validator: G12 bloqueia start sem state_path_created correspondente', () => {
   const root = tmpRoot();
   preflight({
     run_id: 'g12validator', project_root: root, mode: 'execute',
@@ -1024,7 +1774,7 @@ test('atlas_lock_validator: G12 bloqueia start sem state_path_created correspond
   });
   lockDispatch({ run_id: 'g12validator', project_root: root, action: 'start', phase: 'plan_execute' });
 
-  const stateRel = '.atlas/state/g12validator/slice.json';
+  const stateRel = '.talos/state/g12validator/slice.json';
   const abs = path.join(root, stateRel);
   fs.mkdirSync(path.dirname(abs), { recursive: true });
   fs.writeFileSync(abs, JSON.stringify({
@@ -1041,7 +1791,7 @@ test('atlas_lock_validator: G12 bloqueia start sem state_path_created correspond
   assert.equal(beforeCheckpoint.gate, 'G12');
   assert.equal(beforeCheckpoint.next_action, 'aguardar_state_path_created_antes_do_validator');
 
-  const otherRel = '.atlas/state/g12validator/other.json';
+  const otherRel = '.talos/state/g12validator/other.json';
   const otherAbs = path.join(root, otherRel);
   fs.writeFileSync(otherAbs, JSON.stringify({
     ...fixtureState('state-legacy-plan.json'), run_id: 'g12validator',
@@ -1076,7 +1826,7 @@ test('atlas_lock_validator: G12 bloqueia start sem state_path_created correspond
   assert.equal(ok.validator_status, 'running');
 });
 
-test('atlas_lock_dispatch: plan_execute aceita passed_with_observations como terminal aprovado', () => {
+test('talos_lock_dispatch: plan_execute aceita passed_with_observations como terminal aprovado', () => {
   const root = tmpRoot();
   preflight({
     run_id: 'rld-passobs', project_root: root, mode: 'execute',
@@ -1094,7 +1844,7 @@ test('atlas_lock_dispatch: plan_execute aceita passed_with_observations como ter
   assert.equal(r.validator_status, 'passed_with_observations');
 });
 
-test('atlas_lock_validator: codex sibling bloqueia validator concorrente e exige repair antes do retry', () => {
+test('talos_lock_validator: codex sibling bloqueia validator concorrente e exige repair antes do retry', () => {
   const root = tmpRoot();
   preflight({
     run_id: 'rv1', project_root: root, mode: 'execute',
@@ -1107,7 +1857,7 @@ test('atlas_lock_validator: codex sibling bloqueia validator concorrente e exige
     project_root: root,
     host: 'codex',
     action: 'start',
-    state_path: '.atlas/state/rv1/slice.json',
+    state_path: '.talos/state/rv1/slice.json',
   });
   assert.equal(start1.status, 'passed');
   assert.equal(start1.validator_attempt, 1);
@@ -1118,7 +1868,7 @@ test('atlas_lock_validator: codex sibling bloqueia validator concorrente e exige
     project_root: root,
     host: 'codex',
     action: 'start',
-    state_path: '.atlas/state/rv1/slice.json',
+    state_path: '.talos/state/rv1/slice.json',
   });
   assert.equal(concurrent.status, 'blocked');
   assert.match(concurrent.error, /já está ativo/);
@@ -1128,7 +1878,7 @@ test('atlas_lock_validator: codex sibling bloqueia validator concorrente e exige
     project_root: root,
     host: 'codex',
     action: 'complete',
-    state_path: '.atlas/state/rv1/slice.json',
+    state_path: '.talos/state/rv1/slice.json',
     validator_run_id: start1.validator_run_id,
     verdict: 'fail',
     data: { findings: [finding()] },
@@ -1142,7 +1892,7 @@ test('atlas_lock_validator: codex sibling bloqueia validator concorrente e exige
     project_root: root,
     host: 'codex',
     action: 'repair_start',
-    state_path: '.atlas/state/rv1/slice.json',
+    state_path: '.talos/state/rv1/slice.json',
   });
   assert.equal(repairStart.status, 'passed');
   assert.equal(repairStart.validator_status, 'repair_running');
@@ -1154,7 +1904,7 @@ test('atlas_lock_validator: codex sibling bloqueia validator concorrente e exige
     project_root: root,
     host: 'codex',
     action: 'repair_start',
-    state_path: '.atlas/state/rv1/slice.json',
+    state_path: '.talos/state/rv1/slice.json',
   });
   assert.equal(repairConcurrent.status, 'blocked');
   assert.match(repairConcurrent.error, /Repair já está ativo/);
@@ -1164,7 +1914,7 @@ test('atlas_lock_validator: codex sibling bloqueia validator concorrente e exige
     project_root: root,
     host: 'codex',
     action: 'start',
-    state_path: '.atlas/state/rv1/slice-repaired.json',
+    state_path: '.talos/state/rv1/slice-repaired.json',
   });
   assert.equal(retryBeforeRepair.status, 'blocked');
   assert.equal(retryBeforeRepair.next_action, 'complete_findings_repair');
@@ -1175,7 +1925,7 @@ test('atlas_lock_validator: codex sibling bloqueia validator concorrente e exige
     host: 'codex',
     action: 'repair_complete',
     repair_run_id: repairStart.repair_run_id,
-    state_path: '.atlas/state/rv1/slice-repaired.json',
+    state_path: '.talos/state/rv1/slice-repaired.json',
   });
   assert.equal(redirectedRepair.status, 'blocked');
   assert.equal(redirectedRepair.stale_discarded, true);
@@ -1187,8 +1937,8 @@ test('atlas_lock_validator: codex sibling bloqueia validator concorrente e exige
     host: 'codex',
     action: 'repair_complete',
     repair_run_id: repairStart.repair_run_id,
-    state_path: '.atlas/state/rv1/slice.json',
-    data: resolvedRepair(root, '.atlas/state/rv1/slice.json'),
+    state_path: '.talos/state/rv1/slice.json',
+    data: resolvedRepair(root, '.talos/state/rv1/slice.json'),
   });
   assert.equal(repairDone.status, 'passed');
   assert.equal(repairDone.validator_status, 'ready_for_retry');
@@ -1198,13 +1948,13 @@ test('atlas_lock_validator: codex sibling bloqueia validator concorrente e exige
     project_root: root,
     host: 'codex',
     action: 'start',
-    state_path: '.atlas/state/rv1/slice.json',
+    state_path: '.talos/state/rv1/slice.json',
   });
   assert.equal(start2.status, 'passed');
   assert.equal(start2.validator_attempt, 2);
 });
 
-test('atlas_lock_validator: terceiro validator é impossível e segundo fail bloqueia a slice', () => {
+test('talos_lock_validator: terceiro validator é impossível e segundo fail bloqueia a slice', () => {
   const root = tmpRoot();
   preflight({
     run_id: 'rv2', project_root: root, mode: 'execute',
@@ -1217,14 +1967,14 @@ test('atlas_lock_validator: terceiro validator é impossível e segundo fail blo
     project_root: root,
     host: 'codex',
     action: 'start',
-    state_path: '.atlas/state/rv2/slice.json',
+    state_path: '.talos/state/rv2/slice.json',
   });
   lockValidator({
     run_id: 'rv2',
     project_root: root,
     host: 'codex',
     action: 'complete',
-    state_path: '.atlas/state/rv2/slice.json',
+    state_path: '.talos/state/rv2/slice.json',
     validator_run_id: start1.validator_run_id,
     verdict: 'fail',
     data: { findings: [finding()] },
@@ -1234,7 +1984,7 @@ test('atlas_lock_validator: terceiro validator é impossível e segundo fail blo
     project_root: root,
     host: 'codex',
     action: 'repair_start',
-    state_path: '.atlas/state/rv2/slice.json',
+    state_path: '.talos/state/rv2/slice.json',
   });
   assert.equal(repairStart.status, 'passed');
   const repair1 = lockValidator({
@@ -1243,7 +1993,7 @@ test('atlas_lock_validator: terceiro validator é impossível e segundo fail blo
     host: 'codex',
     action: 'repair_complete',
     repair_run_id: 'rv2:repair:1:fake',
-    state_path: '.atlas/state/rv2/slice-repaired.json',
+    state_path: '.talos/state/rv2/slice-repaired.json',
   });
   assert.equal(repair1.status, 'blocked');
   assert.match(repair1.error, /repair_run_id não corresponde/);
@@ -1253,7 +2003,7 @@ test('atlas_lock_validator: terceiro validator é impossível e segundo fail blo
     project_root: root,
     host: 'codex',
     action: 'repair_start',
-    state_path: '.atlas/state/rv2/slice.json',
+    state_path: '.talos/state/rv2/slice.json',
   });
   assert.equal(repairConcurrent.status, 'blocked');
   assert.match(repairConcurrent.error, /Repair já está ativo/);
@@ -1264,8 +2014,8 @@ test('atlas_lock_validator: terceiro validator é impossível e segundo fail blo
     host: 'codex',
     action: 'repair_complete',
     repair_run_id: repairStart.repair_run_id,
-    state_path: '.atlas/state/rv2/slice.json',
-    data: resolvedRepair(root, '.atlas/state/rv2/slice.json'),
+    state_path: '.talos/state/rv2/slice.json',
+    data: resolvedRepair(root, '.talos/state/rv2/slice.json'),
   });
   assert.equal(repair1Done.status, 'passed');
 
@@ -1274,7 +2024,7 @@ test('atlas_lock_validator: terceiro validator é impossível e segundo fail blo
     project_root: root,
     host: 'codex',
     action: 'start',
-    state_path: '.atlas/state/rv2/slice.json',
+    state_path: '.talos/state/rv2/slice.json',
   });
   assert.equal(start2.status, 'passed');
 
@@ -1283,7 +2033,7 @@ test('atlas_lock_validator: terceiro validator é impossível e segundo fail blo
     project_root: root,
     host: 'codex',
     action: 'complete',
-    state_path: '.atlas/state/rv2/slice.json',
+    state_path: '.talos/state/rv2/slice.json',
     validator_run_id: start2.validator_run_id,
     verdict: 'fail',
     data: { findings: [finding({ file: 'y.ts', line: 2 })] },
@@ -1296,7 +2046,7 @@ test('atlas_lock_validator: terceiro validator é impossível e segundo fail blo
     project_root: root,
     host: 'codex',
     action: 'start',
-    state_path: '.atlas/state/rv2/slice-third.json',
+    state_path: '.talos/state/rv2/slice-third.json',
   });
   assert.equal(third.status, 'blocked');
   assert.match(third.error, /Terceiro validator proibido/);
@@ -1318,11 +2068,11 @@ test('S11: run.json adulterado (max_attempts=99, attempts_used=2) → 3º valida
   // inflar max_attempts e marcar 2 attempts já usados (estado terminal de teto).
   const start1 = lockValidator({
     run_id: 's11a', project_root: root, host: 'codex', action: 'start',
-    state_path: '.atlas/state/s11a/slice.json',
+    state_path: '.talos/state/s11a/slice.json',
   });
   assert.equal(start1.status, 'passed');
 
-  const runFile = path.join(root, '.atlas', 'state', 's11a', 'run.json');
+  const runFile = path.join(root, '.talos', 'state', 's11a', 'run.json');
   const raw = JSON.parse(fs.readFileSync(runFile, 'utf8'));
   raw.data.validator_cycle.max_attempts = 99;
   raw.data.validator_cycle.attempts_used = 2;
@@ -1333,7 +2083,7 @@ test('S11: run.json adulterado (max_attempts=99, attempts_used=2) → 3º valida
   // Apesar de max_attempts=99 no disco, o teto efetivo é 2 → 3º proibido.
   const third = lockValidator({
     run_id: 's11a', project_root: root, host: 'codex', action: 'start',
-    state_path: '.atlas/state/s11a/slice-third.json',
+    state_path: '.talos/state/s11a/slice-third.json',
   });
   assert.equal(third.status, 'blocked');
   assert.match(third.error, /Terceiro validator proibido/);
@@ -1351,12 +2101,12 @@ test('S11: run.json com max_attempts=99 e attempts_used=1 → start permitido, c
 
   const start1 = lockValidator({
     run_id: 's11b', project_root: root, host: 'codex', action: 'start',
-    state_path: '.atlas/state/s11b/slice.json',
+    state_path: '.talos/state/s11b/slice.json',
   });
   assert.equal(start1.status, 'passed');
 
   // Adultera: max_attempts=99, attempts_used=1, slot livre (idle) → permite attempt 2.
-  const runFile = path.join(root, '.atlas', 'state', 's11b', 'run.json');
+  const runFile = path.join(root, '.talos', 'state', 's11b', 'run.json');
   const raw = JSON.parse(fs.readFileSync(runFile, 'utf8'));
   raw.data.validator_cycle.max_attempts = 99;
   raw.data.validator_cycle.attempts_used = 1;
@@ -1366,7 +2116,7 @@ test('S11: run.json com max_attempts=99 e attempts_used=1 → start permitido, c
 
   const start2 = lockValidator({
     run_id: 's11b', project_root: root, host: 'codex', action: 'start',
-    state_path: '.atlas/state/s11b/slice-2.json',
+    state_path: '.talos/state/s11b/slice-2.json',
   });
   assert.equal(start2.status, 'passed', 'attempt 2 ainda permitido');
   assert.equal(start2.validator_attempt, 2);
@@ -1385,11 +2135,11 @@ test('S11: max_attempts ausente/inválido no run.json → default 2', () => {
 
   const start1 = lockValidator({
     run_id: 's11c', project_root: root, host: 'codex', action: 'start',
-    state_path: '.atlas/state/s11c/slice.json',
+    state_path: '.talos/state/s11c/slice.json',
   });
   assert.equal(start1.status, 'passed');
 
-  const runFile = path.join(root, '.atlas', 'state', 's11c', 'run.json');
+  const runFile = path.join(root, '.talos', 'state', 's11c', 'run.json');
 
   // Variante ausente → default 2.
   let raw = JSON.parse(fs.readFileSync(runFile, 'utf8'));
@@ -1400,7 +2150,7 @@ test('S11: max_attempts ausente/inválido no run.json → default 2', () => {
   fs.writeFileSync(runFile, JSON.stringify(raw, null, 2));
   const startMissing = lockValidator({
     run_id: 's11c', project_root: root, host: 'codex', action: 'start',
-    state_path: '.atlas/state/s11c/slice-missing.json',
+    state_path: '.talos/state/s11c/slice-missing.json',
   });
   assert.equal(startMissing.status, 'passed');
   assert.equal(startMissing.validator_cycle.max_attempts, 2);
@@ -1416,7 +2166,7 @@ test('S11: max_attempts ausente/inválido no run.json → default 2', () => {
   fs.writeFileSync(runFile, JSON.stringify(raw, null, 2));
   const startZero = lockValidator({
     run_id: 's11c', project_root: root, host: 'codex', action: 'start',
-    state_path: '.atlas/state/s11c/slice-zero.json',
+    state_path: '.talos/state/s11c/slice-zero.json',
   });
   assert.equal(startZero.status, 'passed', 'max_attempts=0 no disco não rebaixa o teto');
   assert.equal(startZero.validator_cycle.max_attempts, 2);
@@ -1439,7 +2189,7 @@ test('S11: attempts_used=-5 adulterado → teto efetivo continua 2 (máx 2 dispa
   // 7 dispatches em vez de 2. Com o piso, normaliza para 0 e o teto efetivo
   // permanece 2. Após cada start aceito, o servidor grava attempts_used correto
   // em disco (1, depois 2) — o ataque de adulteração vale apenas na leitura inicial.
-  const runFile = path.join(root, '.atlas', 'state', 's11d', 'run.json');
+  const runFile = path.join(root, '.talos', 'state', 's11d', 'run.json');
   let raw = JSON.parse(fs.readFileSync(runFile, 'utf8'));
   raw.data.validator_cycle = raw.data.validator_cycle ?? {};
   raw.data.validator_cycle.max_attempts = 2;
@@ -1452,7 +2202,7 @@ test('S11: attempts_used=-5 adulterado → teto efetivo continua 2 (máx 2 dispa
   // O servidor grava attempts_used=1 no run.json após aceitar o start.
   const start1 = lockValidator({
     run_id: 's11d', project_root: root, host: 'codex', action: 'start',
-    state_path: '.atlas/state/s11d/slice-1.json',
+    state_path: '.talos/state/s11d/slice-1.json',
   });
   assert.equal(start1.status, 'passed', 'attempt 1 deve ser permitido');
   assert.equal(start1.validator_attempt, 1);
@@ -1461,7 +2211,7 @@ test('S11: attempts_used=-5 adulterado → teto efetivo continua 2 (máx 2 dispa
   // attempts_used=1 gravado no run.json pelo servidor.
   const complete1 = lockValidator({
     run_id: 's11d', project_root: root, host: 'codex', action: 'complete',
-    state_path: '.atlas/state/s11d/slice-1.json',
+    state_path: '.talos/state/s11d/slice-1.json',
     validator_run_id: start1.validator_run_id,
     verdict: 'fail',
   });
@@ -1470,7 +2220,7 @@ test('S11: attempts_used=-5 adulterado → teto efetivo continua 2 (máx 2 dispa
   // Inicia repair (obrigatório após verdict=fail).
   const repairStart = lockValidator({
     run_id: 's11d', project_root: root, host: 'codex', action: 'repair_start',
-    state_path: '.atlas/state/s11d/slice-1.json',
+    state_path: '.talos/state/s11d/slice-1.json',
   });
   assert.equal(repairStart.status, 'passed', 'repair_start deve funcionar');
 
@@ -1478,7 +2228,7 @@ test('S11: attempts_used=-5 adulterado → teto efetivo continua 2 (máx 2 dispa
   const repairComplete = lockValidator({
     run_id: 's11d', project_root: root, host: 'codex', action: 'repair_complete',
     repair_run_id: repairStart.repair_run_id,
-    state_path: '.atlas/state/s11d/slice-1.json',
+    state_path: '.talos/state/s11d/slice-1.json',
   });
   assert.equal(repairComplete.status, 'passed', 'repair_complete deve funcionar');
 
@@ -1486,7 +2236,7 @@ test('S11: attempts_used=-5 adulterado → teto efetivo continua 2 (máx 2 dispa
   // após start1), não -5. Portanto validator_attempt=2.
   const start2 = lockValidator({
     run_id: 's11d', project_root: root, host: 'codex', action: 'start',
-    state_path: '.atlas/state/s11d/slice-2.json',
+    state_path: '.talos/state/s11d/slice-2.json',
   });
   assert.equal(start2.status, 'passed', 'attempt 2 deve ser permitido');
   assert.equal(start2.validator_attempt, 2, 'attempt 2 é o segundo dispatch correto');
@@ -1497,7 +2247,7 @@ test('S11: attempts_used=-5 adulterado → teto efetivo continua 2 (máx 2 dispa
   // foi respeitado e não há 3º dispatch disponível.
   const complete2 = lockValidator({
     run_id: 's11d', project_root: root, host: 'codex', action: 'complete',
-    state_path: '.atlas/state/s11d/slice-2.json',
+    state_path: '.talos/state/s11d/slice-2.json',
     validator_run_id: start2.validator_run_id,
     verdict: 'fail',
   });
@@ -1511,7 +2261,7 @@ test('S11: attempts_used=-5 adulterado → teto efetivo continua 2 (máx 2 dispa
   // Qualquer tentativa de start adicional deve ser rejeitada.
   const start3 = lockValidator({
     run_id: 's11d', project_root: root, host: 'codex', action: 'start',
-    state_path: '.atlas/state/s11d/slice-3.json',
+    state_path: '.talos/state/s11d/slice-3.json',
   });
   assert.equal(start3.status, 'blocked', '3º attempt deve ser bloqueado');
   // A adulteração inicial com attempts_used=-5 não inflou o teto efetivo:
@@ -1530,7 +2280,7 @@ test('S11: attempts_used float/string/null → normalizado para 0, start permiti
     lockDispatch({ run_id: runId, project_root: root, action: 'start', phase: 'plan_execute' });
 
     // Adultera attempts_used com valor inválido.
-    const runFile = path.join(root, '.atlas', 'state', runId, 'run.json');
+    const runFile = path.join(root, '.talos', 'state', runId, 'run.json');
     const raw = JSON.parse(fs.readFileSync(runFile, 'utf8'));
     raw.data.validator_cycle = raw.data.validator_cycle ?? {};
     raw.data.validator_cycle.attempts_used = badValue;
@@ -1541,7 +2291,7 @@ test('S11: attempts_used float/string/null → normalizado para 0, start permiti
     // Start deve ser permitido como attempt 1 (attempts_used normalizado para 0).
     const start = lockValidator({
       run_id: runId, project_root: root, host: 'codex', action: 'start',
-      state_path: `.atlas/state/${runId}/slice.json`,
+      state_path: `.talos/state/${runId}/slice.json`,
     });
     assert.equal(
       start.status, 'passed',
@@ -1551,7 +2301,7 @@ test('S11: attempts_used float/string/null → normalizado para 0, start permiti
   }
 });
 
-test('atlas_lock_validator: retorno stale do validator não fecha slot ativo', () => {
+test('talos_lock_validator: retorno stale do validator não fecha slot ativo', () => {
   const root = tmpRoot();
   preflight({
     run_id: 'rv4', project_root: root, mode: 'execute',
@@ -1564,7 +2314,7 @@ test('atlas_lock_validator: retorno stale do validator não fecha slot ativo', (
     project_root: root,
     host: 'codex',
     action: 'start',
-    state_path: '.atlas/state/rv4/slice.json',
+    state_path: '.talos/state/rv4/slice.json',
   });
 
   const stale = lockValidator({
@@ -1572,7 +2322,7 @@ test('atlas_lock_validator: retorno stale do validator não fecha slot ativo', (
     project_root: root,
     host: 'codex',
     action: 'complete',
-    state_path: '.atlas/state/rv4/slice.json',
+    state_path: '.talos/state/rv4/slice.json',
     validator_run_id: 'rv4:validator:1:stale',
     verdict: 'pass',
   });
@@ -1584,7 +2334,7 @@ test('atlas_lock_validator: retorno stale do validator não fecha slot ativo', (
     project_root: root,
     host: 'codex',
     action: 'complete',
-    state_path: '.atlas/state/rv4/slice.json',
+    state_path: '.talos/state/rv4/slice.json',
     validator_run_id: start1.validator_run_id,
     verdict: 'pass',
   });
@@ -1592,7 +2342,7 @@ test('atlas_lock_validator: retorno stale do validator não fecha slot ativo', (
   assert.equal(good.validator_status, 'passed');
 });
 
-test('atlas_lock_validator: sibling é a única topologia; todos os hosts operam o lock sem gate', () => {
+test('talos_lock_validator: sibling é a única topologia; todos os hosts operam o lock sem gate', () => {
   const root = tmpRoot();
   preflight({
     run_id: 'rv3', project_root: root, mode: 'execute',
@@ -1604,7 +2354,7 @@ test('atlas_lock_validator: sibling é a única topologia; todos os hosts operam
     project_root: root,
     host: 'claude',
     action: 'start',
-    state_path: '.atlas/state/rv3/slice.json',
+    state_path: '.talos/state/rv3/slice.json',
   });
   assert.equal(r.status, 'passed');
   assert.equal(r.validator_status, 'running');
@@ -1614,7 +2364,7 @@ test('atlas_lock_validator: sibling é a única topologia; todos os hosts operam
 // --- S04: token de dispatch monotônico explícito no validator_cycle ---
 
 function readRunJson(root, runId) {
-  const file = path.join(root, '.atlas', 'state', runId, 'run.json');
+  const file = path.join(root, '.talos', 'state', runId, 'run.json');
   return JSON.parse(fs.readFileSync(file, 'utf8'));
 }
 
@@ -1628,7 +2378,7 @@ test('S04: dispatch_token incrementa monotonicamente a cada validatorStart aceit
 
   const start1 = lockValidator({
     run_id: 'tok1', project_root: root, host: 'codex', action: 'start',
-    state_path: '.atlas/state/tok1/slice.json',
+    state_path: '.talos/state/tok1/slice.json',
   });
   assert.equal(start1.status, 'passed');
   assert.equal(start1.dispatch_token, 1);
@@ -1639,7 +2389,7 @@ test('S04: dispatch_token incrementa monotonicamente a cada validatorStart aceit
   // fail → repair → retry → segundo start incrementa o token (1 → 2).
   lockValidator({
     run_id: 'tok1', project_root: root, host: 'codex', action: 'complete',
-    state_path: '.atlas/state/tok1/slice.json',
+    state_path: '.talos/state/tok1/slice.json',
     validator_run_id: start1.validator_run_id, verdict: 'fail',
     data: { findings: [finding()] },
   });
@@ -1650,18 +2400,18 @@ test('S04: dispatch_token incrementa monotonicamente a cada validatorStart aceit
 
   const repairStart = lockValidator({
     run_id: 'tok1', project_root: root, host: 'codex', action: 'repair_start',
-    state_path: '.atlas/state/tok1/slice.json',
+    state_path: '.talos/state/tok1/slice.json',
   });
   lockValidator({
     run_id: 'tok1', project_root: root, host: 'codex', action: 'repair_complete',
     repair_run_id: repairStart.repair_run_id,
-    state_path: '.atlas/state/tok1/slice.json',
-    data: resolvedRepair(root, '.atlas/state/tok1/slice.json'),
+    state_path: '.talos/state/tok1/slice.json',
+    data: resolvedRepair(root, '.talos/state/tok1/slice.json'),
   });
 
   const start2 = lockValidator({
     run_id: 'tok1', project_root: root, host: 'codex', action: 'start',
-    state_path: '.atlas/state/tok1/slice.json',
+    state_path: '.talos/state/tok1/slice.json',
   });
   assert.equal(start2.status, 'passed');
   assert.equal(start2.dispatch_token, 2);
@@ -1680,7 +2430,7 @@ test('S04: dispatch_token sobrevive a re-spun (releitura do estado em disco)', (
 
   const start1 = lockValidator({
     run_id: 'tok2', project_root: root, host: 'codex', action: 'start',
-    state_path: '.atlas/state/tok2/slice.json',
+    state_path: '.talos/state/tok2/slice.json',
   });
   assert.equal(start1.dispatch_token, 1);
 
@@ -1693,7 +2443,7 @@ test('S04: dispatch_token sobrevive a re-spun (releitura do estado em disco)', (
   // complete com o token preservado de disco fecha normalmente.
   const done = lockValidator({
     run_id: 'tok2', project_root: root, host: 'codex', action: 'complete',
-    state_path: '.atlas/state/tok2/slice.json',
+    state_path: '.talos/state/tok2/slice.json',
     validator_run_id: start1.validator_run_id,
     dispatch_token: reread.active.dispatch_token,
     verdict: 'pass',
@@ -1711,13 +2461,13 @@ test('S04: validatorComplete com token divergente → blocked, slot não fecha',
 
   const start1 = lockValidator({
     run_id: 'tok3', project_root: root, host: 'codex', action: 'start',
-    state_path: '.atlas/state/tok3/slice.json',
+    state_path: '.talos/state/tok3/slice.json',
   });
   assert.equal(start1.dispatch_token, 1);
 
   const stale = lockValidator({
     run_id: 'tok3', project_root: root, host: 'codex', action: 'complete',
-    state_path: '.atlas/state/tok3/slice.json',
+    state_path: '.talos/state/tok3/slice.json',
     validator_run_id: start1.validator_run_id,
     dispatch_token: 99,
     verdict: 'pass',
@@ -1734,7 +2484,7 @@ test('S04: validatorComplete com token divergente → blocked, slot não fecha',
   // complete com token correto fecha normalmente (slot não foi corrompido).
   const good = lockValidator({
     run_id: 'tok3', project_root: root, host: 'codex', action: 'complete',
-    state_path: '.atlas/state/tok3/slice.json',
+    state_path: '.talos/state/tok3/slice.json',
     validator_run_id: start1.validator_run_id,
     dispatch_token: 1,
     verdict: 'pass',
@@ -1753,12 +2503,12 @@ test('S04: validatorComplete sem dispatch_token bloqueia e preserva slot ativo',
 
   const start1 = lockValidator({
     run_id: 'tok4', project_root: root, host: 'codex', action: 'start',
-    state_path: '.atlas/state/tok4/slice.json',
+    state_path: '.talos/state/tok4/slice.json',
   });
 
   const missingToken = lockValidatorCore({
     run_id: 'tok4', project_root: root, host: 'codex', action: 'complete',
-    state_path: '.atlas/state/tok4/slice.json',
+    state_path: '.talos/state/tok4/slice.json',
     validator_run_id: start1.validator_run_id,
     verdict: 'pass',
   });
@@ -1768,7 +2518,7 @@ test('S04: validatorComplete sem dispatch_token bloqueia e preserva slot ativo',
   assert.notEqual(readRunJson(root, 'tok4').data.validator_cycle.active, null);
 });
 
-test('atlas_assert_after_plan: execute → banner plano não-vazio (T07)', () => {
+test('talos_assert_after_plan: execute → banner plano não-vazio (T07)', () => {
   const root = tmpRoot();
   preflight({
     run_id: 'raa', project_root: root, mode: 'execute',
@@ -1776,7 +2526,7 @@ test('atlas_assert_after_plan: execute → banner plano não-vazio (T07)', () =>
   });
   const r = assertAfterPlan({ run_id: 'raa', project_root: root, attempted_action: 'dispatch_plan_execute' });
   assert.equal(r.applicable, false);
-  assert.equal(r.banner, '▸ atlas: plano · validado (TC pass)');
+  assert.equal(r.banner, '▸ talos: plano · validado (TC pass)');
 });
 
 // ── P3: testes de segurança e robustez do dispatch_token (S04 slice-review) ───
@@ -1824,13 +2574,13 @@ test('P3(b): dispatch_token do 2º validatorStart > 1º após start→fail→rep
 
   const start1 = lockValidator({
     run_id: 'mono1', project_root: root, host: 'codex', action: 'start',
-    state_path: '.atlas/state/mono1/slice.json',
+    state_path: '.talos/state/mono1/slice.json',
   });
   const token1 = readRunJson(root, 'mono1').data.validator_cycle.dispatch_token;
 
   lockValidator({
     run_id: 'mono1', project_root: root, host: 'codex', action: 'complete',
-    state_path: '.atlas/state/mono1/slice.json',
+    state_path: '.talos/state/mono1/slice.json',
     validator_run_id: start1.validator_run_id,
     verdict: 'fail',
     data: { findings: [finding({ file: 'a.ts' })] },
@@ -1842,18 +2592,18 @@ test('P3(b): dispatch_token do 2º validatorStart > 1º após start→fail→rep
 
   const repairStart = lockValidator({
     run_id: 'mono1', project_root: root, host: 'codex', action: 'repair_start',
-    state_path: '.atlas/state/mono1/slice.json',
+    state_path: '.talos/state/mono1/slice.json',
   });
   lockValidator({
     run_id: 'mono1', project_root: root, host: 'codex', action: 'repair_complete',
     repair_run_id: repairStart.repair_run_id,
-    state_path: '.atlas/state/mono1/slice.json',
-    data: resolvedRepair(root, '.atlas/state/mono1/slice.json'),
+    state_path: '.talos/state/mono1/slice.json',
+    data: resolvedRepair(root, '.talos/state/mono1/slice.json'),
   });
 
   const start2 = lockValidator({
     run_id: 'mono1', project_root: root, host: 'codex', action: 'start',
-    state_path: '.atlas/state/mono1/slice.json',
+    state_path: '.talos/state/mono1/slice.json',
   });
   const token2 = readRunJson(root, 'mono1').data.validator_cycle.dispatch_token;
 
@@ -1880,12 +2630,12 @@ test('P3(c): estado legado pré-S04 sem dispatch_token — comportamento determi
 
   const start1 = lockValidator({
     run_id: 'legacy1', project_root: root, host: 'codex', action: 'start',
-    state_path: '.atlas/state/legacy1/slice.json',
+    state_path: '.talos/state/legacy1/slice.json',
   });
 
   // Reescrever o run.json removendo dispatch_token do ciclo e do active
   // para simular estado gerado por versão pré-S04.
-  const runFile = path.join(root, '.atlas', 'state', 'legacy1', 'run.json');
+  const runFile = path.join(root, '.talos', 'state', 'legacy1', 'run.json');
   const raw = JSON.parse(fs.readFileSync(runFile, 'utf8'));
   delete raw.data.validator_cycle.dispatch_token;
   delete raw.data.validator_cycle.active.dispatch_token;
@@ -1896,7 +2646,7 @@ test('P3(c): estado legado pré-S04 sem dispatch_token — comportamento determi
   // como 0. Divergência 0 !== 1 → blocked (sem mascarar, determinístico).
   const withToken = lockValidator({
     run_id: 'legacy1', project_root: root, host: 'codex', action: 'complete',
-    state_path: '.atlas/state/legacy1/slice.json',
+    state_path: '.talos/state/legacy1/slice.json',
     validator_run_id: start1.validator_run_id,
     dispatch_token: 1,
     verdict: 'pass',
@@ -1908,7 +2658,7 @@ test('P3(c): estado legado pré-S04 sem dispatch_token — comportamento determi
   // Caso 2: caller não envia dispatch_token → hard-fail, slot permanece ativo.
   const withoutToken = lockValidatorCore({
     run_id: 'legacy1', project_root: root, host: 'codex', action: 'complete',
-    state_path: '.atlas/state/legacy1/slice.json',
+    state_path: '.talos/state/legacy1/slice.json',
     validator_run_id: start1.validator_run_id,
     verdict: 'pass',
   });
@@ -1931,7 +2681,7 @@ test('S05: host claude percorre ciclo completo start→fail→repair→start→p
   // 1º start — deve retornar passed/running com dispatch_token = 1.
   const start1 = lockValidator({
     run_id: 'claude1', project_root: root, host: 'claude', action: 'start',
-    state_path: '.atlas/state/claude1/slice.json',
+    state_path: '.talos/state/claude1/slice.json',
   });
   assert.equal(start1.status, 'passed');
   assert.equal(start1.validator_status, 'running');
@@ -1941,7 +2691,7 @@ test('S05: host claude percorre ciclo completo start→fail→repair→start→p
   // 1º complete com verdict fail → status 'passed', validator_status 'repair_required', slot fecha.
   const fail1 = lockValidator({
     run_id: 'claude1', project_root: root, host: 'claude', action: 'complete',
-    state_path: '.atlas/state/claude1/slice.json',
+    state_path: '.talos/state/claude1/slice.json',
     validator_run_id: start1.validator_run_id,
     verdict: 'fail',
     data: { findings: [finding({ file: 'foo.ts' })] },
@@ -1956,20 +2706,20 @@ test('S05: host claude percorre ciclo completo start→fail→repair→start→p
   // repair_start → repair_complete.
   const repairStart = lockValidator({
     run_id: 'claude1', project_root: root, host: 'claude', action: 'repair_start',
-    state_path: '.atlas/state/claude1/slice.json',
+    state_path: '.talos/state/claude1/slice.json',
   });
   assert.ok(repairStart.repair_run_id, 'repair_run_id presente');
   lockValidator({
     run_id: 'claude1', project_root: root, host: 'claude', action: 'repair_complete',
     repair_run_id: repairStart.repair_run_id,
-    state_path: '.atlas/state/claude1/slice.json',
-    data: resolvedRepair(root, '.atlas/state/claude1/slice.json', 'F-001', 'foo.ts'),
+    state_path: '.talos/state/claude1/slice.json',
+    data: resolvedRepair(root, '.talos/state/claude1/slice.json', 'F-001', 'foo.ts'),
   });
 
   // 2º start — attempt e dispatch_token incrementam (monotonicidade).
   const start2 = lockValidator({
     run_id: 'claude1', project_root: root, host: 'claude', action: 'start',
-    state_path: '.atlas/state/claude1/slice.json',
+    state_path: '.talos/state/claude1/slice.json',
   });
   assert.equal(start2.status, 'passed');
   assert.equal(start2.validator_status, 'running');
@@ -1981,7 +2731,7 @@ test('S05: host claude percorre ciclo completo start→fail→repair→start→p
   // 2º complete com verdict pass → fecha o ciclo.
   const pass1 = lockValidator({
     run_id: 'claude1', project_root: root, host: 'claude', action: 'complete',
-    state_path: '.atlas/state/claude1/slice.json',
+    state_path: '.talos/state/claude1/slice.json',
     validator_run_id: start2.validator_run_id,
     verdict: 'pass',
     data: { findings: [], repaired_finding_ids: ['F-001'] },
@@ -2007,35 +2757,35 @@ test('S10(a): retorno stale do attempt-1 após attempt-2 despachado → blocked,
 
   const start1 = lockValidator({
     run_id: 's10a', project_root: root, host: 'codex', action: 'start',
-    state_path: '.atlas/state/s10a/slice.json',
+    state_path: '.talos/state/s10a/slice.json',
   });
   // attempt-1 falha → repair → attempt-2 (novo slot ativo).
   lockValidator({
     run_id: 's10a', project_root: root, host: 'codex', action: 'complete',
-    state_path: '.atlas/state/s10a/slice.json',
+    state_path: '.talos/state/s10a/slice.json',
     validator_run_id: start1.validator_run_id, verdict: 'fail',
     data: { findings: [finding()] },
   });
   const repairStart = lockValidator({
     run_id: 's10a', project_root: root, host: 'codex', action: 'repair_start',
-    state_path: '.atlas/state/s10a/slice.json',
+    state_path: '.talos/state/s10a/slice.json',
   });
   lockValidator({
     run_id: 's10a', project_root: root, host: 'codex', action: 'repair_complete',
     repair_run_id: repairStart.repair_run_id,
-    state_path: '.atlas/state/s10a/slice.json',
-    data: resolvedRepair(root, '.atlas/state/s10a/slice.json'),
+    state_path: '.talos/state/s10a/slice.json',
+    data: resolvedRepair(root, '.talos/state/s10a/slice.json'),
   });
   const start2 = lockValidator({
     run_id: 's10a', project_root: root, host: 'codex', action: 'start',
-    state_path: '.atlas/state/s10a/slice.json',
+    state_path: '.talos/state/s10a/slice.json',
   });
   assert.equal(start2.status, 'passed');
 
   // attempt-1 (run_id antigo) chega tarde → blocked, stale_discarded, slot intacto.
   const stale = lockValidator({
     run_id: 's10a', project_root: root, host: 'codex', action: 'complete',
-    state_path: '.atlas/state/s10a/slice.json',
+    state_path: '.talos/state/s10a/slice.json',
     validator_run_id: start1.validator_run_id, verdict: 'pass',
   });
   assert.equal(stale.status, 'blocked');
@@ -2059,11 +2809,11 @@ test('S10(b): complete duplicado após slot fechado → idempotente reconhecíve
 
   const start1 = lockValidator({
     run_id: 's10b', project_root: root, host: 'codex', action: 'start',
-    state_path: '.atlas/state/s10b/slice.json',
+    state_path: '.talos/state/s10b/slice.json',
   });
   const good = lockValidator({
     run_id: 's10b', project_root: root, host: 'codex', action: 'complete',
-    state_path: '.atlas/state/s10b/slice.json',
+    state_path: '.talos/state/s10b/slice.json',
     validator_run_id: start1.validator_run_id, verdict: 'pass_with_observations',
   });
   assert.equal(good.status, 'passed');
@@ -2072,7 +2822,7 @@ test('S10(b): complete duplicado após slot fechado → idempotente reconhecíve
   // Retorno duplicado do MESMO run_id após slot fechado.
   const dup = lockValidator({
     run_id: 's10b', project_root: root, host: 'codex', action: 'complete',
-    state_path: '.atlas/state/s10b/slice.json',
+    state_path: '.talos/state/s10b/slice.json',
     validator_run_id: start1.validator_run_id, verdict: 'pass_with_observations',
   });
   assert.equal(dup.status, 'blocked');
@@ -2090,7 +2840,7 @@ test('S10(b): complete duplicado após slot fechado → idempotente reconhecíve
   // run_id desconhecido após slot fechado → erro genérico, mas stale_discarded.
   const unknown = lockValidator({
     run_id: 's10b', project_root: root, host: 'codex', action: 'complete',
-    state_path: '.atlas/state/s10b/slice.json',
+    state_path: '.talos/state/s10b/slice.json',
     validator_run_id: 's10b:validator:99:desconhecido', verdict: 'pass',
   });
   assert.equal(unknown.status, 'blocked');
@@ -2110,23 +2860,23 @@ test('S10(c): repair_complete duplicado → idempotente reconhecível', () => {
 
   const start1 = lockValidator({
     run_id: 's10c', project_root: root, host: 'codex', action: 'start',
-    state_path: '.atlas/state/s10c/slice.json',
+    state_path: '.talos/state/s10c/slice.json',
   });
   lockValidator({
     run_id: 's10c', project_root: root, host: 'codex', action: 'complete',
-    state_path: '.atlas/state/s10c/slice.json',
+    state_path: '.talos/state/s10c/slice.json',
     validator_run_id: start1.validator_run_id, verdict: 'fail',
     data: { findings: [finding()] },
   });
   const repairStart = lockValidator({
     run_id: 's10c', project_root: root, host: 'codex', action: 'repair_start',
-    state_path: '.atlas/state/s10c/slice.json',
+    state_path: '.talos/state/s10c/slice.json',
   });
   const repairDone = lockValidator({
     run_id: 's10c', project_root: root, host: 'codex', action: 'repair_complete',
     repair_run_id: repairStart.repair_run_id,
-    state_path: '.atlas/state/s10c/slice.json',
-    data: resolvedRepair(root, '.atlas/state/s10c/slice.json'),
+    state_path: '.talos/state/s10c/slice.json',
+    data: resolvedRepair(root, '.talos/state/s10c/slice.json'),
   });
   assert.equal(repairDone.status, 'passed');
 
@@ -2134,7 +2884,7 @@ test('S10(c): repair_complete duplicado → idempotente reconhecível', () => {
   const dup = lockValidator({
     run_id: 's10c', project_root: root, host: 'codex', action: 'repair_complete',
     repair_run_id: repairStart.repair_run_id,
-    state_path: '.atlas/state/s10c/slice.json',
+    state_path: '.talos/state/s10c/slice.json',
   });
   assert.equal(dup.status, 'blocked');
   assert.equal(dup.stale_discarded, true);
@@ -2150,7 +2900,7 @@ test('S10(c): repair_complete duplicado → idempotente reconhecível', () => {
   const unknown = lockValidator({
     run_id: 's10c', project_root: root, host: 'codex', action: 'repair_complete',
     repair_run_id: 's10c:repair:99:desconhecido',
-    state_path: '.atlas/state/s10c/slice.json',
+    state_path: '.talos/state/s10c/slice.json',
   });
   assert.equal(unknown.status, 'blocked');
   assert.equal(unknown.stale_discarded, true);
@@ -2158,7 +2908,7 @@ test('S10(c): repair_complete duplicado → idempotente reconhecível', () => {
 });
 
 // (d) re-spun: ler estado de disco, obter validator_recovery determinístico.
-test('S10(d): atlas_run_state(get) expõe validator_recovery do slot ativo (recovery re-spun)', () => {
+test('S10(d): talos_run_state(get) expõe validator_recovery do slot ativo (recovery re-spun)', () => {
   const root = tmpRoot();
   preflight({
     run_id: 's10d', project_root: root, mode: 'execute',
@@ -2172,7 +2922,7 @@ test('S10(d): atlas_run_state(get) expõe validator_recovery do slot ativo (reco
 
   const start1 = lockValidator({
     run_id: 's10d', project_root: root, host: 'codex', action: 'start',
-    state_path: '.atlas/state/s10d/slice.json',
+    state_path: '.talos/state/s10d/slice.json',
   });
 
   // Re-spun: leitura pura do disco expõe o slot esperado de forma determinística.
@@ -2180,13 +2930,13 @@ test('S10(d): atlas_run_state(get) expõe validator_recovery do slot ativo (reco
   assert.notEqual(recovery.validator_recovery, null);
   assert.equal(recovery.validator_recovery.expected_validator_run_id, start1.validator_run_id);
   assert.equal(recovery.validator_recovery.expected_dispatch_token, start1.dispatch_token);
-  assert.equal(recovery.validator_recovery.expected_state_path, '.atlas/state/s10d/slice.json');
+  assert.equal(recovery.validator_recovery.expected_state_path, '.talos/state/s10d/slice.json');
   assert.equal(recovery.validator_recovery.status, 'running');
 
   // Após fechar o slot, validator_recovery volta a null.
   lockValidator({
     run_id: 's10d', project_root: root, host: 'codex', action: 'complete',
-    state_path: '.atlas/state/s10d/slice.json',
+    state_path: '.talos/state/s10d/slice.json',
     validator_run_id: start1.validator_run_id, verdict: 'pass',
   });
   const after = runState({ action: 'get', run_id: 's10d', project_root: root });
@@ -2204,12 +2954,12 @@ test('S10(e): Codex com dispatch_token mantém idempotência por run_id', () => 
 
   const start1 = lockValidator({
     run_id: 's10e', project_root: root, host: 'codex', action: 'start',
-    state_path: '.atlas/state/s10e/slice.json',
+    state_path: '.talos/state/s10e/slice.json',
   });
   // Helper injeta o dispatch_token do validator_recovery, como faz o orquestrador.
   const good = lockValidator({
     run_id: 's10e', project_root: root, host: 'codex', action: 'complete',
-    state_path: '.atlas/state/s10e/slice.json',
+    state_path: '.talos/state/s10e/slice.json',
     validator_run_id: start1.validator_run_id, verdict: 'pass',
   });
   assert.equal(good.status, 'passed');
@@ -2217,7 +2967,7 @@ test('S10(e): Codex com dispatch_token mantém idempotência por run_id', () => 
   // Duplicado → idempotente reconhecível por run_id.
   const dup = lockValidator({
     run_id: 's10e', project_root: root, host: 'codex', action: 'complete',
-    state_path: '.atlas/state/s10e/slice.json',
+    state_path: '.talos/state/s10e/slice.json',
     validator_run_id: start1.validator_run_id, verdict: 'pass',
   });
   assert.equal(dup.status, 'blocked');
@@ -2241,12 +2991,12 @@ test('S10(f): duplicado de attempt-1 (fail→repair_required) em repair_required
 
   const start1 = lockValidator({
     run_id: 's10f', project_root: root, host: 'codex', action: 'start',
-    state_path: '.atlas/state/s10f/slice.json',
+    state_path: '.talos/state/s10f/slice.json',
   });
   // attempt-1 falha → repair_required (result.status='passed', validator_status='repair_required').
   const fail1 = lockValidator({
     run_id: 's10f', project_root: root, host: 'codex', action: 'complete',
-    state_path: '.atlas/state/s10f/slice.json',
+    state_path: '.talos/state/s10f/slice.json',
     validator_run_id: start1.validator_run_id, verdict: 'fail',
     data: { findings: [finding()] },
   });
@@ -2261,7 +3011,7 @@ test('S10(f): duplicado de attempt-1 (fail→repair_required) em repair_required
   // Complete duplicado tardio do MESMO run_id de attempt-1 chega em repair_required.
   const dup = lockValidator({
     run_id: 's10f', project_root: root, host: 'codex', action: 'complete',
-    state_path: '.atlas/state/s10f/slice.json',
+    state_path: '.talos/state/s10f/slice.json',
     validator_run_id: start1.validator_run_id, verdict: 'fail',
   });
   assert.equal(dup.status, 'blocked');
@@ -2298,7 +3048,7 @@ test('S10(f): duplicado de attempt-1 (fail→repair_required) em repair_required
 //   ESTADO INICIAL          idle                  (ciclo não iniciado)
 //     --[validatorStart]-->  running              (attempt 1)
 //     --[complete(fail)]-->  repair_required      (attempt<max → reparo pendente)
-//     --[repair_start]-->    repair_running       (atlas-findings-repair ativo)
+//     --[repair_start]-->    repair_running       (talos-findings-repair ativo)
 //     --[repair_complete]--> ready_for_retry      (reparo concluído; retry autorizado)
 //     --[validatorStart]-->  running              (attempt 2, último dispatch)
 //     --[complete(pass)]-->  passed               (TERMINAL; active=null)
@@ -2326,7 +3076,7 @@ test('S12.1: ciclo canônico da FSM percorre idle→running→repair_required→
   // idle --[validatorStart]--> running (attempt 1).
   const start1 = lockValidator({
     run_id: 's12fsm', project_root: root, host: 'codex', action: 'start',
-    state_path: '.atlas/state/s12fsm/slice.json',
+    state_path: '.talos/state/s12fsm/slice.json',
   });
   assert.equal(start1.status, 'passed');
   assert.equal(start1.validator_attempt, 1);
@@ -2336,7 +3086,7 @@ test('S12.1: ciclo canônico da FSM percorre idle→running→repair_required→
   // running --[complete(fail), attempt<max]--> repair_required.
   const fail1 = lockValidator({
     run_id: 's12fsm', project_root: root, host: 'codex', action: 'complete',
-    state_path: '.atlas/state/s12fsm/slice.json',
+    state_path: '.talos/state/s12fsm/slice.json',
     validator_run_id: start1.validator_run_id, verdict: 'fail',
     data: { findings: [finding()] },
   });
@@ -2347,7 +3097,7 @@ test('S12.1: ciclo canônico da FSM percorre idle→running→repair_required→
   // repair_required --[repair_start]--> repair_running.
   const repairStart = lockValidator({
     run_id: 's12fsm', project_root: root, host: 'codex', action: 'repair_start',
-    state_path: '.atlas/state/s12fsm/slice.json',
+    state_path: '.talos/state/s12fsm/slice.json',
   });
   assert.equal(repairStart.validator_status, 'repair_running');
   assert.equal(status(), 'repair_running', 'após repair_start → repair_running');
@@ -2356,8 +3106,8 @@ test('S12.1: ciclo canônico da FSM percorre idle→running→repair_required→
   const repairDone = lockValidator({
     run_id: 's12fsm', project_root: root, host: 'codex', action: 'repair_complete',
     repair_run_id: repairStart.repair_run_id,
-    state_path: '.atlas/state/s12fsm/slice.json',
-    data: resolvedRepair(root, '.atlas/state/s12fsm/slice.json'),
+    state_path: '.talos/state/s12fsm/slice.json',
+    data: resolvedRepair(root, '.talos/state/s12fsm/slice.json'),
   });
   assert.equal(repairDone.validator_status, 'ready_for_retry');
   assert.equal(status(), 'ready_for_retry', 'após repair_complete → ready_for_retry (retry autorizado)');
@@ -2365,7 +3115,7 @@ test('S12.1: ciclo canônico da FSM percorre idle→running→repair_required→
   // ready_for_retry --[validatorStart]--> running (attempt 2, último dispatch).
   const start2 = lockValidator({
     run_id: 's12fsm', project_root: root, host: 'codex', action: 'start',
-    state_path: '.atlas/state/s12fsm/slice.json',
+    state_path: '.talos/state/s12fsm/slice.json',
   });
   assert.equal(start2.status, 'passed');
   assert.equal(start2.validator_attempt, 2);
@@ -2374,7 +3124,7 @@ test('S12.1: ciclo canônico da FSM percorre idle→running→repair_required→
   // running --[complete(pass)]--> passed (TERMINAL).
   const pass2 = lockValidator({
     run_id: 's12fsm', project_root: root, host: 'codex', action: 'complete',
-    state_path: '.atlas/state/s12fsm/slice.json',
+    state_path: '.talos/state/s12fsm/slice.json',
     validator_run_id: start2.validator_run_id, verdict: 'pass',
     data: { findings: [], repaired_finding_ids: ['F-001'] },
   });
@@ -2400,7 +3150,7 @@ test('S12.1b: ciclo canônico termina em passed_with_observations com slot fecha
   // Attempt 1 — start aceito.
   const start1 = lockValidator({
     run_id: 's12fsm_pwo', project_root: root, host: 'codex', action: 'start',
-    state_path: '.atlas/state/s12fsm_pwo/slice.json',
+    state_path: '.talos/state/s12fsm_pwo/slice.json',
   });
   assert.equal(start1.status, 'passed');
   assert.notEqual(slot(), null, 'slot ativo após start');
@@ -2408,7 +3158,7 @@ test('S12.1b: ciclo canônico termina em passed_with_observations com slot fecha
   // complete com pass_with_observations → passed_with_observations (TERMINAL).
   const pwo = lockValidator({
     run_id: 's12fsm_pwo', project_root: root, host: 'codex', action: 'complete',
-    state_path: '.atlas/state/s12fsm_pwo/slice.json',
+    state_path: '.talos/state/s12fsm_pwo/slice.json',
     validator_run_id: start1.validator_run_id, verdict: 'pass_with_observations',
   });
   assert.equal(pwo.validator_status, 'passed_with_observations');
@@ -2441,7 +3191,7 @@ test('S12.2(a): complete sem start prévio (ciclo idle) → blocked, start_valid
   // Nunca houve validatorStart → cycle idle, active null.
   const complete = lockValidator({
     run_id: 's12a', project_root: root, host: 'codex', action: 'complete',
-    state_path: '.atlas/state/s12a/slice.json',
+    state_path: '.talos/state/s12a/slice.json',
     validator_run_id: 's12a:validator:1:fake', verdict: 'pass',
   });
   assert.equal(complete.status, 'blocked');
@@ -2462,13 +3212,13 @@ test('S12.2(b): repair_start em status running (fora de ordem) → blocked, comp
   // start aceito → status running (validator ainda ativo).
   lockValidator({
     run_id: 's12b', project_root: root, host: 'codex', action: 'start',
-    state_path: '.atlas/state/s12b/slice.json',
+    state_path: '.talos/state/s12b/slice.json',
   });
 
   // repair_start com validator ativo: o 1º guard (validator ativo) dispara primeiro.
   const repairWhileActive = lockValidator({
     run_id: 's12b', project_root: root, host: 'codex', action: 'repair_start',
-    state_path: '.atlas/state/s12b/slice.json',
+    state_path: '.talos/state/s12b/slice.json',
   });
   assert.equal(repairWhileActive.status, 'blocked');
   assert.match(repairWhileActive.error, /Repair não pode iniciar enquanto há validator ativo/);
@@ -2487,23 +3237,23 @@ test('S12.2(b2): repair_start em status repair_running (fora de ordem, sem valid
 
   const start1 = lockValidator({
     run_id: 's12b2', project_root: root, host: 'codex', action: 'start',
-    state_path: '.atlas/state/s12b2/slice.json',
+    state_path: '.talos/state/s12b2/slice.json',
   });
   lockValidator({
     run_id: 's12b2', project_root: root, host: 'codex', action: 'complete',
-    state_path: '.atlas/state/s12b2/slice.json',
+    state_path: '.talos/state/s12b2/slice.json',
     validator_run_id: start1.validator_run_id, verdict: 'fail',
     data: { findings: [finding()] },
   });
   // status → repair_running.
   lockValidator({
     run_id: 's12b2', project_root: root, host: 'codex', action: 'repair_start',
-    state_path: '.atlas/state/s12b2/slice.json',
+    state_path: '.talos/state/s12b2/slice.json',
   });
   // 2º repair_start: repair já ativo → blocked (guard de concorrência dispara antes do "fora de ordem").
   const second = lockValidator({
     run_id: 's12b2', project_root: root, host: 'codex', action: 'repair_start',
-    state_path: '.atlas/state/s12b2/slice.json',
+    state_path: '.talos/state/s12b2/slice.json',
   });
   assert.equal(second.status, 'blocked');
   assert.match(second.error, /Repair já está ativo/);
@@ -2522,7 +3272,7 @@ test('S12.2(c): repair_complete sem repair ativo (ciclo idle) → blocked', () =
   const repairComplete = lockValidator({
     run_id: 's12c', project_root: root, host: 'codex', action: 'repair_complete',
     repair_run_id: 's12c:repair:1:fake',
-    state_path: '.atlas/state/s12c/slice.json',
+    state_path: '.talos/state/s12c/slice.json',
   });
   assert.equal(repairComplete.status, 'blocked');
   // status idle ≠ repair_running → "Repair fora de ordem" OU "Nenhum repair ativo".
@@ -2542,11 +3292,11 @@ test('S12.2(d): validatorStart após terminal passed → blocked (terminal não 
 
   const start1 = lockValidator({
     run_id: 's12d', project_root: root, host: 'codex', action: 'start',
-    state_path: '.atlas/state/s12d/slice.json',
+    state_path: '.talos/state/s12d/slice.json',
   });
   const pass1 = lockValidator({
     run_id: 's12d', project_root: root, host: 'codex', action: 'complete',
-    state_path: '.atlas/state/s12d/slice.json',
+    state_path: '.talos/state/s12d/slice.json',
     validator_run_id: start1.validator_run_id, verdict: 'pass',
   });
   assert.equal(pass1.validator_status, 'passed');
@@ -2555,7 +3305,7 @@ test('S12.2(d): validatorStart após terminal passed → blocked (terminal não 
   // Novo start sobre terminal passed → blocked (não reabre, não vira attempt 2).
   const reopen = lockValidator({
     run_id: 's12d', project_root: root, host: 'codex', action: 'start',
-    state_path: '.atlas/state/s12d/slice-2.json',
+    state_path: '.talos/state/s12d/slice-2.json',
   });
   assert.equal(reopen.status, 'blocked');
   assert.equal(reopen.validator_attempt, undefined, 'terminal não gera novo attempt');
@@ -2577,18 +3327,18 @@ test('S12.2(d2): validatorStart após terminal passed_with_observations → bloc
 
   const start1 = lockValidator({
     run_id: 's12d2', project_root: root, host: 'codex', action: 'start',
-    state_path: '.atlas/state/s12d2/slice.json',
+    state_path: '.talos/state/s12d2/slice.json',
   });
   lockValidator({
     run_id: 's12d2', project_root: root, host: 'codex', action: 'complete',
-    state_path: '.atlas/state/s12d2/slice.json',
+    state_path: '.talos/state/s12d2/slice.json',
     validator_run_id: start1.validator_run_id, verdict: 'pass_with_observations',
   });
   assert.equal(readRunJson(root, 's12d2').data.validator_cycle.status, 'passed_with_observations');
 
   const reopen = lockValidator({
     run_id: 's12d2', project_root: root, host: 'codex', action: 'start',
-    state_path: '.atlas/state/s12d2/slice-2.json',
+    state_path: '.talos/state/s12d2/slice-2.json',
   });
   assert.equal(reopen.status, 'blocked');
   assert.equal(reopen.validator_status, 'passed_with_observations');
@@ -2615,12 +3365,12 @@ test('S12.2(e): reabrir slice que passou no attempt 2 (terminal no último attem
   // Attempt 1: fail → repair.
   const start1 = lockValidator({
     run_id: 's12e', project_root: root, host: 'codex', action: 'start',
-    state_path: '.atlas/state/s12e/slice.json',
+    state_path: '.talos/state/s12e/slice.json',
   });
   assert.equal(start1.status, 'passed', 'attempt 1 aceito');
   const fail1 = lockValidator({
     run_id: 's12e', project_root: root, host: 'codex', action: 'complete',
-    state_path: '.atlas/state/s12e/slice.json',
+    state_path: '.talos/state/s12e/slice.json',
     validator_run_id: start1.validator_run_id, verdict: 'fail',
     data: { findings: [finding()] },
   });
@@ -2628,25 +3378,25 @@ test('S12.2(e): reabrir slice que passou no attempt 2 (terminal no último attem
 
   const repairStart = lockValidator({
     run_id: 's12e', project_root: root, host: 'codex', action: 'repair_start',
-    state_path: '.atlas/state/s12e/slice.json',
+    state_path: '.talos/state/s12e/slice.json',
   });
   lockValidator({
     run_id: 's12e', project_root: root, host: 'codex', action: 'repair_complete',
     repair_run_id: repairStart.repair_run_id,
-    state_path: '.atlas/state/s12e/slice.json',
-    data: resolvedRepair(root, '.atlas/state/s12e/slice.json'),
+    state_path: '.talos/state/s12e/slice.json',
+    data: resolvedRepair(root, '.talos/state/s12e/slice.json'),
   });
 
   // Attempt 2 (último): pass → terminal.
   const start2 = lockValidator({
     run_id: 's12e', project_root: root, host: 'codex', action: 'start',
-    state_path: '.atlas/state/s12e/slice.json',
+    state_path: '.talos/state/s12e/slice.json',
   });
   assert.equal(start2.status, 'passed', 'attempt 2 aceito');
   assert.equal(start2.validator_attempt, 2, 'é o attempt 2');
   const pass2 = lockValidator({
     run_id: 's12e', project_root: root, host: 'codex', action: 'complete',
-    state_path: '.atlas/state/s12e/slice.json',
+    state_path: '.talos/state/s12e/slice.json',
     validator_run_id: start2.validator_run_id, verdict: 'pass',
     data: { findings: [], repaired_finding_ids: ['F-001'] },
   });
@@ -2661,7 +3411,7 @@ test('S12.2(e): reabrir slice que passou no attempt 2 (terminal no último attem
   // Reabrir: DEVE retornar causa TERMINAL (não "terceiro validator proibido").
   const reopen = lockValidator({
     run_id: 's12e', project_root: root, host: 'codex', action: 'start',
-    state_path: '.atlas/state/s12e/slice-3.json',
+    state_path: '.talos/state/s12e/slice-3.json',
   });
   assert.equal(reopen.status, 'blocked', 'reopen bloqueado');
   // Causa deve ser a do guard terminal, não a de HF-05 (contagem).
@@ -2680,7 +3430,7 @@ test('S12.2(e): reabrir slice que passou no attempt 2 (terminal no último attem
 // Regressões do lote de confiabilidade 0.7.1 (achados do smoke S18 multi-host).
 // ───────────────────────────────────────────────────────────────────────────
 
-// P2: `atlas_run_state(upsert)` com `data` parcial DEVE preservar dispatch.active.
+// P2: `talos_run_state(upsert)` com `data` parcial DEVE preservar dispatch.active.
 // O executor escreve o handoff via upsert parcial; antes do fix, o replace cego
 // apagava dispatch.active={plan_execute} e o lock_validator(start) seguinte
 // bloqueava ("current_phase null"). Confirmado em Codex + opencode @ 0.7.0.
@@ -2696,7 +3446,7 @@ test('P2: upsert parcial preserva dispatch.active (não derruba o lock de fase)'
     action: 'upsert',
     run_id: 'p2merge',
     project_root: root,
-    data: { validator_handoff_required: true, state_path: '.atlas/state/p2merge/slice.json' },
+    data: { validator_handoff_required: true, state_path: '.talos/state/p2merge/slice.json' },
   });
   const after = readRunJson(root, 'p2merge');
   assert.equal(after.data.dispatch?.active?.phase, 'plan_execute', 'dispatch.active preservado após upsert parcial');
@@ -2711,7 +3461,7 @@ test('P2: upsert parcial preserva dispatch.active (não derruba o lock de fase)'
 test('version-conflict: run antigo inativo de versão anterior não bloqueia run novo', () => {
   const root = tmpRoot();
   // Resíduo de versão anterior, sem dispatch ativo.
-  const oldDir = path.join(root, '.atlas', 'state', 'run-velho');
+  const oldDir = path.join(root, '.talos', 'state', 'run-velho');
   fs.mkdirSync(oldDir, { recursive: true });
   fs.writeFileSync(path.join(oldDir, 'run.json'), JSON.stringify({
     run_id: 'run-velho',
@@ -2733,9 +3483,36 @@ test('banner: verify_artifact com artifact_kind=prd ecoa banner de PRD; default 
   fs.writeFileSync(path.join(root, 'PLAN_x.md'), CONFORMANT_PLAN_DOC);
   const prd = verifyArtifact({ run_id: 'bk', project_root: root, artifact_path: 'PRD_x.md', artifact_kind: 'prd' });
   assert.equal(prd.status, 'passed');
-  assert.equal(prd.banner, '▸ atlas: prd · ok');
+  assert.equal(prd.banner, '▸ talos: prd · ok');
   const plan = verifyArtifact({ run_id: 'bk', project_root: root, artifact_path: 'PLAN_x.md' });
-  assert.equal(plan.banner, '▸ atlas: plano · validado (TC pass)', 'default (sem kind) preserva banner de plano');
+  assert.equal(plan.banner, '▸ talos: plano · validado (TC pass)', 'default (sem kind) preserva banner de plano');
+});
+
+test('verify_artifact: artifact_kind=json bloqueia JSON inválido e aprova JSON parseável', () => {
+  const root = tmpRoot();
+  const invalidPath = '.talos/state/json-gate/validator-output.json';
+  const invalidAbs = path.join(root, invalidPath);
+  fs.mkdirSync(path.dirname(invalidAbs), { recursive: true });
+  fs.writeFileSync(invalidAbs, '{"msg":"\\$reason"}\n');
+
+  const invalid = verifyArtifact({
+    run_id: 'json-gate',
+    project_root: root,
+    artifact_path: invalidPath,
+    artifact_kind: 'json',
+  });
+  assert.equal(invalid.status, 'blocked');
+  assert.match(invalid.cause, /Invalid|escape|JSON/);
+
+  fs.writeFileSync(invalidAbs, JSON.stringify({ msg: '$reason' }, null, 2));
+  const valid = verifyArtifact({
+    run_id: 'json-gate',
+    project_root: root,
+    artifact_path: invalidPath,
+    artifact_kind: 'json',
+  });
+  assert.equal(valid.status, 'passed');
+  assert.equal(valid.parsed_type, 'object');
 });
 
 // P1.1 — proof-of-work do validador irmão. Setup: run com plan_execute ativo, um
@@ -2753,13 +3530,13 @@ function setupValidatorRun(runId, files = {}) {
     fs.mkdirSync(path.dirname(abs), { recursive: true });
     fs.writeFileSync(abs, content);
   }
-  const sliceRel = `.atlas/state/${runId}/slice.json`;
+  const sliceRel = `.talos/state/${runId}/slice.json`;
   const sliceAbs = path.join(root, sliceRel);
   fs.mkdirSync(path.dirname(sliceAbs), { recursive: true });
   fs.writeFileSync(sliceAbs, JSON.stringify({
     run_id: runId, slice: 'A', tasks: ['T01'], files_changed: filesChanged,
-    diff_stat: '1 files, +1 -0', plan_path: '.atlas/plans/x.plan.md',
-    boundary_refs: ['§2.I1'], executed_at: '2026-06-15T00:00:00Z', executor_skill: 'atlas-plan-execute',
+    diff_stat: '1 files, +1 -0', plan_path: '.talos/plans/x.plan.md',
+    boundary_refs: ['§2.I1'], executed_at: '2026-06-15T00:00:00Z', executor_skill: 'talos-plan-execute',
   }, null, 2));
   return { root, sliceRel };
 }
@@ -2791,6 +3568,48 @@ test('proof-of-work: complete com hash correto passa e marca challenge_verified'
   assert.equal(done.status, 'passed');
   assert.equal(done.validator_status, 'passed');
   assert.equal(done.challenge_verified, 'verified');
+});
+
+test('talos_lock_validator: validator_output_path inválido bloqueia complete sem fechar slot', () => {
+  const runId = 'validator-json-output';
+  const { root, sliceRel } = setupValidatorRun(runId, { 'src/foo.js': 'export const x = 1;\n' });
+  const start = lockValidator({ run_id: runId, project_root: root, action: 'start', state_path: sliceRel });
+  const outputRel = `.talos/state/${runId}/validator-output.json`;
+  const outputAbs = path.join(root, outputRel);
+  fs.mkdirSync(path.dirname(outputAbs), { recursive: true });
+  fs.writeFileSync(outputAbs, '{"observations":[{"msg":"\\$reason"}]}\n');
+
+  const blocked = lockValidator({
+    run_id: runId,
+    project_root: root,
+    action: 'complete',
+    state_path: sliceRel,
+    validator_run_id: start.validator_run_id,
+    dispatch_token: start.dispatch_token,
+    challenge_response: sha256File(root, start.challenge.file),
+    validator_output_path: outputRel,
+    verdict: 'pass',
+    data: { findings: [] },
+  });
+  assert.equal(blocked.status, 'blocked');
+  assert.equal(blocked.validator_status, 'invalid_validator_output_json');
+  assert.notEqual(readRunJson(root, runId).data.validator_cycle.active, null);
+
+  fs.writeFileSync(outputAbs, JSON.stringify({ verdict: 'pass', findings: [] }, null, 2));
+  const passed = lockValidator({
+    run_id: runId,
+    project_root: root,
+    action: 'complete',
+    state_path: sliceRel,
+    validator_run_id: start.validator_run_id,
+    dispatch_token: start.dispatch_token,
+    challenge_response: sha256File(root, start.challenge.file),
+    validator_output_path: outputRel,
+    verdict: 'pass',
+    data: { findings: [] },
+  });
+  assert.equal(passed.status, 'passed');
+  assert.equal(passed.validator_status, 'passed');
 });
 
 test('proof-of-work: complete aceita saída do shasum (hash + nome do arquivo)', () => {
@@ -2892,8 +3711,8 @@ test('proof-of-work: arquivo ilegível após challenge nunca aprova o veredito',
 function initGitFixture() {
   const root = tmpRoot();
   execFileSync('git', ['-C', root, 'init', '-q']);
-  execFileSync('git', ['-C', root, 'config', 'user.email', 'atlas@example.invalid']);
-  execFileSync('git', ['-C', root, 'config', 'user.name', 'Atlas Test']);
+  execFileSync('git', ['-C', root, 'config', 'user.email', 'talos@example.invalid']);
+  execFileSync('git', ['-C', root, 'config', 'user.name', 'Talos Test']);
   fs.writeFileSync(path.join(root, 'README.md'), 'base\n');
   execFileSync('git', ['-C', root, 'add', 'README.md']);
   execFileSync('git', ['-C', root, 'commit', '-qm', 'base']);
@@ -2914,7 +3733,7 @@ function withSnapshot(state, root, baseline = []) {
 }
 
 function writeSliceState(root, runId, state) {
-  const sliceRel = `.atlas/state/${runId}/slice.json`;
+  const sliceRel = `.talos/state/${runId}/slice.json`;
   const abs = path.join(root, sliceRel);
   fs.mkdirSync(path.dirname(abs), { recursive: true });
   fs.writeFileSync(abs, JSON.stringify({ ...state, run_id: runId }, null, 2));
@@ -2969,6 +3788,78 @@ function planStateForBoundary(root, head, baseline, files) {
   state.repair_evidence = [];
   return withSnapshot(state, root, baseline);
 }
+
+function attachSprintEvidence(state, { id = 'S01', sprintPath = '.talos/backlog/sprints/SPRINT_S01_runtime.md' } = {}) {
+  state.sprint_id = id;
+  state.sprint_file_path = sprintPath;
+  state.prd_path = '.talos/prd/PRD_S01_runtime.md';
+  state.eval_results = [{
+    id: 'EVAL-001',
+    claim: 'gate passa',
+    status: 'passed',
+    evidence: ['node --test packages/mcp-server/server.test.js'],
+    checks: ['node --test packages/mcp-server/server.test.js'],
+  }];
+  state.evidence_to_claim = [{
+    claim_id: 'EVAL-001',
+    source: `${sprintPath} §9`,
+    evidence: ['node --test packages/mcp-server/server.test.js'],
+    status: 'passed',
+  }];
+  state.policy_scope = {
+    allowed_scope: ['src'],
+    forbidden_scope: ['secrets'],
+    required_gates: ['talos_verify_sprint_file', 'talos-task-validator'],
+  };
+  return state;
+}
+
+function setupSprintEvidenceBoundary(runId = 'sprint-state-ok') {
+  const { root, head } = initGitFixture();
+  fs.mkdirSync(path.join(root, '.talos/backlog/sprints'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md'), sprintDoc());
+  const baseline = captureWorktreeSnapshot(root);
+  fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'src/initial.js'), 'export const initial = true;\n');
+  const state = attachSprintEvidence(planStateForBoundary(root, head, baseline, ['src/initial.js']));
+  const statePath = writeSliceState(root, runId, state);
+  return { root, statePath, state };
+}
+
+test('state boundary: sprint/eval/policy completos passam', () => {
+  const { root, statePath } = setupSprintEvidenceBoundary();
+  assert.equal(validateStateBoundary(statePath, { project_root: root }).ok, true);
+});
+
+test('state boundary: sprint declarado exige todos EVAL-* como passed e evidence_to_claim', () => {
+  const missing = setupSprintEvidenceBoundary('sprint-state-missing-eval');
+  missing.state.eval_results = [];
+  fs.writeFileSync(path.join(missing.root, missing.statePath), JSON.stringify({ ...missing.state, run_id: 'sprint-state-missing-eval' }, null, 2));
+  let result = validateStateBoundary(missing.statePath, { project_root: missing.root });
+  assert.equal(result.ok, false);
+  assert.match(result.violations.join(' '), /EVAL sem resultado/);
+
+  const failed = setupSprintEvidenceBoundary('sprint-state-failed-eval');
+  failed.state.eval_results[0].status = 'failed';
+  fs.writeFileSync(path.join(failed.root, failed.statePath), JSON.stringify({ ...failed.state, run_id: 'sprint-state-failed-eval' }, null, 2));
+  result = validateStateBoundary(failed.statePath, { project_root: failed.root });
+  assert.equal(result.ok, false);
+  assert.match(result.violations.join(' '), /EVAL não comprovado como passed/);
+});
+
+test('state boundary: policy_scope.forbidden_scope bloqueia arquivo tocado', () => {
+  const { root, head } = initGitFixture();
+  fs.mkdirSync(path.join(root, '.talos/backlog/sprints'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md'), sprintDoc());
+  const baseline = captureWorktreeSnapshot(root);
+  fs.mkdirSync(path.join(root, 'secrets'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'secrets/token.txt'), 'nope\n');
+  const state = attachSprintEvidence(planStateForBoundary(root, head, baseline, ['secrets/token.txt']));
+  const statePath = writeSliceState(root, 'sprint-state-policy-block', state);
+  const result = validateStateBoundary(statePath, { project_root: root });
+  assert.equal(result.ok, false);
+  assert.match(result.violations.join(' '), /forbidden_scope/);
+});
 
 test('F-003: dirty preexistente intacto não contamina; mutação posterior entra no boundary', () => {
   const { root, head } = initGitFixture();

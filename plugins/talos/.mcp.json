@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "talos": {
+      "command": "node",
+      "cwd": ".",
+      "args": [
+        "packages/mcp-server/server.js"
+      ],
+      "transport": "stdio"
+    }
+  }
+}

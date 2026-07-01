@@ -16,8 +16,8 @@ dist/
 node_modules/
 
 # Estado de runs do orquestrador
-.atlas/
+.talos/
 
-#Atlas
-.atlas-smoke/
-.atlas
+#Talos
+.talos-smoke/
+.talos

@@ -1,16 +1,16 @@
 {
-  "name": "atlas-workflow",
+  "name": "talos",
   "owner": {
     "name": "Paulo Borini"
   },
   "metadata": {
-    "description": "Marketplace do Atlas Workflow Orchestrator: plugin único de orquestração de pipeline determinístico (PRD → plano → execução → validação) para Claude Code, Cursor, Codex, opencode e pi cli."
+    "description": "Marketplace do Talos: plugin único de orquestração de pipeline determinístico (PRD → plano → execução → validação) para Claude Code, Cursor, Codex, Antigravity, ZCode, opencode e pi cli."
   },
   "plugins": [
     {
-      "name": "atlas-workflow-orchestrator",
+      "name": "talos",
       "source": "./",
-      "description": "Atlas Workflow Orchestrator — pipeline determinístico orientado a artefato (PRD → plano → execução → validação fria) com família única atlas-* e MCP local."
+      "description": "Talos — pipeline determinístico orientado a artefato (PRD → plano → execução → validação fria) com família única talos-* e MCP local."
     }
   ]
 }

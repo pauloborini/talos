@@ -1,7 +1,0 @@
-interface:
-  display_name: "Atlas Task Validator"
-  short_description: "Cold internal slice validator for atlas-plan-execute"
-  default_prompt: "Use $atlas-task-validator to validate the executed plan slice against the plan contract and return structured findings with a deterministic verdict."
-
-policy:
-  allow_implicit_invocation: true

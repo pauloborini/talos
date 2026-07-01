@@ -4,7 +4,7 @@
 // preflight PREREQ hard-fail (simulado) + veredito JSON parseável do agente.
 //
 // ESCOPO HONESTO (não é teatro verde): isto exercita só a LÓGICA DO MCP SERVER via
-// stdio, com ATLAS_HOST setado por env. NÃO exercita a integração real das extensões
+// stdio, com TALOS_HOST setado por env. NÃO exercita a integração real das extensões
 // de host — opencode (.opencode/agents + opencode.json) é coberto por teste manual no
 // opencode real; pi (pi-mcp-adapter proxia/prefixa as tools + pi-subagents dispara via
 // tool `subagent`) só é validado ponta-a-ponta no pi real. Verde aqui = server correto,
@@ -23,16 +23,19 @@ const EXPECTED_SCHEMA_VERSION = 5;
 
 // Hosts suportados + onde mora o arquivo de agente (p/ checagem de veredito) +
 // join.sync esperado por perfil (sibling-only, DEC-SIB-003): hosts nativos
-// (claude/codex/opencode) = 'self_evident'; must_report (pi/generic) = 'must_report'.
+// (claude/codex/opencode/zcode) = 'self_evident'; must_report (pi/generic) = 'must_report'.
+// dispatch_mutable é reportado nos cenários PASS para hosts com dispatch_capability
+// unknown; hosts mutable ignoram o flag.
 const HOSTS = [
-  { host: 'claude', agent: 'agents/atlas-task-validator.md', join_sync: 'self_evident' },
-  { host: 'codex', agent: 'plugins/atlas-workflow-orchestrator/.codex/agents/atlas-task-validator.toml', join_sync: 'self_evident' },
-  { host: 'opencode', agent: 'hosts/opencode/.opencode/agents/atlas-task-validator.md', join_sync: 'self_evident' },
-  { host: 'pi', agent: 'hosts/pi/.pi/agents/atlas-task-validator.md', join_sync: 'must_report' },
-  { host: 'generic', agent: 'agents/atlas-task-validator.md', join_sync: 'must_report' },
+  { host: 'claude', agent: 'agents/talos-task-validator.md', join_sync: 'self_evident' },
+  { host: 'codex', agent: 'plugins/talos/.codex/agents/talos-task-validator.toml', join_sync: 'self_evident' },
+  { host: 'opencode', agent: 'hosts/opencode/.opencode/agents/talos-task-validator.md', join_sync: 'self_evident' },
+  { host: 'pi', agent: 'hosts/pi/.pi/agents/talos-task-validator.md', join_sync: 'must_report' },
+  { host: 'zcode', agent: 'hosts/zcode/agents/talos-task-validator.md', join_sync: 'self_evident' },
+  { host: 'generic', agent: 'agents/talos-task-validator.md', join_sync: 'must_report' },
 ];
 
-const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-conf-'));
+const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'talos-conf-'));
 
 // Fixture p/ o cenário `execute`: arquivo com nome PLAN_*.md → classify_input o
 // classifica como `plan` (dica de nome), roteando para o modo execute (PRD D5/D6).
@@ -83,30 +86,32 @@ function verdictParseable(agentRel) {
 const errors = [];
 for (const { host, agent, join_sync } of HOSTS) {
   const env = { ...process.env };
-  delete env.ATLAS_HOST; delete env.CLAUDE_PLUGIN_ROOT; delete env.CODEX_HOME; delete env.CODEX_PLUGIN_ROOT;
-  env.ATLAS_HOST = host;
+  delete env.TALOS_HOST; delete env.CLAUDE_PLUGIN_ROOT; delete env.CODEX_HOME; delete env.CODEX_PLUGIN_ROOT;
+  env.TALOS_HOST = host;
   const reqs = [
     { jsonrpc: '2.0', id: 1, method: 'initialize', params: {} },
-    { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'atlas_ping', arguments: {} } },
-    { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'atlas_capabilities', arguments: {} } },
-    // host_capabilities reporta join_sync_available: gate JOIN (DEC-SIB-003) é fail-closed
-    // para hosts must_report (pi/generic); hosts nativos (self_evident) ignoram o flag.
-    { jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'atlas_preflight', arguments: { run_id: `conf-${host}-ok`, mode: 'direct', project_root: TMP, host_capabilities: { subagent_available: true, mcp_available: true, join_sync_available: true } } } },
-    { jsonrpc: '2.0', id: 5, method: 'tools/call', params: { name: 'atlas_preflight', arguments: { run_id: `conf-${host}-blk`, mode: 'direct', project_root: TMP, host_capabilities: { subagent_available: false } } } },
+    { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'talos_ping', arguments: {} } },
+    { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'talos_capabilities', arguments: {} } },
+    // host_capabilities reporta join_sync_available + dispatch_mutable:
+    // - JOIN é fail-closed para hosts must_report (pi/generic);
+    // - DISPATCH é fail-closed para dispatch_capability unknown (pi/zcode/generic).
+    { jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'talos_preflight', arguments: { run_id: `conf-${host}-ok`, mode: 'direct', project_root: TMP, host_capabilities: { subagent_available: true, mcp_available: true, join_sync_available: true, dispatch_mutable: true } } } },
+    { jsonrpc: '2.0', id: 5, method: 'tools/call', params: { name: 'talos_preflight', arguments: { run_id: `conf-${host}-blk`, mode: 'direct', project_root: TMP, host_capabilities: { subagent_available: false } } } },
     // Cenário `execute` (T15): preflight(execute) → classify_input(plano) →
     // lock_dispatch(start, plan_execute) como PRIMEIRA fase → assert_after_plan no-op.
     // Run_id próprio para a rota travar em execute (sem colidir com os -ok/-blk de direct).
-    { jsonrpc: '2.0', id: 6, method: 'tools/call', params: { name: 'atlas_preflight', arguments: { run_id: `conf-${host}-exec`, mode: 'execute', project_root: TMP, host_capabilities: { subagent_available: true, mcp_available: true, join_sync_available: true } } } },
-    { jsonrpc: '2.0', id: 7, method: 'tools/call', params: { name: 'atlas_classify_input', arguments: { run_id: `conf-${host}-exec`, project_root: TMP, input_path: PLAN_FIXTURE } } },
-    { jsonrpc: '2.0', id: 8, method: 'tools/call', params: { name: 'atlas_lock_dispatch', arguments: { run_id: `conf-${host}-exec`, project_root: TMP, action: 'start', phase: 'plan_execute' } } },
-    { jsonrpc: '2.0', id: 9, method: 'tools/call', params: { name: 'atlas_assert_after_plan', arguments: { run_id: `conf-${host}-exec`, project_root: TMP, attempted_action: 'dispatch_plan_execute' } } },
+    { jsonrpc: '2.0', id: 6, method: 'tools/call', params: { name: 'talos_preflight', arguments: { run_id: `conf-${host}-exec`, mode: 'execute', project_root: TMP, host_capabilities: { subagent_available: true, mcp_available: true, join_sync_available: true, dispatch_mutable: true } } } },
+    { jsonrpc: '2.0', id: 7, method: 'tools/call', params: { name: 'talos_classify_input', arguments: { run_id: `conf-${host}-exec`, project_root: TMP, input_path: PLAN_FIXTURE } } },
+    { jsonrpc: '2.0', id: 8, method: 'tools/call', params: { name: 'talos_lock_dispatch', arguments: { run_id: `conf-${host}-exec`, project_root: TMP, action: 'start', phase: 'plan_execute' } } },
+    { jsonrpc: '2.0', id: 9, method: 'tools/call', params: { name: 'talos_assert_after_plan', arguments: { run_id: `conf-${host}-exec`, project_root: TMP, attempted_action: 'dispatch_plan_execute' } } },
     // Cleanup: aborta a fase ativa para liberar o lock no ledger compartilhado (TMP
     // é único entre hosts); sem isto o próximo host bate em LOCK_CONFLICT no preflight.
-    { jsonrpc: '2.0', id: 10, method: 'tools/call', params: { name: 'atlas_lock_dispatch', arguments: { run_id: `conf-${host}-exec`, project_root: TMP, action: 'abort', phase: 'plan_execute' } } },
-    // Cenário JOIN/blocked (P3 S13): preflight com PREREQ ok (subagent+mcp true) mas SEM
-    // join_sync_available. Para must_report (pi/generic): gate JOIN bloqueado.
-    // Para self_evident (claude/codex/opencode): preflight passa — não exige report.
-    { jsonrpc: '2.0', id: 11, method: 'tools/call', params: { name: 'atlas_preflight', arguments: { run_id: `conf-${host}-jblk`, mode: 'direct', project_root: TMP, host_capabilities: { subagent_available: true, mcp_available: true } } } },
+    { jsonrpc: '2.0', id: 10, method: 'tools/call', params: { name: 'talos_lock_dispatch', arguments: { run_id: `conf-${host}-exec`, project_root: TMP, action: 'abort', phase: 'plan_execute' } } },
+    // Cenário JOIN/blocked (P3 S13): preflight audit com PREREQ ok (subagent+mcp true)
+    // mas SEM join_sync_available. Audit evita o gate DISPATCH, isolando o gate JOIN.
+    // Para must_report (pi/generic): gate JOIN bloqueado.
+    // Para self_evident (claude/codex/opencode/zcode): preflight passa — não exige report.
+    { jsonrpc: '2.0', id: 11, method: 'tools/call', params: { name: 'talos_preflight', arguments: { run_id: `conf-${host}-jblk`, mode: 'audit', project_root: TMP, host_capabilities: { subagent_available: true, mcp_available: true } } } },
   ];
   const server = spawn('node', [SERVER], { env, cwd: TMP, stdio: ['pipe', 'pipe', 'ignore'] });
   // eslint-disable-next-line no-await-in-loop
@@ -158,7 +163,7 @@ for (const { host, agent, join_sync } of HOSTS) {
 
   // --- Cenário JOIN/blocked (P3 S13) ---
   // must_report (pi/generic): PREREQ ok mas join_sync_available ausente → gate JOIN blocked.
-  // self_evident (claude/codex/opencode): mesmo payload → preflight passa (G10/passed).
+  // self_evident (claude/codex/opencode/zcode): mesmo payload audit → preflight passa (G10/passed).
   if (join_sync === 'must_report') {
     (r[11] && r[11].gate === 'JOIN' && r[11].status === 'blocked')
       ? ok() : fail(`preflight JOIN/blocked != JOIN/blocked para must_report (${JSON.stringify(r[11])})`);
@@ -177,4 +182,4 @@ if (errors.length) {
   for (const e of errors) console.error(`  - ${e}`);
   process.exit(1);
 }
-console.log('conformance-matrix: ok (5 hosts × 10 cenários verdes — simulado por env)');
+console.log('conformance-matrix: ok (6 hosts × 10 cenários verdes — simulado por env)');

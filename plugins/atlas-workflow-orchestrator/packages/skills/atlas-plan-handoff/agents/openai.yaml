@@ -1,7 +1,0 @@
-interface:
-  display_name: "Atlas Plan Handoff"
-  short_description: "Handoff executável da família atlas-* com prefixo e modo fechados"
-  default_prompt: "Use $atlas-plan-handoff para produzir um plano executável da cadeia atlas-* com prefixo fechado, execution mode explícito, executor correto, validator interno obrigatório e review externo opcional."
-
-policy:
-  allow_implicit_invocation: true

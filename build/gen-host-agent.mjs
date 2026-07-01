@@ -4,8 +4,8 @@
 // frontmatter para o formato do host. Fonte única do corpo → sem drift entre hosts
 // (guard check-consistency verifica existência + alvo do shim).
 //
-// O nome do agente é derivado do basename do <out-file> (ex.: atlas-plan-execute.md
-// → agents/atlas-plan-execute.md como canônico).
+// O nome do agente é derivado do basename do <out-file> (ex.: talos-plan-execute.md
+// → agents/talos-plan-execute.md como canônico).
 //
 // Uso: node build/gen-host-agent.mjs <host> <out-file>
 //   host: codex | opencode | pi
@@ -51,22 +51,18 @@ const description = get('description') || '';
 // model omitido: pi-subagents herda o default do host. opencode NÃO lista tools (herda
 // do host por convenção do repo) — o SKILL.md governa read-only vs executor.
 const PI_TOOLS = {
-  'atlas-task-validator': 'read, grep, find, ls, bash',
-  'atlas-findings-repair': 'read, write, edit, grep, find, ls, bash',
-  'atlas-slice-review': 'read, grep, find, ls, bash',
-  'atlas-plan-execute': 'read, write, edit, grep, find, ls, bash',
-  'atlas-direct-execute': 'read, write, edit, grep, find, ls, bash',
+  'talos-task-validator': 'read, grep, find, ls, bash',
+  'talos-findings-repair': 'read, write, edit, grep, find, ls, bash',
+  'talos-slice-review': 'read, grep, find, ls, bash',
+  'talos-plan-execute': 'read, write, edit, grep, find, ls, bash',
+  'talos-direct-execute': 'read, write, edit, grep, find, ls, bash',
 };
 
-// Codex custom agents can pin model/runtime knobs per agent. Only the cold
-// validator is pinned here: the user-facing contract is higher reasoning for
-// validation, without changing executor/review defaults.
-const CODEX_AGENT_OVERRIDES = {
-  'atlas-task-validator': {
-    model: 'gpt-5.4',
-    model_reasoning_effort: 'high',
-  },
-};
+// Codex custom agents intentionally do not pin model/runtime knobs here.
+// ChatGPT-backed Codex accounts can reject repo-pinned models even when the
+// native spawn_agent role exists. Determinism comes from sibling isolation +
+// MCP gates; model selection stays with the host/account default.
+const CODEX_AGENT_OVERRIDES = {};
 
 let header;
 if (host === 'opencode') {
@@ -110,7 +106,7 @@ if (host === 'opencode') {
   // canônico no corpo gerado (mesmo padrão auto-contido), mantendo fonte única:
   // o contrato continua vivendo só em packages/skills/<name>/SKILL.md; aqui é cópia
   // gerada (regenerável), nunca editada à mão.
-  const PI_EMBED_SHIMS = new Set(['atlas-plan-execute', 'atlas-direct-execute', 'atlas-slice-review', 'atlas-findings-repair']);
+  const PI_EMBED_SHIMS = new Set(['talos-plan-execute', 'talos-direct-execute', 'talos-slice-review', 'talos-findings-repair']);
   let piBody = body;
   if (PI_EMBED_SHIMS.has(name)) {
     const skillPath = path.join(ROOT, `packages/skills/${name}/SKILL.md`);
