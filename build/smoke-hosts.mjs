@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Smoke de não-regressão multi-host (S04 / G3; base da matriz de conformance S11).
 // Sobe o MCP server via stdio com o env de cada host e valida boot + detecção +
-// contrato atlas_capabilities + atlas_ping. Falha (exit != 0) em qualquer divergência.
+// contrato talos_capabilities + talos_ping. Falha (exit != 0) em qualquer divergência.
 //
 // Cursor não tem perfil próprio: instala via manifest Claude e expõe CLAUDE_PLUGIN_ROOT,
 // então é coberto pelo caso `claude` (mesma detecção). Ver DISTRIBUICAO_INVARIANTE.md.
@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 
 const SERVER = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../packages/mcp-server/server.js');
 
-// Contrato atlas_capabilities atual: ver CAPABILITIES_SCHEMA_VERSION em
+// Contrato talos_capabilities atual: ver CAPABILITIES_SCHEMA_VERSION em
 // packages/mcp-server/server.js (v5). join_sync por perfil: hosts nativos
 // (claude/codex/opencode) = 'self_evident'; hosts must_report (pi/generic) = 'must_report'.
 const EXPECTED_SCHEMA_VERSION = 5;
@@ -21,10 +21,10 @@ const CASES = [
   { name: 'claude (= cursor via CLAUDE_PLUGIN_ROOT)', env: { CLAUDE_PLUGIN_ROOT: '/tmp/x' }, host: 'claude', via: 'env:CLAUDE_PLUGIN_ROOT', join_sync: 'self_evident' },
   { name: 'codex (CODEX_HOME)', env: { CODEX_HOME: '/tmp/y' }, host: 'codex', via: 'env:CODEX', join_sync: 'self_evident' },
   { name: 'zcode (ZCODE_PLUGIN_ROOT)', env: { ZCODE_PLUGIN_ROOT: '/tmp/z' }, host: 'zcode', via: 'env:ZCODE_PLUGIN_ROOT', join_sync: 'self_evident' },
-  { name: 'opencode (ATLAS_HOST via opencode.json)', env: { ATLAS_HOST: 'opencode' }, host: 'opencode', via: 'env:ATLAS_HOST', join_sync: 'self_evident' },
-  { name: 'pi (ATLAS_HOST via mcp.json)', env: { ATLAS_HOST: 'pi' }, host: 'pi', via: 'env:ATLAS_HOST', join_sync: 'must_report' },
+  { name: 'opencode (TALOS_HOST via opencode.json)', env: { TALOS_HOST: 'opencode' }, host: 'opencode', via: 'env:TALOS_HOST', join_sync: 'self_evident' },
+  { name: 'pi (TALOS_HOST via mcp.json)', env: { TALOS_HOST: 'pi' }, host: 'pi', via: 'env:TALOS_HOST', join_sync: 'must_report' },
   { name: 'generic (sem env)', env: {}, host: 'generic', via: 'default', join_sync: 'must_report' },
-  { name: 'override ATLAS_HOST', env: { ATLAS_HOST: 'codex', CLAUDE_PLUGIN_ROOT: '/tmp/x' }, host: 'codex', via: 'env:ATLAS_HOST', join_sync: 'self_evident' },
+  { name: 'override TALOS_HOST', env: { TALOS_HOST: 'codex', CLAUDE_PLUGIN_ROOT: '/tmp/x' }, host: 'codex', via: 'env:TALOS_HOST', join_sync: 'self_evident' },
 ];
 
 function rpc(server, msg) {
@@ -35,7 +35,7 @@ function runCase(c) {
   return new Promise((resolve) => {
     // Limpa env de host herdado para não contaminar a detecção.
     const env = { ...process.env };
-    delete env.ATLAS_HOST; delete env.CLAUDE_PLUGIN_ROOT; delete env.CODEX_HOME; delete env.CODEX_PLUGIN_ROOT; delete env.ZCODE_PLUGIN_ROOT;
+    delete env.TALOS_HOST; delete env.CLAUDE_PLUGIN_ROOT; delete env.CODEX_HOME; delete env.CODEX_PLUGIN_ROOT; delete env.ZCODE_PLUGIN_ROOT;
     Object.assign(env, c.env);
     const server = spawn('node', [SERVER], { env, stdio: ['pipe', 'pipe', 'ignore'] });
     let buf = '';
@@ -54,8 +54,8 @@ function runCase(c) {
     });
     server.on('close', () => resolve(results));
     rpc(server, { jsonrpc: '2.0', id: 1, method: 'initialize', params: {} });
-    rpc(server, { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'atlas_capabilities', arguments: {} } });
-    rpc(server, { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'atlas_ping', arguments: {} } });
+    rpc(server, { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'talos_capabilities', arguments: {} } });
+    rpc(server, { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'talos_ping', arguments: {} } });
   });
 }
 
@@ -85,7 +85,7 @@ for (const c of CASES) {
   } else {
     if (fb && fb.enabled === true) errors.push(`${c.name}: NÃO deveria ter fallback.enabled=true (regressão de adapter)`);
   }
-  if (!r.ping || r.ping.status !== 'alive') errors.push(`${c.name}: atlas_ping status '${r.ping?.status}' != 'alive'`);
+  if (!r.ping || r.ping.status !== 'alive') errors.push(`${c.name}: talos_ping status '${r.ping?.status}' != 'alive'`);
   if (!errors.some((e) => e.startsWith(c.name))) console.log(`  ✓ ${c.name} → host=${cap.host} sv=${cap.schema_version} ping=ok`);
 }
 

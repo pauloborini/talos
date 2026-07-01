@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.12.0 - 2026-07-01
+
+Tipo: **major (rebranding completo)**. **BREAKING**: renomeação de `atlas-workflow` → `Talos`. Schema MCP: v5 (inalterado). Contrato de execução: preservado.
+
+Resumo: Lançamento público do **Talos** como pipeline determinístico independente. Renomeação completa do produto, skills e artefatos — de `atlas-workflow`/`atlas-*` para `talos`/`talos-*`. É a mesma pipeline, agora com identidade própria e instalável por qualquer pessoa.
+
+Mudanças:
+- **Rebranding integral** — 632 arquivos alterados: todas as skills renomeadas de `atlas-*` para `talos-*` (10 skills + orquestradora), CLI `atlas-init.mjs` → `talos-init.mjs`, MCP server, agentes, templates, bundles e documentação.
+- **Identidade visual** — Logo Talos, README, metadados de marketplace e plugin.json atualizados para o nome definitivo.
+- **Compatibilidade com legado** — `SKILL_PREFIXES` no instalador agora cobre `['talos-', 'atlas-']`: instalações antigas com prefixo `atlas-` são limpas automaticamente no upgrade.
+- **Correção de smoke test** — Testes de install/uninstall atualizados para validar tanto a limpeza do prefixo legado `atlas-` quanto a instalação correta do prefixo atual `talos-`.
+- **Docs** — `NAMING.md` registra a decisão de ecossistema (Atlas Agents como produto; Talos/Argus/Athena como módulos). `AGENTS.md` e `README.md` refletem a nova marca.
+
+Breaking changes:
+- **Paths e nomes** — Todos os caminhos `atlas-*` (skills, agentes, CLI, bundles) foram renomeados para `talos-*`. Scripts e automações que referenciem os nomes antigos precisam ser atualizados.
+- **Instalador** — O comando `npx github:pauloborini/atlas-workflow init ...` passa a ser `npx github:pauloborini/talos init ...`.
+
+Migração:
+- Para instalações existentes: `talos init <host>` detecta e limpa automaticamente artefatos com prefixo legado `atlas-*`.
+- Para scripts e CI: atualize referências de `atlas-workflow` para `talos` e de `atlas-*` para `talos-*`.
+
+Validação:
+- `build/check-consistency.mjs` — ok (validator sincronizado cross-host; catálogos presentes+versão; skills sem hardcode; sem regressão A1/A2).
+- `claude plugin validate ./ --strict` — ok.
+- `bash build/test-all.sh` — todos os testes verdes (11/11 unit, smoke hosts, conformance matrix 6×10, smoke install/uninstall, checksums 5/5).
+
 ## 0.11.1 - 2026-06-30
 
 Tipo: **packaging**. **Sem breaking**. Schema MCP: v5 (inalterado).

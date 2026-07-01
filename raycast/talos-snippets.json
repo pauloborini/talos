@@ -1,0 +1,97 @@
+[
+  {
+    "name": "Talos — Claude install (GitHub)",
+    "keyword": "!aw-claude",
+    "text": "claude plugin marketplace add pauloborini/talos && claude plugin install talos-orchestrator@talos"
+  },
+  {
+    "name": "Talos — Claude install (local)",
+    "keyword": "!aw-claude-l",
+    "text": "claude plugin marketplace add \"/Volumes/Dados/projetos/talos\" && claude plugin install talos-orchestrator@talos"
+  },
+  {
+    "name": "Talos — Claude update marketplace",
+    "keyword": "!aw-claude-up",
+    "text": "claude plugin marketplace update talos"
+  },
+  {
+    "name": "Talos — Claude reload plugins",
+    "keyword": "!aw-claude-reload",
+    "text": "/reload-plugins"
+  },
+  {
+    "name": "Talos — Codex marketplace (GitHub)",
+    "keyword": "!aw-codex",
+    "text": "codex plugin marketplace add pauloborini/talos"
+  },
+  {
+    "name": "Talos — Codex marketplace (local)",
+    "keyword": "!aw-codex-l",
+    "text": "codex plugin marketplace add \"/Volumes/Dados/projetos/talos\""
+  },
+  {
+    "name": "Talos — Codex upgrade marketplace",
+    "keyword": "!aw-codex-up",
+    "text": "codex plugin marketplace upgrade talos"
+  },
+  {
+    "name": "Talos — Codex remove old personal marketplace",
+    "keyword": "!aw-codex-rm-personal",
+    "text": "codex plugin marketplace remove personal"
+  },
+  {
+    "name": "Talos — cd repo",
+    "keyword": "!aw-cd",
+    "text": "cd \"/Volumes/Dados/projetos/talos\""
+  },
+  {
+    "name": "Talos — git status + push",
+    "keyword": "!aw-push",
+    "text": "cd \"/Volumes/Dados/projetos/talos\" && git status -sb && git push origin main"
+  },
+  {
+    "name": "Talos — git pull",
+    "keyword": "!aw-pull",
+    "text": "cd \"/Volumes/Dados/projetos/talos\" && git pull origin main"
+  },
+  {
+    "name": "Talos — workflow Claude full (sprint)",
+    "keyword": "!aw-wf-claude",
+    "text": "/workflow claude full sprint {cursor}"
+  },
+  {
+    "name": "Talos — workflow Claude direct PRD",
+    "keyword": "!aw-wf-claude-d",
+    "text": "/workflow claude direct prd {clipboard} --review"
+  },
+  {
+    "name": "Talos — workflow Codex full (sprint)",
+    "keyword": "!aw-wf-codex",
+    "text": "workflow codex full sprint {cursor}"
+  },
+  {
+    "name": "Talos — workflow Codex direct PRD",
+    "keyword": "!aw-wf-codex-d",
+    "text": "workflow codex direct prd {clipboard} --review"
+  },
+  {
+    "name": "Talos — workflow Codex interview-only",
+    "keyword": "!aw-wf-codex-i",
+    "text": "workflow codex interview-only brainstorm {cursor}"
+  },
+  {
+    "name": "Talos — repo path (clipboard)",
+    "keyword": "!aw-path",
+    "text": "/Volumes/Dados/projetos/talos"
+  },
+  {
+    "name": "Talos — GitHub repo URL",
+    "keyword": "!aw-github",
+    "text": "https://github.com/pauloborini/talos"
+  },
+  {
+    "name": "Talos — install stack (Claude + Codex GitHub)",
+    "keyword": "!aw-install-all",
+    "text": "claude plugin marketplace add pauloborini/talos && claude plugin install talos-orchestrator@talos && codex plugin marketplace add pauloborini/talos"
+  }
+]

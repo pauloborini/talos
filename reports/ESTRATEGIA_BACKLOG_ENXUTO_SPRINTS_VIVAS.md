@@ -1,26 +1,26 @@
-# Estratégia Atlas — Backlog Enxuto e Sprints Vivas
+# Estratégia Talos — Backlog Enxuto e Sprints Vivas
 
 Data: 2026-06-29
 
 ## Resumo executivo
 
-O Atlas deve evoluir de um backlog mestre monolítico para um modelo em duas camadas:
+O Talos deve evoluir de um backlog mestre monolítico para um modelo em duas camadas:
 
 - **Backlog mestre enxuto**: índice estratégico, fases, tabela de sprints, dependências, prioridade, status e links.
 - **Arquivo vivo de sprint**: fonte de verdade detalhada de cada sprint, com contexto, critérios, decisões, evals, riscos e histórico.
 
-Isto preserva a premissa central do Atlas: macro fica no backlog; execução continua pequena, determinística e validável por sprint.
+Isto preserva a premissa central do Talos: macro fica no backlog; execução continua pequena, determinística e validável por sprint.
 
 ## Decisão proposta
 
 Usar esta estrutura padrão:
 
 ```text
-.atlas/backlog/BACKLOG_MESTRE_<produto>.md
-.atlas/backlog/sprints/S01_<slug>.md
-.atlas/prd/PRD_S01_<slug>.md
-.atlas/plans/PLAN_S01_<slug>.md
-.atlas/state/<run_id>/
+.talos/backlog/BACKLOG_MESTRE_<produto>.md
+.talos/backlog/sprints/S01_<slug>.md
+.talos/prd/PRD_S01_<slug>.md
+.talos/plans/PLAN_S01_<slug>.md
+.talos/state/<run_id>/
 ```
 
 O backlog mestre não deve duplicar o conteúdo detalhado da sprint. Ele aponta para a sprint e espelha apenas resumo/status/dependências.
@@ -33,7 +33,7 @@ O backlog mestre não deve duplicar o conteúdo detalhado da sprint. Ele aponta 
 | Escopo da sprint | `sprints/SNN_*.md` | contexto completo da sprint, critérios, riscos, decisões, evals |
 | Contrato de produto | `PRD_SNN_*.md` | especificação aprovada para implementação |
 | Contrato de execução | `PLAN_SNN_*.md` | tarefas executáveis, invariantes, gates |
-| Prova de execução | `.atlas/state/<run_id>/` | diff, evidência, validator, trace |
+| Prova de execução | `.talos/state/<run_id>/` | diff, evidência, validator, trace |
 
 ## Conteúdo do backlog mestre
 
@@ -81,11 +81,11 @@ Cada `SNN_<slug>.md` deve conter:
 
 ### 1. Contexto limpo por unidade pequena
 
-O harness local mostrou que tarefas longas degradam modelo. Atlas já reduz esse risco com sprint/slice pequena. Separar sprint em arquivo próprio reforça isto: o agente lê só a sprint, não o backlog inteiro.
+O harness local mostrou que tarefas longas degradam modelo. Talos já reduz esse risco com sprint/slice pequena. Separar sprint em arquivo próprio reforça isto: o agente lê só a sprint, não o backlog inteiro.
 
 Aplicação:
 
-- `atlas-sprint-prd-generator` deve ler o arquivo da sprint como fonte primária.
+- `talos-sprint-prd-generator` deve ler o arquivo da sprint como fonte primária.
 - Backlog mestre entra apenas para dependências e ordem macro.
 
 ### 2. Guides e sensors
@@ -95,11 +95,11 @@ Guides orientam antes da ação; sensors verificam depois.
 Aplicação:
 
 - Guides: backlog mestre, sprint file, PRD, PLAN, AGENTS.md, skills.
-- Sensors: lint/testes, `atlas_scan_prd`, template conformance, validator, review, evals.
+- Sensors: lint/testes, `talos_scan_prd`, template conformance, validator, review, evals.
 
 ### 3. Evidence-to-claim
 
-ARIS reforça que toda conclusão deve ter prova. No Atlas, cada claim da sprint precisa apontar para evidência.
+ARIS reforça que toda conclusão deve ter prova. No Talos, cada claim da sprint precisa apontar para evidência.
 
 Aplicação:
 
@@ -110,7 +110,7 @@ Aplicação:
 
 ### 4. Eval manifesto por sprint
 
-Langfuse/AgentOps reforça eval contínuo. No Atlas, isto deve existir localmente, sem SaaS obrigatório.
+Langfuse/AgentOps reforça eval contínuo. No Talos, isto deve existir localmente, sem SaaS obrigatório.
 
 Aplicação:
 
@@ -151,7 +151,7 @@ policy_manifest:
   tool_approval: explicit_for_external_side_effects
   allowed_mutation_scope:
     - path_or_feature_boundary
-  output_format: atlas_validator_schema
+  output_format: talos_validator_schema
   guardrails:
     - no_backend_contract_change_without_prd
 ```
@@ -180,29 +180,29 @@ Para evitar drift:
 
 ## Gates novos sugeridos
 
-1. `atlas_verify_backlog_index`
+1. `talos_verify_backlog_index`
    - valida links para sprint files;
    - valida dependências;
    - valida status espelhado.
 
-2. `atlas_verify_sprint_file`
+2. `talos_verify_sprint_file`
    - valida template da sprint;
    - valida links para backlog/PRD/PLAN;
    - valida `eval_manifest`.
 
-3. `atlas_select_next_sprint`
+3. `talos_select_next_sprint`
    - lê backlog mestre;
    - escolhe próxima sprint executável;
    - bloqueia dependência não done.
 
-4. `atlas_update_sprint_status`
+4. `talos_update_sprint_status`
    - atualiza sprint file e espelho no backlog;
    - exige registro de alteração;
    - bloqueia drift.
 
 ## Mudança nas skills
 
-### `atlas-backlog-generator`
+### `talos-backlog-generator`
 
 Deve criar/atualizar:
 
@@ -211,7 +211,7 @@ Deve criar/atualizar:
 - links bidirecionais;
 - próxima sprint executável.
 
-### `atlas-sprint-prd-generator`
+### `talos-sprint-prd-generator`
 
 Deve priorizar:
 
@@ -219,19 +219,19 @@ Deve priorizar:
 2. backlog mestre apenas para dependências/status;
 3. código/docs reais para descoberta técnica.
 
-### `atlas-workflow-orchestrator`
+### `talos`
 
 Fluxo recomendado:
 
 ```text
 macro input
-  -> atlas-backlog-generator
+  -> talos-backlog-generator
   -> BACKLOG_MESTRE + sprints/SNN
   -> select next sprint
-  -> atlas-sprint-prd-generator
-  -> atlas-plan-handoff
-  -> atlas-plan-execute/direct-execute
-  -> atlas-task-validator
+  -> talos-sprint-prd-generator
+  -> talos-plan-handoff
+  -> talos-plan-execute/talos-direct-execute
+  -> talos-task-validator
 ```
 
 Para `backlog-item` existente:
@@ -251,8 +251,8 @@ Escopo:
 
 - criar `SPRINT_TEMPLATE.md`;
 - ajustar `BACKLOG_MESTRE_TEMPLATE.md` para índice enxuto;
-- atualizar `atlas-backlog-generator`;
-- atualizar `atlas-sprint-prd-generator`;
+- atualizar `talos-backlog-generator`;
+- atualizar `talos-sprint-prd-generator`;
 - adicionar validações de link/status/dependência;
 - adicionar testes de update não destrutivo.
 
@@ -265,4 +265,4 @@ Fora de escopo:
 
 ## Resumo final
 
-Esta estratégia mantém o Atlas fiel ao desenho atual: backlog macro, sprint pequena, PRD recortado, plano executável e validação fria. A melhoria é estrutural: o backlog deixa de carregar todos os detalhes e passa a apontar para arquivos vivos de sprint, que viram a fonte contextual correta para PRD, execução, eval e aprendizado contínuo.
+Esta estratégia mantém o Talos fiel ao desenho atual: backlog macro, sprint pequena, PRD recortado, plano executável e validação fria. A melhoria é estrutural: o backlog deixa de carregar todos os detalhes e passa a apontar para arquivos vivos de sprint, que viram a fonte contextual correta para PRD, execução, eval e aprendizado contínuo.

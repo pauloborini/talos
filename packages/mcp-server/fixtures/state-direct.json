@@ -19,5 +19,5 @@
   "worktree_baseline": [],
   "worktree_final": [],
   "executed_at": "2026-06-22T00:00:00Z",
-  "executor_skill": "atlas-direct-execute"
+  "executor_skill": "talos-direct-execute"
 }

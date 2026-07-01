@@ -178,10 +178,10 @@ policy_manifest:
   data_safety:
     - "[sem apagar dados / sem migrar contrato / sem segredo em log]"
   required_gates:
-    - "atlas_verify_sprint_file"
-    - "atlas_verify_template_conformance:prd"
-    - "atlas_verify_template_conformance:plan"
-    - "atlas-task-validator"
+    - "talos_verify_sprint_file"
+    - "talos_verify_template_conformance:prd"
+    - "talos_verify_template_conformance:plan"
+    - "talos-task-validator"
 ```
 
 ---
@@ -222,7 +222,7 @@ Tabela viva para fechar o loop entre promessa e prova.
 |---|---|
 | Status | [pendente / draft / aprovado / implementado] |
 | Path | [path] |
-| Geração | [manual / atlas-sprint-prd-generator] |
+| Geração | [manual / talos-sprint-prd-generator] |
 | Observações | [resumo] |
 
 ### PLAN

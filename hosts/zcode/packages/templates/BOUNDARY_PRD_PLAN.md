@@ -134,7 +134,7 @@ Cada `#### TNN.` deve ter, quando aplicável:
 2. Sprint file fecha recorte vivo e DoR.
 3. PRD aprovado fecha produto.
 4. PLAN deriva de PRD + sprint file + código real.
-5. Execução: `atlas-plan-execute` lê PLAN + PRD §4–6; `project-rules` via AGENTS.
+5. Execução: `talos-plan-execute` lê PLAN + PRD §4–6; `project-rules` via AGENTS.
 6. Validator/state alimentam sprint file e backlog.
 
-Geradores (`atlas-backlog-generator`, `atlas-sprint-prd-generator`, `atlas-plan-handoff`) devem seguir estes templates, não o formato legado (14 seções, ou §X de arquitetura no PRD).
+Geradores (`talos-backlog-generator`, `talos-sprint-prd-generator`, `talos-plan-handoff`) devem seguir estes templates, não o formato legado (14 seções, ou §X de arquitetura no PRD).

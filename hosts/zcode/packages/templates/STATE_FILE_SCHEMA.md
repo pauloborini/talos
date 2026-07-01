@@ -5,7 +5,7 @@ Boundary canônico executor → validator.
 Path:
 
 ```text
-.atlas/state/<run_id>/<slice>.json
+.talos/state/<run_id>/<slice>.json
 ```
 
 Schema legado mínimo (reader compatível):
@@ -17,10 +17,10 @@ Schema legado mínimo (reader compatível):
   "tasks": ["T01", "T02"],
   "files_changed": ["packages/foo.js"],
   "diff_stat": "N files, +X -Y",
-  "plan_path": ".atlas/plans/<id>.plan.md",
+  "plan_path": ".talos/plans/<id>.plan.md",
   "boundary_refs": ["§2.I3", "§5.T11"],
   "executed_at": "ISO8601",
-  "executor_skill": "atlas-plan-execute"
+  "executor_skill": "talos-plan-execute"
 }
 ```
 
@@ -32,15 +32,15 @@ Extensão determinística (writer atual):
   "head_sha": "40-char git commit SHA",
   "contract_kind": "plan | direct",
   "sprint_id": "S01",
-  "sprint_file_path": ".atlas/backlog/sprints/SPRINT_S01_slug.md",
-  "prd_path": ".atlas/prd/PRD_S01_slug.md",
+  "sprint_file_path": ".talos/backlog/sprints/SPRINT_S01_slug.md",
+  "prd_path": ".talos/prd/PRD_S01_slug.md",
   "obligations": [{"id": "O1", "requirement": "...", "expected_evidence": ["path/test/check"]}],
   "invariants": [{"id": "I1", "requirement": "...", "expected_evidence": ["path/check"]}],
   "scenario_probes": [{"id": "S1", "scenario": "...", "expected": "..."}],
   "risk_probes": [{"id": "R1", "risk": "...", "probe": "..."}],
   "eval_results": [{"id": "EVAL-001", "claim": "...", "status": "passed", "evidence": ["path/test/check"], "checks": ["command"]}],
   "evidence_to_claim": [{"claim_id": "EVAL-001", "source": "Sprint §9", "evidence": ["path/test/check"], "status": "passed"}],
-  "policy_scope": {"allowed_scope": ["path"], "forbidden_scope": ["path"], "required_gates": ["atlas_verify_sprint_file", "atlas-task-validator"]},
+  "policy_scope": {"allowed_scope": ["path"], "forbidden_scope": ["path"], "required_gates": ["talos_verify_sprint_file", "talos-task-validator"]},
   "validation_map": [{"obligation_ids": ["O1"], "checks": ["node --test ..."], "status": "passed"}],
   "task_evidence": [{"task": "T01", "files": ["packages/foo.js"], "checks": ["node --test ..."], "result": "passed"}],
   "repair_evidence": [{"finding_id": "F-001", "files_touched": ["packages/foo.js"], "checks_run": ["node --test ..."], "status": "resolved"}],
@@ -54,12 +54,12 @@ Regras:
 - `run_id`, `slice`, `tasks`, `files_changed`, `diff_stat`, `plan_path`, `boundary_refs`, `executed_at` e `executor_skill` são obrigatórios.
 - `files_changed` contém paths relativos ao repositório consumidor.
 - `boundary_refs` aponta para invariantes, contratos ou tasks do plano que delimitam a validação.
-- O arquivo é uma projeção de boundary para o validator; estado de run continua tendo `atlas_run_state` como fonte primária quando MCP estiver disponível.
+- O arquivo é uma projeção de boundary para o validator; estado de run continua tendo `talos_run_state` como fonte primária quando MCP estiver disponível.
 - Writers atuais sempre preenchem a extensão. `contract_kind=direct` exige `obligations` não vazio; `plan` mantém o contrato autoritativo em `plan_path`.
 - Quando a execução nasce de sprint file, writers preenchem `sprint_id`, `sprint_file_path`, `prd_path`, `eval_results`, `evidence_to_claim` e `policy_scope`.
 - `eval_results` deve cobrir todo `EVAL-*` do `eval_manifest` da sprint com `status:"passed"` e evidência real. Claim ausente, `failed`, `blocked` ou sem `evidence_to_claim` invalida o boundary.
 - `policy_scope` é o resumo executável do `policy_manifest`; arquivo em `forbidden_scope` não pode aparecer em `files_changed`.
 - Writers capturam `worktree_baseline` antes da primeira mutação e `worktree_final` imediatamente antes do handoff. Ambos usam entradas únicas/ordenadas `{path,status,sha256}`; `status` é `A|M|D|R|C|T|U`, delete usa `sha256:null`, symlink usa SHA-256 do target textual.
-- Readers aceitam temporariamente o schema legado mínimo somente para `atlas-plan-execute` sem `contract_kind`. `atlas-direct-execute` nunca degrada para legado.
+- Readers aceitam temporariamente o schema legado mínimo somente para `talos-plan-execute` sem `contract_kind`. `talos-direct-execute` nunca degrada para legado.
 - `base_sha` e `head_sha` são commits explícitos; não inferir base pelo nome da branch. `files_changed` e os arquivos de `task_evidence`/`repair_evidence` devem ser exatamente o diff `base_sha...head_sha` somado ao delta `worktree_baseline→worktree_final`. Dirty preexistente byte/status-idêntico fica fora.
 - `repair_evidence` é aditivo e obrigatório por finding P0/P1 estruturado após repair; o segundo validator correlaciona pelo mesmo `finding_id`.

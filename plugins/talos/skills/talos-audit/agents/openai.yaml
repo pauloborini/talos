@@ -1,0 +1,7 @@
+interface:
+  display_name: "Talos Audit"
+  short_description: "Auditoria universal sem correção de código"
+  default_prompt: "Use $talos-audit para auditar o target informado contra regras locais, stack detectada e Ponytail pass, sem alterar código."
+
+policy:
+  allow_implicit_invocation: true

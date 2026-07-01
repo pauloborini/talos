@@ -14,7 +14,7 @@ import {
 } from '../../packages/skills/_shared/scripts/document_quality.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '../..');
-const CLASSIFIER = path.join(ROOT, 'packages/skills/atlas-slice-review/scripts/classify_findings.mjs');
+const CLASSIFIER = path.join(ROOT, 'packages/skills/talos-slice-review/scripts/classify_findings.mjs');
 
 const finding = {
   severity: 'P1', task_id: 'T01', title: 'Falha', file: 'src/a.js', line: 3,
@@ -23,7 +23,7 @@ const finding = {
 };
 
 test('review: gate canônico executa diretamente com Node, sem Python no PATH', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-review-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'talos-review-'));
   const input = path.join(dir, 'findings.json');
   fs.writeFileSync(input, JSON.stringify([finding]));
   const output = execFileSync(process.execPath, [CLASSIFIER, input], { env: { ...process.env, PATH: dir }, encoding: 'utf8' });
@@ -32,7 +32,7 @@ test('review: gate canônico executa diretamente com Node, sem Python no PATH', 
 });
 
 test('perfis: Flutter, Node e Python ativam só regras aplicáveis', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-stack-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'talos-stack-'));
   const fixture = (name, files, commands = []) => {
     const dir = path.join(root, name); fs.mkdirSync(dir);
     for (const [file, content] of Object.entries(files)) fs.writeFileSync(path.join(dir, file), content);
@@ -65,7 +65,7 @@ function pickProfile(profile) {
 }
 
 test('perfis: Go, Rust, Java/Kotlin, Firebase, Supabase e REST/OpenAPI são detectáveis', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-stack-extra-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'talos-stack-extra-'));
   const fixture = (name, files) => {
     const dir = path.join(root, name); fs.mkdirSync(dir);
     for (const [file, content] of Object.entries(files)) fs.writeFileSync(path.join(dir, file), content);
@@ -81,7 +81,7 @@ test('perfis: Go, Rust, Java/Kotlin, Firebase, Supabase e REST/OpenAPI são dete
 });
 
 test('perfis: monorepo restringe stack por boundary e GetX exige evidência', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-monorepo-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'talos-monorepo-'));
   fs.mkdirSync(path.join(root, 'packages/node'), { recursive: true });
   fs.mkdirSync(path.join(root, 'apps/flutter'), { recursive: true });
   fs.mkdirSync(path.join(root, 'apps/getx'), { recursive: true });
@@ -167,7 +167,7 @@ test('interview: persiste resposta e não repete decisão fechada', () => {
   const prd = '## 3. Decisões de produto (fechadas)\n\n| ID | Decisão |\n|---|---|\n| D1 | Escolha anterior |\n\n## 4. Fluxos\n';
   const questions = [{ decision_id: 'D1' }, { decision_id: 'D2' }];
   assert.deepEqual(pendingInterviewQuestions(prd, questions), [{ decision_id: 'D2' }]);
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-interview-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'talos-interview-'));
   const prdPath = path.join(dir, 'PRD.md');
   fs.writeFileSync(prdPath, prd);
   const updated = persistInterviewRound(prdPath, [{ decision_id: 'D2', value: 'Nova escolha' }], '2026-06-22');

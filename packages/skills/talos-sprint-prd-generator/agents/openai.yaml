@@ -1,0 +1,7 @@
+interface:
+  display_name: "Talos Sprint PRD Generator"
+  short_description: "Gera PRDs de Sprint com prefixo talos-*"
+  default_prompt: "Use $talos-sprint-prd-generator para criar o PRD da sprint S01 com metadados de execução talos-* a partir do backlog mestre e do PRD template reais."
+
+policy:
+  allow_implicit_invocation: true

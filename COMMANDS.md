@@ -1,6 +1,6 @@
-# Atlas Workflow — Comandos rápidos
+# Talos — Comandos rápidos
 
-Referência de 1 linha para instalar, atualizar e remover o Atlas em cada host.
+Referência de 1 linha para instalar, atualizar e remover o Talos em cada host.
 Instalador único via **npx-from-GitHub** (não precisa clonar o repo).
 
 ---
@@ -9,25 +9,25 @@ Instalador único via **npx-from-GitHub** (não precisa clonar o repo).
 
 ```bash
 # Claude Code / Cursor
-claude plugin marketplace update atlas-workflow
-claude plugin update atlas-workflow-orchestrator@atlas-workflow
+claude plugin marketplace update talos
+claude plugin update talos@talos
 
 # Codex — recomendado: reinstala plugin + custom agents em CODEX_HOME/agents
-npx github:pauloborini/atlas-workflow init codex
+npx github:pauloborini/talos init codex
 
 # Antigravity — reinstalar pega runtime novo (mesmo comando do init)
-npx github:pauloborini/atlas-workflow init antigravity
+npx github:pauloborini/talos init antigravity
 
 # opencode / pi — reinstalar pega runtime novo (mesmo comando do init)
-npx github:pauloborini/atlas-workflow init opencode --global
-npx github:pauloborini/atlas-workflow init pi --global --yes
+npx github:pauloborini/talos init opencode --global
+npx github:pauloborini/talos init pi --global --yes
 
 # zcode — reinstalar pega runtime novo (mesmo comando do init; /plugins enable no host)
-npx github:pauloborini/atlas-workflow init zcode
+npx github:pauloborini/talos init zcode
 
 ```
 
-Smoke pós-update: `atlas_ping` → `version: 0.11.1`; `atlas_capabilities` → `schema_version: 5` (sibling-only).
+Smoke pós-update: `talos_ping` → `version: 0.12.0`; `talos_capabilities` → `schema_version: 5` (sibling-only).
 
 ---
 
@@ -35,52 +35,52 @@ Smoke pós-update: `atlas_ping` → `version: 0.11.1`; `atlas_capabilities` → 
 
 ```bash
 # Todos os hosts de uma vez (detecta automaticamente quais estão instalados)
-npx github:pauloborini/atlas-workflow init all
+npx github:pauloborini/talos init all
 
 # Claude Code / Cursor  (global por natureza — registro da CLI)
-npx github:pauloborini/atlas-workflow init claudecode
-npx github:pauloborini/atlas-workflow init cursor
+npx github:pauloborini/talos init claudecode
+npx github:pauloborini/talos init cursor
 
 # Codex  (global por natureza)
-npx github:pauloborini/atlas-workflow init codex
+npx github:pauloborini/talos init codex
 
 # Antigravity (global por natureza)
-npx github:pauloborini/atlas-workflow init antigravity
+npx github:pauloborini/talos init antigravity
 
-# ZCode (global por natureza — cache do host; ativar via /plugins enable atlas-workflow-orchestrator)
-npx github:pauloborini/atlas-workflow init zcode
+# ZCode (global por natureza — cache do host; ativar via /plugins enable talos)
+npx github:pauloborini/talos init zcode
 
 # opencode  — global (recomendado) ou por-projeto
-npx github:pauloborini/atlas-workflow init opencode --global
-npx github:pauloborini/atlas-workflow init opencode
+npx github:pauloborini/talos init opencode --global
+npx github:pauloborini/talos init opencode
 
 # pi  — global (recomendado) ou por-projeto; --yes auto-instala as 2 deps obrigatórias
-npx github:pauloborini/atlas-workflow init pi --global --yes
-npx github:pauloborini/atlas-workflow init pi --yes
+npx github:pauloborini/talos init pi --global --yes
+npx github:pauloborini/talos init pi --yes
 ```
 
 ## Desinstalar
 
 ```bash
 # Todos os hosts de uma vez (detecta automaticamente quais estão instalados)
-npx github:pauloborini/atlas-workflow uninstall all
+npx github:pauloborini/talos uninstall all
 
 # Claude Code / Cursor / Codex / Antigravity / ZCode (sempre globais)
-npx github:pauloborini/atlas-workflow uninstall claudecode   
-npx github:pauloborini/atlas-workflow uninstall codex
-npx github:pauloborini/atlas-workflow uninstall antigravity
-npx github:pauloborini/atlas-workflow uninstall zcode
+npx github:pauloborini/talos uninstall claudecode   
+npx github:pauloborini/talos uninstall codex
+npx github:pauloborini/talos uninstall antigravity
+npx github:pauloborini/talos uninstall zcode
 
 # opencode / pi — desinstalação global (recomendado)
-npx github:pauloborini/atlas-workflow uninstall opencode --global
-npx github:pauloborini/atlas-workflow uninstall pi --global
+npx github:pauloborini/talos uninstall opencode --global
+npx github:pauloborini/talos uninstall pi --global
 
 # opencode / pi — desinstalação por-projeto (caso não tenha usado --global)
-npx github:pauloborini/atlas-workflow uninstall opencode
-npx github:pauloborini/atlas-workflow uninstall pi
+npx github:pauloborini/talos uninstall opencode
+npx github:pauloborini/talos uninstall pi
 ```
 
-Remove **só** os artefatos do Atlas. Preserva config, skills e outros MCP servers do usuário.
+Remove **só** os artefatos do Talos. Preserva config, skills e outros MCP servers do usuário.
 
 ---
 
@@ -103,7 +103,7 @@ Remove **só** os artefatos do Atlas. Preserva config, skills e outros MCP serve
 | claude/cursor | registro da CLI (`claude plugin`) | — |
 | codex | registro da CLI (`codex plugin`) | — |
 | antigravity | `~/.gemini/config/` | `mcp_config.json` |
-| zcode | `~/.zcode/cli/plugins/cache/zcode-plugins-official/atlas-workflow-orchestrator/<version>/` | `.zcode-plugin/plugin.json` (MCP via `${ZCODE_PLUGIN_ROOT}`; ativar via `/plugins enable`) |
+| zcode | `~/.zcode/cli/plugins/cache/zcode-plugins-official/talos/<version>/` | `.zcode-plugin/plugin.json` (MCP via `${ZCODE_PLUGIN_ROOT}`; ativar via `/plugins enable`) |
 | opencode | `~/.config/opencode/` (Win: `%APPDATA%\opencode`; honra `XDG_CONFIG_HOME`) | `opencode.json` |
 | pi | `~/.pi/agent/` (honra `PI_CODING_AGENT_DIR`) | `mcp.json` |
 
@@ -113,11 +113,11 @@ Remove **só** os artefatos do Atlas. Preserva config, skills e outros MCP serve
 
 Abra a CLI no host e chame as tools:
 
-- `atlas_ping` → deve retornar `host=<claude|codex|antigravity|zcode|opencode|pi>`
-- `atlas_capabilities` → descritores + `prereq_policy`
+- `talos_ping` → deve retornar `host=<claude|codex|antigravity|zcode|opencode|pi>`
+- `talos_capabilities` → descritores + `prereq_policy`
 
-> **Não** dispare o `atlas-task-validator` à mão: ele roda automaticamente dentro do
-> workflow, com um state file real (`.atlas/state/<run_id>/<slice>.json`).
+> **Não** dispare o `talos-task-validator` à mão: ele roda automaticamente dentro do
+> workflow, com um state file real (`.talos/state/<run_id>/<slice>.json`).
 
 ---
 
@@ -125,25 +125,25 @@ Abra a CLI no host e chame as tools:
 
 ```bash
 # Claude Code / Cursor
-claude plugin marketplace add pauloborini/atlas-workflow
-claude plugin install atlas-workflow-orchestrator@atlas-workflow
+claude plugin marketplace add pauloborini/talos
+claude plugin install talos@talos
 
-# Codex (garante agent_type atlas-* para spawn_agent)
-npx github:pauloborini/atlas-workflow init codex
+# Codex (garante agent_type talos-* para spawn_agent)
+npx github:pauloborini/talos init codex
 ```
 
 Atualizar (claude/codex):
 
 ```bash
 # Claude Code / Cursor
-claude plugin marketplace update atlas-workflow
-claude plugin update atlas-workflow-orchestrator@atlas-workflow
+claude plugin marketplace update talos
+claude plugin update talos@talos
 
 # Codex (reinstala plugin + custom agents)
-npx github:pauloborini/atlas-workflow init codex
+npx github:pauloborini/talos init codex
 ```
 
-Alternativa equivalente para qualquer host com npx: `npx github:pauloborini/atlas-workflow init <host>`.
+Alternativa equivalente para qualquer host com npx: `npx github:pauloborini/talos init <host>`.
 
 ---
 

@@ -1,12 +1,13 @@
 {
-  "name": "atlas-workflow-orchestrator",
+  "name": "talos",
   "version": "__VERSION__",
-  "description": "Orquestra pipelines via sub-agents (PRD, entrevista, plan handoff, execução, validator, repair, review), auditoria universal e geração explícita de backlog mestre. Bundle único: 10 skills atlas-* + orquestrador + 5 templates canônicos.",
+  "description": "Orquestra pipelines via sub-agents (PRD, entrevista, plan handoff, execução, validator, repair, review), auditoria universal e geração explícita de backlog mestre. Bundle único: 10 skills talos-* + orquestrador + 5 templates canônicos.",
   "author": {
     "name": "Paulo Borini"
   },
   "keywords": [
-    "atlas",
+    "talos",
+    "talos",
     "workflow",
     "orchestration",
     "prd",
@@ -17,9 +18,9 @@
   "skills": "./skills/",
   "mcpServers": "./.mcp.json",
   "interface": {
-    "displayName": "Atlas Workflow Orchestrator",
+    "displayName": "Talos",
     "shortDescription": "Workflow completo por sub-agents.",
-    "longDescription": "Porta o Atlas Workflow Orchestrator para Codex: o orquestrador decide fases e usa skills atlas-* para PRD, entrevista, plano e auditoria; depois despacha sub-agents bloqueantes para plan_execute, task_validator e slice_review opcional nos modos com execução. A geração de backlog mestre fica disponível como skill explícita, não automática.",
+    "longDescription": "Porta o Talos para Codex: o orquestrador decide fases e usa skills talos-* para PRD, entrevista, plano e auditoria; depois despacha sub-agents bloqueantes para plan_execute, task_validator e slice_review opcional nos modos com execução. A geração de backlog mestre fica disponível como skill explícita, não automática.",
     "developerName": "Paulo Borini",
     "category": "Engineering",
     "capabilities": [
@@ -28,7 +29,7 @@
       "Review"
     ],
     "defaultPrompt": [
-      "Use $atlas-backlog-generator para criar um backlog mestre a partir desta ideia:",
+      "Use $talos-backlog-generator para criar um backlog mestre a partir desta ideia:",
       "workflow full backlog-item S05",
       "workflow direct prd PRD_S05.md --review",
       "workflow interview-only brainstorm nova ideia",
