@@ -57,15 +57,15 @@ copy_mcp_runtime() {
   cp -R "$ROOT/packages/mcp-server" "$destination_parent/"
   rm -f "$destination_parent/mcp-server"/*.test.js
   rm -rf "$destination_parent/mcp-server/fixtures"
-  rm -rf "$destination_parent/mcp-server/.atlas"
+  rm -rf "$destination_parent/mcp-server/.talos"
 }
 
 assert_no_runtime_state() {
   local stage="$1"
   local leaked
-  leaked="$(find "$stage" -type d -name .atlas -print -quit)"
+  leaked="$(find "$stage" -type d -name .talos -print -quit)"
   if [[ -n "$leaked" ]]; then
-    echo "Estado local .atlas não pode entrar no bundle: ${leaked#$stage/}" >&2
+    echo "Estado local .talos não pode entrar no bundle: ${leaked#$stage/}" >&2
     exit 4
   fi
 }
@@ -162,20 +162,20 @@ JSON
 
 # Build do host opencode (estrutura nativa .opencode/ + opencode.json), distinta
 # do bundle plugin.json de claude/codex. Subagente gerado do canônico; MCP local
-# com ATLAS_HOST=opencode injetado (detecção determinística). Catálogo from-source
+# com TALOS_HOST=opencode injetado (detecção determinística). Catálogo from-source
 # commitado em hosts/opencode/ (install via GitHub público — DEC-008).
 build_opencode() {
   local stage="$STAGE/opencode"
   local out="$DIST/talos-opencode.plugin"
   echo "montando opencode"
-  mkdir -p "$stage/.opencode/agents" "$stage/.opencode/skills" "$stage/.opencode/atlas/packages"
+  mkdir -p "$stage/.opencode/agents" "$stage/.opencode/skills" "$stage/.opencode/talos/packages"
 
-	  # Runtime bundlado sob .opencode/atlas/ (server lê ../../VERSION = .opencode/atlas/VERSION)
-	  copy_mcp_runtime "$stage/.opencode/atlas/packages"
-	  cp -R "$ROOT/packages/skills" "$stage/.opencode/atlas/packages/"
-	  cp -R "$ROOT/packages/templates" "$stage/.opencode/atlas/packages/"
-	  cp -R "$ROOT/packages/orchestrator" "$stage/.opencode/atlas/"
-  cp "$ROOT/VERSION" "$stage/.opencode/atlas/VERSION"
+	  # Runtime bundlado sob .opencode/talos/ (server lê ../../VERSION = .opencode/talos/VERSION)
+	  copy_mcp_runtime "$stage/.opencode/talos/packages"
+	  cp -R "$ROOT/packages/skills" "$stage/.opencode/talos/packages/"
+	  cp -R "$ROOT/packages/templates" "$stage/.opencode/talos/packages/"
+	  cp -R "$ROOT/packages/orchestrator" "$stage/.opencode/talos/"
+  cp "$ROOT/VERSION" "$stage/.opencode/talos/VERSION"
 
   # Skills (SKILL.md) sob .opencode/skills/
   cp -R "$ROOT/packages/skills/." "$stage/.opencode/skills/"
@@ -188,7 +188,7 @@ build_opencode() {
     node "$ROOT/build/gen-host-agent.mjs" opencode "$stage/.opencode/agents/$ag.md"
   done
 
-  # Config MCP opencode (mcp local, ATLAS_HOST=opencode)
+  # Config MCP opencode (mcp local, TALOS_HOST=opencode)
   cp "$ROOT/plugin-manifests/opencode/opencode.json" "$stage/opencode.json"
 
   echo "zipando opencode"
@@ -202,8 +202,8 @@ build_opencode() {
   cp -R "$stage" "$ROOT/hosts/opencode"
 }
 
-# Build do host pi (pi cli). Estrutura: agents/ (pi-subagents), skills/, atlas/
-# (runtime), mcp.json (pi-mcp-adapter, formato MCP padrão com ATLAS_HOST=pi).
+# Build do host pi (pi cli). Estrutura: agents/ (pi-subagents), skills/, talos/
+# (runtime), mcp.json (pi-mcp-adapter, formato MCP padrão com TALOS_HOST=pi).
 # Requer as 2 deps obrigatórias no host (DEC-005); doc de integração cobre.
 build_pi() {
   local stage="$STAGE/pi"
@@ -211,13 +211,13 @@ build_pi() {
   echo "montando pi"
   # pi-subagents descobre agentes em .pi/agents/**/*.md; pi-mcp-adapter lê .mcp.json
   # (paths reais das deps, verificados no pi real — não 'agents/'/'mcp.json' no root).
-  mkdir -p "$stage/.pi/agents" "$stage/skills" "$stage/atlas/packages"
+  mkdir -p "$stage/.pi/agents" "$stage/skills" "$stage/talos/packages"
 
-	  copy_mcp_runtime "$stage/atlas/packages"
-	  cp -R "$ROOT/packages/skills" "$stage/atlas/packages/"
-	  cp -R "$ROOT/packages/templates" "$stage/atlas/packages/"
-	  cp -R "$ROOT/packages/orchestrator" "$stage/atlas/"
-  cp "$ROOT/VERSION" "$stage/atlas/VERSION"
+	  copy_mcp_runtime "$stage/talos/packages"
+	  cp -R "$ROOT/packages/skills" "$stage/talos/packages/"
+	  cp -R "$ROOT/packages/templates" "$stage/talos/packages/"
+	  cp -R "$ROOT/packages/orchestrator" "$stage/talos/"
+  cp "$ROOT/VERSION" "$stage/talos/VERSION"
 
   cp -R "$ROOT/packages/skills/." "$stage/skills/"
   rm -rf "$stage/skills/talos"
@@ -229,7 +229,7 @@ build_pi() {
     node "$ROOT/build/gen-host-agent.mjs" pi "$stage/.pi/agents/$ag.md"
   done
 
-  # Config MCP pi (pi-mcp-adapter lê .mcp.json no root do projeto; ATLAS_HOST=pi)
+  # Config MCP pi (pi-mcp-adapter lê .mcp.json no root do projeto; TALOS_HOST=pi)
   cp "$ROOT/plugin-manifests/pi/mcp.json" "$stage/.mcp.json"
 
   echo "zipando pi"

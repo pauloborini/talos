@@ -49,11 +49,11 @@ Se não conseguir emitir checkpoint por MCP, retorne `blocked`: liveness não é
 
 Resolve plan paths in this order:
 
-1. `.atlas/plans/`
+1. `.talos/plans/`
 2. `.cursor/plans/` with a deprecation warning
 3. `.codex/plans/` with a deprecation warning
 
-New or rewritten plan artifacts must use `.atlas/plans/`.
+New or rewritten plan artifacts must use `.talos/plans/`.
 
 ## Host adapter
 
@@ -71,7 +71,7 @@ The plan is the SSoT. Map `ready` to `pending`, `implementing`/`gating` to `in_p
 
 ## Entrada via modo `execute` (PRD D1/D13)
 
-Esta skill aceita entrada pelo modo `execute` do orquestrador: um `PLAN_*.md` pronto de pipeline curta, apontado diretamente e já reverificado na entrada (`talos_verify_artifact` + TC) pelo orquestrador. **A entrada `execute` é o mesmo executor, com as mesmas garantias** — o contrato não muda: o state file (`.atlas/state/<run_id>/<slice>.json`) permanece **obrigatório** e o `talos-task-validator` (validador frio, só `state_path`) permanece **obrigatório** antes do relatório final. Não há caminho de execução sem state file nem sem validador, em nenhum modo de entrada.
+Esta skill aceita entrada pelo modo `execute` do orquestrador: um `PLAN_*.md` pronto de pipeline curta, apontado diretamente e já reverificado na entrada (`talos_verify_artifact` + TC) pelo orquestrador. **A entrada `execute` é o mesmo executor, com as mesmas garantias** — o contrato não muda: o state file (`.talos/state/<run_id>/<slice>.json`) permanece **obrigatório** e o `talos-task-validator` (validador frio, só `state_path`) permanece **obrigatório** antes do relatório final. Não há caminho de execução sem state file nem sem validador, em nenhum modo de entrada.
 
 ---
 
@@ -124,7 +124,7 @@ After all tasks in the current slice are complete, write the state file boundary
 
 #### State file boundary
 
-Create `.atlas/state/<run_id>/<slice>.json` following `packages/templates/STATE_FILE_SCHEMA.md`:
+Create `.talos/state/<run_id>/<slice>.json` following `packages/templates/STATE_FILE_SCHEMA.md`:
 
 ```json
 {
@@ -136,11 +136,11 @@ Create `.atlas/state/<run_id>/<slice>.json` following `packages/templates/STATE_
   "tasks": ["T01"],
   "files_changed": ["relative/path.ext"],
   "diff_stat": "N files, +X -Y",
-  "plan_path": ".atlas/plans/<id>.plan.md",
+  "plan_path": ".talos/plans/<id>.plan.md",
   "boundary_refs": ["§2.I1", "§6.1", "§8", "Sprint §9 EVAL-001"],
   "sprint_id": "S01",
-  "sprint_file_path": ".atlas/backlog/sprints/SPRINT_S01_slug.md",
-  "prd_path": ".atlas/prd/PRD_S01_slug.md",
+  "sprint_file_path": ".talos/backlog/sprints/SPRINT_S01_slug.md",
+  "prd_path": ".talos/prd/PRD_S01_slug.md",
   "obligations": [],
   "invariants": [{"id": "I1", "requirement": "<invariante>", "expected_evidence": ["<path/check>"]}],
   "scenario_probes": [{"id": "S1", "scenario": "<cenário>", "expected": "<resultado>"}],

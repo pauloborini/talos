@@ -11,7 +11,7 @@ import {
 } from '../skills/_shared/scripts/document_quality.mjs';
 
 const SERVER_NAME = 'talos';
-const RUN_DIR = path.join('.atlas', 'state');
+const RUN_DIR = path.join('.talos', 'state');
 const SENSITIVE_KEY = /(authorization|credential|password|secret|token|api[_-]?key)/i;
 // S04: chaves cujo nome casa com SENSITIVE_KEY (substring `token`) mas NÃO são
 // segredo/PII — são contadores monotônicos do slot de validação que PRECISAM
@@ -137,18 +137,18 @@ function expectedExecutorSkill(mode) {
 // Símbolo fixo `▸`, idioma pt-BR, exatamente uma linha por evento. Os 11 eventos
 // fechados do PRD §4. Slots no formato {nome} são preenchidos por renderBanner.
 const BANNER_TEMPLATES = {
-  roteia: '▸ atlas: roteamento · input={tipo} → modo={modo}',
-  roteia_troca: '▸ atlas: roteamento · pediu={x} mas input={y} → modo={z}',
-  preflight_ok: '▸ atlas: preflight · ok ({caps})',
-  preflight_fail: '▸ atlas: preflight · BLOCK · {motivo}',
-  prd_lacunas: '▸ atlas: prd · {n} lacunas',
-  prd_ok: '▸ atlas: prd · ok',
-  entrevista: '▸ atlas: entrevista · {n} perguntas',
-  plano: '▸ atlas: plano · validado (TC pass)',
-  exec: '▸ atlas: exec · slice {i}/{n}',
-  validacao: '▸ atlas: validação · {status}',
-  review: '▸ atlas: review · {status}',
-  done: '▸ atlas: done · {resumo}',
+  roteia: '▸ talos: roteamento · input={tipo} → modo={modo}',
+  roteia_troca: '▸ talos: roteamento · pediu={x} mas input={y} → modo={z}',
+  preflight_ok: '▸ talos: preflight · ok ({caps})',
+  preflight_fail: '▸ talos: preflight · BLOCK · {motivo}',
+  prd_lacunas: '▸ talos: prd · {n} lacunas',
+  prd_ok: '▸ talos: prd · ok',
+  entrevista: '▸ talos: entrevista · {n} perguntas',
+  plano: '▸ talos: plano · validado (TC pass)',
+  exec: '▸ talos: exec · slice {i}/{n}',
+  validacao: '▸ talos: validação · {status}',
+  review: '▸ talos: review · {status}',
+  done: '▸ talos: done · {resumo}',
 };
 const BANNER_EVENTS = Object.keys(BANNER_TEMPLATES);
 
@@ -539,7 +539,7 @@ const HOST_NAMES = Object.keys(HOST_ADAPTERS);
 
 // Registry de detecção de host, data-driven e ordenado por precedência (DEC-003).
 // Adicionar host = adicionar um detector aqui (env próprio/arquivo); sem ramo solto.
-// `arg host` e `ATLAS_HOST` (override explícito) têm prioridade sobre sinais de env.
+// `arg host` e `TALOS_HOST` (override explícito) têm prioridade sobre sinais de env.
 // Cada detector retorna o nome do host se casar, ou null. Só hosts presentes em
 // HOST_ADAPTERS são aceitos (perfil desconhecido cai em generic).
 const HOST_DETECTORS = [
@@ -547,19 +547,19 @@ const HOST_DETECTORS = [
   { via: 'env:CODEX', detect: (env) => (env.CODEX_HOME || env.CODEX_PLUGIN_ROOT ? 'codex' : null) },
   // ZCode (app Electron no Claude Agent SDK) injeta ZCODE_PLUGIN_ROOT ao spawnar o
   // subprocesso MCP do plugin (comprovado no bundle zcode.cjs: interpolação análoga a
-  // CLAUDE_PLUGIN_ROOT). Sinal próprio e determinístico — precedência sobre ATLAS_HOST.
+  // CLAUDE_PLUGIN_ROOT). Sinal próprio e determinístico — precedência sobre TALOS_HOST.
   { via: 'env:ZCODE_PLUGIN_ROOT', detect: (env) => (env.ZCODE_PLUGIN_ROOT ? 'zcode' : null) },
   // opencode/pi não expõem env distintivo garantido no subprocesso MCP (S01).
-  // Detecção determinística: o packaging injeta ATLAS_HOST no env do MCP —
-  //   opencode: opencode.json → mcp.<name>.environment.ATLAS_HOST = "opencode"
-  //   pi: mcp.json (pi-mcp-adapter) → env.ATLAS_HOST = "pi"
-  // Tratado pela branch ATLAS_HOST acima; sem file-detection frágil.
+  // Detecção determinística: o packaging injeta TALOS_HOST no env do MCP —
+  //   opencode: opencode.json → mcp.<name>.environment.TALOS_HOST = "opencode"
+  //   pi: mcp.json (pi-mcp-adapter) → env.TALOS_HOST = "pi"
+  // Tratado pela branch TALOS_HOST acima; sem file-detection frágil.
 ];
 
 function detectHost(args = {}, env = process.env) {
   if (args.host && HOST_ADAPTERS[args.host]) return { host: args.host, detected_via: 'arg' };
-  const override = env.ATLAS_HOST;
-  if (override && HOST_ADAPTERS[override]) return { host: override, detected_via: 'env:ATLAS_HOST' };
+  const override = env.TALOS_HOST;
+  if (override && HOST_ADAPTERS[override]) return { host: override, detected_via: 'env:TALOS_HOST' };
   for (const detector of HOST_DETECTORS) {
     const host = detector.detect(env);
     if (host && HOST_ADAPTERS[host]) return { host, detected_via: detector.via };
@@ -590,8 +590,8 @@ function capabilities(args = {}) {
     // ou 'readonly' (hard-fail para modos de execução).
     dispatch_capability: adapter.dispatch_capability ?? 'unknown',
     plan_paths: {
-      write: '.atlas/plans/',
-      read_order: ['.atlas/plans/', '.cursor/plans/', '.codex/plans/'],
+      write: '.talos/plans/',
+      read_order: ['.talos/plans/', '.cursor/plans/', '.codex/plans/'],
       deprecated_read: ['.cursor/plans/', '.codex/plans/'],
     },
     state_backend: 'talos_run_state',
@@ -3401,11 +3401,11 @@ function captureWorktreeSnapshot(root) {
     if (status === 'R' || status === 'C') {
       const previous = normalizeSnapshotPath(records[index + 1]);
       index += 1;
-      if (!previous.startsWith('.atlas/state/')) {
+      if (!previous.startsWith('.talos/state/')) {
         snapshot.push({ path: previous, status: 'D', sha256: null });
       }
     }
-    if (!rel.startsWith('.atlas/state/')) {
+    if (!rel.startsWith('.talos/state/')) {
       snapshot.push({ path: rel, status, sha256: status === 'D' ? null : snapshotHash(root, rel) });
     }
   }
@@ -4587,7 +4587,7 @@ function toolsList() {
       },
       {
         name: 'talos_run_state',
-        description: 'Cria, atualiza ou consulta estado de run em .atlas/state/ no cwd do projeto consumidor.',
+        description: 'Cria, atualiza ou consulta estado de run em .talos/state/ no cwd do projeto consumidor.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,

@@ -15,7 +15,7 @@ Review only the slice that was executed. Do not widen into a generic repo audit 
 
 ## Uso standalone — rótulo de garantia reduzida obrigatório (PRD D10/D11)
 
-Esta skill é **análise de leitura**: revisa código, **não muta código**. Pela fronteira de determinismo do Atlas (mutação de código, PRD D10), leitura standalone é **permitida**, mas carrega **risco epistêmico** — a análise não passou pela defesa fria do pipeline (`talos-task-validator`, que é pipeline-only, só `state_path`). Esse risco é mitigado por **rótulo**, não por gate.
+Esta skill é **análise de leitura**: revisa código, **não muta código**. Pela fronteira de determinismo do Talos (mutação de código, PRD D10), leitura standalone é **permitida**, mas carrega **risco epistêmico** — a análise não passou pela defesa fria do pipeline (`talos-task-validator`, que é pipeline-only, só `state_path`). Esse risco é mitigado por **rótulo**, não por gate.
 
 **Regra dura:** quando `talos-slice-review` roda **fora do pipeline** (sem o `talos-task-validator` ter fechado a slice via state file), a saída **SEMPRE** sai rotulada como garantia reduzida. É **proibido** simular `validator_status: passed` ou qualquer veredito de validação aprovado — a review é leitura, não validação fria.
 

@@ -109,7 +109,7 @@ Direct Execute Contract
 - Stop conditions:
 ```
 
-Do not expand this into a separate planning artifact. The goal is execution guardrails, not transfer documentation. The contract may be terse in the user-visible response, but it must be concrete enough to materialize into `.atlas/state/<run_id>/<slice>.json` and referenced evidence for `talos-task-validator`.
+Do not expand this into a separate planning artifact. The goal is execution guardrails, not transfer documentation. The contract may be terse in the user-visible response, but it must be concrete enough to materialize into `.talos/state/<run_id>/<slice>.json` and referenced evidence for `talos-task-validator`.
 
 Obligations are mandatory. Convert every PRD acceptance criterion and explicit deliverable into one compact row:
 
@@ -175,7 +175,7 @@ Repair only current-diff failures. Stop after repeated failure or budget exhaust
 
 ### 5. Mandatory cold validation
 
-After tasks and local gates pass, write `.atlas/state/<run_id>/<slice>.json` following `packages/templates/STATE_FILE_SCHEMA.md`.
+After tasks and local gates pass, write `.talos/state/<run_id>/<slice>.json` following `packages/templates/STATE_FILE_SCHEMA.md`.
 
 For direct execution, the state file is still the only validator input. Use the user-provided PRD/spec path as `plan_path` when no handoff plan exists, and include direct-contract anchors in `boundary_refs` such as `direct.O1`, `direct.invariant.permissions`, or `direct.risk.partial_failure`.
 
@@ -209,7 +209,7 @@ Stop and report instead of improvising when:
 - implementing would violate explicit out-of-scope
 - deterministic checks cannot run and no equivalent evidence exists
 - repair loops repeat the same failure twice
-- validator cannot receive a valid `.atlas/state/<run_id>/<slice>.json` state path
+- validator cannot receive a valid `.talos/state/<run_id>/<slice>.json` state path
 - any PRD obligation lacks code/test/check evidence after implementation
 
 ## Final Report

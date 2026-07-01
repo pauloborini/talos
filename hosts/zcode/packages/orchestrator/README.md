@@ -1,6 +1,6 @@
-# Atlas Workflow Orchestrator
+# Talos Orchestrator
 
-Orquestra pipelines completos de desenvolvimento de features no projeto Atlas, automatizando a sequência de skills (backlog macro → sprint file → PRD → planejamento → execução → validação fria → review) sob demanda.
+Orquestra pipelines completos de desenvolvimento de features no projeto Talos, automatizando a sequência de skills (backlog macro → sprint file → PRD → planejamento → execução → validação fria → review) sob demanda.
 
 ## Quick Start
 
@@ -158,7 +158,7 @@ Status:
 
 ## Sequências canônicas
 
-Atlas é família única. Cliente (Claude Code, Cursor, Codex App) é apenas o host que executa as skills; não existe roteamento por família.
+Talos é família única. Cliente (Claude Code, Cursor, Codex App) é apenas o host que executa as skills; não existe roteamento por família.
 
 | Mode | Sequência |
 |------|-----------|
@@ -225,7 +225,7 @@ Plugin automatiza tudo. Você valida output.
 | `talos-backlog-generator` | Cria backlog mestre a partir de ideia, prompt, conversa ou briefing; roda explicitamente ou como primeira fase documental em macro input `backlog_first` |
 | `talos-sprint-prd-generator` | Gera PRD a partir de sprint/indicação |
 | `talos-prd-interview` | Entrevista de PRD (resolve ambiguidades) |
-| `talos-audit` | Audita target/boundary sem patch: lê regras locais, detecta stack, produz achados com `arquivo:linha`; com `--handoff`, grava `.atlas/plans/PLAN_AUDIT_*.md` TC-conforme sem executar |
+| `talos-audit` | Audita target/boundary sem patch: lê regras locais, detecta stack, produz achados com `arquivo:linha`; com `--handoff`, grava `.talos/plans/PLAN_AUDIT_*.md` TC-conforme sem executar |
 | `talos-plan-handoff` | Cria plano executável |
 | `talos-plan-execute` | Executa plano (com `talos-task-validator` sub-agent) |
 | `talos-findings-repair` | Corrige findings P0/P1/P2 após `fail` do validator dentro do boundary executado |
@@ -234,7 +234,7 @@ Plugin automatiza tudo. Você valida output.
 
 ## Configuração
 
-Plugin usa configuração embutida no MCP para modos, skills `atlas-*` e validadores de ambiguidade. Defaults auxiliares continuam empacotados em `packages/orchestrator/defaults/` e referências em `packages/orchestrator/references/`.
+Plugin usa configuração embutida no MCP para modos, skills `talos-*` e validadores de ambiguidade. Defaults auxiliares continuam empacotados em `packages/orchestrator/defaults/` e referências em `packages/orchestrator/references/`.
 
 ## Error handling
 
@@ -245,11 +245,11 @@ Plugin usa configuração embutida no MCP para modos, skills `atlas-*` e validad
 
 ## Dúvidas?
 
-Veja este README, `packages/mcp-server/README.md` e os SKILL.md `atlas-*` para o contrato operacional atual.
+Veja este README, `packages/mcp-server/README.md` e os SKILL.md `talos-*` para o contrato operacional atual.
 
 ---
 
-**Plugin version:** 0.11.1
+**Plugin version:** 1.0.0
 **Author:** Paulo Borini
 **Last updated:** 2026-06-30
 
@@ -261,7 +261,7 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `atlas-*` para o
 
 ### Novidades v0.11.0 — fallback de subagente para host ZCode
 
-- **Workaround de Dispatch no ZCode** — O host ZCode tem uma limitação onde sub-agentes de plugin (`subagent_type: "atlas-*"`) não herdam conexões MCP. Implementado o adapter `fallback` que despacha `general-purpose` (agente nativo, herda MCP) apontando para o MD do agente canônico como prompt do sistema.
+- **Workaround de Dispatch no ZCode** — O host ZCode tem uma limitação onde sub-agentes de plugin (`subagent_type: "talos-*"`) não herdam conexões MCP. Implementado o adapter `fallback` que despacha `general-purpose` (agente nativo, herda MCP) apontando para o MD do agente canônico como prompt do sistema.
 - **Isolamento Sibling Preservado** — O validador frio irmão (Gate G4) permanece isolado e executado em subagente separado, mantendo os invariantes de arquitetura.
 
 ### Novidades v0.10.1 — alias `sprint` canônico e Raycast alinhado
@@ -282,7 +282,7 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `atlas-*` para o
 
 ### Novidades v0.9.4 — audit handoff TC-conforme + perfis de stack
 
-- `/workflow audit --handoff` passa a escrever `.atlas/plans/PLAN_AUDIT_<slug>.md` **conforme ao `PLAN_TEMPLATE.md`** (cabeçalho com `| **PRD** | N/A — origem auditoria |`, ref a `BOUNDARY_PRD_PLAN.md`, §1–§6/§8, tasks `#### T01.`): passa no gate TC e é de fato consumível por `/workflow execute plan`. Fecha a promessa quebrada da estrutura ad-hoc anterior, que falharia o gate.
+- `/workflow audit --handoff` passa a escrever `.talos/plans/PLAN_AUDIT_<slug>.md` **conforme ao `PLAN_TEMPLATE.md`** (cabeçalho com `| **PRD** | N/A — origem auditoria |`, ref a `BOUNDARY_PRD_PLAN.md`, §1–§6/§8, tasks `#### T01.`): passa no gate TC e é de fato consumível por `/workflow execute plan`. Fecha a promessa quebrada da estrutura ad-hoc anterior, que falharia o gate.
 - Perfis de stack ganham 6 linhas detectáveis — `go`, `rust`, `java_kotlin`, `firebase`, `supabase`, `rest_openapi` — no baseline universal e no validador frio, ativadas só por manifests/deps/comandos reais no boundary.
 - `audit`/`interview-only` não declaram `guarantee_level` (não há execução a garantir); descrição do `talos_preflight` endurecida para refletir a impl.
 
@@ -296,7 +296,7 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `atlas-*` para o
 
 ### Novidades v0.8.2 — release/npm e procedimento de bump
 
-- Pacote npm `atlas-workflow` validado como instalador multi-host (`npm pack`, `npm exec` do tarball e `.npmignore` restritivo).
+- Pacote npm `talos` validado como instalador multi-host (`npm pack`, `npm exec` do tarball e `.npmignore` restritivo).
 - CI de release publica npm com provenance e GitHub Release somente por tag `vX.Y.Z`, com guard de tag = `VERSION` = `package.json.version`.
 - Procedimento de patch/bump documenta o fluxo completo para IA: classificar mudança, atualizar versões, regenerar catálogos, validar CI local, checar pacote npm, taguear e verificar publicação.
 
@@ -319,7 +319,7 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `atlas-*` para o
 ### Novidades v0.6.2 — backlog mestre
 
 - `talos-backlog-generator` cria backlog mestre a partir de ideia, prompt ou conversa quando acionado explicitamente ou como primeira fase documental em macro input `backlog_first`.
-- O backlog padrão vai para `.atlas/backlog/BACKLOG_MESTRE_<slug>.md` quando o usuário não informa path.
+- O backlog padrão vai para `.talos/backlog/BACKLOG_MESTRE_<slug>.md` quando o usuário não informa path.
 - `BACKLOG_MESTRE_TEMPLATE.md` inclui MoSCoW, esforço x ganho, dependências, riscos e próxima sprint executável.
 - Em `full`/`direct`, macro input sem backlog canônico passa por backlog antes do PRD; `sprint`/`backlog-item`, PRD e plano existentes continuam começando no artefato já recortado.
 

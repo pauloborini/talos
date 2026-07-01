@@ -1,11 +1,11 @@
 ---
 name: talos-plan-handoff
-description: Skill `talos-plan-handoff`. Produz um handoff executável da família Atlas, fechando prefixo, modo de execução e gates no próprio artefato para consumo por `talos-plan-execute` e `talos-slice-review`.
+description: Skill `talos-plan-handoff`. Produz um handoff executável da família Talos, fechando prefixo, modo de execução e gates no próprio artefato para consumo por `talos-plan-execute` e `talos-slice-review`.
 ---
 
 # Talos Plan Handoff
 
-Use esta skill quando o usuário pedir um plano executável da cadeia `atlas-*`.
+Use esta skill quando o usuário pedir um plano executável da cadeia `talos-*`.
 
 O artefato segue `PLAN_TEMPLATE.md` e `BOUNDARY_PRD_PLAN.md` — **localize ambos em `<raiz-do-plugin>/packages/templates/`**. O plano **não** depende de memória do chat para prefixo, modo ou executor.
 
@@ -20,7 +20,7 @@ Um plano `standalone` só é consumível pelo modo `execute` do orquestrador (l�
 
 ## Resolução Canônica de Templates
 
-* Fonte única: `packages/templates/` empacotado no plugin Atlas Workflow.
+* Fonte única: `packages/templates/` empacotado no plugin Talos.
 * Resolver `PLAN_TEMPLATE.md` e `BOUNDARY_PRD_PLAN.md` a partir da raiz do plugin/bundle, antes de olhar qualquer arquivo do repo consumidor.
 * Template local do repo consumidor nunca sobrepõe o template empacotado.
 * Se `packages/templates/PLAN_TEMPLATE.md` ou `packages/templates/BOUNDARY_PRD_PLAN.md` não existir, abortar com erro claro: `Template canônico ausente: <nome-do-template>`.
@@ -34,15 +34,15 @@ Use `talos_run_state` como fonte primária de estado da run. Não leia/escreva e
 
 Os paths são fornecidos pelo adapter de host: consultar `talos_capabilities` e ler `plan_paths` (`write` + `read_order`). Referência canônica: `packages/orchestrator/references/host-adapters.md`. Valores atuais (iguais em todo host):
 
-Escrita de novos planos: somente `.atlas/plans/`.
+Escrita de novos planos: somente `.talos/plans/`.
 
 Leitura/migração por 1 release (ordem de `plan_paths.read_order`):
 
-1. `.atlas/plans/`
+1. `.talos/plans/`
 2. `.cursor/plans/` com warning de depreciação
 3. `.codex/plans/` com warning de depreciação
 
-Se um plano legado for lido, o próximo artefato gerado deve ser salvo em `.atlas/plans/`.
+Se um plano legado for lido, o próximo artefato gerado deve ser salvo em `.talos/plans/`.
 
 ## Cadeia de execução
 
@@ -66,7 +66,7 @@ No workflow `full`, `talos-plan-handoff` é autoria documental do agente princip
    - Se `standalone`: não chamar `talos_verify_sprint_file`. Validar que o PRD tem §2 escopo, §3 decisões, §5 invariantes, §6 aceite com critérios observáveis suficientes para derivar Eval/Policy direto do PRD. PRD insuficiente nessas seções bloqueia com ação corretiva.
 3. **Grounding no código:** confirme padrões, contratos, manifests e comandos reais antes de inferir. Resolva baseline/perfis via `../_shared/references/stack-profiles.md` + `detectStackProfiles(project_root, declared_commands, boundary_paths)`; não presuma Flutter nem aplique perfil fora do package correspondente.
 4. **Decisões estáveis:** sanar bloqueios com perguntas ao usuário; registrar no plano (não recopiar tabela D* do PRD — referenciar `PRD §3`; não copiar YAML integral do sprint file — referenciar `Sprint §9/§10` e IDs).
-5. **Escrita:** artefato markdown no path canônico `.atlas/plans/`. Teto orientativo ~250–350 linhas (até ~450 com slices).
+5. **Escrita:** artefato markdown no path canônico `.talos/plans/`. Teto orientativo ~250–350 linhas (até ~450 com slices).
 
 ---
 
@@ -74,7 +74,7 @@ No workflow `full`, `talos-plan-handoff` é autoria documental do agente princip
 
 ```md
 ## Metadados de execução
-- Plan prefix: `atlas`
+- Plan prefix: `talos`
 - Source mode: `sprint-bound` | `standalone`
 - Execution mode: `sequencial (T01→TN)` | `orchestrated-per-slice`
 - Executor skill: `talos-plan-execute`
@@ -84,7 +84,7 @@ No workflow `full`, `talos-plan-handoff` é autoria documental do agente princip
 
 Regras:
 
-- `Plan prefix` é sempre `atlas`.
+- `Plan prefix` é sempre `talos`.
 - `Source mode` reflete a detecção do passo 2 do fluxo obrigatório. `standalone` é destinado a entrar em execução pelo modo `execute` do orquestrador — não pelo pipeline `full`/`direct`.
 - Se o modo não estiver decidido, o plano **não** está pronto para execução.
 - Em `sprint-bound`, o topo do plano deve linkar PRD e Sprint file; `eval_manifest`/`policy_manifest` entram por referência, não por cópia integral.
@@ -175,7 +175,7 @@ Toda task que prova claim ou toca boundary sensível deve trazer `Eval/Policy`. 
 
 ## Uso standalone vs protocolo interno no workflow (PRD D10/D11)
 
-Esta skill é de **autoria documental** (redigir um `PLAN_*.md`). A fronteira de determinismo do Atlas é a **mutação de código** (PRD D10): como redigir um plano não muta código, **autoria é livre, execução é gateada**.
+Esta skill é de **autoria documental** (redigir um `PLAN_*.md`). A fronteira de determinismo do Talos é a **mutação de código** (PRD D10): como redigir um plano não muta código, **autoria é livre, execução é gateada**.
 
 ### (a) Uso standalone permitido
 
@@ -200,7 +200,7 @@ Um plano escrito standalone **não vale como gate aprovado** só porque existe �
 
 O próximo agente, só lendo o artefato, deve saber:
 
-- usar apenas skills `atlas-*` declaradas nos metadados;
+- usar apenas skills `talos-*` declaradas nos metadados;
 - respeitar `execution_mode`;
 - rodar `talos-task-validator` antes de fechar a slice;
 - usar `talos-slice-review` como segunda camada fria, não substituto do validator interno;

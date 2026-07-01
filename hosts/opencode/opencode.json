@@ -3,10 +3,10 @@
   "mcp": {
     "talos": {
       "type": "local",
-      "command": ["node", ".opencode/atlas/packages/mcp-server/server.js"],
+      "command": ["node", ".opencode/talos/packages/mcp-server/server.js"],
       "enabled": true,
       "environment": {
-        "ATLAS_HOST": "opencode"
+        "TALOS_HOST": "opencode"
       }
     }
   }

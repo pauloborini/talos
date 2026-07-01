@@ -117,8 +117,8 @@ jobs:
         run: |
           set -euo pipefail
           for host in claude codex opencode pi zcode; do
-            test -f "dist/atlas-workflow-${host}.plugin"
-            unzip -t "dist/atlas-workflow-${host}.plugin" >/dev/null
+            test -f "dist/talos-${host}.plugin"
+            unzip -t "dist/talos-${host}.plugin" >/dev/null
           done
           test -f dist/SHA256SUMS
           (cd dist && shasum -a 256 -c SHA256SUMS)
@@ -152,9 +152,9 @@ jobs:
           tag_name: v${{ env.VERSION }}
           body_path: dist/RELEASE_NOTES.md
           files: |
-            dist/atlas-workflow-claude.plugin
-            dist/atlas-workflow-codex.plugin
-            dist/atlas-workflow-opencode.plugin
-            dist/atlas-workflow-pi.plugin
-            dist/atlas-workflow-zcode.plugin
+            dist/talos-claude.plugin
+            dist/talos-codex.plugin
+            dist/talos-opencode.plugin
+            dist/talos-pi.plugin
+            dist/talos-zcode.plugin
             dist/SHA256SUMS

@@ -5,7 +5,7 @@ Boundary canônico executor → validator.
 Path:
 
 ```text
-.atlas/state/<run_id>/<slice>.json
+.talos/state/<run_id>/<slice>.json
 ```
 
 Schema legado mínimo (reader compatível):
@@ -17,7 +17,7 @@ Schema legado mínimo (reader compatível):
   "tasks": ["T01", "T02"],
   "files_changed": ["packages/foo.js"],
   "diff_stat": "N files, +X -Y",
-  "plan_path": ".atlas/plans/<id>.plan.md",
+  "plan_path": ".talos/plans/<id>.plan.md",
   "boundary_refs": ["§2.I3", "§5.T11"],
   "executed_at": "ISO8601",
   "executor_skill": "talos-plan-execute"
@@ -32,8 +32,8 @@ Extensão determinística (writer atual):
   "head_sha": "40-char git commit SHA",
   "contract_kind": "plan | direct",
   "sprint_id": "S01",
-  "sprint_file_path": ".atlas/backlog/sprints/SPRINT_S01_slug.md",
-  "prd_path": ".atlas/prd/PRD_S01_slug.md",
+  "sprint_file_path": ".talos/backlog/sprints/SPRINT_S01_slug.md",
+  "prd_path": ".talos/prd/PRD_S01_slug.md",
   "obligations": [{"id": "O1", "requirement": "...", "expected_evidence": ["path/test/check"]}],
   "invariants": [{"id": "I1", "requirement": "...", "expected_evidence": ["path/check"]}],
   "scenario_probes": [{"id": "S1", "scenario": "...", "expected": "..."}],

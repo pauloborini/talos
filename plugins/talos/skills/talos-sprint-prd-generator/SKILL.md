@@ -14,7 +14,7 @@ Contrato atual:
 - PRD não nasce direto do backlog nem de roadmap macro.
 - Sprint file ausente, não linkado ou inconsistente bloqueia a geração com ação corretiva.
 
-Todo PRD gerado por esta skill deve declarar explicitamente a cadeia de execução Atlas (`atlas-*`) para consumo posterior por `talos-plan-handoff` e `talos-plan-execute`.
+Todo PRD gerado por esta skill deve declarar explicitamente a cadeia de execução Talos (`talos-*`) para consumo posterior por `talos-plan-handoff` e `talos-plan-execute`.
 
 ---
 
@@ -42,7 +42,7 @@ Todo PRD gerado por esta skill deve declarar explicitamente a cadeia de execuç�
 
 ### Resolução Canônica de Templates
 
-* Fonte única: `packages/templates/` empacotado no plugin Atlas Workflow.
+* Fonte única: `packages/templates/` empacotado no plugin Talos.
 * Resolver `PRD_TEMPLATE.md` a partir da raiz do plugin/bundle, antes de olhar qualquer arquivo do repo consumidor.
 * Template local do repo consumidor nunca sobrepõe o template empacotado.
 * Se `packages/templates/PRD_TEMPLATE.md` não existir, abortar com erro claro: `Template canônico ausente: PRD_TEMPLATE.md`.
@@ -56,7 +56,7 @@ Todo PRD criado ou atualizado por esta skill deve incluir, perto do topo e sem s
 
 ```md
 ## Metadados de execução
-- Plan prefix: `atlas`
+- Plan prefix: `talos`
 - Target planner: `talos-plan-handoff`
 - Target executor: `talos-plan-execute`
 - Internal validator: `talos-task-validator`
@@ -84,7 +84,7 @@ Todo PRD criado ou atualizado por esta skill deve incluir, perto do topo e sem s
 
 Antes de salvar:
 * Confirme que todas as seções do template estão presentes.
-* Garanta que o bloco de `Metadados de execução` existe e está preenchido com `atlas`.
+* Garanta que o bloco de `Metadados de execução` existe e está preenchido com `talos`.
 * Garanta que backlog mestre e sprint file estão linkados no cabeçalho.
 * Garanta que todo EVAL-* relevante do sprint file aparece em §6 ou no Apêndice como referência.
 * Certifique-se de que não há nomes de classes de código ou arquivos Dart dentro do PRD.

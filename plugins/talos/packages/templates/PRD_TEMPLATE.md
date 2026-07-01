@@ -10,7 +10,7 @@
 
 | Campo | Valor |
 |-------|-------|
-| **Produto / App** | <GarantiaFácil \| Assina \| Atlas host \| …> |
+| **Produto / App** | <GarantiaFácil \| Assina \| Talos host \| …> |
 | **Status** | <Draft \| Em decisão \| Aprovado para planejamento \| Aprovado para implementação \| Implementado \| Arquivado> |
 | **Responsável** | <Papel ou nome> |
 | **Data** | <YYYY-MM-DD> |

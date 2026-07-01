@@ -1,11 +1,11 @@
 ---
 name: talos-backlog-generator
-description: Skill `talos-backlog-generator`. Use quando o usuário acionar explicitamente `$talos-backlog-generator`, pedir explicitamente para criar/atualizar um backlog mestre Atlas, ou quando o `talos` receber macro input em `full`/`direct` e o MCP declarar `routing.document_flow.priority = backlog_first`. Gera/atualiza `BACKLOG_MESTRE_*.md` como índice macro enxuto e cria/atualiza sprint files `SPRINT_S<NN>_*.md` via `SPRINT_TEMPLATE.md`.
+description: Skill `talos-backlog-generator`. Use quando o usuário acionar explicitamente `$talos-backlog-generator`, pedir explicitamente para criar/atualizar um backlog mestre Talos, ou quando o `talos` receber macro input em `full`/`direct` e o MCP declarar `routing.document_flow.priority = backlog_first`. Gera/atualiza `BACKLOG_MESTRE_*.md` como índice macro enxuto e cria/atualiza sprint files `SPRINT_S<NN>_*.md` via `SPRINT_TEMPLATE.md`.
 ---
 
 # Talos Backlog Generator
 
-Crie backlogs mestres Atlas em PT-BR, ancorados nos templates canônicos, com decomposição gradual em fases e sprints pequenas, priorização MoSCoW, matriz esforço x ganho, dependências explícitas, gates, riscos e próxima sprint executável.
+Crie backlogs mestres Talos em PT-BR, ancorados nos templates canônicos, com decomposição gradual em fases e sprints pequenas, priorização MoSCoW, matriz esforço x ganho, dependências explícitas, gates, riscos e próxima sprint executável.
 
 Esta skill é documental: ela cria ou atualiza o `BACKLOG_MESTRE*.md` e os sprint files vivos no projeto consumidor. Ela não implementa código, não gera PRDs de sprint e não substitui `talos-sprint-prd-generator`.
 
@@ -43,22 +43,22 @@ Se faltar informação não bloqueante, gere o backlog com premissas marcadas e 
 3. **Inspecionar contexto real:** quando houver repo/projeto ativo, busque documentos existentes (`BACKLOG_MESTRE*.md`, `PRD*.md`, `ROADMAP*.md`, specs, OpenAPI, docs de arquitetura) e código que influencie dependências. Não invente contrato técnico.
 4. **Fechar ambiguidade crítica:** se uma decisão bloquear a decomposição segura, faça até 3 perguntas objetivas. Se o usuário não responder e houver caminho razoável, registre a premissa como risco/decisão pendente.
 5. **Preencher o backlog mestre:** mantenha todas as seções de `BACKLOG_MESTRE_TEMPLATE.md`. A seção `## 7. Registro de sprints` é índice macro: uma linha por sprint, com links/estado para Sprint file, PRD, PLAN e State. Não copie critérios completos, tasks ou evidência granular no backlog.
-6. **Criar/atualizar sprint files:** para cada sprint nova ou alterada, preencha `SPRINT_TEMPLATE.md` em `.atlas/backlog/sprints/SPRINT_S<NN>_<slug>.md` (ou path pedido). O sprint file deve conter objetivo único, escopo/fora de escopo, DoR/DoD, dependências, decisões locais, `eval_manifest`, `policy_manifest` e evidence-to-claim.
+6. **Criar/atualizar sprint files:** para cada sprint nova ou alterada, preencha `SPRINT_TEMPLATE.md` em `.talos/backlog/sprints/SPRINT_S<NN>_<slug>.md` (ou path pedido). O sprint file deve conter objetivo único, escopo/fora de escopo, DoR/DoD, dependências, decisões locais, `eval_manifest`, `policy_manifest` e evidence-to-claim.
 7. **Decompor em sprints:** transforme o objetivo em fatias verticais pequenas. Cada sprint deve ter objetivo único, dependências, sprint file e PRD/PLAN/State marcados como `pendente` até existirem.
 8. **Priorizar:** para cada sprint, preencha MoSCoW, ganho, esforço e prioridade usando `## 8.1 Regra determinística` do template.
 9. **Selecionar próxima sprint:** após salvar backlog + sprint files, chame `talos_verify_backlog_index` e depois `talos_select_next_sprint`. A sprint escolhida deve vir do resultado MCP (`selected.sprint_id`/`selected.sprint_file_path`), não de julgamento narrativo. Registre a justificativa em `## 8.2 Próxima sprint executável`.
 10. **Atualização não destrutiva:** se o arquivo já existe, compare antes/depois com `validateBacklogUpdate(before, after, { authorizedIds })` de `../_shared/scripts/document_quality.mjs`. `authorizedIds` contém somente IDs cuja mudança foi explicitamente decidida pelo usuário. Preserve demais IDs, linhas `done`, decisões `decidido|fechado|aprovado`, itens/sprints e ordem histórica.
 11. **Registrar alterações:** toda atualização acrescenta `## Registro de alterações` (data, IDs afetados, motivo e fonte) ou atualiza seção equivalente existente. Não reescreva histórico anterior.
-12. **Salvar artefatos:** grave o backlog no path pedido ou, se não houver path, crie `.atlas/backlog/BACKLOG_MESTRE_<slug>.md`; grave sprint files no diretório recomendado pelo template.
+12. **Salvar artefatos:** grave o backlog no path pedido ou, se não houver path, crie `.talos/backlog/BACKLOG_MESTRE_<slug>.md`; grave sprint files no diretório recomendado pelo template.
 13. **Validar antes de finalizar:** bloqueie se `validateBacklogUpdate` apontar sprint/decisão removida, sprint `done` alterada, enum inválido, ciclo de dependência, placeholder acidental ou falta de registro. Confirme também que dependências referenciam IDs existentes, todo sprint do backlog aponta para sprint file e todo sprint file aponta de volta para o backlog. Chame `talos_verify_sprint_file` para sprint files criados/alterados, `talos_verify_backlog_index` para o backlog final e `talos_select_next_sprint` para a próxima sprint. Se qualquer gate bloquear ou estiver indisponível, não declare a sprint pronta para PRD.
 
 Quando chamada pelo orquestrador em `backlog_first`, finalize retornando dados estruturados mínimos:
 
 ```json
 {
-  "backlog_path": ".atlas/backlog/BACKLOG_MESTRE_<slug>.md",
+  "backlog_path": ".talos/backlog/BACKLOG_MESTRE_<slug>.md",
   "sprint_id": "S<NN>",
-  "sprint_file_path": ".atlas/backlog/sprints/SPRINT_S<NN>_<slug>.md",
+  "sprint_file_path": ".talos/backlog/sprints/SPRINT_S<NN>_<slug>.md",
   "prd_path": "pendente",
   "plan_path": "pendente",
   "state_path": "pendente"

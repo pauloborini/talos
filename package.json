@@ -4,7 +4,7 @@
   "description": "Instalador multi-host do Talos (Claude Code, Cursor, Codex, opencode, pi). Roda via npx-from-GitHub.",
   "type": "module",
   "bin": {
-    "talos": "./build/cli/atlas-init.mjs"
+    "talos": "./build/cli/talos-init.mjs"
   },
   "engines": {
     "node": ">=18"

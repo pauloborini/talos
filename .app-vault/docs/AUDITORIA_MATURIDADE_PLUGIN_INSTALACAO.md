@@ -2,7 +2,7 @@
 
 Data: 2026-06-04
 Atualizado: 2026-06-05
-Repo: `atlas-workflow`
+Repo: `talos`
 Versao auditada: `0.4.0`
 
 ## 0. Atualizacao 2026-06-05 (delta desde a auditoria base)
@@ -11,10 +11,10 @@ Maturidade revisada: **7.5/10 -> 8.0/10** (subida modesta, justificada por smoke
 
 Evidencia real nova obtida nesta data (Windows, dentro do repo):
 
-- **opencode real (Windows):** `atlas_ping` -> alive, v0.4.0, stdio, 9 capabilities; `atlas_capabilities(host=opencode)` -> host detectado, schema v2, flags corretas. Prova **boot do MCP + leitura de capabilities** no opencode real. (Ainda **nao** provado: descoberta/dispatch de agente e skills.)
-- **pi real (Windows):** `atlas_ping` respondeu via tools **prefixadas** `atlas_workflow_*` -> prova o **`pi-mcp-adapter` vivo e proxiando**; `atlas_capabilities` retornou `host: pi` via `detected_via: env:ATLAS_HOST` -> deteccao deterministica confirmada no pi real. (Ainda **nao** provado: `pi-subagents` / dispatch de subagente.)
-- **ZCode real (macOS, v0.9.3):** `atlas_ping` -> alive, v0.9.3, stdio, 11 capabilities; `atlas_capabilities(host=zcode)` -> host detectado, `detected_via: env:ZCODE_PLUGIN_ROOT`, `schema_version: 5`, `validator_dispatch.join.sync: self_evident` (Claude Agent SDK — `Agent(subagent_type)` bloqueante). Prova **boot do MCP + leitura de capabilities + tier-1 self_evident** no ZCode real. App ZCode descobre o plugin via `/plugins enable atlas-workflow-orchestrator` (cache oficial `zcode-plugins-official/`). Sem dependências externas; detector `ZCODE_PLUGIN_ROOT` é hardcoded como `G2="zcode-plugins-official"` no bundle `zcode.cjs`.
-- **Windows (parcial):** os dois smokes acima rodaram em Windows (`state_dir: .atlas\state`) -> primeira evidencia real do **runtime MCP** funcionando no Windows. (Ainda **nao** provado no Windows: caminho do instalador `npx`, claude/codex, install/uninstall.)
+- **opencode real (Windows):** `talos_ping` -> alive, v0.4.0, stdio, 9 capabilities; `talos_capabilities(host=opencode)` -> host detectado, schema v2, flags corretas. Prova **boot do MCP + leitura de capabilities** no opencode real. (Ainda **nao** provado: descoberta/dispatch de agente e skills.)
+- **pi real (Windows):** `talos_ping` respondeu via tools **prefixadas** `talos_workflow_*` -> prova o **`pi-mcp-adapter` vivo e proxiando**; `talos_capabilities` retornou `host: pi` via `detected_via: env:TALOS_HOST` -> deteccao deterministica confirmada no pi real. (Ainda **nao** provado: `pi-subagents` / dispatch de subagente.)
+- **ZCode real (macOS, v0.9.3):** `talos_ping` -> alive, v0.9.3, stdio, 11 capabilities; `talos_capabilities(host=zcode)` -> host detectado, `detected_via: env:ZCODE_PLUGIN_ROOT`, `schema_version: 5`, `validator_dispatch.join.sync: self_evident` (Claude Agent SDK — `Agent(subagent_type)` bloqueante). Prova **boot do MCP + leitura de capabilities + tier-1 self_evident** no ZCode real. App ZCode descobre o plugin via `/plugins enable talos` (cache oficial `zcode-plugins-official/`). Sem dependências externas; detector `ZCODE_PLUGIN_ROOT` é hardcoded como `G2="zcode-plugins-official"` no bundle `zcode.cjs`.
+- **Windows (parcial):** os dois smokes acima rodaram em Windows (`state_dir: .talos\state`) -> primeira evidencia real do **runtime MCP** funcionando no Windows. (Ainda **nao** provado no Windows: caminho do instalador `npx`, claude/codex, install/uninstall.)
 
 Correcao de capability aplicada e verificada no host real:
 
@@ -32,7 +32,7 @@ Estado: **bom para uso controlado/dev**, ainda **nao perfeito para release publi
 O plugin evoluiu bem:
 
 - bundle multi-host existe;
-- instalador unico `npx github:pauloborini/atlas-workflow init <host>` existe;
+- instalador unico `npx github:pauloborini/talos init <host>` existe;
 - uninstall existe;
 - opencode/pi tem modo por-projeto e global;
 - MCP detecta `claude`, `codex`, `opencode`, `pi`, `zcode`, `generic`;
@@ -50,14 +50,14 @@ rtk node build/check-consistency.mjs
 rtk node build/smoke-hosts.mjs
 rtk node --test packages/mcp-server/server.test.js
 rtk bash build/test-all.sh
-rtk node build/cli/atlas-init.mjs init opencode --dry-run
-rtk node build/cli/atlas-init.mjs init opencode --global --dry-run
-rtk node build/cli/atlas-init.mjs init pi --dry-run
-rtk node build/cli/atlas-init.mjs init pi --global --dry-run
-rtk node build/cli/atlas-init.mjs init opencode --dir <tmp>/opencode
-rtk node build/cli/atlas-init.mjs init pi --dir <tmp>/pi
-rtk node build/cli/atlas-init.mjs uninstall opencode --dir <tmp>/opencode
-rtk node build/cli/atlas-init.mjs uninstall pi --dir <tmp>/pi
+rtk node build/cli/talos-init.mjs init opencode --dry-run
+rtk node build/cli/talos-init.mjs init opencode --global --dry-run
+rtk node build/cli/talos-init.mjs init pi --dry-run
+rtk node build/cli/talos-init.mjs init pi --global --dry-run
+rtk node build/cli/talos-init.mjs init opencode --dir <tmp>/opencode
+rtk node build/cli/talos-init.mjs init pi --dir <tmp>/pi
+rtk node build/cli/talos-init.mjs uninstall opencode --dir <tmp>/opencode
+rtk node build/cli/talos-init.mjs uninstall pi --dir <tmp>/pi
 ```
 
 Resultados:
@@ -71,8 +71,8 @@ Resultados:
 
 Validado depois da auditoria base (2026-06-05, ver secao 0):
 
-- opencode real: MCP boot + `atlas_ping` + `atlas_capabilities` (ainda falta agente/skills/dispatch);
-- pi real: `pi-mcp-adapter` vivo (tools prefixadas) + `atlas_ping` + `atlas_capabilities` deteccao por env (ainda falta `pi-subagents`/dispatch);
+- opencode real: MCP boot + `talos_ping` + `talos_capabilities` (ainda falta agente/skills/dispatch);
+- pi real: `pi-mcp-adapter` vivo (tools prefixadas) + `talos_ping` + `talos_capabilities` deteccao por env (ainda falta `pi-subagents`/dispatch);
 - Windows: runtime MCP de opencode e pi (ainda falta instalador `npx`, claude/codex, install/uninstall).
 
 Nao validado nesta auditoria:
@@ -103,11 +103,11 @@ Nao validado nesta auditoria:
 Existe e esta bem encaminhado:
 
 ```bash
-npx github:pauloborini/atlas-workflow init claudecode
-npx github:pauloborini/atlas-workflow init cursor
-npx github:pauloborini/atlas-workflow init codex
-npx github:pauloborini/atlas-workflow init opencode
-npx github:pauloborini/atlas-workflow init pi --yes
+npx github:pauloborini/talos init claudecode
+npx github:pauloborini/talos init cursor
+npx github:pauloborini/talos init codex
+npx github:pauloborini/talos init opencode
+npx github:pauloborini/talos init pi --yes
 ```
 
 Esse e o melhor caminho publico hoje.
@@ -115,22 +115,22 @@ Esse e o melhor caminho publico hoje.
 Ponto honesto: isso e **um comando shell via npx**, nao necessariamente "um comando nativo dentro de cada CLI". Claude/Codex ainda exigem 2 chamadas nativas por baixo.
 
 Se o requisito for "usuario cola uma linha e funciona", ok.
-Se o requisito for "cada CLI tem comando nativo Atlas de 1 passo", ainda nao.
+Se o requisito for "cada CLI tem comando nativo Talos de 1 passo", ainda nao.
 
 ### 4.2 Claude Code / Cursor
 
 Atual:
 
 ```bash
-claude plugin marketplace add pauloborini/atlas-workflow
-claude plugin install atlas-workflow-orchestrator@atlas-workflow
+claude plugin marketplace add pauloborini/talos
+claude plugin install talos@talos
 ```
 
 Wrapper:
 
 ```bash
-npx github:pauloborini/atlas-workflow init claudecode
-npx github:pauloborini/atlas-workflow init cursor
+npx github:pauloborini/talos init claudecode
+npx github:pauloborini/talos init cursor
 ```
 
 Risco:
@@ -144,19 +144,19 @@ Risco:
 Atual:
 
 ```bash
-codex plugin marketplace add pauloborini/atlas-workflow
-codex plugin add atlas-workflow-orchestrator@atlas-workflow
+codex plugin marketplace add pauloborini/talos
+codex plugin add talos@talos
 ```
 
 Wrapper:
 
 ```bash
-npx github:pauloborini/atlas-workflow init codex
+npx github:pauloborini/talos init codex
 ```
 
 Risco:
 
-- `raycast/atlas-workflow-snippets.json` ainda tem snippet `!aw-codex` com apenas `codex plugin marketplace add ...`; falta `codex plugin add ...`.
+- `raycast/talos-snippets.json` ainda tem snippet `!aw-codex` com apenas `codex plugin marketplace add ...`; falta `codex plugin add ...`.
 - `!aw-install-all` tambem instala Codex parcialmente.
 - Precisa smoke real no Codex App/CLI.
 
@@ -165,8 +165,8 @@ Risco:
 Atual:
 
 ```bash
-npx github:pauloborini/atlas-workflow init opencode
-npx github:pauloborini/atlas-workflow init opencode --global
+npx github:pauloborini/talos init opencode
+npx github:pauloborini/talos init opencode --global
 ```
 
 Comportamento:
@@ -187,14 +187,14 @@ Riscos:
 Atual:
 
 ```bash
-npx github:pauloborini/atlas-workflow init pi --yes
-npx github:pauloborini/atlas-workflow init pi --global --yes
+npx github:pauloborini/talos init pi --yes
+npx github:pauloborini/talos init pi --global --yes
 ```
 
 Comportamento:
 
-- por-projeto: copia `atlas/`, `skills/`, `.pi/agents/`, mescla `.mcp.json`;
-- global: copia runtime para `~/.pi/agent/atlas`, agente em `~/.agents` ou `~/.pi/agent/agents`, MCP em `~/.pi/agent/mcp.json`;
+- por-projeto: copia `talos/`, `skills/`, `.pi/agents/`, mescla `.mcp.json`;
+- global: copia runtime para `~/.pi/agent/talos`, agente em `~/.agents` ou `~/.pi/agent/agents`, MCP em `~/.pi/agent/mcp.json`;
 - detecta deps `pi-mcp-adapter` e `pi-subagents`;
 - com `--yes`, tenta instalar deps faltantes.
 
@@ -241,10 +241,10 @@ Correcao: criar CI/manual matrix Windows antes do release.
 
 Impacto: skill/agente antigo pode continuar existindo e contaminar comportamento.
 
-Correcao: em update, remover apenas areas Atlas controladas antes de copiar:
+Correcao: em update, remover apenas areas Talos controladas antes de copiar:
 
-- opencode: `.opencode/atlas`, `.opencode/agents/atlas-task-validator.md`, `.opencode/skills/atlas-*`;
-- pi: `atlas`, `.pi/agents/atlas-task-validator.md`, `skills/atlas-*`;
+- opencode: `.opencode/talos`, `.opencode/agents/talos-task-validator.md`, `.opencode/skills/talos-*`;
+- pi: `talos`, `.pi/agents/talos-task-validator.md`, `skills/talos-*`;
 - global equivalente.
 
 ### P1 - `pi --yes` nao falha se instalacao de dep falhar
@@ -259,7 +259,7 @@ Correcao: checar retorno e abortar com erro acionavel.
 
 Global escolhe `opencode.jsonc` se existir, mas parser e `JSON.parse`.
 
-Impacto: config valida para opencode pode ser tratada como invalida pelo Atlas.
+Impacto: config valida para opencode pode ser tratada como invalida pelo Talos.
 
 Correcao: suportar JSONC com parser leve ou gravar/mesclar em `opencode.json` quando `.jsonc` tiver comentarios, sem tocar no `.jsonc`.
 
@@ -290,7 +290,7 @@ Correcao: validar `--dir` exige valor e que valor nao seja outra flag.
 
 ### P2 - Promessa "apps instalam junto" precisa linguagem precisa
 
-Atlas nao instala Claude Desktop, Claude Code, Cursor, Codex App, opencode ou pi. Ele chama CLIs existentes.
+Talos nao instala Claude Desktop, Claude Code, Cursor, Codex App, opencode ou pi. Ele chama CLIs existentes.
 
 Impacto: expectativa errada do usuario final.
 
@@ -300,44 +300,44 @@ Correcao: docs: "pre-requisito: CLI/app ja instalado e no PATH"; "o plugin pode 
 
 ## Metadados de execucao
 
-- Plan prefix: `atlas`
+- Plan prefix: `talos`
 - Execution mode: `sequencial (T01->T08)`
-- Executor skill: `atlas-plan-execute`
-- Internal validator: `atlas-task-validator`
-- External review: `atlas-slice-review` opcional
+- Executor skill: `talos-plan-execute`
+- Internal validator: `talos-task-validator`
+- External review: `talos-slice-review` opcional
 
 #### T01. Endurecer update idempotente
 
 - Objetivo: remover stale controlado antes de copiar bundle.
-- Arquivos-alvo: `build/cli/atlas-init.mjs`, `build/install-host.sh`.
-- Done: update reexecutado nao deixa arquivo Atlas antigo.
+- Arquivos-alvo: `build/cli/talos-init.mjs`, `build/install-host.sh`.
+- Done: update reexecutado nao deixa arquivo Talos antigo.
 - Validacao: install vA fake -> update vB fake -> `find` sem stale.
 
 #### T02. Falhar `pi --yes` quando dep falhar
 
 - Objetivo: erro real se `pi install npm:<dep>` retornar != 0.
-- Arquivo-alvo: `build/cli/atlas-init.mjs`.
+- Arquivo-alvo: `build/cli/talos-init.mjs`.
 - Done: falha aborta com mensagem e exit != 0.
 - Validacao: teste com `PATH` sandbox/mock `pi`.
 
 #### T03. Suportar ou contornar JSONC do opencode
 
 - Objetivo: nao bloquear config valida do opencode.
-- Arquivo-alvo: `build/cli/atlas-init.mjs`.
-- Done: `.jsonc` com comentario nao e corrompido; MCP Atlas fica registravel.
+- Arquivo-alvo: `build/cli/talos-init.mjs`.
+- Done: `.jsonc` com comentario nao e corrompido; MCP Talos fica registravel.
 - Validacao: fixture `.jsonc` com comentarios.
 
 #### T04. Corrigir docs/snippets
 
 - Objetivo: nenhum comando incompleto.
-- Arquivos-alvo: `README.md`, `COMMANDS.md`, `raycast/atlas-workflow-snippets.json`, `build/install-host.sh`.
+- Arquivos-alvo: `README.md`, `COMMANDS.md`, `raycast/talos-snippets.json`, `build/install-host.sh`.
 - Done: Codex sempre inclui `plugin add`; texto de app/CLI preciso.
 - Validacao: grep por comandos antigos incompletos.
 
 #### T05. Testar parser de argumentos
 
 - Objetivo: `--dir` sem valor, flag desconhecida e host invalido falham limpo.
-- Arquivo-alvo: `build/cli/atlas-init.mjs`.
+- Arquivo-alvo: `build/cli/talos-init.mjs`.
 - Done: CLI nao instala no cwd por acidente.
 - Validacao: testes Node com subprocesso.
 
@@ -352,11 +352,11 @@ Correcao: docs: "pre-requisito: CLI/app ja instalado e no PATH"; "o plugin pode 
 
 - Objetivo: provar runtime em CLIs reais.
 - Alvos:
-  - Claude Code: install + `atlas_ping` + validator dispatch; **[pendente]**
+  - Claude Code: install + `talos_ping` + validator dispatch; **[pendente]**
   - Cursor: reload/visibilidade; **[pendente]**
   - Codex: install + MCP + skill; **[pendente]**
-  - opencode: agent list/tool MCP; **[parcial: `atlas_ping` + `atlas_capabilities` OK no Windows; falta agent list + dispatch validator]**
-  - pi: tools prefixadas + `subagent`. **[parcial: tools prefixadas `atlas_workflow_*` + `atlas_ping` + `atlas_capabilities` OK no Windows (prova `pi-mcp-adapter`); falta `subagent` via `pi-subagents`]**
+  - opencode: agent list/tool MCP; **[parcial: `talos_ping` + `talos_capabilities` OK no Windows; falta agent list + dispatch validator]**
+	  - pi: tools prefixadas + `subagent`. **[parcial: tools prefixadas `talos_workflow_*` + `talos_ping` + `talos_capabilities` OK no Windows (prova `pi-mcp-adapter`); falta `subagent` via `pi-subagents`]**
 - Done: evidence log por host.
 
 #### T08. Smoke OS
@@ -377,7 +377,7 @@ Go para publicar como beta publico honesto: **sim**, se docs disserem:
 - Linux/Windows pendentes de smoke real;
 - opencode/pi dependem de extensoes/host real;
 - `npx` e caminho recomendado;
-- `atlas_ping` e gate obrigatorios pos-install.
+- `talos_ping` e gate obrigatorios pos-install.
 
 ## 9. Criterio objetivo de maturidade 10/10
 
@@ -390,4 +390,4 @@ So declarar 10/10 quando:
 - update nao deixar stale;
 - `pi --yes` falhar corretamente;
 - JSONC opencode tratado sem corromper config;
-- release tag publica instalada via `npx github:pauloborini/atlas-workflow` sem branch fix.
+- release tag publica instalada via `npx github:pauloborini/talos` sem branch fix.

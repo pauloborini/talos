@@ -1,0 +1,15 @@
+{
+  "name": "@talos/mcp-server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "talos-mcp": "./server.js"
+  },
+  "scripts": {
+    "test": "node --test server.test.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -1,10 +1,10 @@
-# Raycast — Atlas Workflow snippets
+# Raycast — Talos snippets
 
 ## Importar
 
 1. Abra o Raycast (`⌘ Space`)
 2. Busque **Import Snippets**
-3. Selecione `atlas-workflow-snippets.json` nesta pasta
+3. Selecione `talos-snippets.json` nesta pasta
 4. Revise a lista e confirme
 
 ## Keywords (prefixo `!aw-`)

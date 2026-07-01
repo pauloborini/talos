@@ -118,10 +118,10 @@ for (const rel of [
 for (const rel of [
   'hosts/opencode/opencode.json',
   'hosts/opencode/.opencode/agents/talos-task-validator.md',
-  'hosts/opencode/.opencode/atlas/packages/mcp-server/server.js',
+  'hosts/opencode/.opencode/talos/packages/mcp-server/server.js',
   'hosts/pi/.mcp.json',
   'hosts/pi/.pi/agents/talos-task-validator.md',
-  'hosts/pi/atlas/packages/mcp-server/server.js',
+  'hosts/pi/talos/packages/mcp-server/server.js',
   'hosts/zcode/.zcode-plugin/plugin.json',
   'hosts/zcode/agents/talos-task-validator.md',
   'hosts/zcode/packages/mcp-server/server.js',
@@ -259,8 +259,8 @@ if (versionFile != null) {
   }
   // Catálogos opencode/pi/zcode carregam VERSION crua (não plugin.json).
   for (const rel of [
-    'hosts/opencode/.opencode/atlas/VERSION',
-    'hosts/pi/atlas/VERSION',
+    'hosts/opencode/.opencode/talos/VERSION',
+    'hosts/pi/talos/VERSION',
     'hosts/zcode/packages/mcp-server/VERSION',
   ]) {
     const raw = read(rel);
@@ -435,13 +435,13 @@ if (stateSchema != null) {
 }
 
 // Codex custom agents não podem depender apenas do bundle do plugin: o instalador
-// precisa copiar os atlas-*.toml para CODEX_HOME/agents, que é o caminho nativo que
+// precisa copiar os talos-*.toml para CODEX_HOME/agents, que é o caminho nativo que
 // `spawn_agent(agent_type)` carrega. Regressão aqui volta ao erro `unknown agent_type`.
-const atlasInit = read('build/cli/atlas-init.mjs');
-if (atlasInit != null) {
-  for (const token of ['CODEX_HOME', "'.codex'", "'agents'", "['.toml']", 'copyAtlasAgents(srcAgents, agentsDir']) {
-    if (!atlasInit.includes(token)) {
-      errors.push(`Codex agent install-regressão: atlas-init.mjs não contém '${token}'`);
+const talosInit = read('build/cli/talos-init.mjs');
+if (talosInit != null) {
+  for (const token of ['CODEX_HOME', "'.codex'", "'agents'", "['.toml']", 'copyTalosAgents(srcAgents, agentsDir']) {
+    if (!talosInit.includes(token)) {
+      errors.push(`Codex agent install-regressão: talos-init.mjs não contém '${token}'`);
     }
   }
 }

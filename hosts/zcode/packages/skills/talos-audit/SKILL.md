@@ -1,11 +1,11 @@
 ---
 name: talos-audit
-description: Skill/mode universal de auditoria Atlas. Use para `/workflow audit <target>` com flags opcionais `--handoff` e `--scope <descrição>`. Audita código contra regras locais, boas práticas da stack detectada e complexidade acidental estilo Ponytail, sem corrigir código nem executar plano.
+description: Skill/mode universal de auditoria Talos. Use para `/workflow audit <target>` com flags opcionais `--handoff` e `--scope <descrição>`. Audita código contra regras locais, boas práticas da stack detectada e complexidade acidental estilo Ponytail, sem corrigir código nem executar plano.
 ---
 
 # Talos Audit
 
-Auditoria universal, framework-agnóstica. Esta skill lê o repositório real, audita o `target` informado e entrega relatório de achados. Opcionalmente gera handoff Atlas-style para correção futura. **Nunca altera código. Nunca executa plano.**
+Auditoria universal, framework-agnóstica. Esta skill lê o repositório real, audita o `target` informado e entrega relatório de achados. Opcionalmente gera handoff Talos-style para correção futura. **Nunca altera código. Nunca executa plano.**
 
 ## Sintaxe
 
@@ -27,7 +27,7 @@ Auditoria universal, framework-agnóstica. Esta skill lê o repositório real, a
 - Não migrar lógica especialista de Flutter/Dart para o core universal.
 - Adapters por stack/backend são opcionais; fallback universal deve funcionar.
 - Não inventar comandos de validação: usar apenas manifests/configs/scripts reais.
-- `--handoff` gera artefato de plano em `.atlas/plans/`, mas não chama executor.
+- `--handoff` gera artefato de plano em `.talos/plans/`, mas não chama executor.
 
 ## Fluxo obrigatório
 
@@ -129,7 +129,7 @@ Se zero achados, diga explicitamente `Nenhum achado P0/P1/P2/P3 com evidência s
 
 ## `--handoff`
 
-Quando `--handoff` estiver presente, escrever em `.atlas/plans/PLAN_AUDIT_<slug>.md` um plano **conforme ao `PLAN_TEMPLATE.md` canônico** (resolver em `<raiz-do-plugin>/packages/templates/`), para que passe no gate TC (`talos_verify_template_conformance`) e seja consumível por `/workflow execute plan <path>` ou por `talos-plan-execute`. O plano só pode conter tasks derivadas dos achados evidenciados. Se a escrita falhar, reportar bloqueio e não fingir que há handoff executável.
+Quando `--handoff` estiver presente, escrever em `.talos/plans/PLAN_AUDIT_<slug>.md` um plano **conforme ao `PLAN_TEMPLATE.md` canônico** (resolver em `<raiz-do-plugin>/packages/templates/`), para que passe no gate TC (`talos_verify_template_conformance`) e seja consumível por `/workflow execute plan <path>` ou por `talos-plan-execute`. O plano só pode conter tasks derivadas dos achados evidenciados. Se a escrita falhar, reportar bloqueio e não fingir que há handoff executável.
 
 A auditoria **não tem PRD**: a fonte de verdade é o relatório de auditoria + achados + regras locais reais. O plano espelha o template, mas reancorado na auditoria — **sem inventar decisões `D*` nem referências PRD inexistentes**.
 
@@ -153,7 +153,7 @@ O gate TC exige literalmente a linha `| **PRD** |`, referência a `BOUNDARY_PRD_
 Política: [BOUNDARY_PRD_PLAN.md](./BOUNDARY_PRD_PLAN.md).
 
 ## Metadados de execução
-- Plan prefix: `atlas`
+- Plan prefix: `talos`
 - Execution mode: `sequencial (T01→TN)`
 - Executor skill: `talos-plan-execute`
 - Internal validator: `talos-task-validator`

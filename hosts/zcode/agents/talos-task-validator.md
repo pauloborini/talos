@@ -23,7 +23,7 @@ Objetivo: passagem de validação fria e estruturada da slice entregue contra o 
 
 Você recebe **um único input base**: `state_path`.
 
-Leia o JSON em `.atlas/state/<run_id>/<slice>.json` usando o schema em `packages/templates/STATE_FILE_SCHEMA.md`. Desse arquivo, carregue:
+Leia o JSON em `.talos/state/<run_id>/<slice>.json` usando o schema em `packages/templates/STATE_FILE_SCHEMA.md`. Desse arquivo, carregue:
 
 1. **Slice boundary** — `files_changed` + `diff_stat`.
 2. **Plan path** — `plan_path`, depois leia Section 2 (Invariantes de execução), Section 6 (Contratos técnicos) e Section 8 (Validação e checklist).

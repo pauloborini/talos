@@ -6,7 +6,7 @@ category: Development Automation
 
 # Talos
 
-Orquestra pipelines de desenvolvimento de features no projeto Atlas, automatizando a sequência de skills sob demanda com um único comando.
+Orquestra pipelines de desenvolvimento de features no projeto Talos, automatizando a sequência de skills sob demanda com um único comando.
 
 > **MCP é fonte obrigatória de status.** Cada gate é consultado via MCP antes de avançar (tools por fase na Fase 0 e nos fluxos). Sem resposta MCP, sem resultado exigido ou status bloqueante → workflow abortado, sem fallback narrativo. Edge cases de ambiente (conflito plugin/nativo, MCP indisponível, estado corrompido, lock conflict, drift de versão) bloqueiam com causa, impacto e próxima ação segura.
 
@@ -24,7 +24,7 @@ Três modos **canônicos de execução** — `full`, `direct`, `execute` (PRD §
 - **`direct`** — pipeline enxuto: backlog macro (se necessário) → sprint file → PRD → validação → entrevista (se necessário) → `talos-direct-execute` → review (opcional). **Não produz plano de handoff** — a diferença real para `full` é exatamente essa.
 - **`execute`** — recebe um **`PLAN_*.md` pronto** e o executa **sem gerar plano** (PRD D1). Entrada = caminho de plano; reverifica o artefato + conformidade de template e despacha `plan_execute` direto. Não regera nem replaneja: ajustes de plano pedem `full`. `talos_assert_after_plan` (gate pós-plano do `full`) **não se aplica** em `execute` — o plano já é o input; o equivalente é a reverificação na entrada (PRD D13). **Não há alias `plan`**: usar `plan` como modo é ambíguo com planejamento documental e deve ser rejeitado como modo inválido.
 - **`interview-only`** — entrevista direta (ex: brainstorm, resolução de decisões). Entrevista **sem execução**: não usa `guarantee_level` no fluxo (não há execução de código a garantir). Permanece modo separado (PRD D2).
-- **`audit`** — auditoria universal sem correção de código: lê target/boundary, regras locais e stack detectada; gera relatório de achados e, com `--handoff`, plano Atlas-style para correção futura. **Não executa plano, não chama executor e não altera código.**
+- **`audit`** — auditoria universal sem correção de código: lê target/boundary, regras locais e stack detectada; gera relatório de achados e, com `--handoff`, plano Talos-style para correção futura. **Não executa plano, não chama executor e não altera código.**
 
 ### Input Types
 
@@ -39,7 +39,7 @@ Três modos **canônicos de execução** — `full`, `direct`, `execute` (PRD §
 
 - `--interview` — força entrevista de PRD mesmo sem ambiguidades detectadas
 - `--review` — executa slice-review ao final (senão é opcional)
-- `--handoff` — em `audit`, escreve plano Atlas-style em `.atlas/plans/` derivado dos achados evidenciados; não executa
+- `--handoff` — em `audit`, escreve plano Talos-style em `.talos/plans/` derivado dos achados evidenciados; não executa
 - `--scope <descrição>` — em `audit`, restringe o boundary lógico dentro do target
 - `--help` — mostra sintaxe completa
 
@@ -76,15 +76,15 @@ Executar **antes** de iniciar o pipeline. Se qualquer item falhar, **parar e rep
 
 1. **Parse** dos argumentos `<mode> <input-type|target> [input] [flags]`. Se inválido ou `--help` → mostrar sintaxe e parar. Em `audit`, o segundo argumento é `target`, não `input-type`.
 2. **Chamar MCP `talos_ping`.** Se não responder, versão vier vazia, `version_check.status` vier bloqueado ou capacidades não listarem os gates exigidos pelo modo → abortar com erro de MCP indisponível/drift. Não seguir por prosa.
-2a. **Chamar MCP `talos_capabilities`.** Ler `host`, `subagent_dispatch`, `validator_dispatch`, `capabilities_flags`, `required_deps` e `dispatch_capability`. Determinar a **disponibilidade real** dos pré-requisitos essenciais neste host: o subagente do plugin é despachável? o MCP está vivo (ping ok)? Em hosts com `required_deps` (ex.: pi: `pi-mcp-adapter` + `pi-subagents`), confirmar que cada dep está presente; se faltar, o pré-requisito correspondente é `false`. Para modos com execução (`full`, `direct`, `execute`), determinar também `host_capabilities.dispatch_mutable`: se `dispatch_capability:"mutable"`, não precisa reportar; se `dispatch_capability:"unknown"` (zcode/pi/generic/antigravity), reporte `dispatch_mutable:true` **somente** quando o sub-agent do host aceitar os agentes atlas-* e tiver ferramentas mutáveis equivalentes a Write/Edit/Bash. Se não for verificável ou for read-only (ex.: schema restrito a `Explore`), não reporte `true`; deixe o `talos_preflight` bloquear no gate `DISPATCH`.
+2a. **Chamar MCP `talos_capabilities`.** Ler `host`, `subagent_dispatch`, `validator_dispatch`, `capabilities_flags`, `required_deps` e `dispatch_capability`. Determinar a **disponibilidade real** dos pré-requisitos essenciais neste host: o subagente do plugin é despachável? o MCP está vivo (ping ok)? Em hosts com `required_deps` (ex.: pi: `pi-mcp-adapter` + `pi-subagents`), confirmar que cada dep está presente; se faltar, o pré-requisito correspondente é `false`. Para modos com execução (`full`, `direct`, `execute`), determinar também `host_capabilities.dispatch_mutable`: se `dispatch_capability:"mutable"`, não precisa reportar; se `dispatch_capability:"unknown"` (zcode/pi/generic/antigravity), reporte `dispatch_mutable:true` **somente** quando o sub-agent do host aceitar os agentes talos-* e tiver ferramentas mutáveis equivalentes a Write/Edit/Bash. Se não for verificável ou for read-only (ex.: schema restrito a `Explore`), não reporte `true`; deixe o `talos_preflight` bloquear no gate `DISPATCH`.
 2b. **Chamar MCP `talos_classify_input`** no input informado (`input_path`), **antes de rotear** (PRD D3/D6). `classify_input` é para **artefato em arquivo** (path em disco). A tool devolve `artifact_type` ∈ {`backlog`, `prd`, `plan`, `idea`, `unknown`} (verdade forte = TC de plano passa) e um `banner` de roteamento já pronto. **O tipo de input é fato e prevalece sobre o modo pedido** (intenção). Aplicar o roteamento:
-   - **`plan` em `direct`/`full`** → auto-rotear para **`execute`** (executa o plano pronto; nunca gera plano de plano, mesmo com arquivo renomeado — PRD D6). **Não bloqueia**: ecoar o banner de troca `▸ atlas: roteamento · pediu={x} mas input={y} → modo=execute`.
+   - **`plan` em `direct`/`full`** → auto-rotear para **`execute`** (executa o plano pronto; nunca gera plano de plano, mesmo com arquivo renomeado — PRD D6). **Não bloqueia**: ecoar o banner de troca `▸ talos: roteamento · pediu={x} mas input={y} → modo=execute`.
    - **`execute` sobre `backlog`/`prd`** → auto-rotear para **`full`** (ou `direct` conforme o pedido), pois não há plano a executar. **Não bloqueia**: ecoar o banner de troca correspondente.
    - **`idea` (`status: not_a_file`)** → o input é **descrição livre, não path**. **Não é `unknown` nem BLOCK**: roteia para **`direct`** (implementa a partir da descrição/spec). Quando o usuário passou uma idea inline (input-type `idea`), você pode até **não chamar** `classify_input` (ele é para arquivos) e seguir direto em `direct`/`full` conforme o pedido — nunca tratar a descrição como path ilegível.
    - **`unknown`** (arquivo existe mas não classifica) → **não adivinhar**: ecoar o banner de input ilegível e **pedir esclarecimento** ao usuário (qual arquivo/tipo). Não inventa modo.
    - Tipo coincide com o modo → segue sem troca (ecoar o banner `roteia` simples).
    O `banner` vem do MCP; o orquestrador **só ecoa** (ver "Protocolo de banner").
-3. **Chamar MCP `talos_preflight`** com `run_id`, `<mode>`, `input_type`/`artifact_type` quando conhecidos, `host`, `expected_version` (quando o host reportar versão) e `host_capabilities` (a disponibilidade real apurada no passo 2a — ex.: `{"subagent_available":false}` se a dep do subagente faltar; `{"dispatch_mutable":true}` se um host `unknown` foi verificado como mutável). O resultado é a fonte obrigatória de pré-requisitos, modo, versão, lock, ids oficiais `atlas-*` e `routing.document_flow`.
+3. **Chamar MCP `talos_preflight`** com `run_id`, `<mode>`, `input_type`/`artifact_type` quando conhecidos, `host`, `expected_version` (quando o host reportar versão) e `host_capabilities` (a disponibilidade real apurada no passo 2a — ex.: `{"subagent_available":false}` se a dep do subagente faltar; `{"dispatch_mutable":true}` se um host `unknown` foi verificado como mutável). O resultado é a fonte obrigatória de pré-requisitos, modo, versão, lock, ids oficiais `talos-*` e `routing.document_flow`.
    - **Gate `PREREQ` (DEC-004): pré-requisito essencial ausente é hard-fail.** Se `gate:"PREREQ"`/`status:"blocked"`, **abortar em `ready`** (antes de qualquer fase/dispatch) com `missing_prerequisites`, causa, impacto e `next_action`. **Proibido degradar, rodar validator inline ou prosseguir sem isolamento, em qualquer tamanho de tarefa.** Só capability não-essencial (`todo`) segue sem o recurso.
    ```text
    ⛔ Pré-flight falhou (PREREQ)
@@ -113,9 +113,9 @@ Executar **antes** de iniciar o pipeline. Se qualquer item falhar, **parar e rep
       Motivo: sprint file ausente/inválido; PRD não nasce direto do backlog
       Ação: criar/atualizar SPRINT_S<NN>_<slug>.md via SPRINT_TEMPLATE.md
    ```
-4. **Usar a cadeia única `atlas-*`.** Cliente (Claude Code, Cursor, Codex App, Antigravity, ZCode, OpenCode, Pi CLI) é host de execução, não família de skills. Não existe roteamento por cliente.
+4. **Usar a cadeia única `talos-*`.** Cliente (Claude Code, Cursor, Codex App, Antigravity, ZCode, OpenCode, Pi CLI) é host de execução, não família de skills. Não existe roteamento por cliente.
 5. **Carregar defaults do pacote do plugin** (`defaults/paths.md` e `references/subagent_dispatch.md`). Não exigir config na raiz do repositório usuário.
-6. **Verificar disponibilidade dos ids `atlas-*`.** Para cada skill exigida pelo modo, confirmar que o id exato é **invocável** no host. Para as skills de **execução/validação/review** (`plan_execute`, `direct_execute`, `task_validator`, `findings_repair`, `slice_review`), confirmar também que são **despacháveis pelo verbo nativo do host** — leia `talos_capabilities.subagent_dispatch.mechanism` (não assuma "Agent tool"; no Codex é `spawn_agent(agent_type)`, no opencode `@<name>`, no pi `subagent({...})`, no ZCode e Claude é `Agent(subagent_type)`). No Codex, `$<skill>` é ativação in-context de skill e **não** conta como sub-agent isolado para execução. Para as skills **documentais/de leitura** (`prd_generator`, `prd_interview`, `plan_handoff`, `audit`), basta invocabilidade no fio principal; não exigir despachabilidade como sub-agent.
+6. **Verificar disponibilidade dos ids `talos-*`.** Para cada skill exigida pelo modo, confirmar que o id exato é **invocável** no host. Para as skills de **execução/validação/review** (`plan_execute`, `direct_execute`, `task_validator`, `findings_repair`, `slice_review`), confirmar também que são **despacháveis pelo verbo nativo do host** — leia `talos_capabilities.subagent_dispatch.mechanism` (não assuma "Agent tool"; no Codex é `spawn_agent(agent_type)`, no opencode `@<name>`, no pi `subagent({...})`, no ZCode e Claude é `Agent(subagent_type)`). No Codex, `$<skill>` é ativação in-context de skill e **não** conta como sub-agent isolado para execução. Para as skills **documentais/de leitura** (`prd_generator`, `prd_interview`, `plan_handoff`, `audit`), basta invocabilidade no fio principal; não exigir despachabilidade como sub-agent.
    - **Skill ausente é bloqueio** (Gate G10): não substitua por skill nativa, variante antiga ou prompt inline.
    - **Conflito plugin × skill nativa:** use somente o id exato retornado pelo preflight. Se o host não permitir comprovar que a skill vem do plugin esperado, aborte e peça remoção/desativação manual da nativa; não resolva por tentativa silenciosa.
    - **Nunca substituir por variante de executor** (Gate G10).
@@ -124,7 +124,7 @@ Executar **antes** de iniciar o pipeline. Se qualquer item falhar, **parar e rep
    ⛔ Pré-flight falhou
       Skill exigida ausente: <id exato>
       Motivo: id não despachável neste host
-      Ação: instalar/ativar o plugin ou corrigir o pacote atlas-* disponível no host
+      Ação: instalar/ativar o plugin ou corrigir o pacote talos-* disponível no host
    ```
    **PROIBIDO o fallback "implementação direta" / "contratos equivalentes inline".** Não existe caminho onde o orquestrador faz plano ou código no próprio fio. Emulação inline e fallback direto são a falha-raiz que esta skill proíbe — se não há sub-agent, **para**. (Gate G7.)
 8. **Rejeitar conflito de modo:** se o pedido tiver `full`/`direct` junto com "sem patch", "sem editar código", "planejamento apenas", "handoff only" ou equivalente, **pare antes de gerar artefatos**. `full` executa `talos-plan-execute`; `direct` executa `talos-direct-execute`; não existe interpretação plan-only implícita. Se o usuário quer diagnóstico sem patch, o modo correto é `audit`.
@@ -138,7 +138,7 @@ O pipeline é **fire-and-continue**: uma vez iniciado, o orquestrador avança fa
 
 **Proibido (regressão, PRD §6):**
 - Pedir confirmação para avançar: "Quer que eu gere o PRD?", "posso seguir?", "continuo?", "devo despachar o executor?". A resposta é sempre sim — **execute**. Se a próxima fase tem artefato a produzir, produza.
-- Inventar modo fora do contrato. **Não existe "Modo Discussão", "modo análise", "dry-run"** ou similar. Os únicos modos são `full`/`direct`/`execute`/`interview-only`/`audit`. Pedido em linguagem natural que nomeia um modo (ex.: "atlas full backlog s40") **executa esse modo** — não vira pergunta nem resumo passivo.
+- Inventar modo fora do contrato. **Não existe "Modo Discussão", "modo análise", "dry-run"** ou similar. Os únicos modos são `full`/`direct`/`execute`/`interview-only`/`audit`. Pedido em linguagem natural que nomeia um modo (ex.: "talos full backlog s40") **executa esse modo** — não vira pergunta nem resumo passivo.
 - Parar por decisão em aberto. Decisão pendente de **qualquer fonte** (scan de PRD, entrevista, `PERGUNTAS_EM_ABERTO.md`, doc de discussão/decisões como `DISCUSSAO_*.md`, ou o próprio backlog) **não é blockage**: gera o PRD se ainda não existe, dispara `talos-prd-interview` sobre ele, propaga e **continua**. Nunca oferecer "responda só: seguir com recomendação ou D=...". Ver "Decisão em aberto ≠ parada".
 
 **PRD ausente em `full`/`direct`** = o passo "Generate PRD" **gera o PRD automaticamente** (invoca o id resolvido para `prd_generator` / autoria documental no fio principal). Nunca perguntar "quer que eu gere?".
@@ -164,7 +164,7 @@ Execução de código é **sempre** sub-agent executor do modo (`talos-plan-exec
 O **mecanismo** varia por host — leia `subagent_dispatch.mechanism`, `.example` e `validator_dispatch` de `talos_capabilities` (fonte de verdade em runtime) e use o **verbo nativo**. Não hardcode o verbo do Claude. Mapeamento ilustrativo, onde `<exec>` é o id da fase (`plan-execute`/`direct-execute`/`slice-review`/`task-validator`):
 
 - **claude:** `Agent(subagent_type: "talos-<exec>", prompt: ...)`
-- **codex:** `spawn_agent(agent_type: "talos-<exec>", items: [{ type: "text", text: "<state_path ou task>" }])` (custom agent nativo em `CODEX_HOME/agents/talos-<exec>.toml`; `.codex/agents/` do bundle é gerado). `$atlas-*` sozinho **não** isola contexto — use `spawn_agent`.
+- **codex:** `spawn_agent(agent_type: "talos-<exec>", items: [{ type: "text", text: "<state_path ou task>" }])` (custom agent nativo em `CODEX_HOME/agents/talos-<exec>.toml`; `.codex/agents/` do bundle é gerado). `$talos-*` sozinho **não** isola contexto — use `spawn_agent`.
 - **zcode:** `Agent(subagent_type: "talos-<exec>", prompt: "<state_path>")` (Claude Agent SDK — mesmo verbo de Claude, formato `agents/<name>.md` no plugin root; `ZCODE_PLUGIN_ROOT` injetado pelo host)
 - **opencode:** `@talos-<exec>` (ou auto por description)
 - **pi:** `subagent({ agent: "talos-<exec>", task, context: "fresh" })`
@@ -180,7 +180,7 @@ Se `talos_capabilities.subagent_dispatch.fallback.enabled === true` (hoje só no
 - `subagent_type`: `fallback.subagent_type` (`"general-purpose"`)
 - `prompt`: `fallback.prompt_template` com `<name>` substituído por `talos-<exec>` (ex.: `talos-task-validator`) e `<input>` substituído por `state_path` (validator/repair/review) ou `task` (executores).
 
-**Por que existe:** o ZCode não propaga MCP para sub-agentes de plugin (mesmo com `mcp__...` no frontmatter `tools:`), mas propaga para o subagente nativo `general-purpose`. O fallback despacha `general-purpose`, que herda MCP + tools nativas; o contrato do subagente Atlas vem do `agents/<name>.md` apontado pelo prompt (fonte única preservada).
+**Por que existe:** o ZCode não propaga MCP para sub-agentes de plugin (mesmo com `mcp__...` no frontmatter `tools:`), mas propaga para o subagente nativo `general-purpose`. O fallback despacha `general-purpose`, que herda MCP + tools nativas; o contrato do subagente Talos vem do `agents/<name>.md` apontado pelo prompt (fonte única preservada).
 
 **Gate G4/sibling preservado:** ainda é um subagente irmão isolado, despachado blocking, com `dispatch_token`/`challenge_response` ecoados do output. Mudou o `subagent_type` (nativo vs plugin), não a topologia. Os gates R17/R19/R20 continuam válidos: o token provém do output do irmão, não fabricado pelo orquestrador. `lock_validator(start→complete)` opera no mesmo ciclo de vida.
 
@@ -189,11 +189,11 @@ Se `talos_capabilities.subagent_dispatch.fallback.enabled === true` (hoje só no
 
 ## Protocolo de banner (única comunicação de progresso)
 
-O orquestrador comunica progresso **apenas** por **banner de fase de linha única** no formato `▸ atlas: <fase> · <ação> [· <detalhe>]` (PRD D7/D8). Regras:
+O orquestrador comunica progresso **apenas** por **banner de fase de linha única** no formato `▸ talos: <fase> · <ação> [· <detalhe>]` (PRD D7/D8). Regras:
 
 - **A string vem do MCP.** Cada gate de tool (`talos_preflight`, `talos_classify_input`, `talos_scan_prd`, `talos_verify_artifact`, `talos_verify_template_conformance`, `talos_lock_dispatch`, `talos_assert_after_plan`) devolve o campo `banner` pronto, derivado do banco canônico de 11 templates no MCP. O orquestrador **só ECOA** essa string — sem reescrever, traduzir ou enfeitar (PRD D9).
-- **Proibido narrar intenção entre gates.** Nada de "vou despachar o sub-agent...", "agora vou...", "deixa eu verificar...". Qualquer prosa de intenção entre fases é **regressão** (PRD §6). A sessão do usuário é uma sequência limpa de linhas `▸ atlas: ...`.
-- **Uma linha por transição**, em pt-BR, prefixada por `▸ atlas:`. Os 11 eventos do banco: roteia, roteia c/ troca, preflight ok, preflight fail (`BLOCK`), prd scan, entrevista, plano, exec, validação, review, done.
+- **Proibido narrar intenção entre gates.** Nada de "vou despachar o sub-agent...", "agora vou...", "deixa eu verificar...". Qualquer prosa de intenção entre fases é **regressão** (PRD §6). A sessão do usuário é uma sequência limpa de linhas `▸ talos: ...`.
+- **Uma linha por transição**, em pt-BR, prefixada por `▸ talos:`. Os 11 eventos do banco: roteia, roteia c/ troca, preflight ok, preflight fail (`BLOCK`), prd scan, entrevista, plano, exec, validação, review, done.
 - Preflight bloqueado → ecoar o banner `preflight · BLOCK · <motivo>`; PRD com lacunas → banner `prd · <n> lacunas`. O detalhe livre só entra no slot `<detalhe>` quando o template tem um.
 
 > O banner **não substitui** os gates de execução: ele é a camada de comunicação. Gates duros (G1–G11, PREREQ, TC) continuam decidindo o fluxo por contrato MCP, não pela string.
@@ -220,7 +220,7 @@ Regras inegociáveis. Violação = parar, não contornar.
 | SELECT_NEXT_SPRINT | **Próxima sprint vem do MCP.** Em `backlog_first`, chamar `talos_select_next_sprint`; sem `selected` não há PRD. A seleção exige `state=ready`, deps internas `done`, sprint file válido e DoR verde. | roteamento |
 | SPRINT_STATUS_SYNC | **Fechamento de sprint é gate MCP, não prosa.** Quando a execução validada pertence a backlog/sprint file, chamar `talos_update_sprint_status`: `done` exige `state_path` + `validator_verdict=pass|pass_with_observations`; `blocked` registra `fail`. O MCP sincroniza BACKLOG_MESTRE + SPRINT_SNN e bloqueia reabrir `done` sem autorização explícita. | pós-validação |
 | SPRINT_FILE | **Sprint file vivo obrigatório antes de PRD.** Em `full`/`direct` com `sprint`, `backlog-item` ou `backlog_first`, resolver o sprint file via backlog/saída do backlog-generator e validar com `talos_verify_sprint_file`. Ausente/inválido/divergente/gate indisponível bloqueia antes do PRD. `audit --handoff`, `execute plan` e `interview-only brainstorm` ficam fora deste gate. | roteamento/PRD |
-| G10 | **Família única atlas-*, id exato.** Modo, versão, lock e ids oficiais vêm de `talos_preflight`, nunca do host. Skill ausente, conflito de origem, lock ativo ou drift de versão → aborta com causa/impacto/próxima ação. | roteamento |
+| G10 | **Família única talos-*, id exato.** Modo, versão, lock e ids oficiais vêm de `talos_preflight`, nunca do host. Skill ausente, conflito de origem, lock ativo ou drift de versão → aborta com causa/impacto/próxima ação. | roteamento |
 | G9 | **Fronteira de determinismo pela mutação de código.** O orquestrador **NUNCA** escreve/edita **código** nem roda comando mutante (flutter/test/git write), em qualquer fase ou modo — execução de código é sempre do sub-agent. **Autoria documental** (PRD, entrevista, `PLAN_*.md`) é permitida no fio principal **somente ANTES do plano validado**; uma vez que o plano passa `talos_verify_artifact` + TC, **mãos atadas fortes**: o orquestrador não edita mais PRD/plano/código, só coordena execução (despachar sub-agent, ler artefato para verificar gate, ecoar banner, montar output final). **NÃO** "ajuda" o sub-agent de execução. **Dispatch é blocking**: despacha **um** sub-agent por vez (verbo nativo do host de `talos_capabilities`, em foreground), **espera o retorno**, só então segue. Proibido `run_in_background` para fases do pipeline e proibido implementar "em paralelo" enquanto um sub-agent roda. Se o orquestrador tocar em **código** = G9 violado, **inclusive rodar a mutação inline porque o host não tem "Agent tool"** (use o verbo daquele host). | orquestrador |
 | G11 | **`full` deve executar depois do plano.** Depois que `PLAN_*.md` passa G1/G2/G7/TC, chamar `talos_assert_after_plan`; a próxima ação obrigatória é despachar `plan_execute` como sub-agent blocking. Proibido completed só com handoff. | `full` |
 
@@ -285,10 +285,10 @@ Entrada: um **`PLAN_*.md` pronto**. Artefatos esperados: (plano já existe) → 
 
 ### Audit mode
 
-Entrada: um `target` auditável, com flags opcionais `--handoff` e `--scope <descrição>`. Artefatos esperados: relatório de auditoria em resposta; se `--handoff`, plano Atlas-style salvo em `.atlas/plans/PLAN_AUDIT_<slug>.md`. **Não há execução, `plan_execute`, validator, repair, review nem `guarantee_level`.**
+Entrada: um `target` auditável, com flags opcionais `--handoff` e `--scope <descrição>`. Artefatos esperados: relatório de auditoria em resposta; se `--handoff`, plano Talos-style salvo em `.talos/plans/PLAN_AUDIT_<slug>.md`. **Não há execução, `plan_execute`, validator, repair, review nem `guarantee_level`.**
 
 1. **Parse / target** — resolver target real em disco. Se o target não for localizável, parar com pedido objetivo de path/boundary.
-2. **Pré-flight leve** — `talos_ping` → `talos_capabilities` → `talos_preflight(mode=audit)` para travar versão/família `atlas-*`. Não chamar `talos_classify_input`: audit não roteia input para execução.
+2. **Pré-flight leve** — `talos_ping` → `talos_capabilities` → `talos_preflight(mode=audit)` para travar versão/família `talos-*`. Não chamar `talos_classify_input`: audit não roteia input para execução.
 3. **Invocar `talos-audit` no fio principal** — carregar o `SKILL.md` real, auditar só o boundary informado, ler regras locais, detectar stack por manifests/configs/comandos reais, aplicar checklist universal e Ponytail pass final.
 4. **Output** — relatório com stack detectada, regras consultadas, boundary, achados P0/P1/P2/P3 com `arquivo:linha`, gaps por área e limitações.
 5. **Handoff opcional** — se `--handoff`, escrever `PLAN_AUDIT_*.md` **conforme ao `PLAN_TEMPLATE.md`** (cabeçalho com linha `| **PRD** | N/A — origem auditoria |`, ref a `BOUNDARY_PRD_PLAN.md`, §1–§6/§8, tasks `#### T01.`), derivado somente dos achados evidenciados — passa no gate TC e é consumível por `/workflow execute plan`. Reportar o path e **parar aqui. Não chamar executor automaticamente.**
@@ -398,7 +398,7 @@ Se `full` gerou `PLAN_*.md` mas não despachou `plan_execute`, o cabeçalho deve
 | `talos-sprint-prd-generator` | `sprint_id`, `sprint_file_path`, backlog autoritativo | `PRD_*.md`, decisions_found |
 | `talos-prd-interview` | prd_path, ambiguities | `PRD_*.md` atualizado, decisions |
 | `talos-plan-handoff` | `prd_path`, `sprint_file_path`, código real | `PLAN_*.md` |
-| `talos-audit` | target, flags (`--handoff`, `--scope`) | relatório de auditoria; `.atlas/plans/PLAN_AUDIT_*.md` opcional sem execução |
+| `talos-audit` | target, flags (`--handoff`, `--scope`) | relatório de auditoria; `.talos/plans/PLAN_AUDIT_*.md` opcional sem execução |
 | `talos-plan-execute` | plan_path (`full` / `execute`) | diff de código, evidência, `state_path` |
 | `talos-direct-execute` | prd_path/spec/task (`direct`) | diff de código, evidência, `state_path` |
 | `talos-slice-review` | diff/output | review_feedback |
@@ -410,7 +410,7 @@ Se `full` gerou `PLAN_*.md` mas não despachou `plan_execute`, o cabeçalho deve
 ## Configuração
 
 Plugin usa configuração embutida no MCP para:
-- mapear skills `atlas-*`;
+- mapear skills `talos-*`;
 - validar padrões de ambiguidade;
 - declarar sequências por modo + artefatos esperados;
 - aplicar gates duros.

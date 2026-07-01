@@ -27,7 +27,7 @@ Before validation, derive `run_id` from `state_path`, call `talos_run_state(acti
 
 The subagent must receive only one base input: `state_path`.
 
-Read the JSON file at `.atlas/state/<run_id>/<slice>.json` using the schema in `packages/templates/STATE_FILE_SCHEMA.md`. From that file, load:
+Read the JSON file at `.talos/state/<run_id>/<slice>.json` using the schema in `packages/templates/STATE_FILE_SCHEMA.md`. From that file, load:
 
 1. **Slice boundary** — `files_changed` plus `diff_stat`.
 2. **Plan path** — `plan_path`, then read Section 2 (Execution Invariants), Section 6 (Technical Contracts), and Section 8 (Validation and Checklist).
@@ -51,7 +51,7 @@ Se o state declara sprint file, trate `eval_results` ausente, `evidence_to_claim
 
 ## Resolução Canônica de Templates
 
-* Fonte única: `packages/templates/` empacotado no plugin Atlas Workflow.
+* Fonte única: `packages/templates/` empacotado no plugin Talos.
 * Antes da validação, resolver `PLAN_TEMPLATE.md` e `BOUNDARY_PRD_PLAN.md` a partir da raiz do plugin/bundle.
 * Template local do repo consumidor nunca sobrepõe o template empacotado.
 * Se `packages/templates/PLAN_TEMPLATE.md` ou `packages/templates/BOUNDARY_PRD_PLAN.md` não existir, abortar com erro claro: `Template canônico ausente: <nome-do-template>`.

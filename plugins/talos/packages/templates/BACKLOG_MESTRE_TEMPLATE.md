@@ -4,7 +4,7 @@ Backlog macro de **[NOME_DO_PROJETO_OU_FEATURE]**.
 
 Este arquivo é **índice estratégico + estado consolidado**. Ele organiza fases, sprints, dependências, prioridade e próxima sprint executável. O detalhe vivo de cada sprint mora em `SPRINT_S<NN>_<slug>.md`; o PRD e o PLAN nascem depois, recortados por sprint.
 
-Use este template para transformar conversa, ideia, briefing, roadmap ou PRD macro em uma sequência pequena, rastreável e executável pelo Atlas.
+Use este template para transformar conversa, ideia, briefing, roadmap ou PRD macro em uma sequência pequena, rastreável e executável pelo Talos.
 
 ---
 
@@ -49,7 +49,7 @@ Observações:
 | Data de criação | [YYYY-MM-DD] |
 | Última atualização | [YYYY-MM-DD] |
 | Fonte macro | [conversa / briefing / roadmap / PRD macro / issue / doc] |
-| Diretório recomendado de sprints | `.atlas/backlog/sprints/` |
+| Diretório recomendado de sprints | `.talos/backlog/sprints/` |
 | Próxima sprint executável | [SNN ou `nenhuma`] |
 
 ---
@@ -147,13 +147,13 @@ Use esta tabela para decisões que impedem uma ou mais sprints de ficarem `ready
 
 Uma linha por sprint. Detalhe vivo no arquivo apontado em **Sprint file**.
 
-As 12 primeiras colunas preservam compatibilidade com helpers Atlas atuais. Colunas novas entram no fim.
+As 12 primeiras colunas preservam compatibilidade com helpers Talos atuais. Colunas novas entram no fim.
 
 | ID | Sprint | Fase-fonte | Objetivo (1 linha) | MoSCoW | Ganho | Esforço | Prioridade | PRD | Depende de | Estado | Gate | Sprint file | PLAN | State |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| S01 | [nome] | F0 | [objetivo curto] | Must | Alto | Baixo | P0 | pendente | — | backlog | — | `.atlas/backlog/sprints/SPRINT_S01_[slug].md` | pendente | pendente |
-| S02 | [nome] | F1 | [objetivo curto] | Must | Alto | Médio | P0 | pendente | S01 | backlog | — | `.atlas/backlog/sprints/SPRINT_S02_[slug].md` | pendente | pendente |
-| S03 | [nome] | F1 | [objetivo curto] | Should | Médio | Baixo | P1 | pendente | S01 | backlog | — | `.atlas/backlog/sprints/SPRINT_S03_[slug].md` | pendente | pendente |
+| S01 | [nome] | F0 | [objetivo curto] | Must | Alto | Baixo | P0 | pendente | — | backlog | — | `.talos/backlog/sprints/SPRINT_S01_[slug].md` | pendente | pendente |
+| S02 | [nome] | F1 | [objetivo curto] | Must | Alto | Médio | P0 | pendente | S01 | backlog | — | `.talos/backlog/sprints/SPRINT_S02_[slug].md` | pendente | pendente |
+| S03 | [nome] | F1 | [objetivo curto] | Should | Médio | Baixo | P1 | pendente | S01 | backlog | — | `.talos/backlog/sprints/SPRINT_S03_[slug].md` | pendente | pendente |
 
 Legenda:
 

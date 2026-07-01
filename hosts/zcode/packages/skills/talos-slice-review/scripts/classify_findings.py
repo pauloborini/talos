@@ -16,7 +16,7 @@ def main() -> int:
     try:
         return subprocess.run(["node", str(script), sys.argv[1]], check=False).returncode
     except FileNotFoundError:
-        sys.stderr.write("Node.js ausente: requisito runtime do Atlas\n")
+        sys.stderr.write("Node.js ausente: requisito runtime do Talos\n")
         return 1
 
 

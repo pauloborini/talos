@@ -1,6 +1,6 @@
 # NAMING — Decisão de Marca do Ecossistema Atlas
 
-> Decisão de produto cross-repo. Registrada aqui (raiz de `atlas-workflow`) por ser
+> Decisão de produto cross-repo. Registrada aqui (raiz de `talos`, originalmente `atlas-workflow`) por ser
 > o repo onde a conversa aconteceu; deve ser copiada/linkada nos repos `atlas-cortex`,
 > `atlas-brain` e `atlas-agents` para que qualquer sessão/agente que trabalhe em
 > qualquer um dos repos veja a mesma convenção.
@@ -33,7 +33,7 @@ mascará-la atrás de nomes parecidos.
 |---|---|---|---|---|
 | **Atlas Agents** | hub/app final — assistente pessoal de IA desktop, orquestra MCPs locais e agentes especializados | sem codinome — é o produto que absorve os demais | `atlas-agents` | já v3.0, mantém nome |
 | **Argus** | code retrieval / context packing local | gigante de 100 olhos, nunca dorme — fit com daemon de auto-sync e indexação contínua | `atlas-cortex` (a renomear) | código maduro, sem usuário externo |
-| **Talos** | pipeline determinística PRD→plano→execução→validação | autômato de bronze, executa regra fixa sem desvio — fit com determinismo/gates duros, sem improviso | `atlas-workflow` (este repo) | v0.11.1, com usuário (mesmo que só o Paulo) |
+| **Talos** | pipeline determinística PRD→plano→execução→validação | autômato de bronze, executa regra fixa sem desvio — fit com determinismo/gates duros, sem improviso | `talos` (este repo) | v0.11.1, com usuário (mesmo que só o Paulo) |
 | **Athena** | documentação/conhecimento contínuo do projeto | deusa da sabedoria/estratégia — fit com conhecimento acumulado | `atlas-brain` (a renomear) | repo existe, fase de pesquisa (`_analysis/gbrain` — referência arquitetural de memória/graph/synthesis, não é fonte a copiar) |
 
 **Nota sobre o app Flutter `atlas`** (`/Volumes/Dados/projetos/atlas`, monorepo
@@ -47,7 +47,7 @@ para o terceiro produto quando ele nascer.
 
 ---
 
-## Plano de rename 1 — `atlas-workflow` → Talos
+## Plano de rename 1 — `atlas-workflow` → Talos (concluído)
 
 **Diferença crítica em relação ao Argus**: este produto **tem usuário real**
 (instalado via marketplace por quem quer que seja, ainda que hoje seja só o
@@ -58,7 +58,7 @@ funciona"** + **"main sempre instalável"**. Rename aqui não é find-replace li
 ### Escopo técnico (levantado por exploração, não executado ainda)
 
 A duplicação física é o multiplicador de esforço: o conteúdo fonte vive em
-`packages/` e é fisicamente copiado (não symlink) para `plugins/atlas-workflow-orchestrator/`
+`packages/` e é fisicamente copiado (não symlink) para `plugins/talos/`
 e para `hosts/{opencode,pi,zcode}/`. **Toda string a trocar deve ser trocada na
 fonte (`packages/`) e re-sincronizada via `build/build-plugins.sh` +
 `build/install-host.sh`** — nunca editada nas 5 cópias à mão.
@@ -66,33 +66,33 @@ fonte (`packages/`) e re-sincronizada via `build/build-plugins.sh` +
 | # | O quê | Onde (fonte) | Vira |
 |---|---|---|---|
 | 1 | Prefixo de tool MCP | `packages/mcp-server/server.js` (~4991 linhas, tool defs a partir de ~4569) | `atlas_*` → `talos_*` |
-| 2 | Nome do server MCP (chave de config) | `.claude-plugin/plugin.json`, `.mcp.json`, `build/cli/atlas-init.mjs` (`mergeServerInto(..., 'atlas-workflow', ...)`) | `mcpServers.atlas-workflow` → `mcpServers.talos` |
+| 2 | Nome do server MCP (chave de config) | `.claude-plugin/plugin.json`, `.mcp.json`, `build/cli/talos-init.mjs` | `mcpServers.atlas-workflow` → `mcpServers.talos` |
 | 3 | Nome do plugin | `.claude-plugin/plugin.json` (`name`), `plugin-manifests/{claude,codex,zcode}/plugin.json`, `hosts/zcode/.zcode-plugin/plugin.json` | `atlas-workflow-orchestrator` → `talos` |
 | 4 | Nome do marketplace | `.claude-plugin/marketplace.json`, `.agents/plugins/marketplace.json` | `atlas-workflow` → `talos` |
 | 5 | 11 skills `atlas-*` | `packages/skills/*`, `packages/orchestrator/skills/atlas-workflow-orchestrator/` | `atlas-plan-execute`→`talos-plan-execute` (e as outras 9), `atlas-workflow-orchestrator`→`talos` (skill orquestradora, nome coincide com o produto) |
 | 6 | Scope npm | `package.json`, `packages/mcp-server/package.json` (`@atlas-workflow/mcp-server`) | `@atlas-workflow/*` → `@talos/*` |
-| 7 | Bin CLI público | `package.json` (`bin`), `build/cli/atlas-init.mjs` | `atlas-workflow` → `talos` |
-| 8 | `REPO_SLUG`/`PLUGIN_ID`/`ZCODE_PLUGIN_NAME` hardcoded | `build/cli/atlas-init.mjs` linhas 21-22, 584 | atualizar para novo slug/nome |
-| 9 | Guards de build hardcoded | `build/check-consistency.mjs` (regex de frontmatter, `MCP_SERVER` literal linha 148), `build/bump-version.mjs`, `build/build-plugins.sh` (artefato `atlas-workflow-${host}.plugin`), `build/install-host.sh` | atualizar todos os 4 scripts — **se esquecidos, quebram silenciosamente, não dão erro óbvio** |
-| 10 | Repo GitHub | `origin = github.com/pauloborini/atlas-workflow` | **decisão em aberto** — ver abaixo |
+| 7 | Bin CLI público | `package.json` (`bin`), `build/cli/talos-init.mjs` | `atlas-workflow` → `talos` |
+| 8 | `REPO_SLUG`/`PLUGIN_ID`/`ZCODE_PLUGIN_NAME` hardcoded | `build/cli/talos-init.mjs` | atualizar para novo slug/nome |
+| 9 | Guards de build hardcoded | `build/check-consistency.mjs` (regex de frontmatter, `MCP_SERVER` literal linha 148), `build/bump-version.mjs`, `build/build-plugins.sh` (artefato `talos-${host}.plugin`), `build/install-host.sh` | atualizar todos os 4 scripts — **se esquecidos, quebram silenciosamente, não dão erro óbvio** |
+| 10 | Repo GitHub | `origin = github.com/pauloborini/talos` | **decisão em aberto** — ver abaixo |
 
 ### Decisão em aberto: renomear o repo GitHub também?
 
-`DEC-009` (já registrada) fixou `npx github:pauloborini/atlas-workflow init <host>`
+`DEC-009` (já registrada) fixou `npx github:pauloborini/talos init <host>`
 como instalador público recomendado. Se o repo for renomeado:
 - GitHub redireciona URLs antigas automaticamente por tempo indeterminado (mitiga, não resolve permanentemente).
-- `REPO_SLUG` em `atlas-init.mjs` muda de qualquer forma — é código, não só doc.
+- `REPO_SLUG` em `talos-init.mjs` muda de qualquer forma — é código, não só doc.
 - Consistente: nome do produto = nome do repo = menos confusão futura.
 
 Se o repo **não** for renomeado: nome técnico do produto (Talos) fica
-dessincronizado do slug do repo (atlas-workflow) — funciona, mas é a mesma
+dessincronizado do slug do repo (talos) — funciona, mas é a mesma
 categoria de confusão que motivou este documento, só que entre repo e produto
 em vez de entre produtos. **Recomendação: renomear o repo também.**
 
 ### Migração para instalações existentes (não pular)
 
-A chave `mcpServers.atlas-workflow` em configs já escritas em máquinas (incluindo
-a do Paulo) precisa de lógica de migração em `atlas-init.mjs`: detectar chave
+A chave `mcpServers.talos` em configs já escritas em máquinas (incluindo
+a do Paulo) precisava de lógica de migração em `talos-init.mjs`: detectar chave
 antiga, remover, escrever a nova — não deixar o usuário com 2 entradas ou uma
 órfã. Isso é trabalho de código, não só rename de string.
 
@@ -102,9 +102,9 @@ antiga, remover, escrever a nova — não deixar o usuário com 2 entradas ou um
 2. Editar fonte em `packages/` (tool prefix, skills, package.json, scripts de build).
 3. Re-rodar `build/build-plugins.sh` + `build/install-host.sh` para resincronizar as 4 cópias derivadas.
 4. Atualizar os 4 scripts de build/consistência (item 9 da tabela).
-5. Adicionar lógica de migração de chave de config em `atlas-init.mjs`.
+5. ~~Adicionar lógica de migração de chave de config em `talos-init.mjs`.~~ (não necessário — instalador foi simplificado para instalação limpa)
 6. `build/check-consistency.mjs` + `claude plugin validate ./ --strict` (gate do invariante 6 do CLAUDE.md).
-7. Smoke real: install em pelo menos Claude Code + 1 host adicional, `atlas_ping`→`talos_ping`, dispatch do validator.
+7. Smoke real: install em pelo menos Claude Code + 1 host adicional, `talos_ping`→`talos_ping`, dispatch do validator.
 8. Só então: renomear repo GitHub (se decidido), atualizar README/CHANGELOG/docs.
 9. Branch feature, nunca direto em `main` (invariante 2).
 
@@ -161,7 +161,7 @@ mas ações concretas:
 1. Renomear o próprio repo GitHub: `atlas-brain` → `argus`... **não**, → `athena` (atenção ao rename certo na hora de executar).
 2. Decidir e documentar no novo README se `_analysis/gbrain/` fica versionado (referência viva) ou vira nota/link externo (mais limpo — é código de terceiro, não dá pra confundir com fonte própria).
 3. Ao escrever o primeiro código real, já nascer com a convenção: nome de pacote/bin/MCP server `athena`, sem prefixo `atlas-`/`atlas_`, mesmo padrão aplicado a Argus e Talos.
-4. Quando a skill `atlas-prd-interview`/docs deste repo (`atlas-workflow`/Talos) referenciarem o futuro produto de documentação, usar "Athena", não "Atlas Brain".
+4. Quando a skill `atlas-prd-interview`/docs deste repo (`talos`/Talos) referenciarem o futuro produto de documentação, usar "Athena", não "Atlas Brain".
 
 ---
 
@@ -182,8 +182,8 @@ Por custo de execução, do mais barato ao mais caro:
 
 1. **Athena** (`atlas-brain`) — sem código próprio, é praticamente só renomear o repo e decidir o destino do material de pesquisa.
 2. **Argus** (`atlas-cortex`) — código maduro mas sem usuário externo, sem migração necessária.
-3. **Talos** (`atlas-workflow`) — tem invariante de não-regressão, duplicação física 5x, e instalações existentes a migrar; é o mais arriscado, deixar por último para aplicar o processo já validado nos outros dois.
+3. **Talos** — tem invariante de não-regressão, duplicação física 5x, e instalações existentes a migrar; é o mais arriscado, deixar por último para aplicar o processo já validado nos outros dois.
 
 Cada um em branch feature próprio, smoke real antes de merge em `main` (onde
-aplicável — invariantes 2 e 6 do CLAUDE.md deste repo valem para `atlas-workflow`;
+aplicável — invariantes 2 e 6 do CLAUDE.md deste repo valem para `talos`;
 os outros repos podem ter sua própria política, a confirmar lá).

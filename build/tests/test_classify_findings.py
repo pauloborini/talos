@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Testes do gate determinístico de findings da atlas-slice-review."""
+"""Testes do gate determinístico de findings da talos-slice-review."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ import unittest
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-SCRIPT = ROOT / "packages/skills/atlas-slice-review/scripts/classify_findings.py"
+SCRIPT = ROOT / "packages/skills/talos-slice-review/scripts/classify_findings.py"
 
 
 def valid_finding() -> dict[str, object]:

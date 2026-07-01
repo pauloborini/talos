@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node <ATLAS_WORKFLOW_REPO>/hooks/claude/atlas-workflow-hook.js pre-tool-use"
+            "command": "node <TALOS_REPO>/hooks/claude/talos-hook.js pre-tool-use"
           }
         ]
       }
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node <ATLAS_WORKFLOW_REPO>/hooks/claude/atlas-workflow-hook.js stop"
+            "command": "node <TALOS_REPO>/hooks/claude/talos-hook.js stop"
           }
         ]
       }

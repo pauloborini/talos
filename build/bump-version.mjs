@@ -31,9 +31,9 @@ const esc = current.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // [arquivo, transform]. transform recebe o conteúdo e devolve o novo.
 const edits = [
   ['VERSION', () => `${next}\n`],
-  ['plugins/atlas-workflow-orchestrator/VERSION', () => `${next}\n`],
-  ['hosts/pi/atlas/VERSION', () => `${next}\n`],
-  ['hosts/opencode/.opencode/atlas/VERSION', () => `${next}\n`],
+  ['plugins/talos/VERSION', () => `${next}\n`],
+  ['hosts/pi/talos/VERSION', () => `${next}\n`],
+  ['hosts/opencode/.opencode/talos/VERSION', () => `${next}\n`],
   ['package.json', (t) => replaceOnce(t, `"version": "${current}"`, `"version": "${next}"`, 'package.json')],
   ['packages/mcp-server/package.json', (t) => replaceOnce(t, `"version": "${current}"`, `"version": "${next}"`, 'mcp-server/package.json')],
   ['.claude-plugin/plugin.json', (t) => replaceOnce(t, `"version": "${current}"`, `"version": "${next}"`, '.claude-plugin/plugin.json')],
@@ -45,20 +45,20 @@ const edits = [
   ['packages/orchestrator/README.md', (t) => replaceOnce(t, `**Plugin version:** ${current}`, `**Plugin version:** ${next}`, 'orchestrator/README.md (Plugin version)')],
 
   // --- Codex plugin bundle ---
-  ['plugins/atlas-workflow-orchestrator/.codex-plugin/plugin.json', (t) => replaceOnce(t, `"version": "${current}"`, `"version": "${next}"`, 'codex-plugin/plugin.json')],
-  ['plugins/atlas-workflow-orchestrator/packages/mcp-server/package.json', (t) => replaceOnce(t, `"version": "${current}"`, `"version": "${next}"`, 'plugins mcp-server/package.json')],
-  ['plugins/atlas-workflow-orchestrator/packages/mcp-server/README.md', (t) => replaceAll(t, esc, next, 'plugins mcp-server/README.md')],
-  ['plugins/atlas-workflow-orchestrator/orchestrator/README.md', (t) => replaceOnce(t, `**Plugin version:** ${current}`, `**Plugin version:** ${next}`, 'plugins orchestrator/README.md (Plugin version)')],
+  ['plugins/talos/.codex-plugin/plugin.json', (t) => replaceOnce(t, `"version": "${current}"`, `"version": "${next}"`, 'codex-plugin/plugin.json')],
+  ['plugins/talos/packages/mcp-server/package.json', (t) => replaceOnce(t, `"version": "${current}"`, `"version": "${next}"`, 'plugins mcp-server/package.json')],
+  ['plugins/talos/packages/mcp-server/README.md', (t) => replaceAll(t, esc, next, 'plugins mcp-server/README.md')],
+  ['plugins/talos/orchestrator/README.md', (t) => replaceOnce(t, `**Plugin version:** ${current}`, `**Plugin version:** ${next}`, 'plugins orchestrator/README.md (Plugin version)')],
 
   // --- Host: Pi ---
-  ['hosts/pi/atlas/packages/mcp-server/package.json', (t) => replaceOnce(t, `"version": "${current}"`, `"version": "${next}"`, 'hosts/pi mcp-server/package.json')],
-  ['hosts/pi/atlas/packages/mcp-server/README.md', (t) => replaceAll(t, esc, next, 'hosts/pi mcp-server/README.md')],
-  ['hosts/pi/atlas/orchestrator/README.md', (t) => replaceOnce(t, `**Plugin version:** ${current}`, `**Plugin version:** ${next}`, 'hosts/pi orchestrator/README.md (Plugin version)')],
+  ['hosts/pi/talos/packages/mcp-server/package.json', (t) => replaceOnce(t, `"version": "${current}"`, `"version": "${next}"`, 'hosts/pi mcp-server/package.json')],
+  ['hosts/pi/talos/packages/mcp-server/README.md', (t) => replaceAll(t, esc, next, 'hosts/pi mcp-server/README.md')],
+  ['hosts/pi/talos/orchestrator/README.md', (t) => replaceOnce(t, `**Plugin version:** ${current}`, `**Plugin version:** ${next}`, 'hosts/pi orchestrator/README.md (Plugin version)')],
 
   // --- Host: OpenCode ---
-  ['hosts/opencode/.opencode/atlas/packages/mcp-server/package.json', (t) => replaceOnce(t, `"version": "${current}"`, `"version": "${next}"`, 'hosts/opencode mcp-server/package.json')],
-  ['hosts/opencode/.opencode/atlas/packages/mcp-server/README.md', (t) => replaceAll(t, esc, next, 'hosts/opencode mcp-server/README.md')],
-  ['hosts/opencode/.opencode/atlas/orchestrator/README.md', (t) => replaceOnce(t, `**Plugin version:** ${current}`, `**Plugin version:** ${next}`, 'hosts/opencode orchestrator/README.md (Plugin version)')],
+  ['hosts/opencode/.opencode/talos/packages/mcp-server/package.json', (t) => replaceOnce(t, `"version": "${current}"`, `"version": "${next}"`, 'hosts/opencode mcp-server/package.json')],
+  ['hosts/opencode/.opencode/talos/packages/mcp-server/README.md', (t) => replaceAll(t, esc, next, 'hosts/opencode mcp-server/README.md')],
+  ['hosts/opencode/.opencode/talos/orchestrator/README.md', (t) => replaceOnce(t, `**Plugin version:** ${current}`, `**Plugin version:** ${next}`, 'hosts/opencode orchestrator/README.md (Plugin version)')],
 
   // --- Docs com versão inline ---
   ['CLAUDE.md', (t) => replaceOnce(t, `Versão: \`${current}\``, `Versão: \`${next}\``, 'CLAUDE.md')],

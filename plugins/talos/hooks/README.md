@@ -5,8 +5,8 @@ Fonte primária continua sendo o MCP (`packages/mcp-server`). Estes hooks apenas
 ## Instalação manual
 
 1. Copie o bloco de `hooks/claude/settings.snippet.json` para o `settings.json` do Claude Code.
-2. Troque `<ATLAS_WORKFLOW_REPO>` pelo path absoluto deste repo ou do plugin instalado.
-3. Mantenha o comando apontando para `hooks/claude/atlas-workflow-hook.js`.
+2. Troque `<TALOS_REPO>` pelo path absoluto deste repo ou do plugin instalado.
+3. Mantenha o comando apontando para `hooks/claude/talos-hook.js`.
 
 ## Regras cobertas
 
@@ -14,4 +14,4 @@ Fonte primária continua sendo o MCP (`packages/mcp-server`). Estes hooks apenas
 - `PreToolUse`: bloqueia ação mutante enquanto a sessão está em fase de coordenação ou dispatch não executor.
 - `Stop`: bloqueia encerramento com fase ativa, G11 pendente ou gate MCP bloqueado.
 
-Mensagens de bloqueio mostram regra violada, impacto e próxima ação permitida. Se `.atlas/state` estiver ausente, o hook fica inativo. Se `.atlas/state` existir mas estiver ilegível/corrompido, o estado não é tratado como aprovado.
+Mensagens de bloqueio mostram regra violada, impacto e próxima ação permitida. Se `.talos/state` estiver ausente, o hook fica inativo. Se `.talos/state` existir mas estiver ilegível/corrompido, o estado não é tratado como aprovado.

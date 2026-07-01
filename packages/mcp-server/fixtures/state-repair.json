@@ -7,7 +7,7 @@
   "tasks": ["T01"],
   "files_changed": ["src/initial.js", "src/repair-new.js"],
   "diff_stat": "2 files",
-  "plan_path": ".atlas/plans/fixture.md",
+  "plan_path": ".talos/plans/fixture.md",
   "boundary_refs": ["§2.I1"],
   "obligations": [],
   "invariants": [],

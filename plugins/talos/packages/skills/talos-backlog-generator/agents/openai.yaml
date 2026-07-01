@@ -1,4 +1,4 @@
 interface:
   display_name: "Talos Backlog Generator"
-  short_description: "Cria backlog mestre Atlas a partir de ideia, prompt ou conversa."
-  default_prompt: "Crie um backlog mestre Atlas para esta ideia de feature:"
+  short_description: "Cria backlog mestre Talos a partir de ideia, prompt ou conversa."
+  default_prompt: "Crie um backlog mestre Talos para esta ideia de feature:"
