@@ -1,6 +1,6 @@
 ---
 name: talos
-description: "Orquestra pipeline completo de desenvolvimento de features: /workflow <mode> <input-type> [flags]. Automatiza backlog macro → sprint file → PRD → validação → entrevista (se necessário) → planejamento → execução → review (opcional) e oferece audit universal sem correção. Pipeline orientado a artefato com gates duros: cada fase só conta se produzir arquivo verificável em disco."
+description: "Orquestra pipeline completo de desenvolvimento de features: /talos <mode> <input-type> [flags]. Automatiza backlog macro → sprint file → PRD → validação → entrevista (se necessário) → planejamento → execução → review (opcional) e oferece audit universal sem correção. Pipeline orientado a artefato com gates duros: cada fase só conta se produzir arquivo verificável em disco."
 category: Development Automation
 ---
 
@@ -13,7 +13,7 @@ Orquestra pipelines de desenvolvimento de features no projeto Talos, automatizan
 ## Sintaxe
 
 ```
-/workflow <mode> <input-type|target> [flags]
+/talos <mode> <input-type|target> [flags]
 ```
 
 ### Modos
@@ -46,25 +46,25 @@ Três modos **canônicos de execução** — `full`, `direct`, `execute` (PRD §
 ## Exemplos
 
 ```
-/workflow full sprint "S05"
+/talos full sprint "S05"
 → Resolve S05 no backlog, valida sprint file, gera PRD, valida, entrevista se necessário, cria PLAN_*.md, executa a partir do plano
 
-/workflow direct sprint "S05"
+/talos direct sprint "S05"
 → Resolve S05 no backlog, valida sprint file, gera PRD, valida, executa direto sem PLAN_*.md
 
-/workflow direct prd "/path/to/PRD_S05.md" --review
+/talos direct prd "/path/to/PRD_S05.md" --review
 → Valida PRD, executa direto (sem handoff), roda review ao final
 
-/workflow full idea "melhorar performance de listagem" --interview
+/talos full idea "melhorar performance de listagem" --interview
 → Prioriza BACKLOG_MESTRE_*.md quando a entrada ainda é macro, cria/atualiza sprint file, seleciona a próxima sprint executável, gera PRD, força entrevista, plano, executor
 
-/workflow interview-only brainstorm "que tal dark mode?"
+/talos interview-only brainstorm "que tal dark mode?"
 → Cria draft mínimo pelo template canônico, valida o path e entrevista esse PRD; sem execução
 
-/workflow execute plan "/path/to/PLAN_S05_login.md"
+/talos execute plan "/path/to/PLAN_S05_login.md"
 → Reverifica o plano (artifact + TC), executa direto via plan_execute + validador frio. Não gera plano.
 
-/workflow audit "apps/mobile/lib/features/auth" --handoff
+/talos audit "apps/mobile/lib/features/auth" --handoff
 → Audita somente o target informado contra regras locais + stack detectada + Ponytail pass; gera relatório e `PLAN_AUDIT_*.md` sem execução.
 ```
 
@@ -138,7 +138,7 @@ O pipeline é **fire-and-continue**: uma vez iniciado, o orquestrador avança fa
 
 **Proibido (regressão, PRD §6):**
 - Pedir confirmação para avançar: "Quer que eu gere o PRD?", "posso seguir?", "continuo?", "devo despachar o executor?". A resposta é sempre sim — **execute**. Se a próxima fase tem artefato a produzir, produza.
-- Inventar modo fora do contrato. **Não existe "Modo Discussão", "modo análise", "dry-run"** ou similar. Os únicos modos são `full`/`direct`/`execute`/`interview-only`/`audit`. Pedido em linguagem natural que nomeia um modo (ex.: "talos full backlog s40") **executa esse modo** — não vira pergunta nem resumo passivo.
+- Inventar modo fora do contrato. **Não existe "Modo Discussão", "modo análise", "dry-run"** ou similar. Os únicos modos são `full`/`direct`/`execute`/`interview-only`/`audit`. Pedido em linguagem natural que nomeia um modo (ex.: "/talos full sprint S40") **executa esse modo** — não vira pergunta nem resumo passivo.
 - Parar por decisão em aberto. Decisão pendente de **qualquer fonte** (scan de PRD, entrevista, `PERGUNTAS_EM_ABERTO.md`, doc de discussão/decisões como `DISCUSSAO_*.md`, ou o próprio backlog) **não é blockage**: gera o PRD se ainda não existe, dispara `talos-prd-interview` sobre ele, propaga e **continua**. Nunca oferecer "responda só: seguir com recomendação ou D=...". Ver "Decisão em aberto ≠ parada".
 
 **PRD ausente em `full`/`direct`** = o passo "Generate PRD" **gera o PRD automaticamente** (invoca o id resolvido para `prd_generator` / autoria documental no fio principal). Nunca perguntar "quer que eu gere?".
@@ -281,7 +281,7 @@ Entrada: um **`PLAN_*.md` pronto**. Artefatos esperados: (plano já existe) → 
 
 > `interview-only` é entrevista **sem execução**: não há fase `plan_execute` nem `guarantee_level` no fluxo (nada de código a garantir). A autoria do esboço é documental e livre.
 
-> **Próximo passo após PRD standalone maturo:** `interview-only` não planeja nem executa. Para implementar, o usuário invoca `talos-plan-handoff` standalone sobre esse PRD (fora do pipeline `full`/`direct`, que exigem sprint — ver `talos-plan-handoff` §"Fontes obrigatórias"), produzindo um `PLAN_*.md` com `Source mode: standalone`, e então roda `/workflow execute plan "<path>"` para executar. `full`/`direct` rejeitam esse PRD na entrada por falta de sprint file (por design).
+> **Próximo passo após PRD standalone maturo:** `interview-only` não planeja nem executa. Para implementar, o usuário invoca `talos-plan-handoff` standalone sobre esse PRD (fora do pipeline `full`/`direct`, que exigem sprint — ver `talos-plan-handoff` §"Fontes obrigatórias"), produzindo um `PLAN_*.md` com `Source mode: standalone`, e então roda `/talos execute plan "<path>"` para executar. `full`/`direct` rejeitam esse PRD na entrada por falta de sprint file (por design).
 
 ### Audit mode
 
@@ -291,7 +291,7 @@ Entrada: um `target` auditável, com flags opcionais `--handoff` e `--scope <des
 2. **Pré-flight leve** — `talos_ping` → `talos_capabilities` → `talos_preflight(mode=audit)` para travar versão/família `talos-*`. Não chamar `talos_classify_input`: audit não roteia input para execução.
 3. **Invocar `talos-audit` no fio principal** — carregar o `SKILL.md` real, auditar só o boundary informado, ler regras locais, detectar stack por manifests/configs/comandos reais, aplicar checklist universal e Ponytail pass final.
 4. **Output** — relatório com stack detectada, regras consultadas, boundary, achados P0/P1/P2/P3 com `arquivo:linha`, gaps por área e limitações.
-5. **Handoff opcional** — se `--handoff`, escrever `PLAN_AUDIT_*.md` **conforme ao `PLAN_TEMPLATE.md`** (cabeçalho com linha `| **PRD** | N/A — origem auditoria |`, ref a `BOUNDARY_PRD_PLAN.md`, §1–§6/§8, tasks `#### T01.`), derivado somente dos achados evidenciados — passa no gate TC e é consumível por `/workflow execute plan`. Reportar o path e **parar aqui. Não chamar executor automaticamente.**
+5. **Handoff opcional** — se `--handoff`, escrever `PLAN_AUDIT_*.md` **conforme ao `PLAN_TEMPLATE.md`** (cabeçalho com linha `| **PRD** | N/A — origem auditoria |`, ref a `BOUNDARY_PRD_PLAN.md`, §1–§6/§8, tasks `#### T01.`), derivado somente dos achados evidenciados — passa no gate TC e é consumível por `/talos execute plan`. Reportar o path e **parar aqui. Não chamar executor automaticamente.**
 
 ---
 
@@ -324,7 +324,7 @@ Marcar TBD e adiar só se o usuário pedir **explicitamente** — nunca por inic
 O ledger é **verificado contra disco** (Gate G6). Cada artefato listado precisa existir. A linha `Guarantee level` declara o enum `guarantee_level` emitido pelo MCP (PRD D12) e aparece em `full`/`direct`/`execute` — todos pipeline completo (`full_pipeline`). `interview-only` não emite `guarantee_level` (entrevista sem execução).
 
 ```
-✅ Workflow: claude full sprint completed
+✅ Talos: claude full sprint completed
 
 📄 PRD: /path/to/PRD_S05_login.md            [verificado em disco]
 📋 Plan: /path/to/PLAN_S05_login.md          [verificado em disco]
@@ -351,14 +351,14 @@ Próximo passo:
 Se algum artefato exigido pelo modo estiver ausente, o cabeçalho vira:
 
 ```
-⚠️  Workflow: claude full sprint incomplete
+⚠️  Talos: claude full sprint incomplete
    Faltando: PLAN_*.md (Gate G2 bloqueou execução de código)
 ```
 
 Se algum resultado MCP exigido estiver ausente, indisponível ou bloqueante, o cabeçalho deve ser:
 
 ```
-⚠️  Workflow: <mode> <input-type> aborted
+⚠️  Talos: <mode> <input-type> aborted
    Gate MCP: <tool MCP ou gate>
    Status: <blocked|missing|unavailable>
    Causa: <causa provável retornada pelo MCP ou indisponibilidade da fonte primária>
@@ -369,7 +369,7 @@ Se algum resultado MCP exigido estiver ausente, indisponível ou bloqueante, o c
 Se `full` gerou `PLAN_*.md` mas não despachou `plan_execute`, o cabeçalho deve ser:
 
 ```
-⚠️  Workflow: full <input-type> incomplete
+⚠️  Talos: full <input-type> incomplete
    Violação: G11 — PLAN_*.md validado, mas plan_execute não foi despachado
    Próxima ação obrigatória: despachar plan_execute como sub-agent blocking
 ```

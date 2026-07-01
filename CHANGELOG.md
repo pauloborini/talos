@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.12.1 - 2026-07-01
+
+Tipo: **runtime + packaging + docs**. **Sem breaking**. Schema MCP: v5 (inalterado). Contrato de execução: preservado.
+
+Resumo: Corrige resíduos do método antigo após o rebranding para Talos. A superfície pública passa a apontar consistentemente para `/talos`, com bundles e catálogos regenerados.
+
+Mudanças:
+- **Slash command canônico** — o arquivo de comando legado foi removido e substituído por `packages/orchestrator/commands/talos.md`, propagado para `plugins/` e hosts gerados.
+- **Docs e prompts alinhados** — `README.md`, `COMMANDS.md`, skill orquestradora, prompts Codex e snippets Raycast passam a usar `/talos ...` nos exemplos.
+- **Instalador npx/tarball corrigido** — `talos --help` via tarball agora resolve `VERSION` mesmo quando executado pelo symlink `.bin/talos`.
+- **Npm registry desativado** — release workflow não publica mais no npm; `package.json` mantém `private: true`. Distribuição oficial fica em `npx github:pauloborini/talos` + GitHub Release.
+- **Fix — regressão de upgrade zcode (`enabledPlugins` órfão)** — o rebrand v0.12.0 (`atlas-workflow-orchestrator` → `talos`) foi uma breaking change de identidade do plugin, mas o `installZcode()` não migrava `~/.zcode/cli/config.json`: instalações antigas ficavam com `enabledPlugins` apontando para o nome morto (`atlas-workflow-orchestrator@zcode-plugins-official`), e o host zcode nunca carregava o `talos` renomeado (skills/MCP invisíveis). Agora `installZcode` migra automaticamente: remove entradas órfãs pré-rebrand e habilita `talos@zcode-plugins-official: true` (idempotente, fail-closed em JSON inválido — preserva config do usuário). `uninstall zcode` remove a entrada de forma limpa. O passo manual `/plugins enable` deixa de ser necessário em upgrade.
+- **Bundles regenerados** — `dist/talos-{claude,codex,opencode,pi,zcode}.plugin`, `SHA256SUMS`, `plugins/talos/**` e `hosts/{opencode,pi,zcode}/**` sincronizados em `0.12.1`.
+
+Impacto:
+- Usuários devem invocar `/talos <mode> ...`; o comando legado não é mais distribuído pelo plugin.
+- Limpeza de instalações antigas com prefixo `atlas-*` permanece suportada pelo instalador.
+
+Arquivos/artefatos:
+- `packages/orchestrator/commands/talos.md`
+- `packages/orchestrator/skills/talos/SKILL.md`
+- `build/cli/talos-init.mjs`
+- `.github/workflows/release.yml`
+- `package.json`
+- `plugin-manifests/*`, `.claude-plugin/plugin.json`, `plugins/talos/**`, `hosts/**`
+- `dist/talos-*.plugin`, `dist/SHA256SUMS`
+
+Validação:
+- `node build/bump-version.mjs 0.12.1` — ok.
+- `build/check-consistency.mjs` — ok.
+- Varredura textual: zero ocorrência do comando legado em superfícies distribuídas, exceto referências legítimas a GitHub Actions.
+- Suíte local completa e validações de pacote devem ser executadas antes do merge/release conforme `PATCH_PROCEDURE.md`.
+
 ## 0.12.0 - 2026-07-01
 
 Tipo: **major (rebranding completo)**. **BREAKING**: renomeação de `atlas-workflow` → `Talos`. Schema MCP: v5 (inalterado). Contrato de execução: preservado.

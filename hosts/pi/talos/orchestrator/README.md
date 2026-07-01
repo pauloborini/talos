@@ -5,7 +5,7 @@ Orquestra pipelines completos de desenvolvimento de features no projeto Talos, a
 ## Quick Start
 
 ```bash
-/workflow full sprint "S05"
+/talos full sprint "S05"
 ```
 
 Pipeline completo executado automaticamente:
@@ -21,7 +21,7 @@ Pipeline completo executado automaticamente:
 ## Sintaxe
 
 ```
-/workflow <mode> <input-type> [flags]
+/talos <mode> <input-type> [flags]
 ```
 
 ### Modes
@@ -49,12 +49,12 @@ Pipeline completo executado automaticamente:
 ### Full pipeline com sprint S05
 
 ```
-/workflow full sprint "S05"
+/talos full sprint "S05"
 ```
 
 Output:
 ```
-✅ Workflow: claude full sprint completed
+✅ Talos: claude full sprint completed
 
 📄 PRD: /path/to/PRD_S05_login.md
 📋 Plan: /path/to/PLAN_S05_login.md
@@ -71,25 +71,25 @@ Status:
 ### Direct pipeline com PRD existente + review
 
 ```
-/workflow direct prd "/path/to/PRD_S05.md" --review
+/talos direct prd "/path/to/PRD_S05.md" --review
 ```
 
 ### Direct pipeline com sprint S05
 
 ```
-/workflow direct sprint "S05"
+/talos direct sprint "S05"
 ```
 
 ### Entrevista de brainstorm
 
 ```
-/workflow interview-only brainstorm "Que tal dark mode?"
+/talos interview-only brainstorm "Que tal dark mode?"
 ```
 
 ### Force entrevista mesmo sem ambiguidades
 
 ```
-/workflow full idea "melhorar performance" --interview
+/talos full idea "melhorar performance" --interview
 ```
 
 ## Como funciona
@@ -207,7 +207,7 @@ Se você rodar `full`/`direct` com macro input (`idea`, briefing, roadmap ou con
 ### Ao rodar workflow
 
 ```
-/workflow full sprint "S05"
+/talos full sprint "S05"
 ```
 
 Plugin automatiza tudo. Você valida output.
@@ -249,9 +249,16 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `talos-*` para o
 
 ---
 
-**Plugin version:** 0.12.0
+**Plugin version:** 0.12.1
 **Author:** Paulo Borini
 **Last updated:** 2026-07-01
+
+### Novidades v0.12.1 — comando `/talos` canônico
+
+- **Comando público corrigido** — o comando legado saiu da superfície distribuída; o comando canônico agora é `/talos <mode> ...`.
+- **Bundles e hosts sincronizados** — `packages/orchestrator/commands/talos.md` foi propagado para Claude/Cursor, Codex, opencode, pi e zcode.
+- **Docs e exemplos limpos** — README, `COMMANDS.md`, skill orquestradora, prompts Codex e snippets Raycast usam `/talos ...`; resíduos do método antigo ficam restritos a histórico ou GitHub Actions.
+- **Distribuição sem npm registry** — publicação npm fica desativada; o caminho oficial é `npx github:pauloborini/talos` + GitHub Release.
 
 ### Novidades v0.12.0 — rebranding atlas-workflow → Talos
 
@@ -273,7 +280,7 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `talos-*` para o
 
 ### Novidades v0.10.1 — alias `sprint` canônico e Raycast alinhado
 
-- **`sprint` agora é o input público principal** para `/workflow full` e `/workflow direct`; `backlog-item` continua aceito só por compatibilidade.
+- **`sprint` agora é o input público principal** para `/talos full` e `/talos direct`; `backlog-item` continua aceito só por compatibilidade.
 - **Comandos e docs sincronizados** — README, `COMMANDS.md`, comandos do orquestrador, bundles dos hosts e snippets do Raycast foram atualizados para o novo contrato.
 - **Sem mudança de runtime** — o fluxo continua determinístico e os gates de validação permanecem os mesmos; a mudança é de contrato de entrada e distribuição.
 
@@ -289,7 +296,7 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `talos-*` para o
 
 ### Novidades v0.9.4 — audit handoff TC-conforme + perfis de stack
 
-- `/workflow audit --handoff` passa a escrever `.talos/plans/PLAN_AUDIT_<slug>.md` **conforme ao `PLAN_TEMPLATE.md`** (cabeçalho com `| **PRD** | N/A — origem auditoria |`, ref a `BOUNDARY_PRD_PLAN.md`, §1–§6/§8, tasks `#### T01.`): passa no gate TC e é de fato consumível por `/workflow execute plan`. Fecha a promessa quebrada da estrutura ad-hoc anterior, que falharia o gate.
+- `/talos audit --handoff` passa a escrever `.talos/plans/PLAN_AUDIT_<slug>.md` **conforme ao `PLAN_TEMPLATE.md`** (cabeçalho com `| **PRD** | N/A — origem auditoria |`, ref a `BOUNDARY_PRD_PLAN.md`, §1–§6/§8, tasks `#### T01.`): passa no gate TC e é de fato consumível por `/talos execute plan`. Fecha a promessa quebrada da estrutura ad-hoc anterior, que falharia o gate.
 - Perfis de stack ganham 6 linhas detectáveis — `go`, `rust`, `java_kotlin`, `firebase`, `supabase`, `rest_openapi` — no baseline universal e no validador frio, ativadas só por manifests/deps/comandos reais no boundary.
 - `audit`/`interview-only` não declaram `guarantee_level` (não há execução a garantir); descrição do `talos_preflight` endurecida para refletir a impl.
 
@@ -341,5 +348,5 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `talos-*` para o
 
 - **Novo host: ZCode** (Claude Agent SDK compat). Entrada `zcode` em `HOST_ADAPTERS` (`packages/mcp-server/server.js`) com perfil `self_evident` — `Agent(subagent_type)` + `TodoWrite` + MCP stdio + skills nativas, clone estrutural do Claude Code. Detector `ZCODE_PLUGIN_ROOT` em `HOST_DETECTORS`. `validator_dispatch.join.sync: 'self_evident'`, `confidence: 'presumed'`.
 - ZCode reusa o agente canônico `agents/<name>.md` no plugin root (mesmo formato Claude); sem gerador próprio, sem custo de manutenção a cada nova skill/agent.
-- Installer `init zcode` (cache-based, análogo ao `init antigravity`): copia catálogo `hosts/zcode/` para `~/.zcode/cli/plugins/cache/zcode-plugins-official/talos/<version>/` e atualiza o `marketplace.json` cache. Ativação no app via `/plugins enable talos`. **Sem dependências externas** (não exige `pi-mcp-adapter`/etc. — passa no preflight direto).
+- Installer `init zcode` (cache-based, análogo ao `init antigravity`): copia catálogo `hosts/zcode/` para `~/.zcode/cli/plugins/cache/zcode-plugins-official/talos/<version>/`, atualiza o `marketplace.json` cache e habilita o plugin em `~/.zcode/cli/config.json` (`enabledPlugins`). **Sem dependências externas** (não exige `pi-mcp-adapter`/etc. — passa no preflight direto).
 - Sete hosts suportados: `claude`, `codex`, `opencode`, `pi`, `antigravity`, `zcode`, `generic`. `CAPABILITIES_SCHEMA_VERSION` segue **v5** (adição aditiva, sem breaking). Smoke real no host ZCode confirma `host=zcode sv=5 join.sync=self_evident ping=alive version=0.9.3`.

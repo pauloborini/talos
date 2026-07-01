@@ -1,7 +1,7 @@
 name: Release
 
-# Dispara em dois caminhos, ambos resultando em publish npm + GitHub Release:
-#   1. Full auto: push na `main` (caminho primário — o job `decide` publica
+# Dispara em dois caminhos, ambos resultando em GitHub Release (sem npm registry):
+#   1. Full auto: push na `main` (caminho primário — o job `decide` publica release
 #      quando a VERSION atual ainda não tem tag `vX.Y.Z`; pushes sem bump têm a
 #      tag já existente e são pulados, então rodar em todo push é seguro e barato).
 #   2. Manual/override: push de tag `vX.Y.Z` (re-release, hotfix fora da main).
@@ -17,7 +17,6 @@ on:
 
 permissions:
   contents: write
-  id-token: write   # habilita --provenance no npm publish (linka release <-> pacote)
 
 jobs:
   decide:
@@ -31,7 +30,7 @@ jobs:
         with:
           fetch-depth: 0   # precisa do histórico de tags para detectar release já feito
 
-      - name: Determinar versão e se deve publicar
+      - name: Determinar versão e se deve gerar release
         id: ctx
         shell: bash
         run: |
@@ -50,8 +49,8 @@ jobs:
               release=true
             fi
           fi
-          # Guard de sincronia: package.json é o que o npm publica; tem que casar
-          # com VERSION/tag antes de qualquer publicação.
+          # Guard de sincronia: package.json carrega o bin usado por npx-from-GitHub;
+          # tem que casar com VERSION/tag antes de gerar release.
           pkg="$(node -p "require('./package.json').version")"
           if [[ "${version}" != "${pkg}" ]]; then
             echo "::error::VERSION/tag (${version}) difere de package.json (${pkg}). Rode build/bump-version.mjs." >&2
@@ -60,7 +59,7 @@ jobs:
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "release=${release}" >> "$GITHUB_OUTPUT"
 
-  publish:
+  release:
     needs: decide
     if: needs.decide.outputs.release == 'true'
     runs-on: ubuntu-latest
@@ -74,7 +73,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "20"
-          registry-url: "https://registry.npmjs.org"
 
       # Invoca via `bash` explícito (não depende de bit +x do script). O
       # actions/checkout@v4 em Linux respeita o file mode do index do git —
@@ -84,8 +82,8 @@ jobs:
         shell: bash
         run: bash build/build-plugins.sh
 
-      # Guards de qualidade antes de publicar (full-auto: main quebrada nunca
-      # publica). Espelham o job multihost do ci.yml.
+      # Guards de qualidade antes de publicar release (full-auto: main quebrada
+      # nunca cria release). Espelham o job multihost do ci.yml.
       - name: Testes unitários do núcleo MCP
         shell: bash
         run: node --test packages/mcp-server/server.test.js
@@ -122,29 +120,6 @@ jobs:
           done
           test -f dist/SHA256SUMS
           (cd dist && shasum -a 256 -c SHA256SUMS)
-
-      - name: Publicar no npm
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          eval "$(node -e "const p=require('./package.json'); process.stdout.write(\`name=\${JSON.stringify(p.name)}\nversion=\${JSON.stringify(p.version)}\nprivate=\${JSON.stringify(!!p.private)}\n\`);")"
-          if [ "$private" = "true" ]; then
-            echo "::error::package.json tem private:true; recusando publicar." >&2
-            exit 1
-          fi
-          if [ "$version" != "$VERSION" ]; then
-            echo "::error::package.json version ($version) difere da versão a publicar ($VERSION)." >&2
-            exit 1
-          fi
-          # Idempotência: versão já publicada (re-run após falha parcial) => pula.
-          existing="$(npm view "${name}@${version}" version 2>/dev/null || true)"
-          if [ "$existing" = "$version" ]; then
-            echo "::notice::${name}@${version} já publicado; pulando npm publish."
-          else
-            npm publish --provenance --access public
-          fi
 
       - name: Publicar GitHub Release (cria a tag se ausente)
         uses: softprops/action-gh-release@v2

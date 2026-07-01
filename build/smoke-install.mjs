@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 // Smoke do instalador público. Não usa CLIs reais; materializa em tmp e mocka `pi`.
 // Cobre: stale cleanup, merge preservando config, JSONC opencode, gate deps pi,
-// local/global e parser de flags.
+// local/global e parser de flags; install/uninstall zcode (migração enabledPlugins
+// do rebrand, idempotência, fail-closed, fresh) e antigravity (merge MCP preservando
+// servers do usuário).
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -11,6 +13,8 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CLI = path.join(ROOT, 'build/cli/talos-init.mjs');
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'talos-install-'));
+// Lido do VERSION do repo (mesma fonte do talos-init.mjs) para não divergir.
+const VERSION = fs.readFileSync(path.join(ROOT, 'VERSION'), 'utf8').trim();
 const errors = [];
 
 function fail(msg) { errors.push(msg); }
@@ -205,6 +209,102 @@ esac
   assert(!exists(path.join(agentDir, 'agents/talos-plan-execute.md')), 'pi global uninstall manteve agente executor');
 }
 
+// zcode: regressão crítica (rebrand v0.12.0). O `init zcode` DEVE migrar
+// enabledPlugins em ~/.zcode/cli/config.json — removendo a entry órfã do nome
+// pré-rebrand (atlas-workflow-orchestrator) e habilitando talos. Sem isso, o
+// host habilita um nome inexistente e o plugin nunca carrega (skills/MCP invisíveis).
+{
+  const home = path.join(TMP, 'zcode-home');
+  fs.mkdirSync(path.join(home, '.zcode/cli'), { recursive: true });
+  // Cenário exato de regressão: config com nome órfão + plugins do usuário preservados.
+  fs.writeFileSync(path.join(home, '.zcode/cli/config.json'), JSON.stringify({
+    plugins: { enabledPlugins: {
+      'atlas-workflow-orchestrator@zcode-plugins-official': true,
+      'atlas-cortex@user': true,
+    } },
+    skills: { '/some/skill/SKILL.md': { enable: false } },
+  }));
+  const r = run(['init', 'zcode'], { HOME: home });
+  assert(r.status === 0, `zcode init falhou: ${r.stderr || r.stdout}`);
+  // Cache instalado e funcional (server.js responde).
+  const server = path.join(home, `.zcode/cli/plugins/cache/zcode-plugins-official/talos/${VERSION}/packages/mcp-server/server.js`);
+  assert(exists(server), 'zcode não copiou server.js para o cache na versão correta');
+  const seed = json(path.join(home, `.zcode/cli/plugins/cache/zcode-plugins-official/talos/${VERSION}/.zcode-plugin-seed.json`));
+  assert(seed.plugin === 'talos' && seed.pluginVersion === VERSION, 'zcode seed incorreto');
+  // marketplace.json registra talos.
+  const mp = json(path.join(home, '.zcode/cli/plugins/marketplaces/zcode-plugins-official/marketplace.json'));
+  assert(mp.plugins.some((p) => p.name === 'talos' && p.version === VERSION), 'zcode marketplace.json não registrou talos');
+  // enabledPlugins migrado: órfão removido, talos habilitado, resto preservado.
+  const cfg = json(path.join(home, '.zcode/cli/config.json'));
+  const ep = cfg.plugins.enabledPlugins;
+  assert(!('atlas-workflow-orchestrator@zcode-plugins-official' in ep), 'zcode manteve entry órfã atlas-workflow-orchestrator (regressão do rebrand)');
+  assert(ep['talos@zcode-plugins-official'] === true, 'zcode não habilitou talos@zcode-plugins-official');
+  assert(ep['atlas-cortex@user'] === true, 'zcode removeu plugin do usuário');
+  assert(cfg.skills['/some/skill/SKILL.md'].enable === false, 'zcode alterou config de skills do usuário');
+  // Idempotência: 2ª execução não quebra nem altera o estado já migrado.
+  const r2 = run(['init', 'zcode'], { HOME: home });
+  assert(r2.status === 0, `zcode init 2ª vez (idempotência) falhou: ${r2.stderr || r2.stdout}`);
+  const cfg2 = json(path.join(home, '.zcode/cli/config.json'));
+  assert(cfg2.plugins.enabledPlugins['talos@zcode-plugins-official'] === true, 'zcode idempotência quebrou talos');
+  assert(!('atlas-workflow-orchestrator@zcode-plugins-official' in cfg2.plugins.enabledPlugins), 'zcode idempotência recriou órfão');
+  // Uninstall limpo: remove entry talos, preserva demais.
+  const u = run(['uninstall', 'zcode'], { HOME: home });
+  assert(u.status === 0, `zcode uninstall falhou: ${u.stderr || u.stdout}`);
+  assert(!exists(path.join(home, '.zcode/cli/plugins/cache/zcode-plugins-official/talos')), 'zcode uninstall manteve cache');
+  const cfgU = json(path.join(home, '.zcode/cli/config.json'));
+  assert(!('talos@zcode-plugins-official' in cfgU.plugins.enabledPlugins), 'zcode uninstall manteve entry talos');
+  assert(cfgU.plugins.enabledPlugins['atlas-cortex@user'] === true, 'zcode uninstall removeu plugin do usuário');
+}
+
+// zcode: fail-closed. Config inválido NÃO deve ser sobrescrito — aborta antes.
+{
+  const home = path.join(TMP, 'zcode-broken');
+  fs.mkdirSync(path.join(home, '.zcode/cli'), { recursive: true });
+  const broken = '{ invalid json,,, }';
+  fs.writeFileSync(path.join(home, '.zcode/cli/config.json'), broken);
+  const r = run(['init', 'zcode'], { HOME: home });
+  assert(r.status !== 0, 'zcode deveria abortar em config.json inválido (fail-closed)');
+  assert(fs.readFileSync(path.join(home, '.zcode/cli/config.json'), 'utf8') === broken, 'zcode sobrescreveu config inválido do usuário');
+}
+
+// zcode: fresh install (sem config.json prévio) cria config com talos habilitado.
+{
+  const home = path.join(TMP, 'zcode-fresh');
+  const r = run(['init', 'zcode'], { HOME: home });
+  assert(r.status === 0, `zcode fresh init falhou: ${r.stderr || r.stdout}`);
+  const cfg = json(path.join(home, '.zcode/cli/config.json'));
+  assert(cfg.plugins.enabledPlugins['talos@zcode-plugins-official'] === true, 'zcode fresh não habilitou talos');
+}
+
+// antigravity: install copia skills + mcp-server, mescla mcp_config.json
+// preservando servers do usuário. uninstall remove só talos.
+{
+  const home = path.join(TMP, 'antigravity-home');
+  fs.mkdirSync(path.join(home, '.gemini/config'), { recursive: true });
+  // Usuário já tem um server MCP próprio que deve ser preservado.
+  fs.writeFileSync(path.join(home, '.gemini/config/mcp_config.json'), JSON.stringify({
+    mcpServers: { 'user-tool': { command: 'node', args: ['x'] } },
+  }));
+  const r = run(['init', 'antigravity'], { HOME: home });
+  assert(r.status === 0, `antigravity init falhou: ${r.stderr || r.stdout}`);
+  // Skills + mcp-server copiados.
+  assert(exists(path.join(home, '.gemini/config/plugins/talos/skills/talos')), 'antigravity não copiou skill orquestradora');
+  assert(exists(path.join(home, '.gemini/config/plugins/talos/packages/mcp-server/server.js')), 'antigravity não copiou server.js');
+  assert(exists(path.join(home, '.gemini/config/plugins/talos/plugin.json')), 'antigravity não criou plugin.json');
+  // MCP mesclado: talos adicionado, user-tool preservado.
+  const mcp = json(path.join(home, '.gemini/config/mcp_config.json'));
+  assert(mcp.mcpServers['talos'], 'antigravity não registrou MCP talos');
+  assert(mcp.mcpServers['user-tool'], 'antigravity perdeu server MCP do usuário');
+  assert(mcp.mcpServers['talos'].env.TALOS_HOST === 'antigravity', 'antigravity MCP entry sem TALOS_HOST');
+  // Uninstall: remove talos, preserva user-tool.
+  const u = run(['uninstall', 'antigravity'], { HOME: home });
+  assert(u.status === 0, `antigravity uninstall falhou: ${u.stderr || u.stdout}`);
+  assert(!exists(path.join(home, '.gemini/config/plugins/talos')), 'antigravity uninstall manteve plugin dir');
+  const mcpU = json(path.join(home, '.gemini/config/mcp_config.json'));
+  assert(!('talos' in mcpU.mcpServers), 'antigravity uninstall manteve MCP talos');
+  assert(mcpU.mcpServers['user-tool'], 'antigravity uninstall perdeu server MCP do usuário');
+}
+
 // Parser de flags.
 {
   assert(run(['init', 'opencode', '--dir']).status !== 0, '--dir sem valor deveria falhar');
@@ -218,4 +318,4 @@ if (errors.length) {
   for (const e of errors) console.error(`  - ${e}`);
   process.exit(1);
 }
-console.log('smoke-install: ok (install/uninstall tmp, stale cleanup, pi deps, JSONC e flags)');
+console.log('smoke-install: ok (install/uninstall tmp: codex, opencode, pi, zcode, antigravity; stale cleanup, deps, JSONC, enabledPlugins migration, flags)');
