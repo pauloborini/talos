@@ -22,12 +22,12 @@ npx github:pauloborini/talos init antigravity
 npx github:pauloborini/talos init opencode --global
 npx github:pauloborini/talos init pi --global --yes
 
-# zcode — reinstalar pega runtime novo (mesmo comando do init; /plugins enable no host)
+# zcode — reinstalar pega runtime novo (mesmo comando do init; installer já habilita o plugin)
 npx github:pauloborini/talos init zcode
 
 ```
 
-Smoke pós-update: `talos_ping` → `version: 0.12.0`; `talos_capabilities` → `schema_version: 5` (sibling-only).
+Smoke pós-update: `talos_ping` → `version: 0.12.1`; `talos_capabilities` → `schema_version: 5` (sibling-only).
 
 ---
 
@@ -47,7 +47,7 @@ npx github:pauloborini/talos init codex
 # Antigravity (global por natureza)
 npx github:pauloborini/talos init antigravity
 
-# ZCode (global por natureza — cache do host; ativar via /plugins enable talos)
+# ZCode (global por natureza — cache do host; installer já habilita em enabledPlugins)
 npx github:pauloborini/talos init zcode
 
 # opencode  — global (recomendado) ou por-projeto
@@ -103,7 +103,7 @@ Remove **só** os artefatos do Talos. Preserva config, skills e outros MCP serve
 | claude/cursor | registro da CLI (`claude plugin`) | — |
 | codex | registro da CLI (`codex plugin`) | — |
 | antigravity | `~/.gemini/config/` | `mcp_config.json` |
-| zcode | `~/.zcode/cli/plugins/cache/zcode-plugins-official/talos/<version>/` | `.zcode-plugin/plugin.json` (MCP via `${ZCODE_PLUGIN_ROOT}`; ativar via `/plugins enable`) |
+| zcode | `~/.zcode/cli/plugins/cache/zcode-plugins-official/talos/<version>/` | `.zcode-plugin/plugin.json` (MCP via `${ZCODE_PLUGIN_ROOT}`; installer já habilita em `~/.zcode/cli/config.json`) |
 | opencode | `~/.config/opencode/` (Win: `%APPDATA%\opencode`; honra `XDG_CONFIG_HOME`) | `opencode.json` |
 | pi | `~/.pi/agent/` (honra `PI_CODING_AGENT_DIR`) | `mcp.json` |
 
@@ -117,7 +117,7 @@ Abra a CLI no host e chame as tools:
 - `talos_capabilities` → descritores + `prereq_policy`
 
 > **Não** dispare o `talos-task-validator` à mão: ele roda automaticamente dentro do
-> workflow, com um state file real (`.talos/state/<run_id>/<slice>.json`).
+> pipeline, com um state file real (`.talos/state/<run_id>/<slice>.json`).
 
 ---
 

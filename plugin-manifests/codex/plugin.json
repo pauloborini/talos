@@ -7,8 +7,7 @@
   },
   "keywords": [
     "talos",
-    "talos",
-    "workflow",
+    "pipeline",
     "orchestration",
     "prd",
     "planning",
@@ -19,7 +18,7 @@
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "Talos",
-    "shortDescription": "Workflow completo por sub-agents.",
+    "shortDescription": "Pipeline completo por sub-agents.",
     "longDescription": "Porta o Talos para Codex: o orquestrador decide fases e usa skills talos-* para PRD, entrevista, plano e auditoria; depois despacha sub-agents bloqueantes para plan_execute, task_validator e slice_review opcional nos modos com execução. A geração de backlog mestre fica disponível como skill explícita, não automática.",
     "developerName": "Paulo Borini",
     "category": "Engineering",
@@ -30,10 +29,10 @@
     ],
     "defaultPrompt": [
       "Use $talos-backlog-generator para criar um backlog mestre a partir desta ideia:",
-      "workflow full backlog-item S05",
-      "workflow direct prd PRD_S05.md --review",
-      "workflow interview-only brainstorm nova ideia",
-      "workflow audit apps/mobile/lib/features/auth --handoff"
+      "/talos full sprint S05",
+      "/talos direct prd PRD_S05.md --review",
+      "/talos interview-only brainstorm nova ideia",
+      "/talos audit apps/mobile/lib/features/auth --handoff"
     ]
   }
 }

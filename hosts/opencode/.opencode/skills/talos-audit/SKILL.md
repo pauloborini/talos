@@ -1,6 +1,6 @@
 ---
 name: talos-audit
-description: Skill/mode universal de auditoria Talos. Use para `/workflow audit <target>` com flags opcionais `--handoff` e `--scope <descrição>`. Audita código contra regras locais, boas práticas da stack detectada e complexidade acidental estilo Ponytail, sem corrigir código nem executar plano.
+description: Skill/mode universal de auditoria Talos. Use para `/talos audit <target>` com flags opcionais `--handoff` e `--scope <descrição>`. Audita código contra regras locais, boas práticas da stack detectada e complexidade acidental estilo Ponytail, sem corrigir código nem executar plano.
 ---
 
 # Talos Audit
@@ -10,9 +10,9 @@ Auditoria universal, framework-agnóstica. Esta skill lê o repositório real, a
 ## Sintaxe
 
 ```text
-/workflow audit <target>
-/workflow audit <target> --handoff
-/workflow audit <target> --scope <descrição>
+/talos audit <target>
+/talos audit <target> --handoff
+/talos audit <target> --scope <descrição>
 ```
 
 `target` pode ser arquivo, diretório, pacote, módulo, feature, PRD/plano como referência ou descrição que aponte para um boundary localizável. Se não for possível resolver o boundary em disco, pare e peça um target mais preciso.
@@ -129,7 +129,7 @@ Se zero achados, diga explicitamente `Nenhum achado P0/P1/P2/P3 com evidência s
 
 ## `--handoff`
 
-Quando `--handoff` estiver presente, escrever em `.talos/plans/PLAN_AUDIT_<slug>.md` um plano **conforme ao `PLAN_TEMPLATE.md` canônico** (resolver em `<raiz-do-plugin>/packages/templates/`), para que passe no gate TC (`talos_verify_template_conformance`) e seja consumível por `/workflow execute plan <path>` ou por `talos-plan-execute`. O plano só pode conter tasks derivadas dos achados evidenciados. Se a escrita falhar, reportar bloqueio e não fingir que há handoff executável.
+Quando `--handoff` estiver presente, escrever em `.talos/plans/PLAN_AUDIT_<slug>.md` um plano **conforme ao `PLAN_TEMPLATE.md` canônico** (resolver em `<raiz-do-plugin>/packages/templates/`), para que passe no gate TC (`talos_verify_template_conformance`) e seja consumível por `/talos execute plan <path>` ou por `talos-plan-execute`. O plano só pode conter tasks derivadas dos achados evidenciados. Se a escrita falhar, reportar bloqueio e não fingir que há handoff executável.
 
 A auditoria **não tem PRD**: a fonte de verdade é o relatório de auditoria + achados + regras locais reais. O plano espelha o template, mas reancorado na auditoria — **sem inventar decisões `D*` nem referências PRD inexistentes**.
 

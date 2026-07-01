@@ -1,7 +1,7 @@
 # Procedimento de Patch, Bump e Release
 
 Procedimento obrigatorio para qualquer IA/agente que altere este repo. Objetivo:
-manter `main` instalavel, bundles sincronizados, npm publicavel e CI confiavel.
+manter `main` instalavel, bundles sincronizados, `npx github` funcional e CI confiavel.
 
 ## 0. Regra principal
 
@@ -11,11 +11,11 @@ Nao declare pronto sem evidencia local. "Pronto" exige:
 - changelog atualizado;
 - catologos gerados (`plugins/`, `hosts/`);
 - artefatos `.plugin` + `SHA256SUMS` validos;
-- pacote npm inspecionado;
+- pacote tarball/npx inspecionado;
 - working tree entendido;
-- release e full-auto: bumpar `VERSION` na `main` publica npm + GitHub Release
-  sozinho (seca 9). Logo, so subir bump de `VERSION` na `main` com o patch
-  inteiro pronto e validado — o push e a propria autorizacao de publicar.
+- release e full-auto: bumpar `VERSION` na `main` cria tag + GitHub Release
+  sozinho (secao 9). Logo, so subir bump de `VERSION` na `main` com o patch
+  inteiro pronto e validado — o push e a propria autorizacao de publicar release.
 
 `archive/` e `raycast/` nao entram no patch salvo pedido explicito.
 
@@ -35,7 +35,7 @@ patch, leia e incorpore.
 ## 2. Classifique o patch
 
 - `runtime`: muda skill, comando, MCP, gates, roteamento, sub-agents ou comportamento.
-- `packaging`: muda manifest, marketplace, estrutura de bundle, npm, `.plugin`, release.
+- `packaging`: muda manifest, marketplace, estrutura de bundle, npx/tarball, `.plugin`, release.
 - `docs`: muda docs sem alterar comportamento distribuido.
 - `tooling`: muda scripts auxiliares, CI ou validadores.
 
@@ -44,7 +44,7 @@ Bump obrigatorio quando:
 - `runtime` ou `packaging`;
 - docs/tooling entram no artefato distribuido (`README`, `packages/orchestrator/**`,
   skills, templates, manifests, `build/cli/**`, `.npmignore`, `.github/release`);
-- CI/release/npm muda e o usuario quer liberar nova versao.
+- CI/release/npx muda e o usuario quer liberar nova versao.
 
 Patch somente de doc interna pode nao bumpar, mas precisa changelog se afetar
 procedimento operacional.
@@ -53,7 +53,7 @@ procedimento operacional.
 
 Use SemVer:
 
-- patch (`X.Y.Z+1`): fix, confiabilidade, docs distribuidas, CI/release, npm.
+- patch (`X.Y.Z+1`): fix, confiabilidade, docs distribuidas, CI/release, npx.
 - minor (`X.Y+1.0`): feature aditiva ou breaking pre-1.0 controlado.
 - major: reservado para `1.0+`.
 
@@ -119,7 +119,7 @@ Atualizar quando aplicavel:
 
 - `packages/orchestrator/README.md`
 - `packages/orchestrator/skills/talos/SKILL.md`
-- `packages/orchestrator/commands/workflow.md`
+- `packages/orchestrator/commands/talos.md`
 - `packages/orchestrator/references/**`
 - `packages/templates/**`
 - `.github/workflows/ci.yml`
@@ -161,8 +161,9 @@ Validacao:
 Para `runtime`, tambem atualizar o changelog resumido no fim de
 `packages/orchestrator/skills/talos/SKILL.md`.
 
-Para `packaging`/npm/release, documentar se a publicacao depende de tag
-`vX.Y.Z` e de `NPM_TOKEN`.
+Para `packaging`/npx/release, documentar se a publicacao depende de tag
+`vX.Y.Z`. Publicacao npm registry esta desativada por contrato; `package.json`
+deve manter `private: true` enquanto isso valer.
 
 ## 6. Regeneracao obrigatoria
 
@@ -229,9 +230,10 @@ rtk claude plugin validate ./ --strict
 
 Se algum subcomando nao existir, registrar no relatorio final. Nao inventar PASS.
 
-## 8. Validacao npm obrigatoria
+## 8. Validacao npx/tarball obrigatoria
 
-Usar cache temporario para evitar cache local root-owned:
+Usar cache temporario para evitar cache local root-owned. Isto valida o caminho
+`npx github:pauloborini/talos ...` sem publicar no npm registry:
 
 ```bash
 rtk env npm_config_cache=/tmp/talos-npm-cache npm pack --dry-run --json
@@ -242,15 +244,9 @@ rtk env npm_config_cache=/tmp/talos-npm-cache npm exec --yes --package /tmp/talo
 rtk env npm_config_cache=/tmp/talos-npm-cache npm exec --yes --package /tmp/talos-npm-pack/talos-X.Y.Z.tgz -- talos init codex --dry-run
 ```
 
-Conferir registry antes de release:
-
-```bash
-rtk env npm_config_cache=/tmp/talos-npm-cache npm view talos version
-rtk env npm_config_cache=/tmp/talos-npm-cache npm view talos@X.Y.Z version
-```
-
-`E404` para pacote novo e aceitavel antes da primeira publicacao. Versao existente
-igual a `X.Y.Z` significa que `release.yml` deve pular publish npm por idempotencia.
+Nao consultar registry npm como gate. O pacote `talos` permanece privado no
+`package.json` e nao deve ser publicado no npm enquanto a distribuicao oficial
+for apenas `npx github:pauloborini/talos`.
 
 ## 9. CI e release externo
 
@@ -265,16 +261,16 @@ CI normal roda em push/PR:
 - runtime MCP em Windows/macOS.
 
 Release e FULL AUTO. O caminho primario e empurrar o bump de `VERSION` para a
-`main` — isso, por si so, publica npm + GitHub Release. NAO precisa criar tag a
+`main` — isso, por si so, cria tag + GitHub Release. NAO precisa criar tag a
 mao; a action cria a tag `vX.Y.Z`. Logo: subir um `VERSION` novo na `main` E o
-ato de autorizar a publicacao publica. Nao bumpar `VERSION` na `main` sem o
+ato de autorizar a publicacao da release. Nao bumpar `VERSION` na `main` sem o
 CHANGELOG da versao pronto (a release falha-fecha se faltar a entrada).
 
 ```bash
-# fluxo full-auto: bump na main publica sozinho
+# fluxo full-auto: bump na main publica GitHub Release sozinho
 rtk node build/bump-version.mjs X.Y.Z
 # (editar CHANGELOG + Novidades, revisar, commitar)
-rtk git push origin main          # => Release dispara: tag + npm + GitHub release
+rtk git push origin main          # => Release dispara: tag + GitHub Release
 ```
 
 `build/bump-version.mjs` NAO cria tag local. Se houver tag local `vX.Y.Z` criada
@@ -296,19 +292,17 @@ O workflow `.github/workflows/release.yml` deve:
 
 1. job `decide`: derivar a versao (da tag, ou de `VERSION` no push da main) e
    pular se a tag `vX.Y.Z` ja existe; guard `VERSION` == `package.json.version`;
-2. job `publish` (so se `decide` liberar): build + check-consistency;
-3. guards de qualidade (testes MCP + smoke-hosts + conformance) antes de publicar;
+2. job `release` (so se `decide` liberar): build + check-consistency;
+3. guards de qualidade (testes MCP + smoke-hosts + conformance) antes de publicar release;
 4. extrair notas do `CHANGELOG.md` aceitando cabecalho `## X.Y.Z` ou `## vX.Y.Z`
    (falha-fecha se ausente);
 5. validar `.plugin` e checksums;
-6. publicar npm com `NPM_TOKEN` + provenance (idempotente);
-7. publicar GitHub Release com 4 `.plugin` + `SHA256SUMS` (cria a tag se ausente).
+6. publicar GitHub Release com 5 `.plugin` + `SHA256SUMS` (cria a tag se ausente).
 
 Depois do push/tag, verificar:
 
 ```bash
 rtk gh run list --workflow release.yml --limit 5
-rtk env npm_config_cache=/tmp/talos-npm-cache npm view talos@X.Y.Z version
 ```
 
 Se `gh` nao estiver autenticado, reportar blocker externo.
@@ -320,7 +314,7 @@ Responder com:
 - versao final;
 - arquivos principais alterados;
 - validacoes executadas e resultado;
-- status npm/registry;
+- status npx/tarball;
 - se tag/release foi ou nao criada;
 - blockers externos, se houver.
 

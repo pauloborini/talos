@@ -55,29 +55,29 @@
     "text": "cd \"/Volumes/Dados/projetos/talos\" && git pull origin main"
   },
   {
-    "name": "Talos — workflow Claude full (sprint)",
+    "name": "Talos — talos Claude full (sprint)",
     "keyword": "!aw-wf-claude",
-    "text": "/workflow claude full sprint {cursor}"
+    "text": "/talos claude full sprint {cursor}"
   },
   {
-    "name": "Talos — workflow Claude direct PRD",
+    "name": "Talos — talos Claude direct PRD",
     "keyword": "!aw-wf-claude-d",
-    "text": "/workflow claude direct prd {clipboard} --review"
+    "text": "/talos claude direct prd {clipboard} --review"
   },
   {
-    "name": "Talos — workflow Codex full (sprint)",
+    "name": "Talos — talos Codex full (sprint)",
     "keyword": "!aw-wf-codex",
-    "text": "workflow codex full sprint {cursor}"
+    "text": "talos codex full sprint {cursor}"
   },
   {
-    "name": "Talos — workflow Codex direct PRD",
+    "name": "Talos — talos Codex direct PRD",
     "keyword": "!aw-wf-codex-d",
-    "text": "workflow codex direct prd {clipboard} --review"
+    "text": "talos codex direct prd {clipboard} --review"
   },
   {
-    "name": "Talos — workflow Codex interview-only",
+    "name": "Talos — talos Codex interview-only",
     "keyword": "!aw-wf-codex-i",
-    "text": "workflow codex interview-only brainstorm {cursor}"
+    "text": "talos codex interview-only brainstorm {cursor}"
   },
   {
     "name": "Talos — repo path (clipboard)",

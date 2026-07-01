@@ -4,9 +4,9 @@
 
 # Talos
 
-Plugin **Talos** v0.12.0 — pipeline determinístico (PRD → plano → execução → validação) com skills `talos-*`, templates e MCP. Um pacote, sete hosts: **Claude Code**, **Cursor**, **Codex App**, **Antigravity (Gemini)**, **ZCode**, **OpenCode** e **Pi CLI**.
+Plugin **Talos** v0.12.1 — pipeline determinístico (PRD → plano → execução → validação) com skills `talos-*`, templates e MCP. Um pacote, sete hosts: **Claude Code**, **Cursor**, **Codex App**, **Antigravity (Gemini)**, **ZCode**, **OpenCode** e **Pi CLI**.
 
-**Versão:** [`VERSION`](VERSION) (`0.12.0`) · **Repo:** https://github.com/pauloborini/talos
+**Versão:** [`VERSION`](VERSION) (`0.12.1`) · **Repo:** https://github.com/pauloborini/talos
 
 ## Hosts
 
@@ -46,7 +46,7 @@ npx github:pauloborini/talos init pi --global --yes  # --yes auto-instala as 2 d
 - **claudecode/cursor**: o instalador roda o `marketplace add` + `install` nativos da CLI por você. Já são globais por natureza.
 - **codex**: o instalador roda `marketplace add` + `plugin add` e também copia os custom agents Talos para `CODEX_HOME/agents` (`~/.codex/agents` se `CODEX_HOME` não estiver definido). Este é o caminho garantido para `spawn_agent(agent_type: "talos-*")`.
 - **antigravity**: o instalador registra o Talos como um plugin em `~/.gemini/config/plugins/` e adiciona o MCP correspondente em `mcp_config.json`.
-- **zcode**: o instalador copia o catálogo from-source `hosts/zcode/` para `~/.zcode/cli/plugins/cache/zcode-plugins-official/talos/<version>/` e atualiza o `marketplace.json` cache. Ative no host via `/plugins enable talos`. ZCode é Claude Agent SDK (clone estrutural do Claude Code): `Agent(subagent_type)` + `TodoWrite` + MCP stdio nativos — perfil `self_evident`, sem dependências externas.
+- **zcode**: o instalador copia o catálogo from-source `hosts/zcode/` para `~/.zcode/cli/plugins/cache/zcode-plugins-official/talos/<version>/`, atualiza o `marketplace.json` cache e habilita o plugin em `~/.zcode/cli/config.json` (`enabledPlugins`). ZCode é Claude Agent SDK (clone estrutural do Claude Code): `Agent(subagent_type)` + `TodoWrite` + MCP stdio nativos — perfil `self_evident`, sem dependências externas.
 - **opencode**: com `--global`, instala globalmente em `~/.config/opencode/` (o MCP é registrado com caminho absoluto, funcionando em todos os projetos).
 - **pi**: com `--global`, instala globalmente em `~/.pi/agent/` (honra `PI_CODING_AGENT_DIR`), registra o MCP em `mcp.json` global e checa/instala as deps `pi-mcp-adapter` + `pi-subagents`.
 
@@ -115,9 +115,9 @@ Alternativa à instalação via GitHub: baixar o `.plugin` do host (`claude`, `c
 
 ## Como usar
 
-Comando (Claude Code / Cursor): `/workflow <mode> <input-type> [input] [flags]`
+Comando (Claude Code / Cursor): `/talos <mode> <input-type> [input] [flags]`
 
-No Codex, Antigravity, opencode, pi e zcode, invoque a skill do orquestrador com o mesmo padrão de argumentos (ex.: `workflow full sprint S05`). O verbo de dispatch do subagente é resolvido por `talos_capabilities` (host-agnóstico).
+No Codex, Antigravity, opencode, pi e zcode, invoque a skill do orquestrador com o mesmo padrão de argumentos (ex.: `/talos full sprint S05`). O verbo de dispatch do subagente é resolvido por `talos_capabilities` (host-agnóstico).
 
 Se você quiser começar fora do fluxo principal, as skills listadas abaixo são os atalhos explícitos para backlog, PRD, auditoria, plano, execução e revisão.
 
@@ -156,55 +156,55 @@ Se você quiser começar fora do fluxo principal, as skills listadas abaixo são
 Feature nova a partir do sprint (pipeline completo):
 
 ```
-/workflow full sprint "S05"
+/talos full sprint "S05"
 ```
 
 Sprint já recortada; implementar direto sem gerar plano separado:
 
 ```
-/workflow direct sprint "S05"
+/talos direct sprint "S05"
 ```
 
 PRD já escrito no repo; implementar sem gerar plano separado:
 
 ```
-/workflow direct prd "./docs/PRD_S05_login.md"
+/talos direct prd "./docs/PRD_S05_login.md"
 ```
 
 Mesmo PRD, com review fria da slice no final:
 
 ```
-/workflow direct prd "./docs/PRD_S05_login.md" --review
+/talos direct prd "./docs/PRD_S05_login.md" --review
 ```
 
 Ideia solta, ainda sem PRD formal (gera PRD e segue o fluxo completo):
 
 ```
-/workflow full idea "cache de sessão com TTL configurável"
+/talos full idea "cache de sessão com TTL configurável"
 ```
 
 Plano já escrito; executar direto sem regerar (modo `execute`):
 
 ```
-/workflow execute plan "./.talos/plans/PLAN_S05_login.md"
+/talos execute plan "./.talos/plans/PLAN_S05_login.md"
 ```
 
 Só alinhar decisões antes de planejar:
 
 ```
-/workflow interview-only brainstorm "dark mode só no web ou mobile também?"
+/talos interview-only brainstorm "dark mode só no web ou mobile também?"
 ```
 
 PRD avulso (sem sprint/backlog) até execução, sem passar por `full`/`direct`:
 
 ```
-/workflow interview-only brainstorm "ideia direto de conversa"
+/talos interview-only brainstorm "ideia direto de conversa"
 → matura o PRD; campo Sprint file fica "Não aplicável (standalone)"
 
-talos-plan-handoff (uso direto, fora do /workflow)
+talos-plan-handoff (uso direto, fora do /talos)
 → lê o PRD, detecta source_mode: standalone, escreve PLAN_*.md com Source mode: standalone
 
-/workflow execute plan "./.talos/plans/PLAN_<ID>_<slug>.md"
+/talos execute plan "./.talos/plans/PLAN_<ID>_<slug>.md"
 → único modo que aceita plano standalone; full/direct exigem sprint e rejeitam esse plano na entrada
 ```
 
