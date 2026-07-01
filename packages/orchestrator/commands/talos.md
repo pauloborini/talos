@@ -3,7 +3,7 @@ description: Orquestra pipeline de desenvolvimento de feature no Talos (backlog 
 argument-hint: <mode> <input-type|target> [input] [--interview] [--review] [--handoff] [--scope] [--help]
 ---
 
-Você está executando o comando `/workflow` do plugin **talos**.
+Você está executando o comando `/talos` do plugin **talos**.
 
 Argumentos recebidos: `$ARGUMENTS`
 
@@ -16,7 +16,7 @@ Argumentos recebidos: `$ARGUMENTS`
 ## Referência rápida de sintaxe
 
 ```
-/workflow <mode> <input-type|target> [input] [flags]
+/talos <mode> <input-type|target> [input] [flags]
 ```
 
 - **mode**: `full` · `direct` · `execute` · `interview-only` · `audit`
@@ -26,12 +26,12 @@ Argumentos recebidos: `$ARGUMENTS`
 Exemplos:
 
 ```
-/workflow full sprint "S05"
-/workflow direct sprint "S05"
-/workflow direct prd "/path/PRD_S05.md" --review
-/workflow execute plan "/path/PLAN_S05.md"
-/workflow interview-only brainstorm "que tal dark mode?"
-/workflow audit apps/mobile/lib/features/auth --handoff
+/talos full sprint "S05"
+/talos direct sprint "S05"
+/talos direct prd "/path/PRD_S05.md" --review
+/talos execute plan "/path/PLAN_S05.md"
+/talos interview-only brainstorm "que tal dark mode?"
+/talos audit apps/mobile/lib/features/auth --handoff
 → Gera relatório e `.talos/plans/PLAN_AUDIT_*.md`; não executa correções
 ```
 

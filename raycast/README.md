@@ -20,8 +20,8 @@
 | `!aw-codex-rm-personal` | Remover marketplace `personal` antigo |
 | `!aw-cd` | `cd` no repo |
 | `!aw-push` / `!aw-pull` | Git sync |
-| `!aw-wf-claude` | `/workflow claude full sprint …` |
-| `!aw-wf-codex` | `workflow codex full …` |
+| `!aw-wf-claude` | `/talos claude full sprint …` |
+| `!aw-wf-codex` | `talos codex full …` |
 | `!aw-install-all` | Claude + Codex de uma vez |
 
 Placeholders Raycast: `{cursor}` posiciona o cursor; `{clipboard}` cola o clipboard.

@@ -17,7 +17,8 @@ import { homedir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+const SELF = fs.realpathSync(fileURLToPath(import.meta.url));
+const ROOT = path.resolve(path.dirname(SELF), '../..');
 const REPO_SLUG = 'pauloborini/talos';
 const PLUGIN_ID = 'talos@talos';
 
@@ -356,7 +357,7 @@ function installPi(targetDir, opts) {
   }
   log(`próximo: cd ${targetDir} && pi  → confirme a instalação com as tools talos_ping`);
   log('  (deve retornar host=pi) e talos_capabilities. NÃO dispare o validator à mão:');
-  log('  o talos-task-validator roda automaticamente dentro do workflow, com um state');
+  log('  o talos-task-validator roda automaticamente dentro do pipeline, com um state');
   log('  file real (.talos/state/<run_id>/<slice>.json) — não com placeholder.');
 }
 
@@ -592,9 +593,17 @@ function uninstallAntigravity(opts) {
 
 const ZCODE_MARKETPLACE = 'zcode-plugins-official';
 const ZCODE_PLUGIN_NAME = 'talos';
+// Nome do plugin pré-rebrand (v0.12.0). Mantido para que upgrades de instalações
+// antigas removam a entry órfã em enabledPlugins — caso contrário o host habilita
+// um nome que não existe mais e o plugin fica invisível (skills/MCP não carregam).
+const ZCODE_LEGACY_PLUGIN_NAMES = ['atlas-workflow-orchestrator', 'atlas-workflow'];
 
 function zcodeCacheDir() {
   return path.join(homedir(), '.zcode', 'cli', 'plugins', 'cache', ZCODE_MARKETPLACE, ZCODE_PLUGIN_NAME, VERSION);
+}
+
+function zcodeConfigFile() {
+  return path.join(homedir(), '.zcode', 'cli', 'config.json');
 }
 
 function zcodeMarketplaceCacheFile() {
@@ -626,6 +635,62 @@ function removeZcodeMarketplaceCacheEntry() {
   } catch { log(`  aviso: ${path.basename(file)} é JSON inválido — não mexi`); }
 }
 
+// Migra enabledPlugins em ~/.zcode/cli/config.json: remove entradas órfãs do nome
+// pré-rebrand e garante que talos@<marketplace> esteja habilitado. Idempotente.
+// Falha-cedo em JSON inválido (não sobrescreve config do usuário — padrão assertConfigParseable).
+// Retorna a lista de changes human-readable (para log).
+function migrateZcodeEnabledPlugins(opts) {
+  const file = zcodeConfigFile();
+  const newKey = `${ZCODE_PLUGIN_NAME}@${ZCODE_MARKETPLACE}`;
+  // Falha-cedo: se o config do usuário existe mas é JSON inválido, aborta ANTES de
+  // copiar qualquer arquivo (não deixa instalação parcial nem sobrescreve config).
+  assertConfigParseable(file);
+  const changes = [];
+  const legacyKeys = ZCODE_LEGACY_PLUGIN_NAMES.flatMap((n) => [`${n}@${ZCODE_MARKETPLACE}`, `${n}@user`]);
+  const cfg = fs.existsSync(file) ? parseJsonFile(file) : {};
+  cfg.plugins ??= {};
+  cfg.plugins.enabledPlugins ??= {};
+  const enabled = cfg.plugins.enabledPlugins;
+  for (const key of legacyKeys) {
+    if (enabled[key] !== undefined) {
+      changes.push(`- removida entry órfã pré-rebrand: ${key}`);
+      delete enabled[key];
+    }
+  }
+  if (enabled[newKey] !== true) {
+    changes.push(`+ habilitado: ${newKey}`);
+    enabled[newKey] = true;
+  }
+  if (!changes.length) return changes;
+  if (opts.dryRun) {
+    log(`  [dry-run] migraria ${path.basename(file)}:`);
+    changes.forEach((c) => log(`    ${c}`));
+    return changes;
+  }
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(cfg, null, 2) + '\n');
+  log(`  ${path.basename(file)} migrado:`);
+  changes.forEach((c) => log(`    ${c}`));
+  return changes;
+}
+
+// Remove a entry talos de enabledPlugins (desinstalação limpa). Preserva demais
+// plugins habilitados pelo usuário. Falha-cedo em JSON inválido.
+function removeZcodeEnabledPluginEntry(opts) {
+  const file = zcodeConfigFile();
+  if (!fs.existsSync(file)) return;
+  assertConfigParseable(file);
+  const cfg = parseJsonFile(file);
+  const enabled = cfg?.plugins?.enabledPlugins;
+  if (!enabled) return;
+  const key = `${ZCODE_PLUGIN_NAME}@${ZCODE_MARKETPLACE}`;
+  if (enabled[key] === undefined) return;
+  if (opts.dryRun) { log(`  [dry-run] removeria ${key} de ${path.basename(file)}`); return; }
+  delete enabled[key];
+  fs.writeFileSync(file, JSON.stringify(cfg, null, 2) + '\n');
+  log(`  ${key} removido de ${path.basename(file)}`);
+}
+
 function installZcode(opts) {
   const cacheDir = zcodeCacheDir();
   const catalogSrc = path.join(ROOT, 'hosts/zcode');
@@ -634,6 +699,7 @@ function installZcode(opts) {
   if (opts.dryRun) {
     log(`  [dry-run] copiaria hosts/zcode/ → ${cacheDir}`);
     log(`  [dry-run] atualizaria ${zcodeMarketplaceCacheFile()}`);
+    migrateZcodeEnabledPlugins(opts);
     return;
   }
   // Limpa instalação anterior (pode haver versão stale)
@@ -654,9 +720,14 @@ function installZcode(opts) {
   // Sincroniza a entry do marketplace cache (o ZCode regenera no boot, mas
   // mantemos sincronizado para visualização imediata no `/plugins`).
   updateZcodeMarketplaceCacheEntry(cacheDir);
-  log('ok — ZCode instalado no cache oficial.');
-  log('próximo: abra o ZCode e ative via /plugins enable talos');
-  log('  confirme com a tool MCP talos_ping (host=zcode, status=alive).');
+  // Migra enabledPlugins: remove nome órfão pré-rebrand e habilita talos.
+  // Antes era manual ("/plugins enable"), o que quebrava upgrades do rebrand
+  // (atlas-workflow-orchestrator → talos): o host ficava com entry órfã e o
+  // plugin nunca carregava. Agora o installer habilita determinísticamente.
+  migrateZcodeEnabledPlugins(opts);
+  log('ok — ZCode instalado no cache oficial e habilitado.');
+  log('reinicie o ZCode para carregar skills + MCP; confirme com a tool');
+  log('  talos_ping (deve retornar host=zcode, status=alive).');
 }
 
 function uninstallZcode(opts) {
@@ -664,7 +735,8 @@ function uninstallZcode(opts) {
   log(`removendo Talos (zcode) GLOBAL de ${cacheParent}`);
   rmIfExists(cacheParent, opts);
   removeZcodeMarketplaceCacheEntry();
-  log('ok — ZCode: cache e registry removidos.');
+  removeZcodeEnabledPluginEntry(opts);
+  log('ok — ZCode: cache, registry e enabledPlugins removidos.');
 }
 
 // --- host virtual `all` -------------------------------------------------------
@@ -772,7 +844,7 @@ hosts:
   claudecode | cursor   via \`claude plugin\` (marketplace from-source; já global)
   codex                 via \`codex plugin\` + custom agents em CODEX_HOME/agents
   antigravity           via plugin nativo em ~/.gemini/config/ (já global)
-  zcode                 via cache ~/.zcode/cli/plugins/cache/ (já global; /plugins enable)
+  zcode                 via cache ~/.zcode/cli/plugins/cache/ (já global; installer habilita em config.json)
   opencode              por-projeto: .opencode/ + opencode.json no [dir]
                         --global: ~/.config/opencode/ (vale em todos os projetos)
   pi                    por-projeto: .mcp.json + .pi/agents/ no [dir] + deps
