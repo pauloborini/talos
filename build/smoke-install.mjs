@@ -94,22 +94,25 @@ esac
   assert(!exists(path.join(codexHome, 'agents/talos-plan-execute.toml')), 'codex uninstall manteve executor');
 }
 
-// opencode local: update remove stale Talos (e nomes legados talos-*) e preserva
-// config/skills do usuário.
+// opencode local: update remove stale Talos (prefixo atual 'talos-' e legado
+// 'atlas-' pré-rename) e preserva config/skills do usuário.
 {
   const dir = path.join(TMP, 'opencode-local');
   fs.mkdirSync(path.join(dir, '.opencode/talos'), { recursive: true });
   fs.mkdirSync(path.join(dir, '.opencode/agents'), { recursive: true });
   fs.mkdirSync(path.join(dir, '.opencode/skills/talos-old'), { recursive: true });
+  fs.mkdirSync(path.join(dir, '.opencode/skills/atlas-old'), { recursive: true });
   fs.mkdirSync(path.join(dir, '.opencode/skills/user-skill'), { recursive: true });
   fs.writeFileSync(path.join(dir, '.opencode/talos/old.txt'), 'stale');
-  fs.writeFileSync(path.join(dir, '.opencode/agents/talos-task-validator.md'), 'stale');
+  fs.writeFileSync(path.join(dir, '.opencode/agents/atlas-task-validator.md'), 'stale-legado');
   fs.writeFileSync(path.join(dir, 'opencode.json'), JSON.stringify({ mcp: { other: { type: 'local', command: ['node', 'x'] } } }));
   const r = run(['init', 'opencode', '--dir', dir]);
   assert(r.status === 0, `opencode local init falhou: ${r.stderr || r.stdout}`);
   assert(!exists(path.join(dir, '.opencode/talos/old.txt')), 'opencode local manteve stale em .opencode/talos');
-  assert(!exists(path.join(dir, '.opencode/skills/talos-old')), 'opencode local manteve skill talos-* stale (nome legado pré-rename)');
-  assert(!exists(path.join(dir, '.opencode/agents/talos-task-validator.md')), 'opencode local manteve agente talos-* stale (nome legado pré-rename)');
+  assert(!exists(path.join(dir, '.opencode/skills/talos-old')), 'opencode local manteve skill talos-* stale');
+  assert(!exists(path.join(dir, '.opencode/skills/atlas-old')), 'opencode local manteve skill atlas-* legada pré-rename');
+  assert(!exists(path.join(dir, '.opencode/agents/atlas-task-validator.md')), 'opencode local manteve agente atlas-* legado pré-rename');
+  assert(exists(path.join(dir, '.opencode/agents/talos-task-validator.md')), 'opencode local não instalou agente talos-task-validator');
   assert(exists(path.join(dir, '.opencode/skills/user-skill')), 'opencode local removeu skill do usuário');
   assert(json(path.join(dir, 'opencode.json')).mcp.other, 'opencode local perdeu mcp do usuário');
   assert(json(path.join(dir, 'opencode.json')).mcp['talos'], 'opencode local não registrou MCP Talos');
@@ -155,14 +158,17 @@ esac
   const dir = path.join(TMP, 'pi-local');
   fs.mkdirSync(path.join(dir, 'talos'), { recursive: true });
   fs.mkdirSync(path.join(dir, 'skills/talos-old'), { recursive: true });
+  fs.mkdirSync(path.join(dir, 'skills/atlas-old'), { recursive: true });
   fs.mkdirSync(path.join(dir, 'skills/user-skill'), { recursive: true });
   fs.writeFileSync(path.join(dir, 'talos/old.txt'), 'stale');
+  fs.writeFileSync(path.join(dir, 'skills/atlas-old/old.txt'), 'stale-legado');
   fs.writeFileSync(path.join(dir, '.mcp.json'), JSON.stringify({ mcpServers: { other: { command: 'node', args: ['x'] } } }));
   const env = makePiMock();
   const r = run(['init', 'pi', '--dir', dir, '--yes'], env);
   assert(r.status === 0, `pi --yes init falhou: ${r.stderr || r.stdout}`);
   assert(!exists(path.join(dir, 'talos/old.txt')), 'pi local manteve stale em talos/');
-  assert(!exists(path.join(dir, 'skills/talos-old')), 'pi local manteve skill talos-* stale (nome legado pré-rename)');
+  assert(!exists(path.join(dir, 'skills/talos-old')), 'pi local manteve skill talos-* órfã');
+  assert(!exists(path.join(dir, 'skills/atlas-old')), 'pi local manteve skill atlas-* legada pré-rename');
   assert(exists(path.join(dir, 'skills/user-skill')), 'pi local removeu skill do usuário');
   assert(json(path.join(dir, '.mcp.json')).mcpServers.other, 'pi local perdeu mcp do usuário');
   assert(json(path.join(dir, '.mcp.json')).mcpServers['talos'], 'pi local não registrou MCP Talos');

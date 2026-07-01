@@ -33,7 +33,7 @@ mascará-la atrás de nomes parecidos.
 |---|---|---|---|---|
 | **Atlas Agents** | hub/app final — assistente pessoal de IA desktop, orquestra MCPs locais e agentes especializados | sem codinome — é o produto que absorve os demais | `atlas-agents` | já v3.0, mantém nome |
 | **Argus** | code retrieval / context packing local | gigante de 100 olhos, nunca dorme — fit com daemon de auto-sync e indexação contínua | `atlas-cortex` (a renomear) | código maduro, sem usuário externo |
-| **Talos** | pipeline determinística PRD→plano→execução→validação | autômato de bronze, executa regra fixa sem desvio — fit com determinismo/gates duros, sem improviso | `talos` (este repo) | v0.11.1, com usuário (mesmo que só o Paulo) |
+| **Talos** | pipeline determinística PRD→plano→execução→validação | autômato de bronze, executa regra fixa sem desvio — fit com determinismo/gates duros, sem improviso | `talos` (este repo) | v0.12.0, com usuário (mesmo que só o Paulo) |
 | **Athena** | documentação/conhecimento contínuo do projeto | deusa da sabedoria/estratégia — fit com conhecimento acumulado | `atlas-brain` (a renomear) | repo existe, fase de pesquisa (`_analysis/gbrain` — referência arquitetural de memória/graph/synthesis, não é fonte a copiar) |
 
 **Nota sobre o app Flutter `atlas`** (`/Volumes/Dados/projetos/atlas`, monorepo

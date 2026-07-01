@@ -65,7 +65,7 @@ function rmPath(p, { dryRun }) {
 
 // Prefixo legado (pré-rename) incluído só para que upgrade de instalações antigas
 // limpe skills/agentes órfãos com o nome velho — novas cópias usam só 'talos-'.
-const SKILL_PREFIXES = ['talos-', 'talos-'];
+const SKILL_PREFIXES = ['talos-', 'atlas-'];
 function hasSkillPrefix(name) { return SKILL_PREFIXES.some((p) => name.startsWith(p)); }
 
 function rmTalosSkillsQuiet(skillsDir, opts) {
@@ -77,7 +77,7 @@ function rmTalosSkillsQuiet(skillsDir, opts) {
 
 // Remove todos os agentes Talos despachados (validator + executores + review), não só
 // o validator — senão upgrade deixa órfãos e install global só copia o validator.
-// Cobre o prefixo legado 'talos-' para limpar agentes órfãos de instalações pré-rename.
+// Cobre o prefixo legado 'atlas-' para limpar agentes órfãos de instalações pré-rename.
 function rmTalosAgentsQuiet(agentsDir, opts, exts = ['.md']) {
   if (!fs.existsSync(agentsDir)) return;
   for (const name of fs.readdirSync(agentsDir)) {
@@ -488,7 +488,7 @@ function rmIfExists(p, { dryRun }) {
 }
 
 // Remove apenas subdirs com prefixo talos-/talos- (não toca skills do usuário).
-// Cobre o prefixo legado 'talos-' para uninstall limpo de instalações pré-rename.
+// Cobre o prefixo legado 'atlas-' para uninstall limpo de instalações pré-rename.
 function rmTalosSkills(skillsDir, opts) {
   if (!fs.existsSync(skillsDir)) return;
   for (const name of fs.readdirSync(skillsDir)) {

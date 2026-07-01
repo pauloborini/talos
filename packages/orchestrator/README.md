@@ -249,9 +249,16 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `talos-*` para o
 
 ---
 
-**Plugin version:** 1.0.0
+**Plugin version:** 0.12.0
 **Author:** Paulo Borini
-**Last updated:** 2026-06-30
+**Last updated:** 2026-07-01
+
+### Novidades v0.12.0 — rebranding atlas-workflow → Talos
+
+- **Rebranding completo** — `atlas-workflow` renomeado para **Talos**. Skills `atlas-*` → `talos-*`, CLI `atlas-init.mjs` → `talos-init.mjs`, plugin `atlas-workflow-orchestrator` → `talos`. 632 arquivos alterados.
+- **Identidade própria** — Logo, README, marketplace e metadados refletem o nome definitivo. O pipeline é o mesmo; o nome mudou.
+- **Compatibilidade com legado** — Instalador limpa automaticamente artefatos com prefixo `atlas-` de instalações antigas; `SKILL_PREFIXES` cobre `['talos-', 'atlas-']`.
+- **Docs sincronizados** — `AGENTS.md`, `CLAUDE.md`, `NAMING.md`, `CHANGELOG.md` e todos os manifests atualizados. `marketplace.json` lista os 7 hosts.
 
 ### Novidades v0.11.1 — correção do instalador Antigravity (Gemini)
 

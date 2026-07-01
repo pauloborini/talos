@@ -27,7 +27,7 @@ npx github:pauloborini/talos init zcode
 
 ```
 
-Smoke pós-update: `talos_ping` → `version: 1.0.0`; `talos_capabilities` → `schema_version: 5` (sibling-only).
+Smoke pós-update: `talos_ping` → `version: 0.12.0`; `talos_capabilities` → `schema_version: 5` (sibling-only).
 
 ---
 

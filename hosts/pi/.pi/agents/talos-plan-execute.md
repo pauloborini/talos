@@ -125,7 +125,7 @@ Read the `talos-plan-handoff` artifact. Extract at minimum:
 * **Slices of execution** (from Section 7).
 * **Checklist for the validator** (from Section 8).
 
-Treat headings as semantic. If the plan uses equivalent wording but carries the same contract, continue. If the plan is missing the substance, stop and report.
+Treat headings as semantic. If the plan uses equivalent wording but carries the same contract, continue. If the plan is missing the substance, stop and report. 
 The old Gate of Readiness (§15) and Handoff Prompt (§16) are **no longer required** in the compact template.
 If optional Section 9 (open questions / real blockers — **not** PRD §7 Apêndice/Referências) has active blocking items, stop execution and request clarification.
 
