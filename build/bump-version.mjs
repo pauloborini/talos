@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// Bump determinístico de versão. Sincroniza os arquivos com versão concreta,
-// regenera bundles/catálogos e roda check-consistency. NÃO cria tag nem commita
-// — quem publica é o workflow Release ao detectar VERSION novo na main.
+// Bump deterministico de versao. Sincroniza os arquivos com versao concreta,
+// regenera bundles/catalogos e roda check-consistency. NAO cria tag nem commita
+// — quem publica e cria a tag é o workflow Release ao detectar VERSION novo na main.
 //
 // Uso: node build/bump-version.mjs <nova-versao>   (ex.: 0.8.3)
 //
@@ -31,9 +31,9 @@ const esc = current.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // [arquivo, transform]. transform recebe o conteúdo e devolve o novo.
 const edits = [
   ['VERSION', () => `${next}\n`],
-  ['plugins/atlas-workflow-orchestrator/VERSION', () => `${next}\n`],
-  ['hosts/pi/atlas/VERSION', () => `${next}\n`],
-  ['hosts/opencode/.opencode/atlas/VERSION', () => `${next}\n`],
+  ['plugins/talos/VERSION', () => `${next}\n`],
+  ['hosts/pi/talos/VERSION', () => `${next}\n`],
+  ['hosts/opencode/.opencode/talos/VERSION', () => `${next}\n`],
   ['package.json', (t) => replaceOnce(t, `"version": "${current}"`, `"version": "${next}"`, 'package.json')],
   ['packages/mcp-server/package.json', (t) => replaceOnce(t, `"version": "${current}"`, `"version": "${next}"`, 'mcp-server/package.json')],
   ['.claude-plugin/plugin.json', (t) => replaceOnce(t, `"version": "${current}"`, `"version": "${next}"`, '.claude-plugin/plugin.json')],
@@ -45,20 +45,20 @@ const edits = [
   ['packages/orchestrator/README.md', (t) => replaceOnce(t, `**Plugin version:** ${current}`, `**Plugin version:** ${next}`, 'orchestrator/README.md (Plugin version)')],
 
   // --- Codex plugin bundle ---
-  ['plugins/atlas-workflow-orchestrator/.codex-plugin/plugin.json', (t) => replaceOnce(t, `"version": "${current}"`, `"version": "${next}"`, 'codex-plugin/plugin.json')],
-  ['plugins/atlas-workflow-orchestrator/packages/mcp-server/package.json', (t) => replaceOnce(t, `"version": "${current}"`, `"version": "${next}"`, 'plugins mcp-server/package.json')],
-  ['plugins/atlas-workflow-orchestrator/packages/mcp-server/README.md', (t) => replaceAll(t, esc, next, 'plugins mcp-server/README.md')],
-  ['plugins/atlas-workflow-orchestrator/orchestrator/README.md', (t) => replaceOnce(t, `**Plugin version:** ${current}`, `**Plugin version:** ${next}`, 'plugins orchestrator/README.md (Plugin version)')],
+  ['plugins/talos/.codex-plugin/plugin.json', (t) => replaceOnce(t, `"version": "${current}"`, `"version": "${next}"`, 'codex-plugin/plugin.json')],
+  ['plugins/talos/packages/mcp-server/package.json', (t) => replaceOnce(t, `"version": "${current}"`, `"version": "${next}"`, 'plugins mcp-server/package.json')],
+  ['plugins/talos/packages/mcp-server/README.md', (t) => replaceAll(t, esc, next, 'plugins mcp-server/README.md')],
+  ['plugins/talos/orchestrator/README.md', (t) => replaceOnce(t, `**Plugin version:** ${current}`, `**Plugin version:** ${next}`, 'plugins orchestrator/README.md (Plugin version)')],
 
   // --- Host: Pi ---
-  ['hosts/pi/atlas/packages/mcp-server/package.json', (t) => replaceOnce(t, `"version": "${current}"`, `"version": "${next}"`, 'hosts/pi mcp-server/package.json')],
-  ['hosts/pi/atlas/packages/mcp-server/README.md', (t) => replaceAll(t, esc, next, 'hosts/pi mcp-server/README.md')],
-  ['hosts/pi/atlas/orchestrator/README.md', (t) => replaceOnce(t, `**Plugin version:** ${current}`, `**Plugin version:** ${next}`, 'hosts/pi orchestrator/README.md (Plugin version)')],
+  ['hosts/pi/talos/packages/mcp-server/package.json', (t) => replaceOnce(t, `"version": "${current}"`, `"version": "${next}"`, 'hosts/pi mcp-server/package.json')],
+  ['hosts/pi/talos/packages/mcp-server/README.md', (t) => replaceAll(t, esc, next, 'hosts/pi mcp-server/README.md')],
+  ['hosts/pi/talos/orchestrator/README.md', (t) => replaceOnce(t, `**Plugin version:** ${current}`, `**Plugin version:** ${next}`, 'hosts/pi orchestrator/README.md (Plugin version)')],
 
   // --- Host: OpenCode ---
-  ['hosts/opencode/.opencode/atlas/packages/mcp-server/package.json', (t) => replaceOnce(t, `"version": "${current}"`, `"version": "${next}"`, 'hosts/opencode mcp-server/package.json')],
-  ['hosts/opencode/.opencode/atlas/packages/mcp-server/README.md', (t) => replaceAll(t, esc, next, 'hosts/opencode mcp-server/README.md')],
-  ['hosts/opencode/.opencode/atlas/orchestrator/README.md', (t) => replaceOnce(t, `**Plugin version:** ${current}`, `**Plugin version:** ${next}`, 'hosts/opencode orchestrator/README.md (Plugin version)')],
+  ['hosts/opencode/.opencode/talos/packages/mcp-server/package.json', (t) => replaceOnce(t, `"version": "${current}"`, `"version": "${next}"`, 'hosts/opencode mcp-server/package.json')],
+  ['hosts/opencode/.opencode/talos/packages/mcp-server/README.md', (t) => replaceAll(t, esc, next, 'hosts/opencode mcp-server/README.md')],
+  ['hosts/opencode/.opencode/talos/orchestrator/README.md', (t) => replaceOnce(t, `**Plugin version:** ${current}`, `**Plugin version:** ${next}`, 'hosts/opencode orchestrator/README.md (Plugin version)')],
 
   // --- Docs com versão inline ---
   ['CLAUDE.md', (t) => replaceOnce(t, `Versão: \`${current}\``, `Versão: \`${next}\``, 'CLAUDE.md')],
@@ -88,26 +88,11 @@ execFileSync('bash', [path.join(ROOT, 'build', 'build-plugins.sh')], { cwd: ROOT
 console.log(`Rodando check-consistency…`);
 execFileSync('node', [path.join(ROOT, 'build', 'check-consistency.mjs')], { cwd: ROOT, stdio: 'inherit' });
 
-// Criar tag git local (marketplace resolve por tag, não por HEAD).
-// Tag só é criada — push fica pro passo manual junto com o commit.
-// CI Release é idempotente: se tag já existe, pula criação.
-const tag = `v${next}`;
-try {
-  execFileSync('git', ['tag', tag], { cwd: ROOT, stdio: 'pipe' });
-  console.log(`\n  tag   ${tag} (local — push com: git push origin ${tag})`);
-} catch (e) {
-  if (e.stderr?.toString().includes('already exists')) {
-    console.log(`\n  tag   ${tag} já existe (ok)`);
-  } else {
-    throw e;
-  }
-}
-
 console.log(`\nbump-version: ${current} -> ${next} OK.
 
 Passos narrativos manuais (não automatizáveis):
   1. CHANGELOG.md — adicionar entrada "## ${next} - YYYY-MM-DD".
   2. packages/orchestrator/README.md — adicionar seção "### Novidades v${next}" e "Last updated".
-  3. Revisar 'git status', commitar e dar push na main (incluir tag):
-       git push origin main v${next}
-     => CI Release detecta tag existente e publica sem re-criar.`);
+  3. Revisar 'git status', commitar e dar push na main:
+       git push origin main
+     => CI Release publica e cria a tag v${next}.`);

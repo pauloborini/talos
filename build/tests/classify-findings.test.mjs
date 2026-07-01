@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { classifyFindings } from '../../packages/skills/atlas-slice-review/scripts/classify_findings.mjs';
+import { classifyFindings } from '../../packages/skills/talos-slice-review/scripts/classify_findings.mjs';
 
 const valid = () => ({
   severity: 'P1', task_id: 'T01', title: 'Finding', file: 'a.js', line: 1,

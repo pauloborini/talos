@@ -9,8 +9,14 @@ const VALID = Object.freeze({
   priority: new Set(['P0', 'P1', 'P2', 'P3']),
   state: new Set(['backlog', 'ready', 'doing', 'review', 'done', 'blocked']),
 });
+const SPRINT_ID_SOURCE = 'S\\d{2}(?:[a-z]|\\.\\d+)?';
+const SPRINT_ID_REGEX = new RegExp(`^${SPRINT_ID_SOURCE}$`);
 
-const STACK_MANIFESTS = ['package.json', 'tsconfig.json', 'pubspec.yaml', 'pyproject.toml', 'requirements.txt', 'setup.py'];
+const STACK_MANIFESTS = [
+  'package.json', 'tsconfig.json', 'pubspec.yaml', 'pyproject.toml', 'requirements.txt', 'setup.py',
+  'go.mod', 'Cargo.toml', 'pom.xml', 'build.gradle', 'build.gradle.kts', 'settings.gradle', 'settings.gradle.kts',
+  'firebase.json', '.firebaserc', 'openapi.yaml', 'openapi.yml', 'openapi.json', 'swagger.yaml', 'swagger.yml', 'swagger.json',
+];
 
 function boundaryRoot(projectRoot, boundary) {
   const project = path.resolve(projectRoot);
@@ -47,6 +53,9 @@ function containsGetxImport(root) {
 
 function detectBoundaryProfile(root, declaredCommands) {
   const exists = (name) => fs.existsSync(path.join(root, name));
+  const readIfExists = (name) => {
+    try { return exists(name) ? fs.readFileSync(path.join(root, name), 'utf8') : ''; } catch { return ''; }
+  };
   const commands = declaredCommands.filter((v) => typeof v === 'string');
   let packageJson = null;
   if (exists('package.json')) {
@@ -57,13 +66,36 @@ function detectBoundaryProfile(root, declaredCommands) {
     try { pubspec = fs.readFileSync(path.join(root, 'pubspec.yaml'), 'utf8'); } catch {}
   }
   const packageCommands = Object.values(packageJson?.scripts ?? {}).filter((v) => typeof v === 'string');
+  const packageDeps = Object.keys({
+    ...(packageJson?.dependencies ?? {}),
+    ...(packageJson?.devDependencies ?? {}),
+    ...(packageJson?.peerDependencies ?? {}),
+    ...(packageJson?.optionalDependencies ?? {}),
+  });
+  const cargo = readIfExists('Cargo.toml');
+  const pom = readIfExists('pom.xml');
+  const gradle = `${readIfExists('build.gradle')}\n${readIfExists('build.gradle.kts')}\n${readIfExists('settings.gradle')}\n${readIfExists('settings.gradle.kts')}`;
   const allCommands = [...commands, ...packageCommands];
   const hasCommand = (re) => allCommands.some((command) => re.test(command));
+  const hasPackageDep = (re) => packageDeps.some((dep) => re.test(dep));
+  const javaKotlinSignal = exists('pom.xml') || exists('build.gradle') || exists('build.gradle.kts')
+    || exists('settings.gradle') || exists('settings.gradle.kts') || hasCommand(/\b(gradle|mvn|java|javac|kotlinc)\b/);
+  const restSignal = exists('openapi.yaml') || exists('openapi.yml') || exists('openapi.json')
+    || exists('swagger.yaml') || exists('swagger.yml') || exists('swagger.json')
+    || hasPackageDep(/\b(openapi|swagger|express|fastify|koa|hono|axios|ky)\b/i)
+    || /openapi|swagger|spring-boot-starter-web|ktor|retrofit/i.test(`${pom}\n${gradle}\n${pubspec}`);
   return {
     universal: true,
     flutter_dart: exists('pubspec.yaml') || hasCommand(/\b(flutter|dart)\b/),
     node_typescript: exists('package.json') || exists('tsconfig.json') || hasCommand(/\b(node|npm|pnpm|yarn|bun|tsc)\b/),
     python: exists('pyproject.toml') || exists('requirements.txt') || exists('setup.py') || hasCommand(/\b(python3?|pytest|ruff|mypy)\b/),
+    go: exists('go.mod') || hasCommand(/\bgo\s+(test|build|run|vet|fmt)\b/),
+    rust: exists('Cargo.toml') || hasCommand(/\bcargo\s+(test|build|run|check|clippy|fmt)\b/) || /^\s*\[package\]/m.test(cargo),
+    java_kotlin: javaKotlinSignal,
+    firebase: exists('firebase.json') || exists('.firebaserc') || hasPackageDep(/^firebase$|^@firebase\/|firebase-admin/i)
+      || /firebase_core|cloud_firestore|firebase_auth|firebase_messaging|firebase_storage/i.test(pubspec),
+    supabase: hasPackageDep(/^@supabase\/|supabase-js/i) || /supabase_flutter|supabase|postgrest/i.test(pubspec),
+    rest_openapi: restSignal,
     getx: /^\s{0,4}get\s*:/m.test(pubspec) || containsGetxImport(root),
   };
 }
@@ -80,6 +112,12 @@ export function detectStackProfiles(root, declaredCommands = [], boundaryPaths =
     flutter_dart: boundaries.some((profile) => profile.flutter_dart),
     node_typescript: boundaries.some((profile) => profile.node_typescript),
     python: boundaries.some((profile) => profile.python),
+    go: boundaries.some((profile) => profile.go),
+    rust: boundaries.some((profile) => profile.rust),
+    java_kotlin: boundaries.some((profile) => profile.java_kotlin),
+    firebase: boundaries.some((profile) => profile.firebase),
+    supabase: boundaries.some((profile) => profile.supabase),
+    rest_openapi: boundaries.some((profile) => profile.rest_openapi),
     getx: boundaries.some((profile) => profile.getx),
     boundaries,
   };
@@ -99,10 +137,170 @@ function parseTable(markdown, heading) {
 export function parseSprintRows(markdown) {
   const rows = parseTable(markdown, '## 7. Registro de sprints');
   const header = rows.findIndex((row) => row[0] === 'ID');
-  return rows.slice(header + 1).filter((row) => /^S\d{2}[a-z]?$/.test(row[0])).map((row) => ({
-    id: row[0], name: row[1], phase: row[2], objective: row[3], moscow: row[4], gain: row[5].toLowerCase(),
-    effort: row[6].toLowerCase(), priority: row[7], prd: row[8], dependencies: row[9], state: row[10], gate: row[11], raw: row,
+  if (header < 0) return [];
+  return rows.slice(header + 1).filter((row) => SPRINT_ID_REGEX.test(row[0])).map((row) => ({
+    id: row[0], name: row[1], phase: row[2], objective: row[3], moscow: row[4], gain: (row[5] ?? '').toLowerCase(),
+    effort: (row[6] ?? '').toLowerCase(), priority: row[7], prd: row[8], dependencies: row[9], state: row[10], gate: row[11],
+    sprint_file: row[12] ?? null, plan: row[13] ?? null, state_file: row[14] ?? null, raw: row,
   }));
+}
+
+function lineOf(markdown, pattern) {
+  const lines = markdown.split(/\r?\n/);
+  const index = lines.findIndex((line) => pattern.test(line));
+  return index < 0 ? null : index + 1;
+}
+
+function tableValue(markdown, label) {
+  const re = new RegExp(`^\\|\\s*${label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\|\\s*(.*?)\\s*\\|\\s*$`, 'im');
+  const match = re.exec(markdown);
+  return match ? match[1].trim() : null;
+}
+
+function fencedYamlBlock(markdown, key) {
+  const re = new RegExp('```ya?ml\\s*([\\s\\S]*?\\b' + key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*:[\\s\\S]*?)```', 'i');
+  const match = re.exec(markdown);
+  return match ? match[1] : null;
+}
+
+function cleanPathToken(value) {
+  if (!value || value === '—') return '';
+  const link = /\[[^\]]+\]\(([^)]+)\)/.exec(value);
+  const raw = link ? link[1] : value;
+  return raw.replace(/^["'`]+|["'`]+$/g, '').trim();
+}
+
+function normalizedPathToken(value) {
+  return cleanPathToken(value).replaceAll('\\', '/').replace(/^\.\//, '');
+}
+
+function sprintFilePending(value) {
+  return !value || /^\[/.test(value) || /pendente|pending/i.test(value);
+}
+
+function sprintConformancePending(category, item, line, message, nextAction = 'corrigir_sprint_file') {
+  return { category, item, line, message, next_action: nextAction };
+}
+
+export function validateSprintFileConformance(markdown, {
+  sprintPath = null,
+  sprintId = null,
+  backlogPath = null,
+  backlogMarkdown = null,
+} = {}) {
+  const pendencies = [];
+  const requiredSections = [
+    '1. Metadados',
+    '2. Objetivo e valor',
+    '3. Escopo da sprint',
+    '4. Contexto e fontes',
+    '5. Dependências e bloqueios',
+    '6. Decisões da sprint',
+    '7. Critérios candidatos para PRD',
+    '8. Definition of Ready',
+    '9. Eval manifest',
+    '10. Policy manifest',
+    '11. Guia e sensores',
+    '12. Evidence-to-claim',
+    '13. PRD e PLAN',
+    '14. Execução e validação',
+    '15. Aprendizados e handoff para próximas sprints',
+    '16. Histórico',
+  ];
+  for (const section of requiredSections) {
+    if (!new RegExp(`^##\\s+${section.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`, 'im').test(markdown)) {
+      pendencies.push(sprintConformancePending('seção_obrigatória', section, null, `Seção obrigatória ausente: ${section}`));
+    }
+  }
+
+  const titleSprint = new RegExp(`^#\\s+Sprint viva\\s+—\\s+(${SPRINT_ID_SOURCE})\\b`, 'im').exec(markdown)?.[1] ?? null;
+  const metadataSprint = tableValue(markdown, 'Sprint ID');
+  const expectedSprintId = sprintId ?? metadataSprint ?? titleSprint;
+  if (!metadataSprint || !SPRINT_ID_REGEX.test(metadataSprint)) {
+    pendencies.push(sprintConformancePending('metadados', 'Sprint ID', lineOf(markdown, /^\|\s*Sprint ID\s*\|/i), 'Sprint ID ausente ou inválido.', 'corrigir_sprint_id'));
+  }
+  if (sprintId && metadataSprint && sprintId !== metadataSprint) {
+    pendencies.push(sprintConformancePending('metadados', 'Sprint ID', lineOf(markdown, /^\|\s*Sprint ID\s*\|/i), `Sprint ID divergente: esperado ${sprintId}, recebido ${metadataSprint}.`, 'alinhar_sprint_id'));
+  }
+  if (titleSprint && metadataSprint && titleSprint !== metadataSprint) {
+    pendencies.push(sprintConformancePending('metadados', 'título', 1, `Sprint ID do título (${titleSprint}) diverge dos metadados (${metadataSprint}).`, 'alinhar_sprint_id'));
+  }
+
+  const status = tableValue(markdown, 'Status');
+  if (!VALID.state.has(status)) {
+    pendencies.push(sprintConformancePending('metadados', 'Status', lineOf(markdown, /^\|\s*Status\s*\|/i), `Status inválido: ${status ?? '<ausente>'}.`, 'corrigir_status'));
+  }
+
+  const backlog = tableValue(markdown, 'Backlog mestre');
+  if (!backlog || sprintFilePending(backlog)) {
+    pendencies.push(sprintConformancePending('metadados', 'Backlog mestre', lineOf(markdown, /^\|\s*Backlog mestre\s*\|/i), 'Backlog mestre ausente no sprint file.', 'vincular_backlog_mestre'));
+  }
+
+  for (const [label, nextAction] of [
+    ['PRD', 'informar_prd_ou_pendente'],
+    ['PLAN', 'informar_plan_ou_pendente'],
+    ['State / evidência', 'informar_state_ou_pendente'],
+  ]) {
+    const value = tableValue(markdown, label);
+    if (!value || /^\[/.test(value)) {
+      pendencies.push(sprintConformancePending('metadados', label, lineOf(markdown, new RegExp(`^\\|\\s*${label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\|`, 'i')), `${label} deve conter path real ou 'pendente'.`, nextAction));
+    }
+  }
+
+  const evalBlock = fencedYamlBlock(markdown, 'eval_manifest');
+  if (!evalBlock) {
+    pendencies.push(sprintConformancePending('eval_manifest', 'eval_manifest', lineOf(markdown, /^##\s+9\./i), 'eval_manifest ausente.', 'preencher_eval_manifest'));
+  } else {
+    const evalSprint = new RegExp(`^\\s*sprint_id\\s*:\\s*["']?(${SPRINT_ID_SOURCE})["']?\\s*$`, 'im').exec(evalBlock)?.[1] ?? null;
+    if (!evalSprint) {
+      pendencies.push(sprintConformancePending('eval_manifest', 'sprint_id', lineOf(markdown, /^\s*sprint_id\s*:/im), 'eval_manifest sem sprint_id.', 'preencher_eval_manifest_sprint_id'));
+    } else if (expectedSprintId && evalSprint !== expectedSprintId) {
+      pendencies.push(sprintConformancePending('eval_manifest', 'sprint_id', lineOf(markdown, /^\s*sprint_id\s*:/im), `eval_manifest.sprint_id (${evalSprint}) diverge de ${expectedSprintId}.`, 'alinhar_eval_manifest'));
+    }
+    for (const token of ['must_prove:', 'regression_guards:', 'negative_paths:']) {
+      if (!evalBlock.includes(token)) {
+        pendencies.push(sprintConformancePending('eval_manifest', token, null, `eval_manifest sem ${token}`, 'completar_eval_manifest'));
+      }
+    }
+  }
+
+  const policyBlock = fencedYamlBlock(markdown, 'policy_manifest');
+  if (!policyBlock) {
+    pendencies.push(sprintConformancePending('policy_manifest', 'policy_manifest', lineOf(markdown, /^##\s+10\./i), 'policy_manifest ausente.', 'preencher_policy_manifest'));
+  } else {
+    for (const token of ['allowed_scope:', 'forbidden_scope:', 'required_gates:']) {
+      if (!policyBlock.includes(token)) {
+        pendencies.push(sprintConformancePending('policy_manifest', token, null, `policy_manifest sem ${token}`, 'completar_policy_manifest'));
+      }
+    }
+  }
+
+  const evidenceLine = lineOf(markdown, /^\|\s*Claim\s*\|\s*Onde foi prometido\s*\|\s*Evidência esperada\s*\|\s*Evidência real\s*\|\s*Status\s*\|/i);
+  if (!evidenceLine) {
+    pendencies.push(sprintConformancePending('evidence_to_claim', 'tabela', lineOf(markdown, /^##\s+12\./i), 'Tabela Evidence-to-claim ausente ou inválida.', 'criar_evidence_to_claim'));
+  }
+
+  if (backlogPath && backlogMarkdown != null) {
+    const rows = parseSprintRows(backlogMarkdown);
+    const row = rows.find((entry) => entry.id === expectedSprintId);
+    if (!row) {
+      pendencies.push(sprintConformancePending('backlog_link', expectedSprintId ?? '<ausente>', null, `Backlog ${backlogPath} não contém linha da sprint ${expectedSprintId ?? '<ausente>'}.`, 'atualizar_backlog_mestre'));
+    } else if (sprintPath && row.sprint_file && !sprintFilePending(row.sprint_file)) {
+      const rowPath = normalizedPathToken(row.sprint_file);
+      const sprintToken = normalizedPathToken(sprintPath);
+      if (rowPath && sprintToken && rowPath !== sprintToken && !sprintToken.endsWith(rowPath) && !rowPath.endsWith(sprintToken)) {
+        pendencies.push(sprintConformancePending('backlog_link', row.id, null, `Linha ${row.id} aponta Sprint file ${row.sprint_file}, não ${sprintPath}.`, 'sincronizar_backlog_e_sprint_file'));
+      }
+    } else {
+      pendencies.push(sprintConformancePending('backlog_link', row.id, null, `Linha ${row.id} não aponta Sprint file real.`, 'preencher_sprint_file_no_backlog'));
+    }
+  }
+
+  return {
+    valid: pendencies.length === 0,
+    pending_count: pendencies.length,
+    pendencies,
+  };
 }
 
 export function parseDecisionRows(markdown) {
@@ -115,7 +313,7 @@ export function parseDecisionRows(markdown) {
 
 function dependencyIds(value) {
   if (!value || value === '—') return [];
-  return [...value.matchAll(/S\d{2}[a-z]?/g)].map((match) => match[0]);
+  return [...value.matchAll(new RegExp(SPRINT_ID_SOURCE, 'g'))].map((match) => match[0]);
 }
 
 function findCycle(rows) {

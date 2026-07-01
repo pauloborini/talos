@@ -1,25 +1,32 @@
-# Atlas Workflow
+<p align="center">
+  <img src="docs/assets/atlas-logo.png" alt="Atlas" width="96" height="96">
+</p>
 
-Plugin **Atlas Workflow Orchestrator** v0.9.1 — pipeline determinístico (PRD → plano → execução → validação) com skills `atlas-*`, templates e MCP. Um pacote, seis hosts: **Claude Code**, **Cursor**, **Codex App**, **Antigravity (Gemini)**, **OpenCode** e **Pi CLI**.
+# Talos
 
-**Versão:** [`VERSION`](VERSION) (`0.9.1`) · **Repo:** https://github.com/pauloborini/atlas-workflow
+Plugin **Talos** v0.12.0 — pipeline determinístico (PRD → plano → execução → validação) com skills `talos-*`, templates e MCP. Um pacote, sete hosts: **Claude Code**, **Cursor**, **Codex App**, **Antigravity (Gemini)**, **ZCode**, **OpenCode** e **Pi CLI**.
+
+**Versão:** [`VERSION`](VERSION) (`0.12.0`) · **Repo:** https://github.com/pauloborini/talos
 
 ## Hosts
 
 | Host | Instalação (recomendada) | Artefato release | Deps obrigatórias |
 |------|--------------------------|------------------|-------------------|
-| Claude Code | Marketplace GitHub | `atlas-workflow-claude.plugin` | — |
-| Cursor | **Igual ao Claude Code** (ver nota abaixo) | `atlas-workflow-claude.plugin` | — |
-| Codex App | Marketplace GitHub | `atlas-workflow-codex.plugin` | — |
+| Claude Code | Marketplace GitHub | `talos-claude.plugin` | — |
+| Cursor | **Igual ao Claude Code** (ver nota abaixo) | `talos-claude.plugin` | — |
+| Codex App | Marketplace GitHub | `talos-codex.plugin` | — |
 | Antigravity (Gemini) | Instalador from-source (`init antigravity`) → `~/.gemini/config/` | — (cópia direta, sem artefato `.plugin`) | — |
-| Opencode | Catálogo from-source `hosts/opencode/` | `atlas-workflow-opencode.plugin` | — |
-| Pi CLI | Catálogo from-source `hosts/pi/` | `atlas-workflow-pi.plugin` | **`pi-mcp-adapter` + `pi-subagents`** |
+| ZCode | Instalador cache-based (`init zcode`) → `~/.zcode/cli/plugins/cache/` | `talos-zcode.plugin` | — |
+| Opencode | Catálogo from-source `hosts/opencode/` | `talos-opencode.plugin` | — |
+| Pi CLI | Catálogo from-source `hosts/pi/` | `talos-pi.plugin` | **`pi-mcp-adapter` + `pi-subagents`** |
 
 **Cursor:** não há pacote nem marketplace próprios — o plugin instalado via `claude plugin` no escopo do usuário já vale para o Cursor (mesmo manifest `.claude-plugin/`). Limitação de packaging, não do pipeline.
 
-**Conceito:** todos são *hosts* (onde as skills rodam). O pipeline é o mesmo; diferenças nativas (subagente, todo, MCP, dispatch do validador frio) vivem em [`host-adapters.md`](packages/orchestrator/references/host-adapters.md) e na tool `atlas_capabilities` (contrato `schema_version: 5` — `validator_dispatch` declara `dispatcher` + `join` por host; ver [Topologia do validador frio (G4)](#topologia-do-validador-frio-g4)). Host sem subagente+MCP é **rejeitado no preflight** (gate `PREREQ`, hard-fail); host sem join síncrono do validador é **rejeitado no preflight** (gate `JOIN`, hard-fail) — determinismo > alcance.
+**ZCode:** subagentes de plugin (`subagent_type: "talos-*"`) não herdam conexões MCP do processo pai — bug do host, não do Talos. O adapter zcode contorna isso com fallback automático: o orquestrador despacha `general-purpose` (nativo, herda MCP) lendo `agents/<name>.md` como system prompt. O isolamento sibling (Gate G4) é preservado — ainda é subagente irmão isolado.
 
-**Pré-requisito:** Node.js no host. Após instalar, confirme o MCP com `atlas_ping`.
+**Conceito:** todos são *hosts* (onde as skills rodam). O pipeline é o mesmo; diferenças nativas (subagente, todo, MCP, dispatch do validador frio) vivem em [`host-adapters.md`](packages/orchestrator/references/host-adapters.md) e na tool `talos_capabilities` (contrato `schema_version: 5` — `validator_dispatch` declara `dispatcher` + `join` por host; ver [Topologia do validador frio (G4)](#topologia-do-validador-frio-g4)). Host sem subagente+MCP é **rejeitado no preflight** (gate `PREREQ`, hard-fail); host sem join síncrono do validador é **rejeitado no preflight** (gate `JOIN`, hard-fail) — determinismo > alcance.
+
+**Pré-requisito:** Node.js no host. Após instalar, confirme o MCP com `talos_ping`.
 
 ## Instalação rápida (1 comando, via npx)
 
@@ -28,31 +35,33 @@ Plugin **Atlas Workflow Orchestrator** v0.9.1 — pipeline determinístico (PRD 
 Um instalador único cobre os hosts de forma **global** (recomendado para valer em todos os projetos) — não precisa clonar o repo:
 
 ```bash
-npx github:pauloborini/atlas-workflow init claudecode   # ou: cursor
-npx github:pauloborini/atlas-workflow init codex
-npx github:pauloborini/atlas-workflow init antigravity
-npx github:pauloborini/atlas-workflow init opencode --global
-npx github:pauloborini/atlas-workflow init pi --global --yes  # --yes auto-instala as 2 deps
+npx github:pauloborini/talos init claudecode   # ou: cursor
+npx github:pauloborini/talos init codex
+npx github:pauloborini/talos init antigravity
+npx github:pauloborini/talos init zcode
+npx github:pauloborini/talos init opencode --global
+npx github:pauloborini/talos init pi --global --yes  # --yes auto-instala as 2 deps
 ```
 
 - **claudecode/cursor**: o instalador roda o `marketplace add` + `install` nativos da CLI por você. Já são globais por natureza.
-- **codex**: o instalador roda `marketplace add` + `plugin add` e também copia os custom agents Atlas para `CODEX_HOME/agents` (`~/.codex/agents` se `CODEX_HOME` não estiver definido). Este é o caminho garantido para `spawn_agent(agent_type: "atlas-*")`.
-- **antigravity**: o instalador registra o Atlas como um plugin em `~/.gemini/config/plugins/` e adiciona o MCP correspondente em `mcp_config.json`.
+- **codex**: o instalador roda `marketplace add` + `plugin add` e também copia os custom agents Talos para `CODEX_HOME/agents` (`~/.codex/agents` se `CODEX_HOME` não estiver definido). Este é o caminho garantido para `spawn_agent(agent_type: "talos-*")`.
+- **antigravity**: o instalador registra o Talos como um plugin em `~/.gemini/config/plugins/` e adiciona o MCP correspondente em `mcp_config.json`.
+- **zcode**: o instalador copia o catálogo from-source `hosts/zcode/` para `~/.zcode/cli/plugins/cache/zcode-plugins-official/talos/<version>/` e atualiza o `marketplace.json` cache. Ative no host via `/plugins enable talos`. ZCode é Claude Agent SDK (clone estrutural do Claude Code): `Agent(subagent_type)` + `TodoWrite` + MCP stdio nativos — perfil `self_evident`, sem dependências externas.
 - **opencode**: com `--global`, instala globalmente em `~/.config/opencode/` (o MCP é registrado com caminho absoluto, funcionando em todos os projetos).
 - **pi**: com `--global`, instala globalmente em `~/.pi/agent/` (honra `PI_CODING_AGENT_DIR`), registra o MCP em `mcp.json` global e checa/instala as deps `pi-mcp-adapter` + `pi-subagents`.
 
-No modo `--global` o runtime vai para um local estável (`~/.config/opencode/atlas` ou `~/.pi/agent/atlas`) e o MCP é registrado com **caminho absoluto** (sem depender do cwd). opencode: agente em `~/.config/opencode/agents/`, skills em `~/.config/opencode/skills/`. pi: agente em `~/.agents/` (se existir) ou `~/.pi/agent/agents/`, MCP em `~/.pi/agent/mcp.json`. A config existente é **mesclada** (preserva outros MCP servers e chaves); se houver `opencode.jsonc` com comentários, ele é preservado e o Atlas é registrado no fallback `opencode.json`.
+No modo `--global` o runtime vai para um local estável (`~/.config/opencode/talos` ou `~/.pi/agent/talos`) e o MCP é registrado com **caminho absoluto** (sem depender do cwd). opencode: agente em `~/.config/opencode/agents/`, skills em `~/.config/opencode/skills/`. pi: agente em `~/.agents/` (se existir) ou `~/.pi/agent/agents/`, MCP em `~/.pi/agent/mcp.json`. A config existente é **mesclada** (preserva outros MCP servers e chaves); se houver `opencode.jsonc` com comentários, ele é preservado e o Talos é registrado no fallback `opencode.json`.
 
 ### Instalação por-projeto (opcional / escopo restrito)
 
 Caso prefira limitar a instalação de `opencode` ou `pi` a apenas um projeto específico, execute omitindo a flag `--global`:
 
 ```bash
-npx github:pauloborini/atlas-workflow init opencode      # no diretório do projeto (.opencode/ + opencode.json)
-npx github:pauloborini/atlas-workflow init pi --yes      # no diretório do projeto (.mcp.json + .pi/)
+npx github:pauloborini/talos init opencode      # no diretório do projeto (.opencode/ + opencode.json)
+npx github:pauloborini/talos init pi --yes      # no diretório do projeto (.mcp.json + .pi/)
 ```
 
-Neste caso, os caminhos serão salvos de forma relativa, exigindo que você execute a CLI a partir do diretório raiz onde o Atlas foi inicializado.
+Neste caso, os caminhos serão salvos de forma relativa, exigindo que você execute a CLI a partir do diretório raiz onde o Talos foi inicializado.
 
 Flags úteis: `--global`/`-g` (opencode/pi), `--dir <d>` (alvo por-projeto), `--yes` (auto-deps pi), `--dry-run` (mostra sem alterar), `-h`.
 
@@ -64,14 +73,14 @@ Se preferir não usar o `npx` ou necessitar de instalação offline, você pode 
 ### Claude Code e Cursor
 
 ```bash
-claude plugin marketplace add pauloborini/atlas-workflow
-claude plugin install atlas-workflow-orchestrator@atlas-workflow
+claude plugin marketplace add pauloborini/talos
+claude plugin install talos@talos
 ```
 
 ### Codex App
 
 ```bash
-npx github:pauloborini/atlas-workflow init codex
+npx github:pauloborini/talos init codex
 ```
 
 Evite instalar Codex só com `codex plugin add`: o plugin expõe skills/MCP, mas custom agents podem não ser registrados como `agent_type` pelo host. O `init codex` instala ambos.
@@ -80,60 +89,65 @@ Evite instalar Codex só com `codex plugin add`: o plugin expõe skills/MCP, mas
 
 ### Desinstalar
 
-O desinstalador via `npx` remove apenas os artefatos e agentes do Atlas, preservando as configurações e skills locais do usuário.
+O desinstalador via `npx` remove apenas os artefatos e agentes do Talos, preservando as configurações e skills locais do usuário.
 
 Se a instalação foi **global** (padrão recomendado):
 ```bash
-npx github:pauloborini/atlas-workflow uninstall claudecode   # ou: cursor
-npx github:pauloborini/atlas-workflow uninstall codex
-npx github:pauloborini/atlas-workflow uninstall opencode --global
-npx github:pauloborini/atlas-workflow uninstall pi --global
+npx github:pauloborini/talos uninstall claudecode   # ou: cursor
+npx github:pauloborini/talos uninstall codex
+npx github:pauloborini/talos uninstall antigravity
+npx github:pauloborini/talos uninstall zcode
+npx github:pauloborini/talos uninstall opencode --global
+npx github:pauloborini/talos uninstall pi --global
 ```
 
 Se a instalação foi local **por-projeto**:
 ```bash
-npx github:pauloborini/atlas-workflow uninstall opencode
-npx github:pauloborini/atlas-workflow uninstall pi
+npx github:pauloborini/talos uninstall opencode
+npx github:pauloborini/talos uninstall pi
 ```
 
 > Para realizar a desinstalação manual (nativa de cada CLI) ou para entender os diretórios afetados, consulte o **[COMMANDS.md](COMMANDS.md)**.
 
 ## Artefato `.plugin` (opcional)
 
-Alternativa à instalação via GitHub: baixar o `.plugin` do host (`claude`, `codex`, `opencode` ou `pi`) na [release](https://github.com/pauloborini/atlas-workflow/releases) (tags `v*`), validar com `shasum -a 256 -c SHA256SUMS` e instalar pelo fluxo do host. Cursor usa o artefato Claude.
+Alternativa à instalação via GitHub: baixar o `.plugin` do host (`claude`, `codex`, `opencode`, `pi` ou `zcode`) na [release](https://github.com/pauloborini/talos/releases) (tags `v*`), validar com `shasum -a 256 -c SHA256SUMS` e instalar pelo fluxo do host. Cursor usa o artefato Claude.
 
 ## Como usar
 
 Comando (Claude Code / Cursor): `/workflow <mode> <input-type> [input] [flags]`
 
-No Codex, opencode e pi, invoque a skill do orquestrador com o mesmo padrão de argumentos (ex.: `workflow full backlog-item S05`). O verbo de dispatch do subagente é resolvido por `atlas_capabilities` (host-agnóstico).
+No Codex, Antigravity, opencode, pi e zcode, invoque a skill do orquestrador com o mesmo padrão de argumentos (ex.: `workflow full sprint S05`). O verbo de dispatch do subagente é resolvido por `talos_capabilities` (host-agnóstico).
 
-Se você quiser começar fora do fluxo principal, as skills listadas abaixo são os atalhos explícitos para backlog, PRD, plano, execução e revisão.
+Se você quiser começar fora do fluxo principal, as skills listadas abaixo são os atalhos explícitos para backlog, PRD, auditoria, plano, execução e revisão.
 
 ### Modos
 
 | Modo | Quando usar | O que faz |
 |------|-------------|-----------|
-| **`full`** | Sprint/backlog novo ou feature do zero | Gera PRD → valida/entrevista se preciso → **plano** (`.atlas/plans/`) → **executa** o plano → review opcional |
+| **`full`** | Sprint/backlog novo ou feature do zero | Gera PRD → valida/entrevista se preciso → **plano** (`.talos/plans/`) → **executa** o plano → review opcional |
 | **`direct`** | PRD já existe e está maduro | Valida PRD → entrevista só se houver gap → **executa direto** (sem fase de plan handoff) → review opcional |
-| **`execute`** | Já tenho um `PLAN_*.md` pronto | Reverifica o plano (artefato + conformidade) → **executa o plano existente** → review opcional. **Não regera plano.** |
+| **`execute`** | Já tenho um `PLAN_*.md` pronto | Reverifica o plano (artefato + conformidade) → **executa o plano existente** → review opcional. **Não regera plano.** Único modo que aceita plano `Source mode: standalone` (sem sprint) — `full`/`direct` exigem sprint na entrada e rejeitam esse plano. |
 | `interview-only` | Só fechar decisões / brainstorm | Entrevista; não implementa |
+| **`audit`** | Quero diagnóstico sem patch | Audita target/boundary contra regras locais + stack detectada + Ponytail pass; `--handoff` grava `.talos/plans/PLAN_AUDIT_*.md` sem executar |
 
-**Dica:** `full` = “quero PRD + plano + código”. `direct` = “já tenho PRD aprovado, implementa”. `execute` = “já tenho o plano, só executa”.
+**Dica:** `full` = “quero PRD + plano + código”. `direct` = “já tenho PRD aprovado, implementa”. `execute` = “já tenho o plano, só executa”. `audit` = “diagnostica, não corrige”.
 
 > **Roteamento por tipo de input (v0.4.1+):** o tipo do arquivo que você passa **prevalece** sobre o modo digitado. Apontar um `PLAN_*.md` em `direct`/`full` (mesmo renomeado) auto-roteia para `execute` com um aviso de uma linha — nunca gera “plano de plano”. Pedir `execute` sobre um backlog/PRD roteia de volta para `full`/`direct`.
 
 ### Input types
 
-- `backlog-item` — ID de sprint ou item (ex.: `S05`)
+- `sprint` — ID de sprint já ancorado no backlog e em sprint file vivo (ex.: `S05`)
+- `backlog-item` — alias legado de `sprint`
 - `idea` — indicação curta em texto
 - `prd` — caminho para `PRD_*.md` existente (principal em **`direct`**)
 - `plan` — caminho para `PLAN_*.md` existente (principal em **`execute`**)
+- `target` — arquivo/diretório/feature/módulo auditável (só em **`audit`**)
 - `brainstorm` — texto livre (só com `interview-only`)
 
 ### Flags
 
-- `--review` — roda `atlas-slice-review` no final
+- `--review` — roda `talos-slice-review` no final
 - `--interview` — força entrevista de PRD mesmo sem ambiguidades detectadas
 - `--help` — sintaxe completa
 
@@ -142,7 +156,13 @@ Se você quiser começar fora do fluxo principal, as skills listadas abaixo são
 Feature nova a partir do sprint (pipeline completo):
 
 ```
-/workflow full backlog-item "S05"
+/workflow full sprint "S05"
+```
+
+Sprint já recortada; implementar direto sem gerar plano separado:
+
+```
+/workflow direct sprint "S05"
 ```
 
 PRD já escrito no repo; implementar sem gerar plano separado:
@@ -166,7 +186,7 @@ Ideia solta, ainda sem PRD formal (gera PRD e segue o fluxo completo):
 Plano já escrito; executar direto sem regerar (modo `execute`):
 
 ```
-/workflow execute plan "./.atlas/plans/PLAN_S05_login.md"
+/workflow execute plan "./.talos/plans/PLAN_S05_login.md"
 ```
 
 Só alinhar decisões antes de planejar:
@@ -175,57 +195,113 @@ Só alinhar decisões antes de planejar:
 /workflow interview-only brainstorm "dark mode só no web ou mobile também?"
 ```
 
+PRD avulso (sem sprint/backlog) até execução, sem passar por `full`/`direct`:
+
+```
+/workflow interview-only brainstorm "ideia direto de conversa"
+→ matura o PRD; campo Sprint file fica "Não aplicável (standalone)"
+
+talos-plan-handoff (uso direto, fora do /workflow)
+→ lê o PRD, detecta source_mode: standalone, escreve PLAN_*.md com Source mode: standalone
+
+/workflow execute plan "./.talos/plans/PLAN_<ID>_<slug>.md"
+→ único modo que aceita plano standalone; full/direct exigem sprint e rejeitam esse plano na entrada
+```
+
 ### Dicas práticas
 
-1. Confirme o MCP antes de começar (`atlas_ping`); sem MCP o orquestrador para no pré-flight.
-2. Artefatos ficam no projeto consumidor: planos em `.atlas/plans/`, estado em `.atlas/state/<run_id>/`.
+1. Confirme o MCP antes de começar (`talos_ping`); sem MCP o orquestrador para no pré-flight.
+2. Artefatos ficam no projeto consumidor: planos em `.talos/plans/`, estado em `.talos/state/<run_id>/`.
 3. Em `full`, não espere código antes do `PLAN_*.md` validado — é gate explícito.
 4. Ambiguidades no PRD disparam entrevista automaticamente; use `--interview` se quiser forçar.
-5. Toda execução passa pelo validador frio (`atlas-task-validator`) antes de declarar a slice pronta.
+5. Toda execução passa pelo validador frio (`talos-task-validator`) antes de declarar a slice pronta.
+
+### Princípio Fire-and-Continue
+
+O pipeline avança fase a fase **sem pedir permissão**. As únicas paradas são gates duros (`blocked`) ou bloqueios reais de ambiente. Decisões em aberto no PRD geram entrevista automática e o fluxo **continua** — o orquestrador não para para pedir confirmação. Isso vale para todos os modos e hosts.
+
+### Backlog em 2 camadas
+
+O Talos estrutura a demanda em duas camadas complementares:
+
+- **Backlog mestre** (`BACKLOG_MESTRE_*.md`): índice estratégico enxuto com fases, tabela de sprints, dependências, priorização MoSCoW e links para sprint files. É o mapa do produto.
+- **Sprint files**: arquivos vivos dedicados por sprint — a fonte de verdade contextual que o pipeline lê para gerar PRDs, planos e executar slices. Cada sprint file respeita o template canônico e é validado pelo gate `SPRINT_FILE`.
+
+Gates MCP dedicados (`talos_verify_backlog_index`, `talos_verify_sprint_file`, `talos_select_next_sprint`, `talos_update_sprint_status`) garantem consistência entre as duas camadas. O gate `DEP` bloqueia execução de sprints cujas dependências de backlog não estejam concluídas.
 
 ### Skills da cadeia
 
-Cadeia automática: `atlas-sprint-prd-generator` → `atlas-prd-interview` → `atlas-plan-handoff` → `atlas-plan-execute` (full) ou `atlas-direct-execute` (direct) → `atlas-task-validator` → `atlas-findings-repair` (só após `fail`, em qualquer host) → `atlas-slice-review` (opcional)
+Cadeia automática de execução: `talos-sprint-prd-generator` → `talos-prd-interview` → `talos-plan-handoff` → `talos-plan-execute` (full) ou `talos-direct-execute` (direct) → `talos-task-validator` → `talos-findings-repair` (só após `fail`, em qualquer host) → `talos-slice-review` (opcional)
 
-No modo `full`, as etapas documentais (`PRD`, entrevista, `PLAN_*.md`) ficam no agente principal/orquestrador. O primeiro sub-agent obrigatório nasce só na fase de execução (`atlas-plan-execute`).
+Modo sem execução: `talos-audit` roda no fio principal, não altera código, não chama executor e pode gravar handoff Talos-style em `.talos/plans/` com `--handoff`.
+
+No modo `full`, as etapas documentais (`PRD`, entrevista, `PLAN_*.md`) ficam no agente principal/orquestrador. O primeiro sub-agent obrigatório nasce só na fase de execução (`talos-plan-execute`).
 
 ### Skills com uso direto
 
 Além da cadeia automática, estas skills também podem ser chamadas diretamente para tarefas específicas. Algumas delas aparecem no fluxo principal em outro contexto, mas vale saber quando usar cada uma:
 
-- `atlas-backlog-generator` — cria `BACKLOG_MESTRE_*.md` a partir de uma conversa, briefing, roadmap ou lista solta de requisitos. Use quando o objetivo for organizar demanda antes de virar PRD.
-- `atlas-sprint-prd-generator` — transforma um sprint ID como `S01`/`S02` em PRD de sprint. Use quando o escopo já está amarrado ao roadmap e você quer o PRD da rodada.
-- `atlas-prd-interview` — valida e amadurece um PRD antes de planejar. Use quando você quer fechar ambiguidades, dependências ou decisões de produto.
-- `atlas-plan-handoff` — converte um PRD validado em plano executável. Use quando a intenção é preparar a execução, não ainda codar.
-- `atlas-direct-execute` — executa diretamente quando o PRD já está maduro. Use quando você quer pular a fase de plan handoff.
-- `atlas-task-validator` — faz a validação fria da slice executada. Use como veredito final de conformidade, nunca como ação manual de rotina.
-- `atlas-findings-repair` — corrige findings P0/P1/P2 depois de um `fail` do validator sem reabrir a execução completa. Use só no caminho de retry.
-- `atlas-slice-review` — faz a revisão fria opcional depois da execução. Use quando quiser uma segunda passada focada em riscos e regressões.
+- `talos-backlog-generator` — cria `BACKLOG_MESTRE_*.md` a partir de uma conversa, briefing, roadmap ou lista solta de requisitos. Use quando o objetivo for organizar demanda antes de virar PRD.
+- `talos-sprint-prd-generator` — transforma um sprint ID como `S01`/`S02` em PRD de sprint. Use quando o escopo já está amarrado ao roadmap e você quer o PRD da rodada.
+- `talos-prd-interview` — valida e amadurece um PRD antes de planejar. Use quando você quer fechar ambiguidades, dependências ou decisões de produto.
+- `talos-audit` — audita arquivo, diretório, pacote, módulo, feature ou boundary localizável sem corrigir código. Lê regras locais reais, **detecta stack deterministicamente** por manifests/configs (Flutter, Node, Python, Go, Rust, Java/Kotlin, Firebase, Supabase, REST/OpenAPI), analisa arquitetura/contratos/erros/segurança/testes/observabilidade, faz Ponytail pass final e só promove achado com evidência `arquivo:linha`. Regras só ativam com sinal real no boundary. Com `--handoff`, grava `.talos/plans/PLAN_AUDIT_*.md` TC-conforme para correção posterior; não chama executor.
+- `talos-plan-handoff` — converte um PRD validado em plano executável. Use quando a intenção é preparar a execução, não ainda codar. Aceita PRD `sprint-bound` (com sprint file) ou `standalone` (PRD declara explicitamente `Sprint file: Não aplicável (standalone)`); plano `standalone` só é executável via modo `execute` — `full`/`direct` exigem sprint na entrada.
+- `talos-direct-execute` — executa diretamente quando o PRD já está maduro. Use quando você quer pular a fase de plan handoff.
+- `talos-task-validator` — faz a validação fria da slice executada. Use como veredito final de conformidade, nunca como ação manual de rotina.
+- `talos-findings-repair` — corrige findings P0/P1/P2 depois de um `fail` do validator sem reabrir a execução completa. Use só no caminho de retry.
+- `talos-slice-review` — faz a revisão fria opcional depois da execução. Use quando quiser uma segunda passada focada em riscos e regressões.
 
 ### Topologia do validador frio (G4)
 
-O validador frio (`atlas-task-validator`) **sempre** roda isolado e **sempre** como sub-agent irmão (sibling) despachado pelo orquestrador — em todos os hosts, sem exceção. O orquestrador lê `atlas_capabilities.validator_dispatch` em runtime; o `dispatcher` é sempre `orchestrator`. Fluxo único: orquestrador → executor escreve `state_path` e encerra → **validator irmão** lê `state_path` → veredito → orquestrador consome. Você não escolhe à mão.
+O validador frio (`talos-task-validator`) **sempre** roda isolado e **sempre** como sub-agent irmão (sibling) despachado pelo orquestrador — em todos os hosts, sem exceção. O orquestrador lê `talos_capabilities.validator_dispatch` em runtime; o `dispatcher` é sempre `orchestrator`. Fluxo único: orquestrador → executor escreve `state_path` e encerra → **validator irmão** lê `state_path` → veredito → orquestrador consome. Você não escolhe à mão.
 
 **Por que sibling em todos os hosts:** o executor sub-agent **não** despacha o validador (evita validar o próprio trabalho e evita depender de o host permitir um sub-agent disparar um neto). Em vez disso, o executor termina ao escrever o `state_path`, e o orquestrador dispara o validator como **irmão isolado**. Hosts sem join síncrono confiável do validador são **rejeitados no preflight** (gate `JOIN`, hard-fail) — não há degradação. Os dois invariantes seguem firmes:
 
 - **G9 (mutação só em sub-agent isolado):** todo código muda dentro do executor isolado — o fio principal nunca edita.
 - **G4 (validação fria separada):** o validator é um sub-agent **frio e isolado**, com contexto próprio, irmão do executor e coordenado pelo orquestrador — nunca filho do executor.
 
-**Loop de reparo (sibling):** se o validator retorna `fail` com P0/P1/P2, o orquestrador abre o lock de reparo (`repair_start`), dispara `atlas-findings-repair` com os findings estruturados, fecha com `repair_run_id` e só então roda o **2º e último** validator. `validator_run_id` e `repair_run_id` existem para descartar retornos stale/duplicados. Se o 2º validator ainda falhar, a slice termina em `blocked` — **3º validator é proibido**.
+**Loop de reparo (sibling):** se o validator retorna `fail` com P0/P1/P2, o orquestrador abre o lock de reparo (`repair_start`), dispara `talos-findings-repair` com os findings estruturados, fecha com `repair_run_id` e só então roda o **2º e último** validator. `validator_run_id` e `repair_run_id` existem para descartar retornos stale/duplicados. Se o 2º validator ainda falhar, a slice termina em `blocked` — **3º validator é proibido**.
 
-**Proof-of-work (R20, v0.8.0):** ao abrir o slot, `atlas_lock_validator(start)` emite um `challenge` (sha256 de um arquivo do boundary do `state_path`); o validator irmão computa o hash desse arquivo e devolve em `challenge_response`. No `complete`, o MCP recomputa o hash do disco e bloqueia (`challenge_failed`) em divergência/ausência, sem fechar o slot — re-despacho do mesmo validator, **bounded** por attempt (esgotado o teto, fecha terminal `challenge_exhausted`, fail-closed). É atestação **mecânica** de que o veredito leu o boundary; o hash esperado nunca é persistido em estado legível. Não é prova de isolamento não-forjável (o MCP fala stdio com um único caller) — fecha o atalho preguiçoso de afirmar `pass` sem ler código.
+**Proof-of-work (R20, v0.8.0):** ao abrir o slot, `talos_lock_validator(start)` emite um `challenge` (sha256 de um arquivo do boundary do `state_path`); o validator irmão computa o hash desse arquivo e devolve em `challenge_response`. No `complete`, o MCP recomputa o hash do disco e bloqueia (`challenge_failed`) em divergência/ausência, sem fechar o slot — re-despacho do mesmo validator, **bounded** por attempt (esgotado o teto, fecha terminal `challenge_exhausted`, fail-closed). É atestação **mecânica** de que o veredito leu o boundary; o hash esperado nunca é persistido em estado legível. Não é prova de isolamento não-forjável (o MCP fala stdio com um único caller) — fecha o atalho preguiçoso de afirmar `pass` sem ler código.
 
 **Smoke G9 — critério PASS:** o smoke do Gate G9 exige validator irmão disparado pelo orquestrador (sibling) em todos os hosts. Exigir que o executor dispare o validador (validador aninhado) é leitura errada do contrato.
+
+### Visão geral dos Gates
+
+Cada gate é uma verificação determinística de contrato. Se um gate retorna `blocked`, o pipeline para (hard-fail). Não há fallback inline — é isso que torna o Talos determinístico.
+
+| Gate | Descrição | Fase |
+|------|-----------|------|
+| **PREREQ** | Subagente + MCP disponíveis no host | Preflight |
+| **JOIN** | Join síncrono do validador frio | Preflight |
+| **DISPATCH** | Subagente capaz de mutação (Write/Edit/Bash) | Preflight |
+| **VERSION_DRIFT** | Versão do plugin consistente em todos os componentes | Preflight |
+| **LOCK_CONFLICT** | Sem conflito de lock com outra execução | Preflight |
+| **G1** | Artefato de entrada existe e é válido | Entrada |
+| **BACKLOG** | Backlog mestre é índice válido | Entrada |
+| **SPRINT_FILE** | Sprint file conforme template canônico | Entrada |
+| **DEP** | Dependências de backlog satisfeitas (não-done = hard-fail) | Entrada |
+| **TC** | Conformidade com template canônico | Documental |
+| **G5** | PRD sem ambiguidades não-resolvidas | Documental |
+| **G7** | Contrato pós-plano verificado | Documental |
+| **G4** | Validador frio isolado (sibling) + proof-of-work | Execução |
+| **G8** | Boundary de execução respeitado | Execução |
+| **G9** | Revisão de slice isolada | Execução |
+| **G10** | Skill exigida disponível (sem substituição silenciosa) | Execução |
+| **G11** | Contrato de repair (boundary, budget=1) | Repair |
+| **G12** | Liveness do executor (checkpoint/stall detection) | Execução |
+
+Gates documentais e de entrada rodam no orquestrador (fio principal). Gates de execução (G4, G8, G9, G10, G12) envolvem subagentes isolados. O validador frio (G4) é o gate terminal de cada slice.
 
 ## Estrutura do repo
 
 | Caminho | Conteúdo |
 |---------|----------|
 | [`packages/`](packages/) | Skills, templates, MCP |
-| [`agents/`](agents/) | Subagentes despachados (Claude): `atlas-task-validator`, `atlas-plan-execute`, `atlas-direct-execute`, `atlas-slice-review` |
-| [`plugins/atlas-workflow-orchestrator/`](plugins/atlas-workflow-orchestrator/) | Catálogo Codex from-source (marketplace) |
-| [`hosts/opencode/`](hosts/opencode/) · [`hosts/pi/`](hosts/pi/) | Catálogos from-source opencode/pi |
-| [`plugin-manifests/`](plugin-manifests/) | Manifests/configs por host (claude, codex, opencode, pi) |
+| [`agents/`](agents/) | Subagentes despachados (Claude): `talos-task-validator`, `talos-plan-execute`, `talos-direct-execute`, `talos-slice-review` |
+| [`plugins/talos/`](plugins/talos/) | Catálogo Codex from-source (marketplace) |
+| [`hosts/opencode/`](hosts/opencode/) · [`hosts/pi/`](hosts/pi/) · [`hosts/zcode/`](hosts/zcode/) | Catálogos from-source opencode/pi/zcode |
+| [`plugin-manifests/`](plugin-manifests/) | Manifests/configs por host (claude, codex, opencode, pi, zcode; Antigravity é gerado pelo instalador) |
 | [`build/`](build/) | Gera `.plugin` em `dist/`, sincroniza catálogos, testes/smoke/conformance |
 | [`CHANGELOG.md`](CHANGELOG.md) · [`PATCH_PROCEDURE.md`](PATCH_PROCEDURE.md) | Release e manutenção |
 
@@ -234,5 +310,22 @@ Templates canônicos em [`packages/templates/`](packages/templates/) — fonte �
 ## Referências
 
 - Adapters de host: [`host-adapters.md`](packages/orchestrator/references/host-adapters.md)
-- MCP: [`packages/mcp-server/`](packages/mcp-server/) (`atlas_ping`, `atlas_run_state`, `atlas_capabilities`)
-- Plugin v0.1.10 (rollback): [`archive/v0.1.10/`](archive/v0.1.10/)
+- MCP: [`packages/mcp-server/`](packages/mcp-server/) — 15 ferramentas disponíveis:
+
+| Tool | Função |
+|------|--------|
+| `talos_ping` | Health check, versão, detecção de host |
+| `talos_capabilities` | Perfil runtime do host (schema v5) |
+| `talos_classify_input` | Classifica tipo de artefato do input |
+| `talos_preflight` | Pré-flight obrigatório (gates PREREQ, JOIN, DISPATCH, VERSION_DRIFT, LOCK_CONFLICT) |
+| `talos_verify_artifact` | Verifica existência e validade de artefato (G1) |
+| `talos_verify_template_conformance` | Conformidade com template canônico (TC) |
+| `talos_scan_prd` | Scaneia PRD por ambiguidades (G5) |
+| `talos_assert_after_plan` | Verifica contrato pós-plano (G7) |
+| `talos_run_state` | Persiste estado de execução em disco |
+| `talos_lock_dispatch` | Gerencia lock de dispatch (G12 — liveness) |
+| `talos_lock_validator` | Gerencia ciclo do validador frio (G4 — proof-of-work) |
+| `talos_verify_sprint_file` | Valida conformidade de sprint file |
+| `talos_verify_backlog_index` | Valida backlog mestre como índice |
+| `talos_select_next_sprint` | Seleção determinística da próxima sprint executável |
+| `talos_update_sprint_status` | Atualiza status atomicamente (backlog + sprint file) |
