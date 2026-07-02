@@ -2949,6 +2949,29 @@ test('S10(d): talos_run_state(get) expõe validator_recovery do slot ativo (reco
   assert.equal(after.validator_recovery, null);
 });
 
+test('P2: talos_run_state(recovery) expõe só recovery mínimo do validator', () => {
+  const root = tmpRoot();
+  preflight({
+    run_id: 'recover1', project_root: root, mode: 'execute',
+    host: 'codex', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: 'recover1', project_root: root, action: 'start', phase: 'plan_execute' });
+  const start = lockValidator({
+    run_id: 'recover1', project_root: root, host: 'codex', action: 'start',
+    state_path: '.talos/state/recover1/slice.json',
+  });
+
+  const full = runState({ action: 'get', run_id: 'recover1', project_root: root });
+  const recovery = runState({ action: 'recovery', run_id: 'recover1', project_root: root });
+
+  assert.equal(recovery.run_id, 'recover1');
+  assert.equal(recovery.validator_recovery.expected_validator_run_id, start.validator_run_id);
+  assert.equal(recovery.validator_recovery.expected_dispatch_token, full.validator_recovery.expected_dispatch_token);
+  assert.equal(recovery.validator_recovery.expected_state_path, '.talos/state/recover1/slice.json');
+  assert.equal(Object.hasOwn(recovery, 'data'), false);
+  assert.equal(Object.hasOwn(recovery, 'last_call'), false);
+});
+
 // (e) regressão Codex sem token: caminho idempotente não exige dispatch_token.
 test('S10(e): Codex com dispatch_token mantém idempotência por run_id', () => {
   const root = tmpRoot();

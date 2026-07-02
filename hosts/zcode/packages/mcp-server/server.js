@@ -1514,6 +1514,17 @@ function runState(args = {}) {
     const state = readState(validateRunId(args.run_id), args);
     return { ...state, validator_recovery: deriveValidatorRecovery(state) };
   }
+  if (action === 'recovery') {
+    const runId = validateRunId(args.run_id);
+    const state = readState(runId, args);
+    return {
+      run_id: runId,
+      phase: state.phase ?? null,
+      status: state.status ?? null,
+      updated_at: state.updated_at ?? null,
+      validator_recovery: deriveValidatorRecovery(state),
+    };
+  }
   if (action === 'upsert') return upsertState(args);
   throw rpcError(-32602, `Ação inválida para talos_run_state: ${action}`);
 }
@@ -4888,7 +4899,7 @@ function toolsList() {
     tools: [
       {
         name: 'talos_ping',
-        description: 'Retorna saúde, identidade, versão e capacidades mínimas do MCP Talos.',
+        description: 'Saúde/versão do MCP Talos.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
@@ -4897,7 +4908,7 @@ function toolsList() {
       },
       {
         name: 'talos_capabilities',
-        description: 'Adapter de host: detecta o host (Claude/Codex/genérico) e retorna descritores canônicos de disparo de subagente, todo nativo e paths de plano. Skills consultam isto em vez de hardcodar nome de host.',
+        description: 'Host adapter: subagente, todo e paths.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
@@ -4908,13 +4919,13 @@ function toolsList() {
       },
       {
         name: 'talos_run_state',
-        description: 'Cria, atualiza ou consulta estado de run em .talos/state/ no cwd do projeto consumidor.',
+        description: 'Estado de run; use recovery para payload mínimo do validator.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
           required: ['run_id'],
           properties: {
-            action: { type: 'string', enum: ['get', 'upsert'], default: 'get' },
+            action: { type: 'string', enum: ['get', 'upsert', 'recovery'], default: 'get' },
             run_id: { type: 'string', minLength: 1 },
             project_root: { type: 'string', minLength: 1 },
             phase: { type: 'string' },
@@ -4926,7 +4937,7 @@ function toolsList() {
       },
       {
         name: 'talos_verify_artifact',
-        description: 'Gate G1: verifica se artefato obrigatório existe em disco e é legível.',
+        description: 'G1: artefato existe/legível.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
@@ -4941,7 +4952,7 @@ function toolsList() {
       },
       {
         name: 'talos_scan_prd',
-        description: 'Gate G5: escaneia PRD por padrões determinísticos de ambiguidade bloqueante.',
+        description: 'G5: ambiguidades bloqueantes no PRD.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
@@ -4955,7 +4966,7 @@ function toolsList() {
       },
       {
         name: 'talos_verify_template_conformance',
-        description: 'Gate de conformidade: valida PRD ou plano contra o template canônico aplicável e registra pendências acionáveis.',
+        description: 'TC: PRD/plano contra template.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
@@ -4972,7 +4983,7 @@ function toolsList() {
       },
       {
         name: 'talos_verify_sprint_file',
-        description: 'Gate de conformidade: valida sprint file vivo contra SPRINT_TEMPLATE e, se fornecido, vínculo lexical com backlog mestre.',
+        description: 'Valida sprint file e backlink.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
@@ -4988,7 +4999,7 @@ function toolsList() {
       },
       {
         name: 'talos_verify_backlog_index',
-        description: 'Gate de conformidade: valida BACKLOG_MESTRE como índice macro, links para sprint files, deps internas, status espelhado e drift básico.',
+        description: 'Valida backlog: sprints, deps, links.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
@@ -5002,7 +5013,7 @@ function toolsList() {
       },
       {
         name: 'talos_select_next_sprint',
-        description: 'Gate determinístico: seleciona a próxima sprint executável a partir do backlog indexado, exigindo deps done, sprint file válido e DoR verde.',
+        description: 'Seleciona próxima sprint executável.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
@@ -5016,7 +5027,7 @@ function toolsList() {
       },
       {
         name: 'talos_update_sprint_status',
-        description: 'Gate determinístico: sincroniza status da sprint viva no BACKLOG_MESTRE e no SPRINT_SNN, exigindo evidência/validator para done.',
+        description: 'Sincroniza status backlog/sprint.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
@@ -5039,7 +5050,7 @@ function toolsList() {
       },
       {
         name: 'talos_classify_input',
-        description: 'Classifica o input em backlog|prd|plan|unknown (PRD D4/D5). Verdade forte = conformidade de template de plano passa; depois cabeçalho canônico; nome PLAN_*.md é só dica fraca. Devolve artifact_type + banner de roteamento. Alimenta o guardrail anti plano-de-plano.',
+        description: 'Classifica input: backlog|prd|plan|unknown.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
@@ -5053,7 +5064,7 @@ function toolsList() {
       },
       {
         name: 'talos_preflight',
-        description: 'Gate PREREQ+G10: hard-fail de pré-requisitos de determinismo (subagente/MCP do host, DEC-004), depois valida modo, versão e lock ativo, travando a rota da run. Output declara guarantee_level só em modos com execução.',
+        description: 'PREREQ+G10: modo, host, versão, lock.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
@@ -5070,7 +5081,7 @@ function toolsList() {
             // delimita defensivamente o override a PREREQUISITE_FLAGS em checkPrerequisites.
             host_capabilities: {
               type: 'object',
-              description: 'Disponibilidade real reportada pelo host (override das flags do perfil). Ex.: pi sem deps → {"subagent_available":false}. dispatch_mutable reporta capacidade de mutação (Write/Edit/Bash) do subagente para gate DISPATCH (DEC-008).',
+              description: 'Flags reais do host.',
               additionalProperties: false,
               properties: {
                 subagent_available: { type: 'boolean' },
@@ -5090,7 +5101,7 @@ function toolsList() {
       },
       {
         name: 'talos_lock_dispatch',
-        description: 'Gates G7/G8/G12: controla fase ativa, checkpoints de liveness do executor, transições de dispatch, validator antes de review e concorrência 1.',
+        description: 'G7/G8/G12: dispatch e liveness.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
@@ -5103,7 +5114,7 @@ function toolsList() {
             event: {
               type: 'string',
               enum: [...EXECUTOR_CHECKPOINT_EVENTS],
-              description: 'Checkpoint G12 emitido pelo executor durante plan_execute.',
+              description: 'Checkpoint G12.',
             },
             plan_path: { type: 'string' },
             state_path: { type: 'string' },
@@ -5114,7 +5125,7 @@ function toolsList() {
       },
       {
         name: 'talos_lock_validator',
-        description: 'Gate G4/G8 sibling: enforça um validator por vez em todos os hosts, dispatch_token obrigatório no retorno, proof-of-work (challenge sha256 do boundary recomputado no complete), máximo de 2 attempts, repair obrigatório entre fail e retry e bloqueio explícito do terceiro validator.',
+        description: 'G4/G8: validator sibling, token, challenge, repair.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
@@ -5137,7 +5148,7 @@ function toolsList() {
       },
       {
         name: 'talos_assert_after_plan',
-        description: 'Gate G11: bloqueia encerramento prematuro do modo full após plano validado e antes da execução.',
+        description: 'G11: bloqueia full antes da execução.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,

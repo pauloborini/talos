@@ -19,7 +19,7 @@ Purpose: perform a cold, structured validation pass of the delivered slice again
 
 Use `talos_run_state` as the primary source for run metadata and gate state. The `state_path` JSON is the slice boundary projection for validation, not a replacement for MCP state. If `talos_run_state` is unavailable when required to confirm run state, return `verdict: "fail"` with a P1 finding instead of inferring status.
 
-Before validation, derive `run_id` from `state_path`, call `talos_run_state(action=get)`, and require an active `validator_recovery` whose `expected_state_path` matches the input. Copy `expected_dispatch_token` unchanged into the output. If correlation is unavailable, return `dispatch_token: null`, `verdict: "fail"`, and a P1 finding; never invent a token.
+Before validation, derive `run_id` from `state_path`, call `talos_run_state(action=recovery)`, and require an active `validator_recovery` whose `expected_state_path` matches the input. Copy `expected_dispatch_token` unchanged into the output. If correlation is unavailable, return `dispatch_token: null`, `verdict: "fail"`, and a P1 finding; never invent a token. Use `action=get` only for debugging; normal validation must not load the full run ledger.
 
 > **Proveniência do token (G4/R19) — quem lê o recovery é o validador, não o orquestrador.** É **este** subagente irmão que lê `validator_recovery` e ecoa `expected_dispatch_token` no próprio output. O orquestrador **nunca** preenche o token do `talos_lock_validator(complete)` lendo o recovery por conta própria: ele só pode submeter o token que **este output** devolveu. O `validator_recovery` serve ao orquestrador para *reconhecer/descartar* retornos stale (`stale_discarded: true`), nunca para *fabricar* o token de um validador que não rodou.
 
