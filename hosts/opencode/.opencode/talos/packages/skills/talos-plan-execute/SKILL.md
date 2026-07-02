@@ -124,10 +124,13 @@ After all tasks in the current slice are complete, write the state file boundary
 
 #### State file boundary
 
-Create `.talos/state/<run_id>/<slice>.json` following `packages/templates/STATE_FILE_SCHEMA.md`:
+Create `.talos/state/<run_id>/<slice>.json` following `packages/templates/STATE_FILE_SCHEMA.md`.
+
+State file = deterministic context layer, not a human report. Keep it compact: IDs, paths, checks, hashes, short status. Do not paste plan/PRD text, diffs, logs, reasoning, prose summaries, or transcripts. Prefer one-line compact JSON on disk; JSON parsing, not formatting, is the contract.
 
 ```json
 {
+  "state_schema_version": 2,
   "run_id": "<run_id>",
   "slice": "<slice id>",
   "base_sha": "<base commit explícito do plano/handoff>",
@@ -141,18 +144,15 @@ Create `.talos/state/<run_id>/<slice>.json` following `packages/templates/STATE_
   "sprint_id": "S01",
   "sprint_file_path": ".talos/backlog/sprints/SPRINT_S01_slug.md",
   "prd_path": ".talos/prd/PRD_S01_slug.md",
-  "obligations": [],
-  "invariants": [{"id": "I1", "requirement": "<invariante>", "expected_evidence": ["<path/check>"]}],
-  "scenario_probes": [{"id": "S1", "scenario": "<cenário>", "expected": "<resultado>"}],
-  "risk_probes": [{"id": "R1", "risk": "<risco>", "probe": "<pergunta verificável>"}],
-  "eval_results": [{"id": "EVAL-001", "claim": "<claim>", "status": "passed", "evidence": ["<path/check/state>"], "checks": ["<comando>"]}],
-  "evidence_to_claim": [{"claim_id": "EVAL-001", "source": "Sprint §9", "evidence": ["<path/check/state>"], "status": "passed"}],
+  "contract_ids": {"obligations": [], "invariants": ["I1"], "scenarios": ["S1"], "risks": ["R1"]},
+  "eval_results": [{"id": "EVAL-001", "status": "passed", "evidence": ["<path/check/state>"], "checks": [0]}],
   "policy_scope": {"allowed_scope": ["<path>"], "forbidden_scope": ["<path>"], "required_gates": ["talos_verify_sprint_file", "talos-task-validator"]},
-  "validation_map": [{"obligation_ids": [], "checks": ["<comando>"], "status": "passed"}],
-  "task_evidence": [{"task": "T01", "files": ["relative/path.ext"], "checks": ["<comando>"], "result": "passed"}],
+  "check_table": ["<comando>"],
+  "validation_map": [{"obligation_ids": [], "checks": [0], "status": "passed"}],
+  "task_evidence": [{"task": "T01", "files": [0], "checks": [0], "result": "passed"}],
   "repair_evidence": [],
-  "worktree_baseline": [{"path": "relative/preexisting.ext", "status": "M", "sha256": "<64 hex>"}],
-  "worktree_final": [{"path": "relative/preexisting.ext", "status": "M", "sha256": "<64 hex>"}],
+  "worktree_baseline": [["relative/preexisting.ext", "M", "<64 hex>"]],
+  "worktree_final": [["relative/path.ext", "M", "<64 hex>"]],
   "executed_at": "ISO8601",
   "executor_skill": "talos-plan-execute"
 }
@@ -160,7 +160,9 @@ Create `.talos/state/<run_id>/<slice>.json` following `packages/templates/STATE_
 
 Capture `base_sha` da referência explícita do plano/handoff; nunca infira pelo nome da branch. Antes da primeira mutação, capture `worktree_baseline`; imediatamente antes do handoff, capture `worktree_final`. `files_changed` e `task_evidence` representam exatamente `base_sha...head_sha` + delta entre snapshots. Dirty preexistente byte/status-idêntico fica fora; qualquer alteração posterior entra.
 
-Se o plano tiver Sprint file, o state deve provar todos os `EVAL-*` do `eval_manifest` com `eval_results.status="passed"` e entrada correspondente em `evidence_to_claim`. `policy_scope` deve refletir `Sprint §10` em forma resumida; arquivo em `forbidden_scope` não pode aparecer em `files_changed`.
+Use schema v2. `contract_ids` referencia IDs autoritativos do plano/PRD/Sprint; não copie narrativa de invariantes, cenários ou riscos. `check_table` deduplica comandos; `task_evidence.files` referencia índices de `files_changed`; snapshots usam tuplas `[path,status,sha256]`.
+
+Se o plano tiver Sprint file, o state deve provar todos os `EVAL-*` do `eval_manifest` com `eval_results.status="passed"` e evidência real. Não grave `evidence_to_claim` no v2; `eval_results` é fonte única. `policy_scope` deve refletir `Sprint §10` em forma resumida; arquivo em `forbidden_scope` não pode aparecer em `files_changed`.
 
 Validation is always **sibling**, on every host. The validator is registered as a real subagent on every host, but this executor **never** dispatches it and never validates its own work. After tasks and local gates pass and the state file is written, this executor **stops mutation** and returns `validator_handoff_required` with the `state_path`. The orchestrator dispatches `talos-task-validator` as the next isolated sibling phase, locks it via `talos_lock_validator`, and — if the verdict is `fail` — dispatches `talos-findings-repair` (not this executor) before the **2nd and last** validator.
 
