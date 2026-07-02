@@ -4,9 +4,9 @@
 
 # Talos
 
-Plugin **Talos** v0.12.1 — pipeline determinístico (PRD → plano → execução → validação) com skills `talos-*`, templates e MCP. Um pacote, sete hosts: **Claude Code**, **Cursor**, **Codex App**, **Antigravity (Gemini)**, **ZCode**, **OpenCode** e **Pi CLI**.
+Plugin **Talos** v0.12.2 — pipeline determinístico (PRD → plano → execução → validação) com skills `talos-*`, templates e MCP. Um pacote, sete hosts: **Claude Code**, **Cursor**, **Codex App**, **Antigravity (Gemini)**, **ZCode**, **OpenCode** e **Pi CLI**.
 
-**Versão:** [`VERSION`](VERSION) (`0.12.1`) · **Repo:** https://github.com/pauloborini/talos
+**Versão:** [`VERSION`](VERSION) (`0.12.2`) · **Repo:** https://github.com/pauloborini/talos
 
 ## Hosts
 
