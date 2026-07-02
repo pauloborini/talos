@@ -34,18 +34,18 @@ Read the JSON file at `.talos/state/<run_id>/<slice>.json` using the schema in `
 3. **Executed task ids** — `tasks`.
 4. **Boundary refs** — `boundary_refs`.
 5. **Explicit cold-review note** — you did not observe implementation; read current code only.
-6. **Deterministic boundary** — `base_sha`, `head_sha`, `contract_kind`, and all evidence/probe arrays.
-7. **Sprint evidence** — when present, load `sprint_id`, `sprint_file_path`, `prd_path`, `eval_results`, `evidence_to_claim` and `policy_scope`; verify all `EVAL-*` from `Sprint §9` are proved by current code/check evidence and no file violates `Sprint §10`.
+6. **Deterministic boundary** — `base_sha`, `head_sha`, `contract_kind`, and evidence/probe IDs. Schema v2 uses `contract_ids`, `check_table`, indexed file/check refs, and snapshot tuples.
+7. **Sprint evidence** — when present, load `sprint_id`, `sprint_file_path`, `prd_path`, `eval_results` and `policy_scope`; verify all `EVAL-*` from `Sprint §9` are proved by current code/check evidence and no file violates `Sprint §10`.
 8. **Working-tree delta** — compare `worktree_baseline`/`worktree_final` and current tree; unchanged preexisting dirt stays outside, later mutations must be evidenced.
 9. **Repair correlation** — on attempt 2, correlate every target finding id with `repair_evidence` in the same state path.
 
 Do not accept inline contract, copied diff, or pasted task lists as the validation boundary. If `state_path` is missing, unreadable, or lacks any required field, return JSON with `verdict: "fail"` and one P1 finding for `Input insuficiente: <missing item>`.
 
-Compatibilidade: state legado mínimo sem `contract_kind` só é aceito quando `executor_skill=talos-plan-execute`; nesse caso o plano continua autoritativo. State de `talos-direct-execute` exige extensão completa e `obligations` não vazio.
+Compatibilidade: schema v2 é canônico. Reader/MCP aceita v1 por compat e normaliza v2 internamente para o shape canônico. State legado mínimo sem `contract_kind` só é aceito quando `executor_skill=talos-plan-execute`; nesse caso o plano continua autoritativo. State de `talos-direct-execute` exige extensão completa e obligations não vazio (`contract_ids.obligations` no v2).
 
 Antes de validar código, compare `base_sha...head_sha`, `HEAD`, snapshot final atual e delta `worktree_baseline→worktree_final` com `files_changed`/evidências. Não infira base pelo nome da branch. Divergência gera `boundary_violations` e finding P1 estruturado.
 
-Se o state declara sprint file, trate `eval_results` ausente, `evidence_to_claim` ausente, EVAL não `passed`, sprint file inválido ou mutação em `policy_scope.forbidden_scope` como falha P1 de boundary. Não rebaixe claim de sprint não provada para observação.
+Se o state declara sprint file, trate `eval_results` ausente, EVAL não `passed`, evidência ausente, sprint file inválido ou mutação em `policy_scope.forbidden_scope` como falha P1 de boundary. Em v2, `evidence_to_claim` não deve existir; `eval_results` é fonte única. Não rebaixe claim de sprint não provada para observação.
 
 ---
 
