@@ -1643,6 +1643,7 @@ test('talos_lock_dispatch: plan_execute cria liveness G12 no start e aceita chec
   state = readRunJson(root, 'g12live');
   assert.equal(state.data.dispatch.active.liveness.last_checkpoint, 'executor_started');
   assert.equal(state.data.dispatch.active.liveness.checkpoints[0].plan_path, '.talos/plans/PLAN_S41.md');
+  assert.equal(state.data.dispatch.history.at(-1).event, 'executor_started');
 });
 
 test('talos_lock_dispatch: status marca bootstrap sem checkpoint como stalled e libera retry', () => {
@@ -2880,6 +2881,11 @@ test('S10(c): repair_complete duplicado → idempotente reconhecível', () => {
   });
   assert.equal(repairDone.status, 'passed');
 
+  const runFile = path.join(root, '.talos/state/s10c/run.json');
+  const raw = JSON.parse(fs.readFileSync(runFile, 'utf8'));
+  raw.data.validator_cycle.history = [];
+  fs.writeFileSync(runFile, JSON.stringify(raw));
+
   // Retorno duplicado do MESMO repair_run_id após repair concluído.
   const dup = lockValidator({
     run_id: 's10c', project_root: root, host: 'codex', action: 'repair_complete',
@@ -2943,6 +2949,29 @@ test('S10(d): talos_run_state(get) expõe validator_recovery do slot ativo (reco
   assert.equal(after.validator_recovery, null);
 });
 
+test('P2: talos_run_state(recovery) expõe só recovery mínimo do validator', () => {
+  const root = tmpRoot();
+  preflight({
+    run_id: 'recover1', project_root: root, mode: 'execute',
+    host: 'codex', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: 'recover1', project_root: root, action: 'start', phase: 'plan_execute' });
+  const start = lockValidator({
+    run_id: 'recover1', project_root: root, host: 'codex', action: 'start',
+    state_path: '.talos/state/recover1/slice.json',
+  });
+
+  const full = runState({ action: 'get', run_id: 'recover1', project_root: root });
+  const recovery = runState({ action: 'recovery', run_id: 'recover1', project_root: root });
+
+  assert.equal(recovery.run_id, 'recover1');
+  assert.equal(recovery.validator_recovery.expected_validator_run_id, start.validator_run_id);
+  assert.equal(recovery.validator_recovery.expected_dispatch_token, full.validator_recovery.expected_dispatch_token);
+  assert.equal(recovery.validator_recovery.expected_state_path, '.talos/state/recover1/slice.json');
+  assert.equal(Object.hasOwn(recovery, 'data'), false);
+  assert.equal(Object.hasOwn(recovery, 'last_call'), false);
+});
+
 // (e) regressão Codex sem token: caminho idempotente não exige dispatch_token.
 test('S10(e): Codex com dispatch_token mantém idempotência por run_id', () => {
   const root = tmpRoot();
@@ -2976,11 +3005,44 @@ test('S10(e): Codex com dispatch_token mantém idempotência por run_id', () => 
   assert.equal(dup.last_verdict, 'passed');
 });
 
+test('S10(e2): idempotência de validator não depende de history persistido', () => {
+  const root = tmpRoot();
+  preflight({
+    run_id: 's10e2', project_root: root, mode: 'execute',
+    host: 'codex', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: 's10e2', project_root: root, action: 'start', phase: 'plan_execute' });
+
+  const start1 = lockValidator({
+    run_id: 's10e2', project_root: root, host: 'codex', action: 'start',
+    state_path: '.talos/state/s10e2/slice.json',
+  });
+  lockValidator({
+    run_id: 's10e2', project_root: root, host: 'codex', action: 'complete',
+    state_path: '.talos/state/s10e2/slice.json',
+    validator_run_id: start1.validator_run_id, verdict: 'pass',
+  });
+
+  const runFile = path.join(root, '.talos/state/s10e2/run.json');
+  const raw = JSON.parse(fs.readFileSync(runFile, 'utf8'));
+  raw.data.validator_cycle.history = [];
+  fs.writeFileSync(runFile, JSON.stringify(raw));
+
+  const dup = lockValidator({
+    run_id: 's10e2', project_root: root, host: 'codex', action: 'complete',
+    state_path: '.talos/state/s10e2/slice.json',
+    validator_run_id: start1.validator_run_id, verdict: 'pass',
+  });
+  assert.equal(dup.status, 'blocked');
+  assert.equal(dup.stale_discarded, true);
+  assert.equal(dup.reason, 'stale_duplicate_already_applied');
+  assert.equal(dup.applied_validator_status, 'passed');
+});
+
 // (f) P3-2: duplicado de attempt-1 (fail→repair_required) chegando com o ciclo
-// já em repair_required. O complete fail grava status:'passed' no history (result
-// .status é 'passed' no caminho repair); o duplicado tardio casa o evento e
-// retorna applied_validator_status='repair_required' para o consumidor não
-// confundir com slice concluída. Slot NÃO reabre (blocked, stale_discarded).
+// já em repair_required. O complete fail grava marcador em `applied`; o duplicado
+// tardio casa o evento e retorna applied_validator_status='repair_required' para
+// o consumidor não confundir com slice concluída. Slot NÃO reabre.
 test('S10(f): duplicado de attempt-1 (fail→repair_required) em repair_required → applied_validator_status=repair_required', () => {
   const root = tmpRoot();
   preflight({
@@ -3454,6 +3516,42 @@ test('P2: upsert parcial preserva dispatch.active (não derruba o lock de fase)'
   assert.equal(after.data.routing?.mode, 'execute', 'routing preservado após upsert parcial');
 });
 
+test('P2: run ledger é persistido em JSON compacto', () => {
+  const root = tmpRoot();
+  runState({
+    action: 'upsert',
+    run_id: 'compact-ledger',
+    project_root: root,
+    phase: 'preflight',
+    status: 'passed',
+    data: { routing: { mode: 'execute' } },
+  });
+
+  const raw = fs.readFileSync(path.join(root, '.talos/state/compact-ledger/run.json'), 'utf8');
+  assert.equal(raw.endsWith('\n'), true);
+  assert.equal(raw.split('\n').length, 2, 'JSON compacto deve ocupar uma linha + newline final');
+  assert.doesNotMatch(raw, /\n\s+"/, 'não deve persistir JSON pretty com indentação');
+  assert.equal(JSON.parse(raw).run_id, 'compact-ledger');
+});
+
+test('P2: gates persistem ledger mínimo sem duplicar payload MCP completo', () => {
+  const root = tmpRoot();
+  preflight({
+    run_id: 'compact-gates',
+    project_root: root,
+    mode: 'execute',
+    host: 'codex',
+    host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+
+  const state = readRunJson(root, 'compact-gates');
+  assert.equal(state.data.gates.G10.status, 'passed');
+  assert.equal(state.data.gates.G10.gate, 'G10');
+  assert.equal(state.data.routing.mode, 'execute');
+  assert.equal(state.data.gates.G10.routing, undefined, 'routing completo fica só em data.routing');
+  assert.equal(state.data.gates.G10.skills, undefined, 'skills completas não duplicam dentro de gates');
+});
+
 // Version-conflict: um run ANTIGO inativo (versão anterior do plugin) não pode
 // travar um run NOVO. Antes do fix, findActiveRunConflict dava hard-fail de versão
 // em qualquer run.json do diretório — quem atualizava de 0.6.x ficava com todo run
@@ -3646,6 +3744,30 @@ test('proof-of-work: complete com hash errado bloqueia (challenge_failed) sem fe
   assert.equal(good.status, 'passed');
 });
 
+test('proof-of-work: contador bounded não depende de history persistido', () => {
+  const { root, sliceRel } = setupValidatorRun('pow3b', { 'src/foo.js': 'export const x = 1;\n' });
+  const start = lockValidator({ run_id: 'pow3b', project_root: root, action: 'start', state_path: sliceRel });
+  const payload = {
+    run_id: 'pow3b', project_root: root, action: 'complete', state_path: sliceRel,
+    validator_run_id: start.validator_run_id, dispatch_token: start.dispatch_token,
+    challenge_response: 'deadbeef', verdict: 'pass',
+  };
+  const first = lockValidator(payload);
+  assert.equal(first.validator_status, 'challenge_failed');
+  assert.equal(first.challenge_failures, 1);
+
+  const runFile = path.join(root, '.talos/state/pow3b/run.json');
+  const raw = JSON.parse(fs.readFileSync(runFile, 'utf8'));
+  raw.data.validator_cycle.history = [];
+  fs.writeFileSync(runFile, JSON.stringify(raw));
+
+  const second = lockValidator(payload);
+  assert.equal(second.validator_status, 'challenge_failed');
+  assert.equal(second.challenge_failures, 2);
+  const exhausted = lockValidator(payload);
+  assert.equal(exhausted.validator_status, 'challenge_exhausted');
+});
+
 test('proof-of-work: challenge emitido exige challenge_response (ausência bloqueia)', () => {
   const { root, sliceRel } = setupValidatorRun('pow4', { 'src/foo.js': 'export const x = 1;\n' });
   const start = lockValidator({ run_id: 'pow4', project_root: root, action: 'start', state_path: sliceRel });
@@ -3740,6 +3862,74 @@ function writeSliceState(root, runId, state) {
   return sliceRel;
 }
 
+function compactStateV2(state) {
+  const files = state.files_changed ?? [];
+  const checkTable = [...new Set([
+    ...(state.validation_map ?? []).flatMap((item) => item.checks ?? []),
+    ...(state.task_evidence ?? []).flatMap((item) => item.checks ?? []),
+    ...(state.eval_results ?? []).flatMap((item) => item.checks ?? []),
+    ...(state.repair_evidence ?? []).flatMap((item) => item.checks_run ?? []),
+  ])];
+  const fileIndexes = (items = []) => items.map((item) => files.indexOf(item)).filter((index) => index >= 0);
+  const checkIndexes = (items = []) => items.map((item) => checkTable.indexOf(item)).filter((index) => index >= 0);
+  const out = {
+    state_schema_version: 2,
+    run_id: state.run_id,
+    slice: state.slice,
+    base_sha: state.base_sha,
+    head_sha: state.head_sha,
+    contract_kind: state.contract_kind,
+    tasks: state.tasks,
+    files_changed: files,
+    diff_stat: state.diff_stat,
+    plan_path: state.plan_path,
+    boundary_refs: state.boundary_refs,
+    sprint_id: state.sprint_id,
+    sprint_file_path: state.sprint_file_path,
+    prd_path: state.prd_path,
+    contract_ids: {
+      obligations: (state.obligations ?? []).map((item) => item.id).filter(Boolean),
+      invariants: (state.invariants ?? []).map((item) => item.id).filter(Boolean),
+      scenarios: (state.scenario_probes ?? []).map((item) => item.id).filter(Boolean),
+      risks: (state.risk_probes ?? []).map((item) => item.id).filter(Boolean),
+    },
+    eval_results: (state.eval_results ?? []).map((item) => ({
+      id: item.id,
+      status: item.status,
+      evidence: item.evidence ?? [],
+      checks: checkIndexes(item.checks),
+    })),
+    policy_scope: state.policy_scope,
+    check_table: checkTable,
+    validation_map: (state.validation_map ?? []).map((item) => ({
+      obligation_ids: item.obligation_ids ?? [],
+      checks: checkIndexes(item.checks),
+      status: item.status,
+    })),
+    task_evidence: (state.task_evidence ?? []).map((item) => ({
+      task: item.task,
+      files: fileIndexes(item.files),
+      checks: checkIndexes(item.checks),
+      result: item.result,
+    })),
+    repair_evidence: (state.repair_evidence ?? []).map((item) => ({
+      finding_id: item.finding_id,
+      files: fileIndexes(item.files_touched),
+      checks: checkIndexes(item.checks_run),
+      status: item.status,
+    })),
+    worktree_baseline: (state.worktree_baseline ?? []).map((item) => [item.path, item.status, item.sha256]),
+    worktree_final: (state.worktree_final ?? []).map((item) => [item.path, item.status, item.sha256]),
+    executed_at: state.executed_at,
+    executor_skill: state.executor_skill,
+  };
+  for (const key of ['sprint_id', 'sprint_file_path', 'prd_path', 'policy_scope']) {
+    if (out[key] === undefined) delete out[key];
+  }
+  if (!Array.isArray(state.eval_results)) delete out.eval_results;
+  return out;
+}
+
 test('Etapa 2: state legado mínimo de plan continua aceito', () => {
   const root = tmpRoot();
   const state = fixtureState('state-legacy-plan.json');
@@ -3759,6 +3949,20 @@ test('Etapa 2: direct sem obligations bloqueia', () => {
   const result = validateStateBoundary(statePath, { project_root: root });
   assert.equal(result.ok, false);
   assert.ok(result.violations.includes('direct exige obligations não vazio'));
+});
+
+test('Etapa 2: direct aceita schema v2 compacto com obligations por ID', () => {
+  const { root, head } = initGitFixture();
+  fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'src/direct.js'), 'export const direct = true;\n');
+  const state = fixtureState('state-direct.json', { __BASE_SHA__: head, __HEAD_SHA__: head });
+  withSnapshot(state, root);
+  const compact = compactStateV2(state);
+  const statePath = writeSliceState(root, 'direct-v2', compact);
+  const result = validateStateBoundary(statePath, { project_root: root });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.state.obligations, [{ id: 'O1' }]);
+  assert.deepEqual(result.state.task_evidence[0].files, ['src/direct.js']);
 });
 
 test('Etapa 2: fixtures plan e direct novos passam no mesmo validator de state', () => {
@@ -3829,6 +4033,41 @@ function setupSprintEvidenceBoundary(runId = 'sprint-state-ok') {
 test('state boundary: sprint/eval/policy completos passam', () => {
   const { root, statePath } = setupSprintEvidenceBoundary();
   assert.equal(validateStateBoundary(statePath, { project_root: root }).ok, true);
+});
+
+test('state boundary: schema v2 compacto passa sem evidence_to_claim persistido', () => {
+  const { root, statePath, state } = setupSprintEvidenceBoundary('sprint-state-v2');
+  const compact = compactStateV2(state);
+  assert.equal(compact.evidence_to_claim, undefined);
+  fs.writeFileSync(path.join(root, statePath), JSON.stringify(compact));
+  const result = validateStateBoundary(statePath, { project_root: root });
+  assert.equal(result.ok, true);
+  assert.equal(result.state.state_schema_version, 2);
+  assert.deepEqual(result.state.task_evidence[0].files, ['src/initial.js']);
+  assert.ok(result.state.worktree_final.some((item) => item.path === 'src/initial.js'));
+  assert.deepEqual(result.state.evidence_to_claim.map((item) => item.claim_id), ['EVAL-001']);
+});
+
+test('state boundary: schema v2 bloqueia índice compacto inválido', () => {
+  const { root, statePath, state } = setupSprintEvidenceBoundary('sprint-state-v2-invalid-index');
+  const compact = compactStateV2(state);
+  compact.task_evidence[0].files = [99];
+  fs.writeFileSync(path.join(root, statePath), JSON.stringify(compact));
+  const result = validateStateBoundary(statePath, { project_root: root });
+  assert.equal(result.ok, false);
+  assert.match(result.violations.join(' '), /task_evidence\[0\]\.files\[0\] índice inválido/);
+});
+
+test('state boundary: schema v2 com EVAL ausente não exige evidence_to_claim legado', () => {
+  const { root, statePath, state } = setupSprintEvidenceBoundary('sprint-state-v2-missing-eval');
+  const compact = compactStateV2(state);
+  compact.eval_results = [];
+  fs.writeFileSync(path.join(root, statePath), JSON.stringify(compact));
+  const result = validateStateBoundary(statePath, { project_root: root });
+  const joined = result.violations.join(' ');
+  assert.equal(result.ok, false);
+  assert.match(joined, /EVAL sem resultado/);
+  assert.doesNotMatch(joined, /evidence_to_claim/);
 });
 
 test('state boundary: sprint declarado exige todos EVAL-* como passed e evidence_to_claim', () => {
