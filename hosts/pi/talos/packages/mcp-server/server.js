@@ -1098,9 +1098,189 @@ function upsertState(args) {
 
   const target = statePath(runId, args);
   const tmp = `${target}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(next, null, 2) + '\n', { mode: 0o600 });
+  // Ledger MCP é leitura de máquina/context layer. JSON compacto preserva o
+  // contrato e corta whitespace/token sem mudar semântica.
+  fs.writeFileSync(tmp, `${JSON.stringify(next)}\n`, { mode: 0o600 });
   fs.renameSync(tmp, target);
   return next;
+}
+
+const LEDGER_TEXT_LIMIT = 120;
+const LEDGER_HISTORY_LIMIT = 8;
+const LEDGER_APPLIED_LIMIT = 16;
+
+function compactLedgerText(value) {
+  if (typeof value !== 'string') return value;
+  return value.length > LEDGER_TEXT_LIMIT ? `${value.slice(0, LEDGER_TEXT_LIMIT)}...` : value;
+}
+
+function compactLedgerArray(value) {
+  if (!Array.isArray(value)) return value;
+  return value.slice(0, 8).map((item) => (
+    typeof item === 'string' ? compactLedgerText(item) : item
+  ));
+}
+
+function compactLedgerEvent(event = {}) {
+  const keys = [
+    'gate', 'action', 'phase', 'status', 'timestamp', 'mode', 'artifact_kind',
+    'event', 'applicable', 'current_phase', 'expected_phase', 'validator_status',
+    'validator_attempt', 'validator_run_id', 'repair_run_id', 'state_path',
+    'next_action', 'error', 'cause', 'block_kind', 'reason',
+    'stale_discarded', 'challenge_verified', 'challenge_file',
+    'challenge_failures', 'challenge_failures_max', 'applied_validator_status',
+    'last_verdict', 'validator_output_path', 'repair_budget', 'pending_count',
+  ];
+  const arrayKeys = [
+    'finding_ids', 'missing_finding_ids', 'unresolved_finding_ids',
+    'boundary_violations', 'repair_violations',
+  ];
+  const compact = {};
+  for (const key of keys) {
+    if (event[key] !== undefined && event[key] !== null) {
+      compact[key] = compactLedgerText(event[key]);
+    }
+  }
+  for (const key of arrayKeys) {
+    if (event[key] !== undefined && event[key] !== null) {
+      compact[key] = compactLedgerArray(event[key]);
+    }
+  }
+  return redact(compact);
+}
+
+function appendLedgerHistory(history, event) {
+  return [...(Array.isArray(history) ? history : []), compactLedgerEvent(event)].slice(-LEDGER_HISTORY_LIMIT);
+}
+
+function compactFindingsPacket(packet) {
+  if (!packet || typeof packet !== 'object') return packet;
+  const findings = Array.isArray(packet.findings) ? packet.findings : [];
+  const compactFindings = findings.map((finding) => ({
+    id: finding?.id ?? null,
+    severity: finding?.severity ?? null,
+    file: finding?.file ?? null,
+    line: finding?.line ?? null,
+    failure_mode: compactLedgerText(finding?.failure_mode ?? null),
+    evidence: compactLedgerText(finding?.evidence ?? null),
+    recommendation: compactLedgerText(finding?.recommendation ?? null),
+  }));
+  return {
+    findings: compactFindings,
+    ...(Array.isArray(packet.repaired_finding_ids)
+      ? { repaired_finding_ids: packet.repaired_finding_ids }
+      : {}),
+  };
+}
+
+function compactValidatorCycleForLedger(cycle) {
+  if (!cycle || typeof cycle !== 'object') return cycle;
+  if (cycle.findings_packet && VALIDATOR_PASSED_STATUSES.has(cycle.status)) {
+    return { ...cycle, findings_packet: compactFindingsPacket(cycle.findings_packet) };
+  }
+  if (cycle.findings_packet && cycle.status === 'blocked') {
+    return { ...cycle, findings_packet: compactFindingsPacket(cycle.findings_packet) };
+  }
+  return cycle;
+}
+
+function normalizeApplied(applied = {}) {
+  const challengeFailures = applied.challenge_failures && typeof applied.challenge_failures === 'object'
+    ? Object.fromEntries(
+      Object.entries(applied.challenge_failures)
+        .filter(([, count]) => Number.isInteger(count) && count >= 0)
+        .slice(-LEDGER_APPLIED_LIMIT),
+    )
+    : {};
+  return {
+    validator_completions: Array.isArray(applied.validator_completions)
+      ? applied.validator_completions.slice(-LEDGER_APPLIED_LIMIT)
+      : [],
+    repair_completions: Array.isArray(applied.repair_completions)
+      ? applied.repair_completions.slice(-LEDGER_APPLIED_LIMIT)
+      : [],
+    challenge_failures: challengeFailures,
+  };
+}
+
+function appendAppliedMarker(list, marker, key) {
+  const current = Array.isArray(list) ? list : [];
+  return [
+    ...current.filter((item) => item?.[key] !== marker[key]),
+    marker,
+  ].slice(-LEDGER_APPLIED_LIMIT);
+}
+
+function appendAppliedValidatorCompletion(applied, marker) {
+  const normalized = normalizeApplied(applied);
+  return {
+    ...normalized,
+    validator_completions: appendAppliedMarker(
+      normalized.validator_completions,
+      marker,
+      'validator_run_id',
+    ),
+  };
+}
+
+function appendAppliedRepairCompletion(applied, marker) {
+  const normalized = normalizeApplied(applied);
+  return {
+    ...normalized,
+    repair_completions: appendAppliedMarker(
+      normalized.repair_completions,
+      marker,
+      'repair_run_id',
+    ),
+  };
+}
+
+function setAppliedChallengeFailures(applied, validatorRunId, count) {
+  const normalized = normalizeApplied(applied);
+  return {
+    ...normalized,
+    challenge_failures: {
+      ...normalized.challenge_failures,
+      [validatorRunId]: count,
+    },
+  };
+}
+
+function appliedValidatorCompletion(cycle, validatorRunId) {
+  const normalized = normalizeApplied(cycle.applied);
+  return normalized.validator_completions.find((event) => event.validator_run_id === validatorRunId)
+    ?? cycle.history.find(
+      (event) =>
+        event.action === 'complete' &&
+        event.status === 'passed' &&
+        event.validator_run_id === validatorRunId,
+    )
+    ?? null;
+}
+
+function appliedRepairCompletion(cycle, repairRunIdValue) {
+  const normalized = normalizeApplied(cycle.applied);
+  return normalized.repair_completions.find((event) => event.repair_run_id === repairRunIdValue)
+    ?? cycle.history.find(
+      (event) =>
+        event.action === 'repair_complete' &&
+        event.status === 'passed' &&
+        event.repair_run_id === repairRunIdValue,
+    )
+    ?? null;
+}
+
+function appliedChallengeFailures(cycle, validatorRunId) {
+  const normalized = normalizeApplied(cycle.applied);
+  if (Number.isInteger(normalized.challenge_failures[validatorRunId])) {
+    return normalized.challenge_failures[validatorRunId];
+  }
+  return cycle.history.filter(
+    (event) =>
+      event.action === 'complete' &&
+      event.validator_status === 'challenge_failed' &&
+      event.validator_run_id === validatorRunId,
+  ).length;
 }
 
 function patchGateResult(runId, gate, result, args = {}) {
@@ -1115,7 +1295,7 @@ function patchGateResult(runId, gate, result, args = {}) {
     ...(previous?.data ?? {}),
     gates: {
       ...(previous?.data?.gates ?? {}),
-      [gate]: redact(result),
+      [gate]: compactLedgerEvent(result),
     },
   };
 
@@ -1142,7 +1322,7 @@ function patchTemplateConformanceResult(runId, result, args = {}) {
     template_conformance: redact(result),
     gates: {
       ...(previous?.data?.gates ?? {}),
-      template_conformance: redact(result),
+      template_conformance: compactLedgerEvent(result),
     },
   };
 
@@ -1169,7 +1349,7 @@ function patchRoutingResult(runId, result, args = {}) {
     routing: result.routing ?? previous?.data?.routing ?? null,
     gates: {
       ...(previous?.data?.gates ?? {}),
-      [result.gate ?? 'G10']: redact(result),
+      [result.gate ?? 'G10']: compactLedgerEvent(result),
     },
   };
 
@@ -1186,18 +1366,15 @@ function patchRoutingResult(runId, result, args = {}) {
 function patchDispatchResult(runId, result, args = {}) {
   const previous = readState(runId, args);
   const currentDispatch = previous.data?.dispatch ?? {};
-  const history = [
-    ...(currentDispatch.history ?? []),
-    {
-      timestamp: result.timestamp,
-      phase: result.phase ?? null,
-      action: result.action ?? null,
-      event: result.event ?? null,
-      status: result.status,
-      next_action: result.next_action ?? null,
-      error: result.error ?? null,
-    },
-  ];
+  const history = appendLedgerHistory(currentDispatch.history, {
+    timestamp: result.timestamp,
+    phase: result.phase ?? null,
+    action: result.action ?? null,
+    event: result.event ?? null,
+    status: result.status,
+    next_action: result.next_action ?? null,
+    error: result.error ?? null,
+  });
   const data = {
     ...(previous.data ?? {}),
     dispatch: {
@@ -1207,7 +1384,7 @@ function patchDispatchResult(runId, result, args = {}) {
     },
     gates: {
       ...(previous.data?.gates ?? {}),
-      [result.gate ?? 'G7']: redact(result),
+      [result.gate ?? 'G7']: compactLedgerEvent(result),
     },
   };
 
@@ -1267,6 +1444,7 @@ function normalizeValidatorCycle(cycle = {}) {
         completed_at: null,
         active: null,
       },
+    applied: normalizeApplied(cycle.applied),
     history: Array.isArray(cycle.history) ? cycle.history : [],
   };
 }
@@ -1274,31 +1452,28 @@ function normalizeValidatorCycle(cycle = {}) {
 function patchValidatorResult(runId, result, args = {}) {
   const previous = readState(runId, args);
   const current = normalizeValidatorCycle(previous.data?.validator_cycle ?? {});
-  const history = [
-    ...current.history,
-    {
-      timestamp: result.timestamp,
-      action: result.action,
-      status: result.status,
-      validator_status: result.validator_status ?? null,
-      validator_attempt: result.validator_attempt ?? null,
-      validator_run_id: result.validator_run_id ?? null,
-      repair_run_id: result.repair_run_id ?? null,
-      state_path: result.state_path ?? null,
-      next_action: result.next_action ?? null,
-      error: result.error ?? null,
-    },
-  ];
+  const history = appendLedgerHistory(current.history, {
+    timestamp: result.timestamp,
+    action: result.action,
+    status: result.status,
+    validator_status: result.validator_status ?? null,
+    validator_attempt: result.validator_attempt ?? null,
+    validator_run_id: result.validator_run_id ?? null,
+    repair_run_id: result.repair_run_id ?? null,
+    state_path: result.state_path ?? null,
+    next_action: result.next_action ?? null,
+    error: result.error ?? null,
+  });
   const data = {
     ...(previous.data ?? {}),
-    validator_cycle: {
+    validator_cycle: compactValidatorCycleForLedger({
       ...current,
       ...(result.validator_cycle ?? {}),
       history,
-    },
+    }),
     gates: {
       ...(previous.data?.gates ?? {}),
-      [result.gate ?? 'G4']: redact(result),
+      [result.gate ?? 'G4']: compactLedgerEvent(result),
     },
   };
 
@@ -1338,6 +1513,17 @@ function runState(args = {}) {
   if (action === 'get') {
     const state = readState(validateRunId(args.run_id), args);
     return { ...state, validator_recovery: deriveValidatorRecovery(state) };
+  }
+  if (action === 'recovery') {
+    const runId = validateRunId(args.run_id);
+    const state = readState(runId, args);
+    return {
+      run_id: runId,
+      phase: state.phase ?? null,
+      status: state.status ?? null,
+      updated_at: state.updated_at ?? null,
+      validator_recovery: deriveValidatorRecovery(state),
+    };
   }
   if (action === 'upsert') return upsertState(args);
   throw rpcError(-32602, `Ação inválida para talos_run_state: ${action}`);
@@ -3226,6 +3412,7 @@ const STATE_EXTENSION_ARRAYS = [
   'obligations', 'invariants', 'scenario_probes', 'risk_probes',
   'validation_map', 'task_evidence', 'worktree_baseline', 'worktree_final',
 ];
+const STATE_COMPACT_SCHEMA_VERSION = 2;
 const SPRINT_ID_PATTERN = /^S\d{2}(?:[a-z]|\.\d+)?$/;
 const EVAL_ID_PATTERN = /^EVAL-\d+$/;
 const EVAL_STATUSES = new Set(['passed', 'failed', 'blocked', 'not_applicable']);
@@ -3253,6 +3440,126 @@ function stateEvidenceFiles(state) {
   return [...new Set(result.filter((item) => typeof item === 'string' && item.trim()))].sort();
 }
 
+function stateSchemaVersion(state) {
+  return Number(state?.state_schema_version ?? state?.schema ?? 1);
+}
+
+function isCompactStateSchema(state) {
+  return stateSchemaVersion(state) === STATE_COMPACT_SCHEMA_VERSION;
+}
+
+function compactStateStrings(values, label, violations) {
+  if (values === undefined) return [];
+  if (!Array.isArray(values)) {
+    violations.push(`${label} deve ser array no schema v2`);
+    return [];
+  }
+  return values.filter((value, index) => {
+    const ok = typeof value === 'string' && value.trim();
+    if (!ok) violations.push(`${label}[${index}] deve ser string não vazia`);
+    return ok;
+  });
+}
+
+function normalizeCompactStateContractIds(state, violations) {
+  const ids = state.contract_ids;
+  if (!ids || typeof ids !== 'object' || Array.isArray(ids)) {
+    violations.push('contract_ids deve ser objeto no schema v2');
+    return {
+      obligations: [], invariants: [], scenario_probes: [], risk_probes: [],
+    };
+  }
+  const objects = (key) => compactStateStrings(ids[key], `contract_ids.${key}`, violations)
+    .map((id) => ({ id }));
+  return {
+    obligations: objects('obligations'),
+    invariants: objects('invariants'),
+    scenario_probes: objects('scenarios'),
+    risk_probes: objects('risks'),
+  };
+}
+
+function normalizeCompactStateRefs(refs, table, label, violations) {
+  if (refs === undefined) return [];
+  if (!Array.isArray(refs)) {
+    violations.push(`${label} deve ser array no schema v2`);
+    return [];
+  }
+  const out = [];
+  for (const [index, ref] of refs.entries()) {
+    if (Number.isInteger(ref)) {
+      if (ref < 0 || ref >= table.length) violations.push(`${label}[${index}] índice inválido`);
+      else out.push(table[ref]);
+    } else if (typeof ref === 'string' && ref.trim()) {
+      out.push(ref);
+    } else {
+      violations.push(`${label}[${index}] deve ser índice ou string`);
+    }
+  }
+  return out;
+}
+
+function normalizeCompactStateSnapshot(snapshot, field, violations) {
+  if (!Array.isArray(snapshot)) return snapshot;
+  return snapshot.map((entry, index) => {
+    if (!Array.isArray(entry)) return entry;
+    if (entry.length !== 3) violations.push(`${field}[${index}] tupla deve ter 3 itens`);
+    return { path: entry[0], status: entry[1], sha256: entry[2] };
+  });
+}
+
+function normalizeCompactState(state, violations) {
+  if (!isCompactStateSchema(state)) return state;
+  const fileTable = Array.isArray(state.files_changed) ? state.files_changed : [];
+  const checkTable = Array.isArray(state.check_table) ? state.check_table : [];
+  if (state.check_table !== undefined && !Array.isArray(state.check_table)) {
+    violations.push('check_table deve ser array no schema v2');
+  }
+  for (const [index, value] of checkTable.entries()) {
+    if (typeof value !== 'string' || !value.trim()) violations.push(`check_table[${index}] deve ser string não vazia`);
+  }
+  const contracts = normalizeCompactStateContractIds(state, violations);
+  const checks = (refs, label) => normalizeCompactStateRefs(refs, checkTable, label, violations);
+  const files = (refs, label) => normalizeCompactStateRefs(refs, fileTable, label, violations);
+  const evalResults = Array.isArray(state.eval_results) ? state.eval_results.map((item, index) => ({
+    ...item,
+    checks: checks(item?.checks, `eval_results[${index}].checks`),
+  })) : state.eval_results;
+
+  return {
+    ...state,
+    state_schema_version: STATE_COMPACT_SCHEMA_VERSION,
+    obligations: contracts.obligations,
+    invariants: contracts.invariants,
+    scenario_probes: contracts.scenario_probes,
+    risk_probes: contracts.risk_probes,
+    eval_results: evalResults,
+    evidence_to_claim: Array.isArray(evalResults)
+      ? evalResults.map((item) => ({
+        claim_id: item?.id,
+        evidence: Array.isArray(item?.evidence) ? item.evidence : [],
+        status: item?.status,
+      }))
+      : state.evidence_to_claim,
+    validation_map: Array.isArray(state.validation_map) ? state.validation_map.map((item, index) => ({
+      ...item,
+      checks: checks(item?.checks, `validation_map[${index}].checks`),
+    })) : state.validation_map,
+    task_evidence: Array.isArray(state.task_evidence) ? state.task_evidence.map((item, index) => ({
+      ...item,
+      files: files(item?.files, `task_evidence[${index}].files`),
+      checks: checks(item?.checks, `task_evidence[${index}].checks`),
+    })) : state.task_evidence,
+    repair_evidence: Array.isArray(state.repair_evidence) ? state.repair_evidence.map((item, index) => ({
+      ...item,
+      files_touched: files(item?.files_touched ?? item?.files, `repair_evidence[${index}].files`),
+      checks_run: checks(item?.checks_run ?? item?.checks, `repair_evidence[${index}].checks`),
+    })) : state.repair_evidence,
+    worktree_baseline: normalizeCompactStateSnapshot(state.worktree_baseline, 'worktree_baseline', violations),
+    worktree_final: normalizeCompactStateSnapshot(state.worktree_final, 'worktree_final', violations),
+  };
+}
+
 function extractEvalIdsFromSprint(markdown) {
   return [...new Set([...markdown.matchAll(/\bid\s*:\s*["']?(EVAL-\d+)["']?/g)].map((match) => match[1]))].sort();
 }
@@ -3272,6 +3579,7 @@ function pathMatchesScope(rel, scope) {
 }
 
 function validateSprintEvidenceState(state, args, violations) {
+  const compactSchema = isCompactStateSchema(state);
   const hasSprintContract = state.sprint_file_path !== undefined
     || state.sprint_id !== undefined
     || state.eval_results !== undefined
@@ -3307,7 +3615,7 @@ function validateSprintEvidenceState(state, args, violations) {
   if (!Array.isArray(state.eval_results)) {
     violations.push('eval_results deve ser array quando state declara sprint');
   }
-  if (!Array.isArray(state.evidence_to_claim)) {
+  if (!compactSchema && !Array.isArray(state.evidence_to_claim)) {
     violations.push('evidence_to_claim deve ser array quando state declara sprint');
   }
 
@@ -3337,7 +3645,7 @@ function validateSprintEvidenceState(state, args, violations) {
     const result = evalResults.find((item) => item?.id === evalId);
     if (!result) violations.push(`EVAL sem resultado no state: ${evalId}`);
     else if (result.status !== 'passed') violations.push(`EVAL não comprovado como passed: ${evalId}:${result.status}`);
-    if (!claimIds.has(evalId)) violations.push(`EVAL sem evidence_to_claim: ${evalId}`);
+    if (!compactSchema && !claimIds.has(evalId)) violations.push(`EVAL sem evidence_to_claim: ${evalId}`);
   }
 
   if (!state.policy_scope || typeof state.policy_scope !== 'object' || Array.isArray(state.policy_scope)) {
@@ -3461,6 +3769,7 @@ function validateStateBoundary(statePathValue, args = {}) {
     return { ok: false, violations: [`state_path inválido: ${error.message}`] };
   }
   const violations = [];
+  state = normalizeCompactState(state, violations);
   for (const field of STATE_REQUIRED_FIELDS) {
     if (state[field] === undefined || state[field] === null) violations.push(`campo obrigatório ausente: ${field}`);
   }
@@ -3755,14 +4064,8 @@ function validatorComplete(args, context) {
   if (!cycle.active) {
     // S10: slot já fechado. Distinguir retorno duplicado já aplicado (idempotente
     // reconhecível) de payload sem nenhum slot conhecido. NUNCA reabrir o ciclo.
-    // Um complete já aplicado para este run_id aparece no history como evento
-    // `action: 'complete'`/`status: 'passed'` com o mesmo validator_run_id.
-    const appliedCompleteEvent = cycle.history.find(
-      (event) =>
-        event.action === 'complete' &&
-        event.status === 'passed' &&
-        event.validator_run_id === activeValidatorRunId,
-    );
+    // A idempotência vive em `applied`, não no history curto de observabilidade.
+    const appliedCompleteEvent = appliedValidatorCompletion(cycle, activeValidatorRunId);
     if (appliedCompleteEvent) {
       return {
         gate: 'G4',
@@ -3865,15 +4168,9 @@ function validatorComplete(args, context) {
   // attempt nem reabre terminal. Arquivo sumido/ilegível consome o mesmo orçamento bounded.
   const challengeCheck = verifyValidatorChallenge(cycle.active.challenge, challengeResponse, args);
   if (!challengeCheck.ok) {
-    // P2-1: falhas de challenge são bounded por attempt. As anteriores ficam no
-    // history (patchValidatorResult registra cada challenge_failed). Esgotado o
-    // teto, o slot fecha terminal (fail-closed) em vez de re-despachar pra sempre.
-    const priorChallengeFailures = cycle.history.filter(
-      (event) =>
-        event.action === 'complete' &&
-        event.validator_status === 'challenge_failed' &&
-        event.validator_run_id === activeValidatorRunId,
-    ).length;
+    // P2-1: falhas de challenge são bounded por attempt. O contador vive em
+    // `applied.challenge_failures`; history pode ser truncado sem reabrir loop.
+    const priorChallengeFailures = appliedChallengeFailures(cycle, activeValidatorRunId);
     if (priorChallengeFailures >= VALIDATOR_CHALLENGE_MAX_FAILURES) {
       return {
         gate: 'G4',
@@ -3898,6 +4195,14 @@ function validatorComplete(args, context) {
           last_verdict: cycle.last_verdict,
           findings_packet: cycle.findings_packet,
           repair: cycle.repair,
+          applied: appendAppliedValidatorCompletion(cycle.applied, {
+            validator_run_id: activeValidatorRunId,
+            validator_status: 'challenge_exhausted',
+            status: 'blocked',
+            state_path: statePathValue,
+            attempt: cycle.active.attempt,
+            timestamp,
+          }),
         },
       };
     }
@@ -3917,6 +4222,9 @@ function validatorComplete(args, context) {
       cause: 'validator_proof_of_work_failed',
       impact: 'sem_prova_de_leitura_do_boundary_o_veredito_pode_nao_ter_lido_o_codigo',
       next_action: 'redespachar_o_mesmo_validador_irmao_que_le_o_boundary_e_reenvia_challenge_response',
+      validator_cycle: {
+        applied: setAppliedChallengeFailures(cycle.applied, activeValidatorRunId, priorChallengeFailures + 1),
+      },
     };
   }
   const challengeVerified = !cycle.active.challenge ? 'no_challenge' : 'verified';
@@ -4021,6 +4329,14 @@ function validatorComplete(args, context) {
           completed_at: cycle.repair.completed_at,
           active: null,
         },
+        applied: appendAppliedValidatorCompletion(cycle.applied, {
+          validator_run_id: activeValidatorRunId,
+          validator_status: normalizedVerdict,
+          status: 'passed',
+          state_path: statePathValue,
+          attempt: cycle.active.attempt,
+          timestamp,
+        }),
       },
     };
   }
@@ -4066,6 +4382,14 @@ function validatorComplete(args, context) {
           completed_at: cycle.repair.completed_at,
           active: null,
         },
+        applied: appendAppliedValidatorCompletion(cycle.applied, {
+          validator_run_id: activeValidatorRunId,
+          validator_status: 'blocked_final_validator_failed',
+          status: 'blocked',
+          state_path: statePathValue,
+          attempt: cycle.active.attempt,
+          timestamp,
+        }),
       },
     };
   }
@@ -4097,6 +4421,14 @@ function validatorComplete(args, context) {
         completed_at: null,
         active: null,
       },
+      applied: appendAppliedValidatorCompletion(cycle.applied, {
+        validator_run_id: activeValidatorRunId,
+        validator_status: 'repair_required',
+        status: 'passed',
+        state_path: statePathValue,
+        attempt: cycle.active.attempt,
+        timestamp,
+      }),
     },
   };
 }
@@ -4225,15 +4557,8 @@ function validatorRepairComplete(args, context) {
     };
   }
 
-  // S10: idempotência reconhecível — um repair_complete já aplicado para este
-  // repair_run_id aparece no history como evento `repair_complete`/`passed`.
-  // Distingue duplicado/fora de ordem após repair concluído de erro real.
-  const appliedRepairEvent = cycle.history.find(
-    (event) =>
-      event.action === 'repair_complete' &&
-      event.status === 'passed' &&
-      event.repair_run_id === activeRepairRunId,
-  );
+  // S10: idempotência reconhecível sem depender do history truncado.
+  const appliedRepairEvent = appliedRepairCompletion(cycle, activeRepairRunId);
 
   if (cycle.status !== 'repair_running') {
     return {
@@ -4423,6 +4748,13 @@ function validatorRepairComplete(args, context) {
         completed_at: timestamp,
         active: null,
       },
+      applied: appendAppliedRepairCompletion(cycle.applied, {
+        repair_run_id: activeRepairRunId,
+        status: 'passed',
+        state_path: statePathValue,
+        validator_attempt: cycle.attempts_used,
+        timestamp,
+      }),
     },
   };
 }
@@ -4567,7 +4899,7 @@ function toolsList() {
     tools: [
       {
         name: 'talos_ping',
-        description: 'Retorna saúde, identidade, versão e capacidades mínimas do MCP Talos.',
+        description: 'Saúde/versão do MCP Talos.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
@@ -4576,7 +4908,7 @@ function toolsList() {
       },
       {
         name: 'talos_capabilities',
-        description: 'Adapter de host: detecta o host (Claude/Codex/genérico) e retorna descritores canônicos de disparo de subagente, todo nativo e paths de plano. Skills consultam isto em vez de hardcodar nome de host.',
+        description: 'Host adapter: subagente, todo e paths.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
@@ -4587,13 +4919,13 @@ function toolsList() {
       },
       {
         name: 'talos_run_state',
-        description: 'Cria, atualiza ou consulta estado de run em .talos/state/ no cwd do projeto consumidor.',
+        description: 'Estado de run; use recovery para payload mínimo do validator.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
           required: ['run_id'],
           properties: {
-            action: { type: 'string', enum: ['get', 'upsert'], default: 'get' },
+            action: { type: 'string', enum: ['get', 'upsert', 'recovery'], default: 'get' },
             run_id: { type: 'string', minLength: 1 },
             project_root: { type: 'string', minLength: 1 },
             phase: { type: 'string' },
@@ -4605,7 +4937,7 @@ function toolsList() {
       },
       {
         name: 'talos_verify_artifact',
-        description: 'Gate G1: verifica se artefato obrigatório existe em disco e é legível.',
+        description: 'G1: artefato existe/legível.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
@@ -4620,7 +4952,7 @@ function toolsList() {
       },
       {
         name: 'talos_scan_prd',
-        description: 'Gate G5: escaneia PRD por padrões determinísticos de ambiguidade bloqueante.',
+        description: 'G5: ambiguidades bloqueantes no PRD.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
@@ -4634,7 +4966,7 @@ function toolsList() {
       },
       {
         name: 'talos_verify_template_conformance',
-        description: 'Gate de conformidade: valida PRD ou plano contra o template canônico aplicável e registra pendências acionáveis.',
+        description: 'TC: PRD/plano contra template.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
@@ -4651,7 +4983,7 @@ function toolsList() {
       },
       {
         name: 'talos_verify_sprint_file',
-        description: 'Gate de conformidade: valida sprint file vivo contra SPRINT_TEMPLATE e, se fornecido, vínculo lexical com backlog mestre.',
+        description: 'Valida sprint file e backlink.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
@@ -4667,7 +4999,7 @@ function toolsList() {
       },
       {
         name: 'talos_verify_backlog_index',
-        description: 'Gate de conformidade: valida BACKLOG_MESTRE como índice macro, links para sprint files, deps internas, status espelhado e drift básico.',
+        description: 'Valida backlog: sprints, deps, links.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
@@ -4681,7 +5013,7 @@ function toolsList() {
       },
       {
         name: 'talos_select_next_sprint',
-        description: 'Gate determinístico: seleciona a próxima sprint executável a partir do backlog indexado, exigindo deps done, sprint file válido e DoR verde.',
+        description: 'Seleciona próxima sprint executável.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
@@ -4695,7 +5027,7 @@ function toolsList() {
       },
       {
         name: 'talos_update_sprint_status',
-        description: 'Gate determinístico: sincroniza status da sprint viva no BACKLOG_MESTRE e no SPRINT_SNN, exigindo evidência/validator para done.',
+        description: 'Sincroniza status backlog/sprint.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
@@ -4718,7 +5050,7 @@ function toolsList() {
       },
       {
         name: 'talos_classify_input',
-        description: 'Classifica o input em backlog|prd|plan|unknown (PRD D4/D5). Verdade forte = conformidade de template de plano passa; depois cabeçalho canônico; nome PLAN_*.md é só dica fraca. Devolve artifact_type + banner de roteamento. Alimenta o guardrail anti plano-de-plano.',
+        description: 'Classifica input: backlog|prd|plan|unknown.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
@@ -4732,7 +5064,7 @@ function toolsList() {
       },
       {
         name: 'talos_preflight',
-        description: 'Gate PREREQ+G10: hard-fail de pré-requisitos de determinismo (subagente/MCP do host, DEC-004), depois valida modo, versão e lock ativo, travando a rota da run. Output declara guarantee_level só em modos com execução.',
+        description: 'PREREQ+G10: modo, host, versão, lock.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
@@ -4749,7 +5081,7 @@ function toolsList() {
             // delimita defensivamente o override a PREREQUISITE_FLAGS em checkPrerequisites.
             host_capabilities: {
               type: 'object',
-              description: 'Disponibilidade real reportada pelo host (override das flags do perfil). Ex.: pi sem deps → {"subagent_available":false}. dispatch_mutable reporta capacidade de mutação (Write/Edit/Bash) do subagente para gate DISPATCH (DEC-008).',
+              description: 'Flags reais do host.',
               additionalProperties: false,
               properties: {
                 subagent_available: { type: 'boolean' },
@@ -4769,7 +5101,7 @@ function toolsList() {
       },
       {
         name: 'talos_lock_dispatch',
-        description: 'Gates G7/G8/G12: controla fase ativa, checkpoints de liveness do executor, transições de dispatch, validator antes de review e concorrência 1.',
+        description: 'G7/G8/G12: dispatch e liveness.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
@@ -4782,7 +5114,7 @@ function toolsList() {
             event: {
               type: 'string',
               enum: [...EXECUTOR_CHECKPOINT_EVENTS],
-              description: 'Checkpoint G12 emitido pelo executor durante plan_execute.',
+              description: 'Checkpoint G12.',
             },
             plan_path: { type: 'string' },
             state_path: { type: 'string' },
@@ -4793,7 +5125,7 @@ function toolsList() {
       },
       {
         name: 'talos_lock_validator',
-        description: 'Gate G4/G8 sibling: enforça um validator por vez em todos os hosts, dispatch_token obrigatório no retorno, proof-of-work (challenge sha256 do boundary recomputado no complete), máximo de 2 attempts, repair obrigatório entre fail e retry e bloqueio explícito do terceiro validator.',
+        description: 'G4/G8: validator sibling, token, challenge, repair.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
@@ -4816,7 +5148,7 @@ function toolsList() {
       },
       {
         name: 'talos_assert_after_plan',
-        description: 'Gate G11: bloqueia encerramento prematuro do modo full após plano validado e antes da execução.',
+        description: 'G11: bloqueia full antes da execução.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,

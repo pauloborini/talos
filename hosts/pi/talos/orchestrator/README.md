@@ -249,9 +249,15 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `talos-*` para o
 
 ---
 
-**Plugin version:** 0.12.1
+**Plugin version:** 0.12.2
 **Author:** Paulo Borini
-**Last updated:** 2026-07-01
+**Last updated:** 2026-07-02
+
+### Novidades v0.12.2 — tokens e performance no MCP/state
+
+- **State file v2 compacto** — handoff executor→validator com `contract_ids` por referência, `eval_results` como única fonte de claims e evidências por índice; JSON compacto, readers compatíveis com v1.
+- **`talos_run_state` recovery** — action dedicada retorna só `validator_recovery` para o validador frio; `get` preservado para debug.
+- **Tool descriptions enxutas** — menos tokens no `tools/list` sem mudar contratos MCP nem gates.
 
 ### Novidades v0.12.1 — comando `/talos` canônico
 

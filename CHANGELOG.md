@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.12.2 - 2026-07-02
+
+Tipo: **runtime**. **Sem breaking**. Schema MCP: v5 (inalterado). Contrato de execução: preservado.
+
+Resumo: Otimiza consumo de tokens e performance no MCP e no state file de handoff executor→validator, sem alterar gates determinísticos nem nomes/schemas de tools.
+
+Mudanças:
+- **State file schema v2 compacto** — writers passam a emitir `state_schema_version:2` em JSON compacto; `contract_ids` referencia obrigações/invariantes/cenários/riscos por ID (sem copiar texto do PRD/plano); `eval_results` é a única fonte de claims; evidências de task/repair usam índices em vez de paths completos repetidos. Readers aceitam v1 e v2.
+- **`talos_run_state` action `recovery`** — expõe payload mínimo (`validator_recovery`) para o validador frio em orquestrador re-spun; `get` permanece para debug/legado.
+- **Descrições MCP encurtadas** — tool descriptions mais curtas no `tools/list`, reduzindo overhead de contexto sem mudar nomes, schemas ou comportamento dos gates.
+- **Skills de execução/validação alinhadas** — `talos-plan-execute`, `talos-direct-execute`, `talos-task-validator` e `talos-findings-repair` atualizados para o contrato v2 e recovery.
+- **Testes MCP ampliados** — cobertura de normalização v2, action `recovery` e compatibilidade de leitura.
+- **Bundles regenerados** — `dist/talos-{claude,codex,opencode,pi,zcode}.plugin`, `SHA256SUMS`, `plugins/talos/**` e `hosts/{opencode,pi,zcode}/**` em `0.12.2`.
+
+Impacto:
+- Menor custo de token em handoff validator e listagem de tools MCP; comportamento de pipeline e gates inalterados.
+- Executores devem escrever state v2; validador continua lendo boundary via `state_path` + MCP.
+
+Arquivos/artefatos:
+- `packages/mcp-server/server.js`, `packages/mcp-server/server.test.js`
+- `packages/templates/STATE_FILE_SCHEMA.md`
+- `packages/skills/talos-{plan-execute,direct-execute,task-validator,findings-repair}/SKILL.md`
+- `dist/talos-*.plugin`, `dist/SHA256SUMS`
+
+Validação:
+- `node build/bump-version.mjs 0.12.2` — ok.
+- `build/check-consistency.mjs` — ok.
+- `node --test packages/mcp-server/server.test.js` — ok.
+- `build/smoke-hosts.mjs` — ok.
+- `build/conformance-matrix.mjs` — ok.
+
 ## 0.12.1 - 2026-07-01
 
 Tipo: **runtime + packaging + docs**. **Sem breaking**. Schema MCP: v5 (inalterado). Contrato de execução: preservado.

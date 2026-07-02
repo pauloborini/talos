@@ -19,7 +19,7 @@ Purpose: perform a cold, structured validation pass of the delivered slice again
 
 Use `talos_run_state` as the primary source for run metadata and gate state. The `state_path` JSON is the slice boundary projection for validation, not a replacement for MCP state. If `talos_run_state` is unavailable when required to confirm run state, return `verdict: "fail"` with a P1 finding instead of inferring status.
 
-Before validation, derive `run_id` from `state_path`, call `talos_run_state(action=get)`, and require an active `validator_recovery` whose `expected_state_path` matches the input. Copy `expected_dispatch_token` unchanged into the output. If correlation is unavailable, return `dispatch_token: null`, `verdict: "fail"`, and a P1 finding; never invent a token.
+Before validation, derive `run_id` from `state_path`, call `talos_run_state(action=recovery)`, and require an active `validator_recovery` whose `expected_state_path` matches the input. Copy `expected_dispatch_token` unchanged into the output. If correlation is unavailable, return `dispatch_token: null`, `verdict: "fail"`, and a P1 finding; never invent a token. Use `action=get` only for debugging; normal validation must not load the full run ledger.
 
 > **Proveniência do token (G4/R19) — quem lê o recovery é o validador, não o orquestrador.** É **este** subagente irmão que lê `validator_recovery` e ecoa `expected_dispatch_token` no próprio output. O orquestrador **nunca** preenche o token do `talos_lock_validator(complete)` lendo o recovery por conta própria: ele só pode submeter o token que **este output** devolveu. O `validator_recovery` serve ao orquestrador para *reconhecer/descartar* retornos stale (`stale_discarded: true`), nunca para *fabricar* o token de um validador que não rodou.
 
@@ -34,18 +34,18 @@ Read the JSON file at `.talos/state/<run_id>/<slice>.json` using the schema in `
 3. **Executed task ids** — `tasks`.
 4. **Boundary refs** — `boundary_refs`.
 5. **Explicit cold-review note** — you did not observe implementation; read current code only.
-6. **Deterministic boundary** — `base_sha`, `head_sha`, `contract_kind`, and all evidence/probe arrays.
-7. **Sprint evidence** — when present, load `sprint_id`, `sprint_file_path`, `prd_path`, `eval_results`, `evidence_to_claim` and `policy_scope`; verify all `EVAL-*` from `Sprint §9` are proved by current code/check evidence and no file violates `Sprint §10`.
+6. **Deterministic boundary** — `base_sha`, `head_sha`, `contract_kind`, and evidence/probe IDs. Schema v2 uses `contract_ids`, `check_table`, indexed file/check refs, and snapshot tuples.
+7. **Sprint evidence** — when present, load `sprint_id`, `sprint_file_path`, `prd_path`, `eval_results` and `policy_scope`; verify all `EVAL-*` from `Sprint §9` are proved by current code/check evidence and no file violates `Sprint §10`.
 8. **Working-tree delta** — compare `worktree_baseline`/`worktree_final` and current tree; unchanged preexisting dirt stays outside, later mutations must be evidenced.
 9. **Repair correlation** — on attempt 2, correlate every target finding id with `repair_evidence` in the same state path.
 
 Do not accept inline contract, copied diff, or pasted task lists as the validation boundary. If `state_path` is missing, unreadable, or lacks any required field, return JSON with `verdict: "fail"` and one P1 finding for `Input insuficiente: <missing item>`.
 
-Compatibilidade: state legado mínimo sem `contract_kind` só é aceito quando `executor_skill=talos-plan-execute`; nesse caso o plano continua autoritativo. State de `talos-direct-execute` exige extensão completa e `obligations` não vazio.
+Compatibilidade: schema v2 é canônico. Reader/MCP aceita v1 por compat e normaliza v2 internamente para o shape canônico. State legado mínimo sem `contract_kind` só é aceito quando `executor_skill=talos-plan-execute`; nesse caso o plano continua autoritativo. State de `talos-direct-execute` exige extensão completa e obligations não vazio (`contract_ids.obligations` no v2).
 
 Antes de validar código, compare `base_sha...head_sha`, `HEAD`, snapshot final atual e delta `worktree_baseline→worktree_final` com `files_changed`/evidências. Não infira base pelo nome da branch. Divergência gera `boundary_violations` e finding P1 estruturado.
 
-Se o state declara sprint file, trate `eval_results` ausente, `evidence_to_claim` ausente, EVAL não `passed`, sprint file inválido ou mutação em `policy_scope.forbidden_scope` como falha P1 de boundary. Não rebaixe claim de sprint não provada para observação.
+Se o state declara sprint file, trate `eval_results` ausente, EVAL não `passed`, evidência ausente, sprint file inválido ou mutação em `policy_scope.forbidden_scope` como falha P1 de boundary. Em v2, `evidence_to_claim` não deve existir; `eval_results` é fonte única. Não rebaixe claim de sprint não provada para observação.
 
 ---
 
