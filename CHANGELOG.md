@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.13.0 - 2026-07-03
+
+Tipo: **runtime + packaging**. **Sem breaking**. Schema MCP: v5 (inalterado). Contrato de execução: preservado.
+
+Resumo: Adiciona **VS Code** como 8º host oficial, com instalador `init vscode` (workspace + global), adapter `self_evident`/`mutable` no MCP, e suporte a JSONC (`settings.json` com comentários).
+
+Mudanças:
+- **Host VS Code** — entrada `vscode` em `HOST_ADAPTERS` (`packages/mcp-server/server.js`) com perfil `self_evident`, `dispatch_capability: 'mutable'`, `todo_tool: 'manage_todo_list'`. Detecção via `TALOS_HOST=vscode` injetado no MCP config. Subagente: `runSubagent(agentName)`, bloqueante. Join do validador: `self_evident`, `confidence: 'high'`.
+- **Instalador `init vscode`** — workspace: `.vscode/talos/` + `.vscode/mcp.json`; global: `~/.vscode-talos/` (runtime) + prompt folder `~/Library/Application Support/Code/User/prompts/` (agents/skills) + `settings.json` (`github.copilot.chat.mcpServers`). `uninstall vscode` limpo preservando config do usuário.
+- **Suporte JSONC** — parser tolerante a comentários `//` e trailing commas (`parseJsoncFile`), usado no merge do `settings.json` do VS Code e no `dropMcpKey` (uninstall).
+- **Build do host VS Code** — `build_vscode()` em `build-plugins.sh`, artefato `dist/talos-vscode.plugin`, catálogo from-source `hosts/vscode/`.
+- **Matriz de conformance** — host `vscode` adicionado, 10 cenários verdes (70/70 cross-host, zero regressões).
+- **Docs atualizados** — `README.md`, `COMMANDS.md`, `AGENTS.md`, `CLAUDE.md`, `plugin-manifests/README.md`, `packages/orchestrator/README.md` refletem 8 hosts.
+- **`install-host.sh`** — caso `vscode` com instruções de ativação no VS Code.
+- **Bundles regenerados** — `dist/talos-{claude,codex,opencode,pi,zcode,vscode}.plugin`, `SHA256SUMS`, `plugins/talos/**` e `hosts/{opencode,pi,zcode,vscode}/**` em `0.13.0`.
+
+Impacto:
+- VS Code Copilot Chat é o oitavo host oficial; usa `npx github:pauloborini/talos init vscode --global` ou `npx github:pauloborini/talos init vscode`.
+- Nenhum adapter de host existente foi alterado; 7 hosts originais mantêm mesmos valores de `join`, `dispatch` e `prereq`.
+
+Arquivos/artefatos:
+- `packages/mcp-server/server.js` (adapter `vscode`)
+- `build/cli/talos-init.mjs` (install/uninstall vscode + JSONC parser)
+- `build/build-plugins.sh` (`build_vscode`)
+- `build/install-host.sh` (caso `vscode`)
+- `build/conformance-matrix.mjs` (host `vscode`)
+- `plugin-manifests/vscode/mcp.json`
+- `hosts/vscode/` (catálogo from-source)
+- `dist/talos-vscode.plugin`
+
+Validação:
+- `node build/bump-version.mjs 0.13.0` — ok.
+- `build/check-consistency.mjs` — ok.
+- `build/conformance-matrix.mjs` — 70/70 (7 hosts × 10 cenários), zero regressões.
+- `talos_ping` + `talos_capabilities` com `TALOS_HOST=vscode`: `host=vscode`, `self_evident`, `mutable`, schema v5.
+- Dry-run `init vscode` (workspace + global), `uninstall vscode` (workspace + global): 4/4 cenários passando.
+- JSONC `settings.json` real do VS Code (comentários + trailing commas): parse OK.
+
 ## 0.12.2 - 2026-07-02
 
 Tipo: **runtime**. **Sem breaking**. Schema MCP: v5 (inalterado). Contrato de execução: preservado.

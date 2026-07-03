@@ -2855,15 +2855,15 @@ function preflight(args = {}) {
       next_action: 'corrigir_rota',
     };
   } else if (currentRouting && currentRouting.mode !== mode) {
-      result = {
-        gate: 'G10',
-        status: 'blocked',
-        timestamp,
-        mode,
-        locked_mode: currentRouting.mode,
-        error: `Troca de modo bloqueada: ${currentRouting.mode} -> ${mode}`,
-        next_action: 'encerrar_run_ou_usar_modo_travado',
-      };
+    result = {
+      gate: 'G10',
+      status: 'blocked',
+      timestamp,
+      mode,
+      locked_mode: currentRouting.mode,
+      error: `Troca de modo bloqueada: ${currentRouting.mode} -> ${mode}`,
+      next_action: 'encerrar_run_ou_usar_modo_travado',
+    };
   } else {
     const guaranteeLevel = guaranteeLevelForMode(mode);
     const documentFlow = documentFlowForRouting(mode, args.input_type, args.artifact_type);
@@ -3376,10 +3376,10 @@ function lockDispatch(args = {}) {
   const context = getDispatchState(runId, args);
   const result =
     action === 'start' ? startDispatch(args, context) :
-    action === 'checkpoint' ? checkpointDispatch(args, context) :
-    action === 'status' ? statusDispatch(args, context) :
-    action === 'complete' ? completeDispatch(args, context) :
-    abortDispatch(args, context);
+      action === 'checkpoint' ? checkpointDispatch(args, context) :
+        action === 'status' ? statusDispatch(args, context) :
+          action === 'complete' ? completeDispatch(args, context) :
+            abortDispatch(args, context);
 
   result.banner = dispatchBanner(result);
   patchDispatchResult(runId, result, args);
@@ -5225,21 +5225,21 @@ function handleRequest(message) {
     try {
       const value =
         name === 'talos_ping' ? ping() :
-        name === 'talos_capabilities' ? capabilities(args) :
-        name === 'talos_run_state' ? runState(args) :
-        name === 'talos_verify_artifact' ? verifyArtifact(args) :
-        name === 'talos_scan_prd' ? scanPrd(args) :
-        name === 'talos_verify_template_conformance' ? verifyTemplateConformance(args) :
-        name === 'talos_verify_sprint_file' ? verifySprintFile(args) :
-        name === 'talos_verify_backlog_index' ? verifyBacklogIndex(args) :
-        name === 'talos_select_next_sprint' ? selectNextSprint(args) :
-        name === 'talos_update_sprint_status' ? updateSprintStatus(args) :
-        name === 'talos_classify_input' ? classifyInput(args) :
-        name === 'talos_preflight' ? preflight(args) :
-        name === 'talos_lock_dispatch' ? lockDispatch(args) :
-        name === 'talos_lock_validator' ? lockValidator(args) :
-        name === 'talos_assert_after_plan' ? assertAfterPlan(args) :
-        (() => { throw rpcError(-32601, `Tool desconhecida: ${name}`); })();
+          name === 'talos_capabilities' ? capabilities(args) :
+            name === 'talos_run_state' ? runState(args) :
+              name === 'talos_verify_artifact' ? verifyArtifact(args) :
+                name === 'talos_scan_prd' ? scanPrd(args) :
+                  name === 'talos_verify_template_conformance' ? verifyTemplateConformance(args) :
+                    name === 'talos_verify_sprint_file' ? verifySprintFile(args) :
+                      name === 'talos_verify_backlog_index' ? verifyBacklogIndex(args) :
+                        name === 'talos_select_next_sprint' ? selectNextSprint(args) :
+                          name === 'talos_update_sprint_status' ? updateSprintStatus(args) :
+                            name === 'talos_classify_input' ? classifyInput(args) :
+                              name === 'talos_preflight' ? preflight(args) :
+                                name === 'talos_lock_dispatch' ? lockDispatch(args) :
+                                  name === 'talos_lock_validator' ? lockValidator(args) :
+                                    name === 'talos_assert_after_plan' ? assertAfterPlan(args) :
+                                      (() => { throw rpcError(-32601, `Tool desconhecida: ${name}`); })();
       logCall({ tool: name, run: args.run_id ?? null, status: 'ok' }, args);
       return { id, result: toolResult(value) };
     } catch (error) {
