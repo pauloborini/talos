@@ -1,6 +1,6 @@
 # Talos MCP Server
 
-Servidor MCP do plugin Talos v0.12.2.
+Servidor MCP do plugin Talos v0.13.0.
 
 ## Tools
 
