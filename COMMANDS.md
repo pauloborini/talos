@@ -25,6 +25,9 @@ npx github:pauloborini/talos init pi --global --yes
 # zcode — reinstalar pega runtime novo (mesmo comando do init; installer já habilita o plugin)
 npx github:pauloborini/talos init zcode
 
+# vscode — reinstalar pega runtime novo (mesmo comando do init)
+npx github:pauloborini/talos init vscode --global
+
 ```
 
 Smoke pós-update: `talos_ping` → `version: 0.12.2`; `talos_capabilities` → `schema_version: 5` (sibling-only).
@@ -57,6 +60,10 @@ npx github:pauloborini/talos init opencode
 # pi  — global (recomendado) ou por-projeto; --yes auto-instala as 2 deps obrigatórias
 npx github:pauloborini/talos init pi --global --yes
 npx github:pauloborini/talos init pi --yes
+
+# vscode  — global (recomendado) ou por-projeto
+npx github:pauloborini/talos init vscode --global
+npx github:pauloborini/talos init vscode
 ```
 
 ## Desinstalar
@@ -78,6 +85,10 @@ npx github:pauloborini/talos uninstall pi --global
 # opencode / pi — desinstalação por-projeto (caso não tenha usado --global)
 npx github:pauloborini/talos uninstall opencode
 npx github:pauloborini/talos uninstall pi
+
+# vscode — global (recomendado) ou por-projeto
+npx github:pauloborini/talos uninstall vscode --global
+npx github:pauloborini/talos uninstall vscode
 ```
 
 Remove **só** os artefatos do Talos. Preserva config, skills e outros MCP servers do usuário.
@@ -88,8 +99,8 @@ Remove **só** os artefatos do Talos. Preserva config, skills e outros MCP serve
 
 | Flag | Vale para | Efeito |
 |------|-----------|--------|
-| `--global`, `-g` | opencode, pi | instala em `~/.config/opencode/` / `~/.pi/agent/` (todos os projetos) |
-| `--dir <d>` | opencode, pi (por-projeto) | diretório alvo; default = diretório atual |
+| `--global`, `-g` | opencode, pi, vscode | instala em `~/.config/opencode/` / `~/.pi/agent/` / `~/.vscode-talos/` (todos os projetos) |
+| `--dir <d>` | opencode, pi, vscode (por-projeto) | diretório alvo; default = diretório atual |
 | `--yes`, `-y` | pi (init) | auto-instala deps faltantes (`pi-mcp-adapter` + `pi-subagents`) |
 | `--dry-run` | todos | mostra o que faria, sem alterar nada |
 | `-h`, `--help` | — | ajuda |
@@ -106,6 +117,7 @@ Remove **só** os artefatos do Talos. Preserva config, skills e outros MCP serve
 | zcode | `~/.zcode/cli/plugins/cache/zcode-plugins-official/talos/<version>/` | `.zcode-plugin/plugin.json` (MCP via `${ZCODE_PLUGIN_ROOT}`; installer já habilita em `~/.zcode/cli/config.json`) |
 | opencode | `~/.config/opencode/` (Win: `%APPDATA%\opencode`; honra `XDG_CONFIG_HOME`) | `opencode.json` |
 | pi | `~/.pi/agent/` (honra `PI_CODING_AGENT_DIR`) | `mcp.json` |
+| vscode | `~/.vscode-talos/` (runtime) + `~/Library/Application Support/Code/User/prompts/` (agents/skills) | `settings.json` (`github.copilot.chat.mcpServers`) |
 
 ---
 
@@ -113,7 +125,7 @@ Remove **só** os artefatos do Talos. Preserva config, skills e outros MCP serve
 
 Abra a CLI no host e chame as tools:
 
-- `talos_ping` → deve retornar `host=<claude|codex|antigravity|zcode|opencode|pi>`
+- `talos_ping` → deve retornar `host=<claude|codex|antigravity|zcode|opencode|pi|vscode>`
 - `talos_capabilities` → descritores + `prereq_policy`
 
 > **Não** dispare o `talos-task-validator` à mão: ele roda automaticamente dentro do

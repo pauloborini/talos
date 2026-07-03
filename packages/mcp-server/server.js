@@ -475,6 +475,45 @@ const HOST_ADAPTERS = {
     // Modos read-only (audit, interview-only) passam sem report.
     dispatch_capability: 'unknown',
   },
+  vscode: {
+    label: 'VS Code',
+    subagent_dispatch: {
+      // VS Code Copilot Chat despacha subagentes via runSubagent (tool nativa).
+      // Os agentes são definidos como .agent.md ou .prompt.md no prompt folder do
+      // VS Code (~/Library/Application Support/Code/User/prompts/ no macOS) ou
+      // como skills/.agent.md no workspace. O orquestrador usa runSubagent com o
+      // agentName canônico Talos (talos-task-validator, talos-plan-execute, etc.).
+      mechanism: 'runSubagent(agentName)',
+      example: 'runSubagent(agentName: "talos-task-validator", prompt: "<state_path>")',
+      registration: 'agents/<name>.md no prompt folder do VS Code ou .vscode/agents/',
+    },
+    validator_dispatch: {
+      dispatcher: 'orchestrator',
+      join: {
+        sync: 'self_evident',
+        confidence: 'high',
+        mechanism: 'runSubagent bloqueante por design do host — aguarda retorno do subagente',
+      },
+    },
+    question_prompt: {
+      mechanism: 'vscode_askQuestions',
+      mode: 'structured',
+      max_questions: 4,
+      options_per_question: 3,
+      persistence: 'prd_after_each_round',
+    },
+    // VS Code Copilot Chat expõe manage_todo_list nativo ao agente primário.
+    todo_tool: 'manage_todo_list',
+    hooks: { supported: false, mechanism: null },
+    // VS Code tem subagente (runSubagent) + MCP nativo (mcp.json) + todo (manage_todo_list)
+    // todas capabilities self_evident — confirmadas no ambiente de execução.
+    capabilities_flags: { subagent_available: true, mcp_available: true, todo_available: true },
+    // self_evident: MCP nativo + runSubagent bloqueante provados pelo boot do host.
+    prereq_policy: 'self_evident',
+    // VS Code runSubagent confirmado em produção com capacidade de mutação
+    // (Write/Edit/Bash disponíveis no subagente nativo).
+    dispatch_capability: 'mutable',
+  },
   generic: {
     label: 'Host genérico',
     subagent_dispatch: {
@@ -2816,15 +2855,15 @@ function preflight(args = {}) {
       next_action: 'corrigir_rota',
     };
   } else if (currentRouting && currentRouting.mode !== mode) {
-      result = {
-        gate: 'G10',
-        status: 'blocked',
-        timestamp,
-        mode,
-        locked_mode: currentRouting.mode,
-        error: `Troca de modo bloqueada: ${currentRouting.mode} -> ${mode}`,
-        next_action: 'encerrar_run_ou_usar_modo_travado',
-      };
+    result = {
+      gate: 'G10',
+      status: 'blocked',
+      timestamp,
+      mode,
+      locked_mode: currentRouting.mode,
+      error: `Troca de modo bloqueada: ${currentRouting.mode} -> ${mode}`,
+      next_action: 'encerrar_run_ou_usar_modo_travado',
+    };
   } else {
     const guaranteeLevel = guaranteeLevelForMode(mode);
     const documentFlow = documentFlowForRouting(mode, args.input_type, args.artifact_type);
@@ -3337,10 +3376,10 @@ function lockDispatch(args = {}) {
   const context = getDispatchState(runId, args);
   const result =
     action === 'start' ? startDispatch(args, context) :
-    action === 'checkpoint' ? checkpointDispatch(args, context) :
-    action === 'status' ? statusDispatch(args, context) :
-    action === 'complete' ? completeDispatch(args, context) :
-    abortDispatch(args, context);
+      action === 'checkpoint' ? checkpointDispatch(args, context) :
+        action === 'status' ? statusDispatch(args, context) :
+          action === 'complete' ? completeDispatch(args, context) :
+            abortDispatch(args, context);
 
   result.banner = dispatchBanner(result);
   patchDispatchResult(runId, result, args);
@@ -5186,21 +5225,21 @@ function handleRequest(message) {
     try {
       const value =
         name === 'talos_ping' ? ping() :
-        name === 'talos_capabilities' ? capabilities(args) :
-        name === 'talos_run_state' ? runState(args) :
-        name === 'talos_verify_artifact' ? verifyArtifact(args) :
-        name === 'talos_scan_prd' ? scanPrd(args) :
-        name === 'talos_verify_template_conformance' ? verifyTemplateConformance(args) :
-        name === 'talos_verify_sprint_file' ? verifySprintFile(args) :
-        name === 'talos_verify_backlog_index' ? verifyBacklogIndex(args) :
-        name === 'talos_select_next_sprint' ? selectNextSprint(args) :
-        name === 'talos_update_sprint_status' ? updateSprintStatus(args) :
-        name === 'talos_classify_input' ? classifyInput(args) :
-        name === 'talos_preflight' ? preflight(args) :
-        name === 'talos_lock_dispatch' ? lockDispatch(args) :
-        name === 'talos_lock_validator' ? lockValidator(args) :
-        name === 'talos_assert_after_plan' ? assertAfterPlan(args) :
-        (() => { throw rpcError(-32601, `Tool desconhecida: ${name}`); })();
+          name === 'talos_capabilities' ? capabilities(args) :
+            name === 'talos_run_state' ? runState(args) :
+              name === 'talos_verify_artifact' ? verifyArtifact(args) :
+                name === 'talos_scan_prd' ? scanPrd(args) :
+                  name === 'talos_verify_template_conformance' ? verifyTemplateConformance(args) :
+                    name === 'talos_verify_sprint_file' ? verifySprintFile(args) :
+                      name === 'talos_verify_backlog_index' ? verifyBacklogIndex(args) :
+                        name === 'talos_select_next_sprint' ? selectNextSprint(args) :
+                          name === 'talos_update_sprint_status' ? updateSprintStatus(args) :
+                            name === 'talos_classify_input' ? classifyInput(args) :
+                              name === 'talos_preflight' ? preflight(args) :
+                                name === 'talos_lock_dispatch' ? lockDispatch(args) :
+                                  name === 'talos_lock_validator' ? lockValidator(args) :
+                                    name === 'talos_assert_after_plan' ? assertAfterPlan(args) :
+                                      (() => { throw rpcError(-32601, `Tool desconhecida: ${name}`); })();
       logCall({ tool: name, run: args.run_id ?? null, status: 'ok' }, args);
       return { id, result: toolResult(value) };
     } catch (error) {

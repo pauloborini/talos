@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "talos": {
+      "command": "node",
+      "args": [".vscode/talos/packages/mcp-server/server.js"],
+      "env": {
+        "TALOS_HOST": "vscode"
+      }
+    }
+  }
+}
