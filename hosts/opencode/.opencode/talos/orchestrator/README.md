@@ -251,7 +251,14 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `talos-*` para o
 
 **Plugin version:** 0.13.0
 **Author:** Paulo Borini
-**Last updated:** 2026-07-02
+**Last updated:** 2026-07-03
+
+### Novidades v0.13.0 — host VS Code (8º host)
+
+- **VS Code como host oficial** — adapter `vscode` em `HOST_ADAPTERS`: perfil `self_evident`, `dispatch_capability: 'mutable'`, `todo_tool: 'manage_todo_list'`, subagente via `runSubagent`. Detecção por `TALOS_HOST=vscode`. 10/10 na matriz de conformance.
+- **Instalador `init vscode`** — workspace (`.vscode/talos/` + `.vscode/mcp.json`) e global (`~/.vscode-talos/` + prompt folder + `settings.json` MCP). Parse tolerante a JSONC (comentários `//`, trailing commas) para o `settings.json` do VS Code.
+- **Build + artefato** — `build_vscode()` em `build-plugins.sh`, `dist/talos-vscode.plugin`, catálogo `hosts/vscode/`. `install-host.sh` com caso `vscode`.
+- **Docs** — `README.md`, `COMMANDS.md`, `AGENTS.md`, `CLAUDE.md`, `plugin-manifests/README.md` atualizados para 8 hosts.
 
 ### Novidades v0.12.2 — tokens e performance no MCP/state
 
