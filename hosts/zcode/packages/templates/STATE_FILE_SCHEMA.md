@@ -58,7 +58,7 @@ Schema v2 compacto (writer atual, ordem canônica):
     "risks": ["R1"]
   },
   "eval_results": [{"id": "EVAL-001", "status": "passed", "evidence": ["path/test/check"], "checks": [0]}],
-  "policy_scope": {"allowed_scope": ["path"], "forbidden_scope": ["path"], "required_gates": ["talos_verify_sprint_file", "talos-task-validator"]},
+  "policy_scope": {"forbidden_scope": ["path"], "required_gates": ["talos_verify_sprint_file", "talos-task-validator"]},
   "check_table": ["node --test ..."],
   "validation_map": [{"obligation_ids": ["O1"], "checks": [0], "status": "passed"}],
   "task_evidence": [{"task": "T01", "files": [0], "checks": [0], "result": "passed"}],
@@ -81,7 +81,7 @@ Regras:
 - `contract_kind=direct` exige `contract_ids.obligations` não vazio; `plan` mantém o contrato autoritativo em `plan_path`.
 - Quando a execução nasce de sprint file, writers preenchem `sprint_id`, `sprint_file_path`, `prd_path`, `eval_results` e `policy_scope`.
 - `eval_results` é a fonte única para claims `EVAL-*`; não persistir `evidence_to_claim` no v2. Todo `EVAL-*` do `eval_manifest` da sprint deve ter `status:"passed"` e evidência real. Claim ausente, `failed`, `blocked` ou sem evidência invalida o boundary.
-- `policy_scope` é o resumo executável do `policy_manifest`; arquivo em `forbidden_scope` não pode aparecer em `files_changed`.
+- `policy_scope` é o resumo executável do `policy_manifest`; arquivo em `forbidden_scope` não pode aparecer em `files_changed`. `allowed_scope`, quando lido de state legado, é informativo e nunca funciona como lista permitida.
 - `check_table` deduplica comandos/checks longos. Campos `checks` em `eval_results`, `validation_map`, `task_evidence` e `repair_evidence` referenciam índices dessa tabela.
 - `task_evidence.files` e `repair_evidence.files` referenciam índices de `files_changed`.
 - Writers capturam `worktree_baseline` antes da primeira mutação e `worktree_final` imediatamente antes do handoff. Ambos usam tuplas únicas/ordenadas `[path,status,sha256]`; `status` é `A|M|D|R|C|T|U`, delete usa `sha256:null`, symlink usa SHA-256 do target textual.
