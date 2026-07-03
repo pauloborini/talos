@@ -104,7 +104,7 @@ Regras:
 ### 2. Invariantes de execução (derivados do PRD)
 
 - Invariantes técnicos inegociáveis (ex.: sem refetch ao filtrar).
-- Em `sprint-bound`: invariantes/gates derivados de `Sprint §9 eval_manifest` e `Sprint §10 policy_manifest`. Referenciar IDs: `PRD §3 D12`, `Sprint §9 EVAL-001`, `Sprint §10 policy.allowed_scope` — não colar a tabela D* nem YAML inteiro.
+- Em `sprint-bound`: invariantes/gates derivados de `Sprint §9 eval_manifest` e `Sprint §10 policy_manifest`. Referenciar IDs: `PRD §3 D12`, `Sprint §9 EVAL-001`, `Sprint §10 policy_manifest` — não colar a tabela D* nem YAML inteiro.
 - Em `standalone`: invariantes/gates derivados direto de `PRD §5`. Referenciar `PRD §3 D12`, `PRD §5` — sem citar Sprint §9/§10 (não aplicável).
 
 ### 3. Pitfalls
