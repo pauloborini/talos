@@ -4,7 +4,7 @@
 
 # Talos
 
-Plugin **Talos** v0.12.2 — pipeline determinístico (PRD → plano → execução → validação) com skills `talos-*`, templates e MCP. Um pacote, sete hosts: **Claude Code**, **Cursor**, **Codex App**, **Antigravity (Gemini)**, **ZCode**, **OpenCode** e **Pi CLI**.
+Plugin **Talos** v0.12.2 — pipeline determinístico (PRD → plano → execução → validação) com skills `talos-*`, templates e MCP. Um pacote, oito hosts: **Claude Code**, **Cursor**, **Codex App**, **Antigravity (Gemini)**, **ZCode**, **OpenCode**, **Pi CLI** e **VS Code**.
 
 **Versão:** [`VERSION`](VERSION) (`0.12.2`) · **Repo:** https://github.com/pauloborini/talos
 
@@ -19,6 +19,7 @@ Plugin **Talos** v0.12.2 — pipeline determinístico (PRD → plano → execuç
 | ZCode | Instalador cache-based (`init zcode`) → `~/.zcode/cli/plugins/cache/` | `talos-zcode.plugin` | — |
 | Opencode | Catálogo from-source `hosts/opencode/` | `talos-opencode.plugin` | — |
 | Pi CLI | Catálogo from-source `hosts/pi/` | `talos-pi.plugin` | **`pi-mcp-adapter` + `pi-subagents`** |
+| VS Code | Instalador from-source (`init vscode`) → `~/.vscode-talos/` (global) ou `.vscode/` (projeto) | `talos-vscode.plugin` | — |
 
 **Cursor:** não há pacote nem marketplace próprios — o plugin instalado via `claude plugin` no escopo do usuário já vale para o Cursor (mesmo manifest `.claude-plugin/`). Limitação de packaging, não do pipeline.
 
@@ -41,6 +42,8 @@ npx github:pauloborini/talos init antigravity
 npx github:pauloborini/talos init zcode
 npx github:pauloborini/talos init opencode --global
 npx github:pauloborini/talos init pi --global --yes  # --yes auto-instala as 2 deps
+npx github:pauloborini/talos init vscode               # projeto atual
+npx github:pauloborini/talos init vscode --global       # todos os projetos
 ```
 
 - **claudecode/cursor**: o instalador roda o `marketplace add` + `install` nativos da CLI por você. Já são globais por natureza.
@@ -49,6 +52,7 @@ npx github:pauloborini/talos init pi --global --yes  # --yes auto-instala as 2 d
 - **zcode**: o instalador copia o catálogo from-source `hosts/zcode/` para `~/.zcode/cli/plugins/cache/zcode-plugins-official/talos/<version>/`, atualiza o `marketplace.json` cache e habilita o plugin em `~/.zcode/cli/config.json` (`enabledPlugins`). ZCode é Claude Agent SDK (clone estrutural do Claude Code): `Agent(subagent_type)` + `TodoWrite` + MCP stdio nativos — perfil `self_evident`, sem dependências externas.
 - **opencode**: com `--global`, instala globalmente em `~/.config/opencode/` (o MCP é registrado com caminho absoluto, funcionando em todos os projetos).
 - **pi**: com `--global`, instala globalmente em `~/.pi/agent/` (honra `PI_CODING_AGENT_DIR`), registra o MCP em `mcp.json` global e checa/instala as deps `pi-mcp-adapter` + `pi-subagents`.
+- **vscode**: com `--global`, instala o runtime em `~/.vscode-talos/`, copia agentes e skills para o prompt folder do VS Code (`~/Library/Application Support/Code/User/prompts/` no macOS) e registra o MCP no `settings.json` do usuário (`github.copilot.chat.mcpServers`). Sem `--global`, instala no projeto atual (`.vscode/talos/` + `.vscode/mcp.json`). VS Code Copilot Chat é o host nativo com `runSubagent` + `manage_todo_list` + MCP — perfil `self_evident`, sem dependências externas.
 
 No modo `--global` o runtime vai para um local estável (`~/.config/opencode/talos` ou `~/.pi/agent/talos`) e o MCP é registrado com **caminho absoluto** (sem depender do cwd). opencode: agente em `~/.config/opencode/agents/`, skills em `~/.config/opencode/skills/`. pi: agente em `~/.agents/` (se existir) ou `~/.pi/agent/agents/`, MCP em `~/.pi/agent/mcp.json`. A config existente é **mesclada** (preserva outros MCP servers e chaves); se houver `opencode.jsonc` com comentários, ele é preservado e o Talos é registrado no fallback `opencode.json`.
 
@@ -99,6 +103,7 @@ npx github:pauloborini/talos uninstall antigravity
 npx github:pauloborini/talos uninstall zcode
 npx github:pauloborini/talos uninstall opencode --global
 npx github:pauloborini/talos uninstall pi --global
+npx github:pauloborini/talos uninstall vscode --global
 ```
 
 Se a instalação foi local **por-projeto**:
@@ -117,7 +122,7 @@ Alternativa à instalação via GitHub: baixar o `.plugin` do host (`claude`, `c
 
 Comando (Claude Code / Cursor): `/talos <mode> <input-type> [input] [flags]`
 
-No Codex, Antigravity, opencode, pi e zcode, invoque a skill do orquestrador com o mesmo padrão de argumentos (ex.: `/talos full sprint S05`). O verbo de dispatch do subagente é resolvido por `talos_capabilities` (host-agnóstico).
+No Codex, Antigravity, opencode, pi, zcode e VS Code, invoque a skill do orquestrador com o mesmo padrão de argumentos (ex.: `/talos full sprint S05`). O verbo de dispatch do subagente é resolvido por `talos_capabilities` (host-agnóstico).
 
 Se você quiser começar fora do fluxo principal, as skills listadas abaixo são os atalhos explícitos para backlog, PRD, auditoria, plano, execução e revisão.
 

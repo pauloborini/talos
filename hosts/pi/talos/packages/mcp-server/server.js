@@ -475,6 +475,45 @@ const HOST_ADAPTERS = {
     // Modos read-only (audit, interview-only) passam sem report.
     dispatch_capability: 'unknown',
   },
+  vscode: {
+    label: 'VS Code',
+    subagent_dispatch: {
+      // VS Code Copilot Chat despacha subagentes via runSubagent (tool nativa).
+      // Os agentes são definidos como .agent.md ou .prompt.md no prompt folder do
+      // VS Code (~/Library/Application Support/Code/User/prompts/ no macOS) ou
+      // como skills/.agent.md no workspace. O orquestrador usa runSubagent com o
+      // agentName canônico Talos (talos-task-validator, talos-plan-execute, etc.).
+      mechanism: 'runSubagent(agentName)',
+      example: 'runSubagent(agentName: "talos-task-validator", prompt: "<state_path>")',
+      registration: 'agents/<name>.md no prompt folder do VS Code ou .vscode/agents/',
+    },
+    validator_dispatch: {
+      dispatcher: 'orchestrator',
+      join: {
+        sync: 'self_evident',
+        confidence: 'high',
+        mechanism: 'runSubagent bloqueante por design do host — aguarda retorno do subagente',
+      },
+    },
+    question_prompt: {
+      mechanism: 'vscode_askQuestions',
+      mode: 'structured',
+      max_questions: 4,
+      options_per_question: 3,
+      persistence: 'prd_after_each_round',
+    },
+    // VS Code Copilot Chat expõe manage_todo_list nativo ao agente primário.
+    todo_tool: 'manage_todo_list',
+    hooks: { supported: false, mechanism: null },
+    // VS Code tem subagente (runSubagent) + MCP nativo (mcp.json) + todo (manage_todo_list)
+    // todas capabilities self_evident — confirmadas no ambiente de execução.
+    capabilities_flags: { subagent_available: true, mcp_available: true, todo_available: true },
+    // self_evident: MCP nativo + runSubagent bloqueante provados pelo boot do host.
+    prereq_policy: 'self_evident',
+    // VS Code runSubagent confirmado em produção com capacidade de mutação
+    // (Write/Edit/Bash disponíveis no subagente nativo).
+    dispatch_capability: 'mutable',
+  },
   generic: {
     label: 'Host genérico',
     subagent_dispatch: {
