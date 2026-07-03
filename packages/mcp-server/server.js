@@ -3652,8 +3652,11 @@ function validateSprintEvidenceState(state, args, violations) {
     violations.push('policy_scope obrigatório quando state declara sprint');
     return;
   }
-  for (const key of ['allowed_scope', 'forbidden_scope', 'required_gates']) {
+  for (const key of ['forbidden_scope', 'required_gates']) {
     if (!Array.isArray(state.policy_scope[key])) violations.push(`policy_scope.${key} deve ser array`);
+  }
+  if (state.policy_scope.allowed_scope !== undefined && !Array.isArray(state.policy_scope.allowed_scope)) {
+    violations.push('policy_scope.allowed_scope deve ser array quando presente');
   }
   const forbidden = Array.isArray(state.policy_scope.forbidden_scope) ? state.policy_scope.forbidden_scope : [];
   for (const file of state.files_changed ?? []) {
