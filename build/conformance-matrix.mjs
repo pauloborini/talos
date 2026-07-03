@@ -23,7 +23,7 @@ const EXPECTED_SCHEMA_VERSION = 5;
 
 // Hosts suportados + onde mora o arquivo de agente (p/ checagem de veredito) +
 // join.sync esperado por perfil (sibling-only, DEC-SIB-003): hosts nativos
-// (claude/codex/opencode/zcode) = 'self_evident'; must_report (pi/generic) = 'must_report'.
+// (claude/codex/opencode/zcode/vscode) = 'self_evident'; must_report (pi/generic) = 'must_report'.
 // dispatch_mutable é reportado nos cenários PASS para hosts com dispatch_capability
 // unknown; hosts mutable ignoram o flag.
 const HOSTS = [
@@ -32,6 +32,7 @@ const HOSTS = [
   { host: 'opencode', agent: 'hosts/opencode/.opencode/agents/talos-task-validator.md', join_sync: 'self_evident' },
   { host: 'pi', agent: 'hosts/pi/.pi/agents/talos-task-validator.md', join_sync: 'must_report' },
   { host: 'zcode', agent: 'hosts/zcode/agents/talos-task-validator.md', join_sync: 'self_evident' },
+  { host: 'vscode', agent: 'hosts/vscode/agents/talos-task-validator.md', join_sync: 'self_evident' },
   { host: 'generic', agent: 'agents/talos-task-validator.md', join_sync: 'must_report' },
 ];
 

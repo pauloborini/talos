@@ -293,6 +293,46 @@ build_zcode() {
   cp -R "$stage" "$ROOT/hosts/zcode"
 }
 
+# Build do host vscode (VS Code Copilot Chat). Estrutura: .vscode/talos/ (runtime),
+# agents/ (subagentes canônicos, mesmo formato claude .md), skills/, packages/
+# (MCP server + templates + orchestrator). MCP local com TALOS_HOST=vscode
+# injetado (detecção determinística). Catálogo from-source commitado em hosts/vscode/.
+build_vscode() {
+  local stage="$STAGE/vscode"
+  local out="$DIST/talos-vscode.plugin"
+  echo "montando vscode"
+  mkdir -p "$stage/.vscode/talos/packages" "$stage/agents" "$stage/skills"
+
+  # Runtime bundlado sob .vscode/talos/packages/ (MCP server + skills + templates + orchestrator)
+  copy_mcp_runtime "$stage/.vscode/talos/packages"
+  cp -R "$ROOT/packages/skills" "$stage/.vscode/talos/packages/"
+  cp -R "$ROOT/packages/templates" "$stage/.vscode/talos/packages/"
+  cp -R "$ROOT/packages/orchestrator" "$stage/.vscode/talos/"
+  cp "$ROOT/VERSION" "$stage/.vscode/talos/VERSION"
+
+  # Skills no prompt folder do VS Code
+  cp -R "$ROOT/packages/skills/." "$stage/skills/"
+  rm -rf "$stage/skills/talos"
+  cp -R "$ROOT/packages/orchestrator/skills/talos" \
+    "$stage/skills/talos"
+
+  # Subagentes canônicos (mesmo formato claude — .md com frontmatter).
+  cp -R "$ROOT/agents/." "$stage/agents/"
+
+  # Config MCP (.vscode/mcp.json com TALOS_HOST=vscode injetado)
+  cp "$ROOT/plugin-manifests/vscode/mcp.json" "$stage/.vscode/mcp.json"
+
+  echo "zipando vscode"
+  assert_no_runtime_state "$stage"
+  rm -f "$out"
+  ( cd "$stage" && find . -type f | LC_ALL=C sort | zip -X -q "$out" -@ )
+
+  echo "sincronizando catálogo vscode em hosts/vscode"
+  rm -rf "$ROOT/hosts/vscode"
+  mkdir -p "$ROOT/hosts"
+  cp -R "$stage" "$ROOT/hosts/vscode"
+}
+
 for h in "${HOSTS[@]}"; do
   build_host "$h"
 done
@@ -300,6 +340,7 @@ done
 build_opencode
 build_pi
 build_zcode
+build_vscode
 
 (
   cd "$DIST"
@@ -317,4 +358,4 @@ else
   echo "aviso: node ausente — pulando check-consistency" >&2
 fi
 
-echo "ok — dist/talos-{claude,codex,opencode,pi,zcode}.plugin dist/SHA256SUMS + hosts/{opencode,pi,zcode}/"
+echo "ok — dist/talos-{claude,codex,opencode,pi,zcode,vscode}.plugin dist/SHA256SUMS + hosts/{opencode,pi,zcode,vscode}/"

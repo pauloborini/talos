@@ -249,9 +249,22 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `talos-*` para o
 
 ---
 
-**Plugin version:** 0.12.1
+**Plugin version:** 0.13.0
 **Author:** Paulo Borini
-**Last updated:** 2026-07-01
+**Last updated:** 2026-07-03
+
+### Novidades v0.13.0 — host VS Code (8º host)
+
+- **VS Code como host oficial** — adapter `vscode` em `HOST_ADAPTERS`: perfil `self_evident`, `dispatch_capability: 'mutable'`, `todo_tool: 'manage_todo_list'`, subagente via `runSubagent`. Detecção por `TALOS_HOST=vscode`. 10/10 na matriz de conformance.
+- **Instalador `init vscode`** — workspace (`.vscode/talos/` + `.vscode/mcp.json`) e global (`~/.vscode-talos/` + prompt folder + `settings.json` MCP). Parse tolerante a JSONC (comentários `//`, trailing commas) para o `settings.json` do VS Code.
+- **Build + artefato** — `build_vscode()` em `build-plugins.sh`, `dist/talos-vscode.plugin`, catálogo `hosts/vscode/`. `install-host.sh` com caso `vscode`.
+- **Docs** — `README.md`, `COMMANDS.md`, `AGENTS.md`, `CLAUDE.md`, `plugin-manifests/README.md` atualizados para 8 hosts.
+
+### Novidades v0.12.2 — tokens e performance no MCP/state
+
+- **State file v2 compacto** — handoff executor→validator com `contract_ids` por referência, `eval_results` como única fonte de claims e evidências por índice; JSON compacto, readers compatíveis com v1.
+- **`talos_run_state` recovery** — action dedicada retorna só `validator_recovery` para o validador frio; `get` preservado para debug.
+- **Tool descriptions enxutas** — menos tokens no `tools/list` sem mudar contratos MCP nem gates.
 
 ### Novidades v0.12.1 — comando `/talos` canônico
 
@@ -265,7 +278,7 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `talos-*` para o
 - **Rebranding completo** — `atlas-workflow` renomeado para **Talos**. Skills `atlas-*` → `talos-*`, CLI `atlas-init.mjs` → `talos-init.mjs`, plugin `atlas-workflow-orchestrator` → `talos`. 632 arquivos alterados.
 - **Identidade própria** — Logo, README, marketplace e metadados refletem o nome definitivo. O pipeline é o mesmo; o nome mudou.
 - **Compatibilidade com legado** — Instalador limpa automaticamente artefatos com prefixo `atlas-` de instalações antigas; `SKILL_PREFIXES` cobre `['talos-', 'atlas-']`.
-- **Docs sincronizados** — `AGENTS.md`, `CLAUDE.md`, `NAMING.md`, `CHANGELOG.md` e todos os manifests atualizados. `marketplace.json` lista os 7 hosts.
+- **Docs sincronizados** — `AGENTS.md`, `CLAUDE.md`, `NAMING.md`, `CHANGELOG.md` e todos os manifests atualizados. `marketplace.json` lista os 8 hosts.
 
 ### Novidades v0.11.1 — correção do instalador Antigravity (Gemini)
 
@@ -349,4 +362,7 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `talos-*` para o
 - **Novo host: ZCode** (Claude Agent SDK compat). Entrada `zcode` em `HOST_ADAPTERS` (`packages/mcp-server/server.js`) com perfil `self_evident` — `Agent(subagent_type)` + `TodoWrite` + MCP stdio + skills nativas, clone estrutural do Claude Code. Detector `ZCODE_PLUGIN_ROOT` em `HOST_DETECTORS`. `validator_dispatch.join.sync: 'self_evident'`, `confidence: 'presumed'`.
 - ZCode reusa o agente canônico `agents/<name>.md` no plugin root (mesmo formato Claude); sem gerador próprio, sem custo de manutenção a cada nova skill/agent.
 - Installer `init zcode` (cache-based, análogo ao `init antigravity`): copia catálogo `hosts/zcode/` para `~/.zcode/cli/plugins/cache/zcode-plugins-official/talos/<version>/`, atualiza o `marketplace.json` cache e habilita o plugin em `~/.zcode/cli/config.json` (`enabledPlugins`). **Sem dependências externas** (não exige `pi-mcp-adapter`/etc. — passa no preflight direto).
-- Sete hosts suportados: `claude`, `codex`, `opencode`, `pi`, `antigravity`, `zcode`, `generic`. `CAPABILITIES_SCHEMA_VERSION` segue **v5** (adição aditiva, sem breaking). Smoke real no host ZCode confirma `host=zcode sv=5 join.sync=self_evident ping=alive version=0.9.3`.
+- **Novo host: VS Code** (Copilot Chat nativo). Entrada `vscode` em `HOST_ADAPTERS` (`packages/mcp-server/server.js`) com perfil `self_evident` — `runSubagent` + `manage_todo_list` + MCP (`mcp.json`) + skills nativas. Detector via `TALOS_HOST=vscode` injetado no MCP config. `validator_dispatch.join.sync: 'self_evident'`, `confidence: 'high'`. `dispatch_capability: 'mutable'` (subagentes VS Code têm Write/Edit/Bash, confirmado em produção).
+- VS Code reusa os agentes canônicos `agents/<name>.md` (mesmo formato Claude); sem gerador próprio. Skills no prompt folder do VS Code (`~/Library/Application Support/Code/User/prompts/` no macOS).
+- Installer `init vscode` (análogo a opencode/pi): workspace copia `.vscode/talos/` + `.vscode/mcp.json`; global copia runtime para `~/.vscode-talos/`, agents/skills para o prompt folder, e mescla MCP no `settings.json` do usuário (`github.copilot.chat.mcpServers`). **Sem dependências externas**.
+- Oito hosts suportados: `claude`, `codex`, `opencode`, `pi`, `antigravity`, `zcode`, `vscode`, `generic`. `CAPABILITIES_SCHEMA_VERSION` segue **v5** (adição aditiva, sem breaking). Smoke real no host VS Code confirma `host=vscode sv=5 join.sync=self_evident ping=alive version=0.12.2`.
