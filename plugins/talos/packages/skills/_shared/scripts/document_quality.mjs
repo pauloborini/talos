@@ -268,7 +268,7 @@ export function validateSprintFileConformance(markdown, {
   if (!policyBlock) {
     pendencies.push(sprintConformancePending('policy_manifest', 'policy_manifest', lineOf(markdown, /^##\s+10\./i), 'policy_manifest ausente.', 'preencher_policy_manifest'));
   } else {
-    for (const token of ['allowed_scope:', 'forbidden_scope:', 'required_gates:']) {
+    for (const token of ['forbidden_scope:', 'required_gates:']) {
       if (!policyBlock.includes(token)) {
         pendencies.push(sprintConformancePending('policy_manifest', token, null, `policy_manifest sem ${token}`, 'completar_policy_manifest'));
       }

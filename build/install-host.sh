@@ -7,6 +7,7 @@
 # Uso: build/install-host.sh <opencode|pi> <target-dir>
 #   opencode → copia .opencode/ + opencode.json para <target-dir>/
 #   pi       → copia talos/ agents/ skills/ mcp.json para <target-dir>/
+#   vscode   → copia .vscode/ agents/ skills/ para <target-dir>/
 #
 # Layout/cwd: o MCP roda via path relativo (.opencode/talos/... ou talos/...). O host
 # DEVE lançar `node` com cwd em <target-dir>. Ver README (seções opencode/pi).
@@ -18,7 +19,7 @@ HOST="${1:-}"
 TARGET="${2:-}"
 
 if [[ -z "$HOST" || -z "$TARGET" ]]; then
-  echo "uso: build/install-host.sh <opencode|pi|zcode> <target-dir>" >&2
+  echo "uso: build/install-host.sh <opencode|pi|zcode|vscode> <target-dir>" >&2
   exit 2
 fi
 
@@ -35,8 +36,12 @@ case "$HOST" in
     SRC="$ROOT/hosts/zcode"
     VERSION_FILE="$SRC/packages/mcp-server/VERSION"
     ;;
+  vscode)
+    SRC="$ROOT/hosts/vscode"
+    VERSION_FILE="$SRC/.vscode/talos/VERSION"
+    ;;
   *)
-    echo "host inválido: '$HOST' (use opencode, pi ou zcode)" >&2
+    echo "host inválido: '$HOST' (use opencode, pi, zcode ou vscode)" >&2
     exit 2
     ;;
 esac
@@ -73,6 +78,17 @@ elif [[ "$HOST" == "zcode" ]]; then
   echo "Subagente em '$TARGET/agents/'; ative via /plugins enable no ZCode."
 elif [[ "$HOST" == "opencode" ]]; then
   echo "registre/mescle '$TARGET/opencode.json'; reinicie o opencode com cwd em $TARGET."
+elif [[ "$HOST" == "vscode" ]]; then
+  echo "instalação concluída em $TARGET."
+  echo "para ativar no VS Code:"
+  echo "  1. o MCP já está configurado em '$TARGET/.vscode/mcp.json' (TALOS_HOST=vscode)"
+  echo "  2. copie os agentes para o prompt folder do VS Code:"
+  echo "     cp -R $TARGET/agents/*.md ~/Library/Application Support/Code/User/prompts/"
+  echo "     (ou %APPDATA%\\Code\\User\\prompts\\ no Windows)"
+  echo "  3. copie as skills para o skills folder do VS Code:"
+  echo "     cp -R $TARGET/skills/* ~/Library/Application Support/Code/User/prompts/"
+  echo "  4. reinicie o VS Code ou recarregue a janela (Cmd+Shift+P → Reload Window)"
+  echo "confirme com talos_ping (deve responder status=alive, version=$VERSION, host=vscode)."
 fi
 
 echo "ok — confirme com a tool MCP talos_ping (deve responder status=alive, version=$VERSION)."
