@@ -168,11 +168,10 @@ eval_manifest:
 ## 10. Policy manifest
 
 Regras locais da sprint. Não substitui AGENTS.md nem regras do projeto.
+Áreas previstas pertencem ao escopo da sprint/PRD/PLAN; não use lista positiva como lista permitida de arquivos.
 
 ```yaml
 policy_manifest:
-  allowed_scope:
-    - "[área/módulo permitido]"
   forbidden_scope:
     - "[área/módulo proibido]"
   data_safety:

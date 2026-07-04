@@ -35,6 +35,7 @@ const HOST_ALIASES = {
   pi: 'pi',
   zcode: 'zcode', zai: 'zcode',
   antigravity: 'antigravity', gemini: 'antigravity', antigravitycode: 'antigravity',
+  vscode: 'vscode', 'visual-studio-code': 'vscode', 'vs-code': 'vscode',
   all: 'all',
 };
 
@@ -118,6 +119,20 @@ function assertConfigParseable(file) {
 
 function parseJsonFile(file) {
   return JSON.parse(fs.readFileSync(file, 'utf8'));
+}
+
+// JSONC (JSON with Comments) — VS Code settings.json e outros arquivos de config
+// que suportam comentários // e trailing commas. Tolerante: se o JSON já é estrito,
+// parse normal funciona; senão, strip de comentários antes do parse.
+function parseJsoncFile(file) {
+  const raw = fs.readFileSync(file, 'utf8');
+  // Tenta parse estrito primeiro (mais seguro)
+  try { return JSON.parse(raw); } catch { }
+  // Strip de comentários de linha (//) — preserva strings com // dentro
+  let stripped = raw.replace(/(["'])(?:(?=(\\?))\2.)*?\1|\/\/.*$/gm, (m, q) => q ? m : '');
+  // Strip de trailing commas antes de } ou ] (comuns em JSONC/VS Code settings)
+  stripped = stripped.replace(/,(\s*[}\]])/g, '$1');
+  return JSON.parse(stripped);
 }
 
 function isStrictJson(file) {
@@ -231,11 +246,15 @@ function absServerEntry(host, talosRootAbs) {
 
 // Merge genérico de uma entry de server num config JSON. Falha-cedo se o arquivo
 // existente for JSON inválido (não sobrescreve). Preserva outros servers e chaves.
-function mergeServerInto(file, containerKey, serverName, entry, { dryRun, schema } = {}) {
-  assertConfigParseable(file);
+// jsonc: true → tolera comentários // (VS Code settings.json).
+function mergeServerInto(file, containerKey, serverName, entry, { dryRun, schema, jsonc } = {}) {
+  if (!jsonc) { assertConfigParseable(file); }
+  else if (fs.existsSync(file)) {
+    try { parseJsoncFile(file); } catch { fail(`${path.basename(file)} existente é JSON/JSONC inválido: ${file} (corrija antes de instalar; não sobrescrevo config do usuário)`); }
+  }
   let cfg = {};
   if (fs.existsSync(file)) {
-    cfg = parseJsonFile(file);
+    cfg = jsonc ? parseJsoncFile(file) : parseJsonFile(file);
     log(`  ${path.basename(file)} já existe — mesclando ${containerKey}.${serverName} (config do usuário preservada)`);
   }
   if (schema) cfg.$schema ??= schema;
@@ -502,7 +521,8 @@ function rmTalosSkills(skillsDir, opts) {
 function dropMcpKey(file, containerKey, serverName, opts) {
   if (!fs.existsSync(file)) return;
   let cfg;
-  try { cfg = JSON.parse(fs.readFileSync(file, 'utf8')); }
+  const jsonc = opts.jsonc === true;
+  try { cfg = jsonc ? parseJsoncFile(file) : JSON.parse(fs.readFileSync(file, 'utf8')); }
   catch { log(`  aviso: ${path.basename(file)} é JSON inválido — não mexi`); return; }
   const container = cfg[containerKey];
   if (!container || !(serverName in container)) return;
@@ -739,6 +759,144 @@ function uninstallZcode(opts) {
   log('ok — ZCode: cache, registry e enabledPlugins removidos.');
 }
 
+// --- VS Code (Copilot Chat) ---------------------------------------------------
+// Workspace: .vscode/talos/ (runtime) + .vscode/mcp.json (MCP local, TALOS_HOST=vscode).
+// Global: ~/.vscode-talos/ (runtime) + user settings MCP + agents/skills no prompt folder.
+
+function vscodeUserDir() {
+  if (WIN) {
+    const appData = process.env.APPDATA?.trim();
+    if (appData) return path.join(appData, 'Code', 'User');
+  }
+  const xdg = process.env.XDG_CONFIG_HOME?.trim();
+  if (xdg) return path.join(xdg, 'Code', 'User');
+  if (process.platform === 'darwin') return path.join(homedir(), 'Library', 'Application Support', 'Code', 'User');
+  return path.join(homedir(), '.config', 'Code', 'User');
+}
+
+function vscodePromptsDir() { return path.join(vscodeUserDir(), 'prompts'); }
+function vscodeSettingsFile() { return path.join(vscodeUserDir(), 'settings.json'); }
+
+function vscodeGlobalRoot() { return path.join(homedir(), '.vscode-talos'); }
+
+function cleanVscodeControlled(targetDir, opts) {
+  rmPath(path.join(targetDir, '.vscode/talos'), opts);
+  rmTalosAgentsQuiet(path.join(targetDir, '.vscode/agents'), opts);
+  rmTalosSkillsQuiet(path.join(targetDir, '.vscode/skills'), opts);
+}
+
+// Mescla a entry MCP do Talos no .vscode/mcp.json do projeto. Preserva outros
+// servers e chaves do usuário. Falha-cedo em JSON inválido.
+function mergeVscodeMcpJson(targetDir, opts) {
+  const srcCfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'plugin-manifests/vscode/mcp.json'), 'utf8'));
+  const dest = path.join(targetDir, '.vscode', 'mcp.json');
+  assertConfigParseable(dest);
+  let cfg = {};
+  if (fs.existsSync(dest)) {
+    cfg = parseJsonFile(dest);
+    log(`  .vscode/mcp.json já existe — mesclando mcpServers.talos (config do usuário preservada)`);
+  }
+  cfg.mcpServers = { ...(cfg.mcpServers ?? {}), ...srcCfg.mcpServers };
+  if (opts.dryRun) return dest;
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  fs.writeFileSync(dest, JSON.stringify(cfg, null, 2) + '\n');
+  return dest;
+}
+
+function installVscode(targetDir, opts) {
+  log(`instalando Talos (vscode v${VERSION}) em ${targetDir}`);
+  assertConfigParseable(path.join(targetDir, '.vscode', 'mcp.json'));
+  if (opts.dryRun) { log('  [dry-run] copiaria .vscode/talos/ + .vscode/mcp.json'); return; }
+  fs.mkdirSync(targetDir, { recursive: true });
+  cleanVscodeControlled(targetDir, opts);
+  copyInto('hosts/vscode/.vscode', targetDir);
+  mergeVscodeMcpJson(targetDir, opts);
+  log('ok — VS Code instalado no projeto (MCP + runtime em .vscode/).');
+  log('próximo: recarregue a janela do VS Code (Cmd+Shift+P → Reload Window)');
+  log('  e confirme com talos_ping (deve retornar host=vscode).');
+}
+
+// VS Code global: runtime em ~/.vscode-talos/, MCP no user settings.json,
+// agents + skills no prompt folder (~/Library/Application Support/Code/User/prompts/).
+function installVscodeGlobal(opts) {
+  const talosRoot = vscodeGlobalRoot();
+  const promptsDir = vscodePromptsDir();
+  const settingsFile = vscodeSettingsFile();
+  const absServer = path.join(talosRoot, 'packages', 'mcp-server', 'server.js');
+
+  log(`instalando Talos (vscode v${VERSION}) GLOBAL`);
+  log(`  runtime: ${talosRoot}`);
+  log(`  prompts: ${promptsDir}`);
+  // VS Code settings.json usa JSONC (comentários //) — validação tolerante.
+  if (fs.existsSync(settingsFile)) {
+    try { parseJsoncFile(settingsFile); } catch { fail(`settings.json existente é JSON/JSONC inválido: ${settingsFile} (corrija antes de instalar; não sobrescrevo config do usuário)`); }
+  }
+
+  const entry = {
+    command: process.execPath,
+    args: [absServer],
+    env: { TALOS_HOST: 'vscode' },
+  };
+
+  if (opts.dryRun) {
+    log(`  [dry-run] copiaria runtime → ${talosRoot}`);
+    log(`  [dry-run] copiaria agents + skills → ${promptsDir}`);
+    log(`  [dry-run] mesclaria mcpServers.talos em ${settingsFile}`);
+    return;
+  }
+
+  // Runtime
+  rmPath(talosRoot, opts);
+  fs.cpSync(path.join(ROOT, 'hosts/vscode/.vscode/talos'), talosRoot, { recursive: true });
+
+  // Agents + skills no prompt folder
+  fs.mkdirSync(promptsDir, { recursive: true });
+  rmTalosAgentsQuiet(promptsDir, opts);
+  copyTalosAgents(path.join(ROOT, 'hosts/vscode/agents'), promptsDir);
+  const skillsSrc = path.join(ROOT, 'hosts/vscode/skills');
+  if (fs.existsSync(skillsSrc)) {
+    for (const name of fs.readdirSync(skillsSrc)) {
+      if (hasSkillPrefix(name)) {
+        const dest = path.join(promptsDir, name);
+        rmPath(dest, opts);
+        fs.cpSync(path.join(skillsSrc, name), dest, { recursive: true });
+      }
+    }
+  }
+
+  // MCP no user settings (github.copilot.chat.mcpServers)
+  mergeServerInto(settingsFile, 'github.copilot.chat.mcpServers', 'talos', entry, { ...opts, jsonc: true });
+
+  log('ok — VS Code GLOBAL instalado (runtime + agents + skills + MCP no user settings).');
+  log('próximo: recarregue a janela do VS Code (Cmd+Shift+P → Reload Window)');
+  log('  e confirme com talos_ping (deve retornar host=vscode, status=alive).');
+}
+
+function uninstallVscode(targetDir, opts) {
+  log(`removendo Talos (vscode) de ${targetDir}`);
+  rmIfExists(path.join(targetDir, '.vscode/talos'), opts);
+  rmTalosAgentsQuiet(path.join(targetDir, '.vscode/agents'), opts);
+  rmTalosSkills(path.join(targetDir, '.vscode/skills'), opts);
+  dropMcpKey(path.join(targetDir, '.vscode', 'mcp.json'), 'mcpServers', 'talos', opts);
+  log('ok — artefatos do Talos removidos (.vscode/mcp.json preservado se tiver outros servers).');
+}
+
+function uninstallVscodeGlobal(opts) {
+  const talosRoot = vscodeGlobalRoot();
+  const promptsDir = vscodePromptsDir();
+  const settingsFile = vscodeSettingsFile();
+
+  log(`removendo Talos (vscode) GLOBAL`);
+  log(`  runtime: ${talosRoot}`);
+  log(`  prompts: ${promptsDir}`);
+
+  rmIfExists(talosRoot, opts);
+  rmTalosAgentsQuiet(promptsDir, opts);
+  rmTalosSkills(promptsDir, opts);
+  dropMcpKey(settingsFile, 'github.copilot.chat.mcpServers', 'talos', { ...opts, jsonc: true });
+  log('ok — artefatos globais do Talos para VS Code removidos.');
+}
+
 // --- host virtual `all` -------------------------------------------------------
 // Detecta automaticamente quais hosts estão presentes no sistema e retorna
 // uma lista de descritores para `runAll()`. Cada entrada tem:
@@ -790,6 +948,15 @@ function allHostDescriptors(opts) {
       // `--yes` é sempre propagado no `all` para não bloquear a instalação em lote.
       install: (o) => installPiGlobal({ ...o, yes: true }),
       uninstall: (o) => uninstallPiGlobal(o),
+    },
+    {
+      host: 'vscode',
+      label: 'VS Code (global)',
+      // VS Code está sempre presente quando rodamos o npx via terminal — não
+      // precisa de CLI. Detecta pela existência do prompt folder padrão.
+      detect: () => fs.existsSync(vscodeUserDir()),
+      install: (o) => installVscodeGlobal(o),
+      uninstall: (o) => uninstallVscodeGlobal(o),
     },
   ];
 }
@@ -849,6 +1016,8 @@ hosts:
                         --global: ~/.config/opencode/ (vale em todos os projetos)
   pi                    por-projeto: .mcp.json + .pi/agents/ no [dir] + deps
                         --global: ~/.pi/agent/ (vale em todos os projetos)
+  vscode                por-projeto: .vscode/talos/ + .vscode/mcp.json no [dir]
+                        --global: ~/.vscode-talos/ + user settings MCP + agents/skills no prompt folder
 
 flags:
   --dir <d>    diretório alvo (opencode/pi por-projeto); default: diretório atual
@@ -866,6 +1035,8 @@ exemplos:
   npx github:${REPO_SLUG} init opencode               # projeto atual
   npx github:${REPO_SLUG} init opencode --global      # todos os projetos
   npx github:${REPO_SLUG} init pi --global --yes
+  npx github:${REPO_SLUG} init vscode               # projeto atual
+  npx github:${REPO_SLUG} init vscode --global       # todos os projetos
   npx github:${REPO_SLUG} uninstall opencode --global
   npx github:${REPO_SLUG} uninstall pi --global --dry-run`);
 }
@@ -902,10 +1073,10 @@ function main() {
     fail(`comando desconhecido: ${cmd} (use \`init <host>\` ou \`uninstall <host>\`)`, 2);
   }
 
-  if (!rawHost) fail('informe o host: all | claudecode | cursor | codex | antigravity | zcode | opencode | pi', 2);
+  if (!rawHost) fail('informe o host: all | claudecode | cursor | codex | antigravity | zcode | opencode | pi | vscode', 2);
   if (extra.length) fail(`argumentos extras não suportados: ${extra.join(' ')}`, 2);
   const host = HOST_ALIASES[rawHost.toLowerCase()];
-  if (!host) fail(`host inválido: ${rawHost} (use all|claudecode|cursor|codex|antigravity|zcode|opencode|pi)`, 2);
+  if (!host) fail(`host inválido: ${rawHost} (use all|claudecode|cursor|codex|antigravity|zcode|opencode|pi|vscode)`, 2);
 
   const opts = parsed.opts;
 
@@ -918,12 +1089,12 @@ function main() {
 
   const targetDir = path.resolve(opts.dir || rawDir || process.cwd());
   const actions = {
-    init: { claude: installClaude, codex: installCodex, antigravity: installAntigravity, zcode: installZcode, opencode: installOpencode, pi: installPi },
-    uninstall: { claude: uninstallClaude, codex: uninstallCodex, antigravity: uninstallAntigravity, zcode: uninstallZcode, opencode: uninstallOpencode, pi: uninstallPi },
+    init: { claude: installClaude, codex: installCodex, antigravity: installAntigravity, zcode: installZcode, opencode: installOpencode, pi: installPi, vscode: installVscode },
+    uninstall: { claude: uninstallClaude, codex: uninstallCodex, antigravity: uninstallAntigravity, zcode: uninstallZcode, opencode: uninstallOpencode, pi: uninstallPi, vscode: uninstallVscode },
   };
   const globalActions = {
-    init: { opencode: installOpencodeGlobal, pi: installPiGlobal },
-    uninstall: { opencode: uninstallOpencodeGlobal, pi: uninstallPiGlobal },
+    init: { opencode: installOpencodeGlobal, pi: installPiGlobal, vscode: installVscodeGlobal },
+    uninstall: { opencode: uninstallOpencodeGlobal, pi: uninstallPiGlobal, vscode: uninstallVscodeGlobal },
   };
 
   if (host === 'claude' || host === 'codex' || host === 'antigravity' || host === 'zcode') {

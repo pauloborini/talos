@@ -934,7 +934,7 @@ const CONFORMANT_PLAN = [
   '## 4. Estado na abertura da sprint',
   '## 5. Tarefas de execução',
   '#### T01. Primeira tarefa',
-  '- **Eval/Policy:** Sprint §9 EVAL-001 / Sprint §10 policy.allowed_scope',
+  '- **Eval/Policy:** Sprint §9 EVAL-001 / Sprint §10 policy_manifest',
   '## 6. Contratos técnicos',
   '## 7. Slices',
   '## 8. Validação e checklist',
@@ -1057,7 +1057,7 @@ const CONFORMANT_PLAN_DOC = [
   '## 4. Estado na abertura da sprint',
   '## 5. Tarefas de execução',
   '#### T01. Primeira tarefa',
-  '- **Eval/Policy:** Sprint §9 EVAL-001 / Sprint §10 policy.allowed_scope',
+  '- **Eval/Policy:** Sprint §9 EVAL-001 / Sprint §10 policy_manifest',
   '## 6. Contratos técnicos',
   '## 7. Slices',
   '## 8. Validação e checklist',
@@ -1167,8 +1167,6 @@ function sprintDoc({
     '## 10. Policy manifest',
     '```yaml',
     'policy_manifest:',
-    '  allowed_scope:',
-    '    - "packages/mcp-server"',
     '  forbidden_scope:',
     '    - "hosts"',
     '  required_gates:',
@@ -4011,7 +4009,6 @@ function attachSprintEvidence(state, { id = 'S01', sprintPath = '.talos/backlog/
     status: 'passed',
   }];
   state.policy_scope = {
-    allowed_scope: ['src'],
     forbidden_scope: ['secrets'],
     required_gates: ['talos_verify_sprint_file', 'talos-task-validator'],
   };
@@ -4098,6 +4095,29 @@ test('state boundary: policy_scope.forbidden_scope bloqueia arquivo tocado', () 
   const result = validateStateBoundary(statePath, { project_root: root });
   assert.equal(result.ok, false);
   assert.match(result.violations.join(' '), /forbidden_scope/);
+});
+
+test('state boundary: allowed_scope legado é informativo, não lista permitida', () => {
+  const { root, head } = initGitFixture();
+  fs.mkdirSync(path.join(root, '.talos/backlog/sprints'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md'), sprintDoc());
+  const baseline = captureWorktreeSnapshot(root);
+  fs.mkdirSync(path.join(root, 'tests'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'tests/outside.js'), 'export const outside = true;\n');
+  const state = attachSprintEvidence(planStateForBoundary(root, head, baseline, ['tests/outside.js']));
+  state.policy_scope.allowed_scope = ['src'];
+  const statePath = writeSliceState(root, 'sprint-state-allowed-informative', state);
+  const result = validateStateBoundary(statePath, { project_root: root });
+  assert.equal(result.ok, true);
+});
+
+test('state boundary: allowed_scope legado inválido falha como shape, não como boundary', () => {
+  const boundary = setupSprintEvidenceBoundary('sprint-state-allowed-invalid');
+  boundary.state.policy_scope.allowed_scope = 'src';
+  fs.writeFileSync(path.join(boundary.root, boundary.statePath), JSON.stringify({ ...boundary.state, run_id: 'sprint-state-allowed-invalid' }, null, 2));
+  const result = validateStateBoundary(boundary.statePath, { project_root: boundary.root });
+  assert.equal(result.ok, false);
+  assert.match(result.violations.join(' '), /allowed_scope deve ser array/);
 });
 
 test('F-003: dirty preexistente intacto não contamina; mutação posterior entra no boundary', () => {
