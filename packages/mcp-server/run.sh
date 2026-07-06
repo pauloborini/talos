@@ -58,4 +58,8 @@ NODE_BIN="$(resolve_node)" || {
 }
 
 export CLAUDE_PLUGIN_ROOT="$ROOT"
+# Node compara argv[1] com import.meta.url; symlink no path do spawn quebra o boot stdio.
+if command -v python3 >/dev/null 2>&1; then
+  SERVER="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$SERVER")"
+fi
 exec "$NODE_BIN" "$SERVER" "$@"
