@@ -20,10 +20,8 @@
   ],
   "mcpServers": {
     "talos": {
-      "command": "node",
-      "args": [
-        "${CLAUDE_PLUGIN_ROOT}/packages/mcp-server/server.js"
-      ],
+      "command": "${CLAUDE_PLUGIN_ROOT}/packages/mcp-server/run.sh",
+      "args": [],
       "transport": "stdio"
     }
   }
