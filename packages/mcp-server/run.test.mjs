@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -52,4 +53,39 @@ test('run.sh resolve server sem CLAUDE_PLUGIN_ROOT no env', () => {
     encoding: 'utf8',
   }).trim();
   assert.ok(out.length > 0);
+});
+
+test('server.js responde initialize via symlink do entrypoint', () => {
+  const server = path.join(DIR, 'server.js');
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'talos-mcp-symlink-'));
+  const link = path.join(tmp, 'server-link.js');
+  fs.symlinkSync(server, link);
+
+  const node = execFileSync(RUN_SH, ['--resolve-node'], {
+    env: { HOME: process.env.HOME ?? '/tmp', PATH: '/usr/bin:/bin' },
+    encoding: 'utf8',
+  }).trim();
+
+  const init = `${JSON.stringify({
+    jsonrpc: '2.0',
+    id: 1,
+    method: 'initialize',
+    params: {
+      protocolVersion: '2024-11-05',
+      capabilities: {},
+      clientInfo: { name: 'test', version: '1' },
+    },
+  })}\n`;
+
+  const out = execFileSync(node, [link], {
+    input: init,
+    env: {
+      HOME: process.env.HOME ?? '/tmp',
+      CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT,
+    },
+    encoding: 'utf8',
+    timeout: 5000,
+  });
+
+  assert.match(out, /"protocolVersion":"2024-11-05"/);
 });

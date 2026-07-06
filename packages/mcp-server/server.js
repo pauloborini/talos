@@ -5322,8 +5322,20 @@ function startStdioLoop() {
 
 // Só inicia o loop stdio quando executado como entrypoint (node server.js).
 // Importado por testes (node --test), o módulo expõe funções puras sem bootar I/O.
-const isEntrypoint = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
-if (isEntrypoint) startStdioLoop();
+function isMainModule() {
+  if (!process.argv[1]) return false;
+  const entry = path.resolve(process.argv[1]);
+  const modulePath = fileURLToPath(import.meta.url);
+  if (entry === modulePath) return true;
+  try {
+    // Parall/Cursor: HOME pode ser symlink (Library/p2 → Application Support/Parall/N).
+    // argv[1] fica no path lógico; import.meta.url no físico — sem realpath o stdio não sobe.
+    return fs.realpathSync(entry) === fs.realpathSync(modulePath);
+  } catch {
+    return false;
+  }
+}
+if (isMainModule()) startStdioLoop();
 
 export {
   HOST_ADAPTERS,
