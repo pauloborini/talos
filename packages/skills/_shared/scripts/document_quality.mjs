@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -195,6 +196,60 @@ function extractSectionMarkdown(markdown, sectionNumber) {
   return next ? markdown.slice(from, from + start[0].length + next.index) : markdown.slice(from);
 }
 
+function normalizeAcceptanceBlock(text) {
+  return text
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map((line) => line.trimEnd())
+    .join('\n')
+    .trim();
+}
+
+/** Extrai o bloco §7 (contrato) normalizado — mesma normalização na gravação e na verificação. */
+export function extractAcceptanceBlock(markdown) {
+  const start = /^##\s+7\.\s/im.exec(markdown);
+  if (!start) return null;
+  const from = start.index;
+  const tail = markdown.slice(from);
+  const afterHeading = tail.slice(start[0].length);
+  const next = /\n##\s/.exec(afterHeading);
+  const raw = next ? tail.slice(0, start[0].length + next.index) : tail;
+  return normalizeAcceptanceBlock(raw);
+}
+
+/** Retorna `sha256:<hex>` do bloco §7, ou null se §7 ausente. */
+export function computeAcceptanceSeal(markdown) {
+  const block = extractAcceptanceBlock(markdown);
+  if (block == null) return null;
+  const hash = crypto.createHash('sha256').update(block, 'utf8').digest('hex');
+  return `sha256:${hash}`;
+}
+
+/**
+ * Selo write-once do contrato de produto.
+ * - draft (ou status ≠ aprovado): selo ignorado → { sealed:false, tampered:false }
+ * - aprovado sem selo válido: { sealed:false, tampered:true }
+ * - aprovado com selo: compara sha256 do §7 → tampered se divergir
+ */
+export function validateAcceptanceSeal(markdown) {
+  const status = tableValue(markdown, 'Contrato status');
+  if (!status || !/^aprovado$/i.test(status.trim())) {
+    return { sealed: false, tampered: false };
+  }
+  const sealRaw = tableValue(markdown, 'Selo do contrato');
+  if (!sealRaw || !/^sha256:[a-f0-9]{64}$/i.test(sealRaw.trim())) {
+    return { sealed: false, tampered: true };
+  }
+  const expected = computeAcceptanceSeal(markdown);
+  if (!expected) {
+    return { sealed: false, tampered: true };
+  }
+  return {
+    sealed: true,
+    tampered: expected.toLowerCase() !== sealRaw.trim().toLowerCase(),
+  };
+}
+
 export function validateSprintFileConformance(markdown, {
   sprintPath = null,
   sprintId = null,
@@ -289,6 +344,17 @@ export function validateSprintFileConformance(markdown, {
       lineOf(markdown, /^##\s+7\./i),
       'Contrato §7 sem checkbox de aceite observável.',
       'preencher_aceite_binario',
+    ));
+  }
+
+  const sealResult = validateAcceptanceSeal(markdown);
+  if (sealResult.tampered) {
+    pendencies.push(sprintConformancePending(
+      'contrato_congelado',
+      'FROZEN_ACCEPTANCE_TAMPERED',
+      lineOf(markdown, /^##\s+7\./i),
+      'Contrato aprovado foi alterado sem re-aprovação (selo divergente).',
+      'reaprovar_contrato',
     ));
   }
 

@@ -15,6 +15,7 @@ Regra: este arquivo guarda **escopo, estado, decisões locais, dependências, ga
 | Status | [backlog / ready / doing / review / done / blocked] |
 | Backlog mestre | [path + anchor da linha S<NN> — ou `Não aplicável (standalone)`] |
 | Contrato status | [draft / aprovado] |
+| Selo do contrato | [pendente até aprovação] |
 | PRD | [pendente ou path] |
 | PLAN | [pendente ou path] |
 | State / evidência | [pendente ou path] |
@@ -108,7 +109,7 @@ Decisões locais que moldam esta sprint. Decisão de produto que vira aceite dev
 
 ## 7. Contrato de produto (congelado)
 
-Casa única de produto desta sprint: decisões D*, cenários UX e aceite binário. O validador frio nota código contra este bloco (não contra o PLAN). Enquanto `Contrato status: draft`, o bloco pode madurar; ao virar `aprovado`, congela (selo no Plano 2).
+Casa única de produto desta sprint: decisões D*, cenários UX e aceite binário. O validador frio nota código contra este bloco (não contra o PLAN). Fluxo de congelamento: `draft` (maturação) → ao aprovar, gravar `Contrato status: aprovado` + `Selo do contrato: sha256:<hash do §7>`; qualquer edição do bloco aprovado sem re-aprovação é tamper (`FROZEN_ACCEPTANCE_TAMPERED`). Para reeditar: voltar a `draft` (limpa o selo), editar, re-aprovar.
 
 ### 7.1 Decisões de produto (D*)
 
