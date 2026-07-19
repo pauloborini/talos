@@ -255,7 +255,7 @@ const HOST_ADAPTERS = {
         mechanism: 'Agent(subagent_type) bloqueante por design do host',
       },
     },
-    question_prompt: { mechanism: 'AskUserQuestion', mode: 'structured', max_questions: 4, options_per_question: 3, persistence: 'prd_after_each_round' },
+    question_prompt: { mechanism: 'AskUserQuestion', mode: 'structured', max_questions: 4, options_per_question: 3, persistence: 'sprint_after_each_round' },
     todo_tool: 'TodoWrite',
     hooks: { supported: true, mechanism: 'hooks/claude/settings.snippet.json' },
     capabilities_flags: { subagent_available: true, mcp_available: true, todo_available: true },
@@ -280,7 +280,7 @@ const HOST_ADAPTERS = {
         mechanism: 'spawn_agent bloqueante; retorno via state_path + veredito; no Codex deve usar explicitamente agent_type="talos-task-validator"',
       },
     },
-    question_prompt: { mechanism: 'request_user_input', mode: 'structured', max_questions: 3, options_per_question: 3, persistence: 'prd_after_each_round' },
+    question_prompt: { mechanism: 'request_user_input', mode: 'structured', max_questions: 3, options_per_question: 3, persistence: 'sprint_after_each_round' },
     todo_tool: 'tasks',
     hooks: { supported: false, mechanism: null },
     // Codex subagents are native, but spawned agents do not receive spawn_agent in
@@ -305,7 +305,7 @@ const HOST_ADAPTERS = {
         mechanism: '@<name> bloqueante presumido',
       },
     },
-    question_prompt: { mechanism: 'question', mode: 'structured', max_questions: 4, options_per_question: 3, persistence: 'prd_after_each_round' },
+    question_prompt: { mechanism: 'question', mode: 'structured', max_questions: 4, options_per_question: 3, persistence: 'sprint_after_each_round' },
     // opencode expõe `todowrite` nativo ao agente primário (orquestrador). O `todoread`
     // foi fundido em `todowrite` (mar/2026): a tool retorna a lista atual no output.
     // Subagentes têm `todowrite` desabilitado por padrão, mas o todo é usado pelo
@@ -334,7 +334,7 @@ const HOST_ADAPTERS = {
         mechanism: 'subagent({agent,task}) via pi-subagents; join depende de dep externa',
       },
     },
-    question_prompt: { mechanism: 'interactive_prompt', mode: 'structured', max_questions: 4, options_per_question: 3, persistence: 'prd_after_each_round' },
+    question_prompt: { mechanism: 'interactive_prompt', mode: 'structured', max_questions: 4, options_per_question: 3, persistence: 'sprint_after_each_round' },
     todo_tool: null,
     hooks: { supported: false, mechanism: null },
     // pi exige 2 deps externas obrigatórias (DEC-005): pi-mcp-adapter (MCP) e
@@ -364,7 +364,7 @@ const HOST_ADAPTERS = {
     //   — invoke_subagent é BLOQUEANTE por design: não polling, não background.
     //   — Workspace: "branch" garante isolamento de contexto (fronteira G4/G9).
     //
-    // Fases documentais (PRD, entrevista, plano) NÃO usam subagente — o orquestrador
+    // Fases documentais (contrato §7, entrevista, plano) NÃO usam subagente — o orquestrador
     // conduz no fio principal; define_subagent não é chamado para essas fases.
     subagent_dispatch: {
       mechanism: 'define_subagent(name, system_prompt) + invoke_subagent(Subagents: [{TypeName, Role, Prompt, Workspace}])',
@@ -386,14 +386,14 @@ const HOST_ADAPTERS = {
     // question_prompt: usado pela talos-sprint-interview para fazer perguntas ao usuário.
     // No Antigravity, usar ask_question (ferramenta nativa de perguntas interativas).
     // IMPORTANTE — resume_after_interview: após receber respostas via ask_question,
-    // persistir no PRD e RETOMAR O PIPELINE IMEDIATAMENTE sem nova confirmação.
+    // persistir no sprint file (§7) e RETOMAR O PIPELINE IMEDIATAMENTE sem nova confirmação.
     // Nunca aguardar input adicional do usuário entre fases — viola fire-and-continue.
     question_prompt: {
       mechanism: 'ask_question',
       mode: 'structured',
       max_questions: 4,
       options_per_question: 3,
-      persistence: 'prd_after_each_round',
+      persistence: 'sprint_after_each_round',
       resume_after_interview: 'automatic',
     },
     todo_tool: null,
@@ -444,7 +444,7 @@ const HOST_ADAPTERS = {
         mechanism: 'Agent(subagent_type) bloqueante por design do host (Claude Agent SDK)',
       },
     },
-    question_prompt: { mechanism: 'AskUserQuestion', mode: 'structured', max_questions: 4, options_per_question: 3, persistence: 'prd_after_each_round' },
+    question_prompt: { mechanism: 'AskUserQuestion', mode: 'structured', max_questions: 4, options_per_question: 3, persistence: 'sprint_after_each_round' },
     todo_tool: 'TodoWrite',
     hooks: { supported: true, mechanism: '.zcode-plugin/plugin.json (hooks)' },
     // ZCode é clone estrutural do Claude Code (Claude Agent SDK): subagente +
@@ -481,7 +481,7 @@ const HOST_ADAPTERS = {
       mode: 'structured',
       max_questions: 4,
       options_per_question: 3,
-      persistence: 'prd_after_each_round',
+      persistence: 'sprint_after_each_round',
     },
     // VS Code Copilot Chat expõe manage_todo_list nativo ao agente primário.
     todo_tool: 'manage_todo_list',
@@ -510,7 +510,7 @@ const HOST_ADAPTERS = {
         mechanism: 'indeterminado; host deve reportar',
       },
     },
-    question_prompt: { mechanism: 'native_structured_question', mode: 'structured', max_questions: 4, options_per_question: 3, persistence: 'prd_after_each_round' },
+    question_prompt: { mechanism: 'native_structured_question', mode: 'structured', max_questions: 4, options_per_question: 3, persistence: 'sprint_after_each_round' },
     todo_tool: null,
     hooks: { supported: false, mechanism: null },
     // generic EXIGE subagente+MCP do host (DEC-004); host MCP-only sem subagente
@@ -2262,18 +2262,22 @@ function compareSprintCandidates(a, b) {
 }
 
 /**
- * Próxima ação canônica pós-seleção (pipeline 0.14+):
- * - PLAN real → plan_execute
- * - §7 aprovado + selo íntegro → plan_handoff
- * - caso contrário (draft / sem selo) → sprint_interview
+ * Próxima ação canônica pós-seleção (pipeline 0.14+), mode-aware:
+ * - §7 draft / sem selo → sprint_interview (qualquer modo)
+ * - interview-only → sprint_interview (mesmo com §7 selado)
+ * - direct + §7 selado → plan_execute (direct_execute; sem plan_handoff)
+ * - full/execute + PLAN real → plan_execute
+ * - full/execute + §7 selado sem PLAN → plan_handoff
  * Verbos alinhados a WORKFLOW_CONFIG / expectedNextPhase. Nunca `gerar_prd`.
  */
-function nextActionForSelectedSprint(info) {
-  if (info?.plan && !pendingPathToken(info.plan)) return 'plan_execute';
-  if (/^aprovado$/i.test(info?.contrato_status ?? '') && info?.contrato_sealed === true) {
-    return 'plan_handoff';
-  }
-  return 'sprint_interview';
+function nextActionForSelectedSprint(info, mode = 'full') {
+  const sealed = /^aprovado$/i.test(info?.contrato_status ?? '') && info?.contrato_sealed === true;
+  const hasPlan = Boolean(info?.plan && !pendingPathToken(info.plan));
+
+  if (!sealed || mode === 'interview-only') return 'sprint_interview';
+  if (mode === 'direct') return 'plan_execute';
+  if (hasPlan) return 'plan_execute';
+  return 'plan_handoff';
 }
 
 function derivedSprintGateStatus(status, validatorVerdict) {
@@ -2492,6 +2496,7 @@ function updateSprintStatus(args = {}) {
 function selectNextSprint(args = {}) {
   const runId = validateRunId(args.run_id);
   const backlogPath = requiredString(args, 'backlog_path');
+  const mode = typeof args.mode === 'string' && args.mode.trim() ? args.mode.trim() : 'full';
   const timestamp = nowIso();
   let result;
   try {
@@ -2541,7 +2546,7 @@ function selectNextSprint(args = {}) {
         : renderBanner('preflight_ok', { caps: `next=${selected.id}` }),
       next_action: blocked
         ? (structuralPendencies[0]?.next_action ?? 'atualizar_sprint_file_ou_dependencias')
-        : nextActionForSelectedSprint(selected),
+        : nextActionForSelectedSprint(selected, mode),
     };
   } catch (error) {
     result = {
@@ -4999,7 +5004,7 @@ function toolsList() {
       },
       {
         name: 'talos_select_next_sprint',
-        description: 'Seleciona próxima sprint executável.',
+        description: 'Seleciona próxima sprint executável. next_action é mode-aware (§7 + PLAN + mode).',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
@@ -5008,6 +5013,11 @@ function toolsList() {
             run_id: { type: 'string', minLength: 1 },
             project_root: { type: 'string', minLength: 1 },
             backlog_path: { type: 'string', minLength: 1 },
+            mode: {
+              type: 'string',
+              enum: ['full', 'direct', 'execute', 'interview-only', 'audit'],
+              description: 'Modo do pipeline; altera next_action (ex.: direct nunca sugere plan_handoff). Default: full.',
+            },
           },
         },
       },

@@ -124,7 +124,7 @@ Comando (Claude Code / Cursor): `/talos <mode> <input-type> [input] [flags]`
 
 No Codex, Antigravity, opencode, pi, zcode e VS Code, invoque a skill do orquestrador com o mesmo padrão de argumentos (ex.: `/talos full sprint S05`). O verbo de dispatch do subagente é resolvido por `talos_capabilities` (host-agnóstico).
 
-Se você quiser começar fora do fluxo principal, as skills listadas abaixo são os atalhos explícitos para backlog, PRD, auditoria, plano, execução e revisão.
+Se você quiser começar fora do fluxo principal, as skills listadas abaixo são os atalhos explícitos para backlog, contrato §7 (entrevista), auditoria, plano, execução e revisão.
 
 ### Modos
 
@@ -279,7 +279,7 @@ Cada gate é uma verificação determinística de contrato. Se um gate retorna `
 | **SPRINT_FILE** | Sprint file conforme template canônico | Entrada |
 | **DEP** | Dependências de backlog satisfeitas (não-done = hard-fail) | Entrada |
 | **TC** | Conformidade com template canônico | Documental |
-| **G5** | PRD sem ambiguidades não-resolvidas | Documental |
+| **G5** | Contrato §7 sem ambiguidades não-resolvidas (`talos_scan_acceptance`) | Documental |
 | **G7** | Contrato pós-plano verificado | Documental |
 | **G4** | Validador frio isolado (sibling) + proof-of-work | Execução |
 | **G8** | Boundary de execução respeitado | Execução |
@@ -317,7 +317,7 @@ Templates canônicos em [`packages/templates/`](packages/templates/) — fonte �
 | `talos_preflight` | Pré-flight obrigatório (gates PREREQ, JOIN, DISPATCH, VERSION_DRIFT, LOCK_CONFLICT) |
 | `talos_verify_artifact` | Verifica existência e validade de artefato (G1) |
 | `talos_verify_template_conformance` | Conformidade com template canônico (TC) |
-| `talos_scan_prd` | Scaneia PRD por ambiguidades (G5) |
+| `talos_scan_acceptance` | Scaneia contrato §7 / aceite por ambiguidades (G5) |
 | `talos_assert_after_plan` | Verifica contrato pós-plano (G7) |
 | `talos_run_state` | Persiste estado de execução em disco |
 | `talos_lock_dispatch` | Gerencia lock de dispatch (G12 — liveness) |

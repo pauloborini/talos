@@ -181,7 +181,7 @@ test('capabilities: schema_version atual e campos do contrato v5', () => {
   assert.ok(cap.validator_dispatch);
   assert.ok(cap.question_prompt);
   assert.equal(cap.question_prompt.mode, 'structured');
-  assert.equal(cap.question_prompt.persistence, 'prd_after_each_round');
+  assert.equal(cap.question_prompt.persistence, 'sprint_after_each_round');
   assert.ok(cap.hooks);
   assert.deepEqual(cap.prerequisites, PREREQUISITES);
   assert.deepEqual(cap.known_hosts, HOST_NAMES);
@@ -1758,11 +1758,43 @@ test('talos_select_next_sprint: PLAN real → plan_execute', () => {
   assert.equal(r.selected.plan_path, '.talos/plans/PLAN_S01_runtime.md');
 });
 
-test('nextActionForSelectedSprint: matriz canônica 0.14', () => {
-  assert.equal(nextActionForSelectedSprint({ contrato_status: 'draft', contrato_sealed: false, plan: null }), 'sprint_interview');
-  assert.equal(nextActionForSelectedSprint({ contrato_status: 'aprovado', contrato_sealed: true, plan: 'pendente' }), 'plan_handoff');
-  assert.equal(nextActionForSelectedSprint({ contrato_status: 'aprovado', contrato_sealed: true, plan: 'PLAN_S01.md' }), 'plan_execute');
-  assert.equal(nextActionForSelectedSprint({ contrato_status: 'aprovado', contrato_sealed: false, plan: null }), 'sprint_interview');
+test('nextActionForSelectedSprint: matriz canônica 0.14 mode-aware', () => {
+  const draft = { contrato_status: 'draft', contrato_sealed: false, plan: null };
+  const sealed = { contrato_status: 'aprovado', contrato_sealed: true, plan: null };
+  const sealedPending = { contrato_status: 'aprovado', contrato_sealed: true, plan: 'pendente' };
+  const sealedWithPlan = { contrato_status: 'aprovado', contrato_sealed: true, plan: 'PLAN_S01.md' };
+  const sealedNoSeal = { contrato_status: 'aprovado', contrato_sealed: false, plan: null };
+
+  assert.equal(nextActionForSelectedSprint(draft), 'sprint_interview');
+  assert.equal(nextActionForSelectedSprint(sealedPending), 'plan_handoff');
+  assert.equal(nextActionForSelectedSprint(sealedWithPlan), 'plan_execute');
+  assert.equal(nextActionForSelectedSprint(sealedNoSeal), 'sprint_interview');
+
+  assert.equal(nextActionForSelectedSprint(sealed, 'direct'), 'plan_execute');
+  assert.equal(nextActionForSelectedSprint(sealedWithPlan, 'direct'), 'plan_execute');
+  assert.equal(nextActionForSelectedSprint(draft, 'direct'), 'sprint_interview');
+
+  assert.equal(nextActionForSelectedSprint(sealed, 'interview-only'), 'sprint_interview');
+  assert.equal(nextActionForSelectedSprint(sealedWithPlan, 'full'), 'plan_execute');
+  assert.equal(nextActionForSelectedSprint(sealed, 'full'), 'plan_handoff');
+});
+
+test('talos_select_next_sprint: mode=direct + §7 selado → plan_execute (não plan_handoff)', () => {
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S01', { status: 'ready', dorStatus: 'verde', contratoStatus: 'aprovado' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | — | — | ready | — | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+  const r = selectNextSprint({
+    run_id: 'r1',
+    project_root: root,
+    backlog_path: 'BACKLOG.md',
+    mode: 'direct',
+  });
+  assert.equal(r.status, 'passed');
+  assert.equal(r.next_action, 'plan_execute');
+  assert.notEqual(r.next_action, 'plan_handoff');
+  assert.notEqual(r.next_action, 'gerar_prd');
 });
 
 test('talos_select_next_sprint: dependência interna não done bloqueia seleção', () => {
