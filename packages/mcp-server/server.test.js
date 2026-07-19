@@ -46,7 +46,13 @@ import {
   ping,
   toolsList,
 } from './server.js';
-import { parseSprintRows, validateSprintFileConformance } from '../skills/_shared/scripts/document_quality.mjs';
+import {
+  parseSprintRows,
+  validateSprintFileConformance,
+  validateAcceptanceSeal,
+  computeAcceptanceSeal,
+  extractAcceptanceBlock,
+} from '../skills/_shared/scripts/document_quality.mjs';
 import { fileURLToPath } from 'node:url';
 
 const SPRINT_TEMPLATE_PATH = path.resolve(
@@ -1115,6 +1121,8 @@ function sprintDoc({
   includeContrato = true,
   omitDecisions = false,
   omitAceiteGroup = null,
+  /** undefined = auto-selo quando aprovado; null = omitir campo; string = valor literal */
+  selo = undefined,
 } = {}) {
   const contratoBlock = includeContrato ? [
     '## 7. Contrato de produto (congelado)',
@@ -1136,7 +1144,15 @@ function sprintDoc({
     '## 7. Contrato de produto (congelado)',
     'sem contrato',
   ];
-  return [
+  const sealMeta = [];
+  if (selo === null) {
+    // omitir campo (AC-2.1.3)
+  } else if (typeof selo === 'string') {
+    sealMeta.push(`| Selo do contrato | ${selo} |`);
+  } else if (contratoStatus !== 'aprovado') {
+    sealMeta.push('| Selo do contrato | pendente até aprovação |');
+  }
+  let doc = [
     `# Sprint viva — ${id} — Runtime harness`,
     '',
     '## 1. Metadados',
@@ -1147,6 +1163,7 @@ function sprintDoc({
     `| Status | ${status} |`,
     `| Backlog mestre | ${backlog} |`,
     `| Contrato status | ${contratoStatus} |`,
+    ...sealMeta,
     '| PRD | pendente |',
     '| PLAN | pendente |',
     '| State / evidência | pendente |',
@@ -1224,8 +1241,15 @@ function sprintDoc({
     '| Data | Autor | Mudança |',
     '|---|---|---|',
     '| 2026-06-29 | Talos | Criação |',
-    '',
   ].join('\n');
+  if (contratoStatus === 'aprovado' && selo === undefined) {
+    const computed = computeAcceptanceSeal(doc);
+    doc = doc.replace(
+      `| Contrato status | ${contratoStatus} |`,
+      `| Contrato status | ${contratoStatus} |\n| Selo do contrato | ${computed} |`,
+    );
+  }
+  return doc;
 }
 
 const BACKLOG_WITH_SPRINT_FILE = [
@@ -1500,6 +1524,91 @@ test('talos_verify_sprint_file: contrato completo passa no gate público (AC-1.2
   });
   assert.equal(r.status, 'passed');
   assert.equal(r.pending_count, 0);
+});
+
+test('validateAcceptanceSeal: aprovado + bloco intacto → tampered:false (AC-2.1.1)', () => {
+  const markdown = sprintDoc({ contratoStatus: 'aprovado' });
+  const block = extractAcceptanceBlock(markdown);
+  assert.ok(block && block.startsWith('## 7.'));
+  const seal = validateAcceptanceSeal(markdown);
+  assert.equal(seal.sealed, true);
+  assert.equal(seal.tampered, false);
+  assert.match(computeAcceptanceSeal(markdown), /^sha256:[a-f0-9]{64}$/);
+});
+
+test('validateAcceptanceSeal: aprovado + bloco alterado 1 char → tampered:true (AC-2.1.2)', () => {
+  const intact = sprintDoc({ contratoStatus: 'aprovado' });
+  assert.equal(validateAcceptanceSeal(intact).tampered, false);
+  const adulterated = intact.replace(
+    '| D1 | Runtime harness entrega gate observável |',
+    '| D1 | Runtime harness entrega gate observávelX |',
+  );
+  const seal = validateAcceptanceSeal(adulterated);
+  assert.equal(seal.sealed, true);
+  assert.equal(seal.tampered, true);
+});
+
+test('validateAcceptanceSeal: aprovado sem Selo do contrato → tampered:true (AC-2.1.3)', () => {
+  const markdown = sprintDoc({ contratoStatus: 'aprovado', selo: null });
+  const seal = validateAcceptanceSeal(markdown);
+  assert.equal(seal.sealed, false);
+  assert.equal(seal.tampered, true);
+});
+
+test('validateAcceptanceSeal: draft ignora selo → tampered:false (AC-2.1.4)', () => {
+  const markdown = sprintDoc({
+    contratoStatus: 'draft',
+    selo: 'sha256:0000000000000000000000000000000000000000000000000000000000000000',
+  });
+  const seal = validateAcceptanceSeal(markdown);
+  assert.equal(seal.sealed, false);
+  assert.equal(seal.tampered, false);
+});
+
+test('talos_verify_sprint_file: aprovado adulterado → blocked FROZEN_ACCEPTANCE_TAMPERED (AC-2.2.1)', () => {
+  const root = tmpRoot();
+  fs.mkdirSync(path.join(root, '.talos/backlog/sprints'), { recursive: true });
+  const intact = sprintDoc({ contratoStatus: 'aprovado' });
+  const adulterated = intact.replace(
+    '| D1 | Runtime harness entrega gate observável |',
+    '| D1 | Runtime harness entrega gate observávelX |',
+  );
+  fs.writeFileSync(path.join(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md'), adulterated);
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), BACKLOG_WITH_SPRINT_FILE);
+  const r = verifySprintFile({
+    run_id: 'r1',
+    project_root: root,
+    sprint_path: '.talos/backlog/sprints/SPRINT_S01_runtime.md',
+    sprint_id: 'S01',
+    backlog_path: 'BACKLOG.md',
+  });
+  assert.equal(r.status, 'blocked');
+  assert.ok(r.pendencies.some((p) =>
+    p.category === 'contrato_congelado' && p.item === 'FROZEN_ACCEPTANCE_TAMPERED'));
+});
+
+test('talos_verify_sprint_file: aprovado intacto → passed (AC-2.2.2)', () => {
+  const root = tmpRoot();
+  fs.mkdirSync(path.join(root, '.talos/backlog/sprints'), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md'),
+    sprintDoc({ contratoStatus: 'aprovado' }),
+  );
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), BACKLOG_WITH_SPRINT_FILE);
+  const r = verifySprintFile({
+    run_id: 'r1',
+    project_root: root,
+    sprint_path: '.talos/backlog/sprints/SPRINT_S01_runtime.md',
+    sprint_id: 'S01',
+    backlog_path: 'BACKLOG.md',
+  });
+  assert.equal(r.status, 'passed');
+  assert.equal(r.pending_count, 0);
+});
+
+test('SPRINT_TEMPLATE: §1 contém Selo do contrato (AC-2.2.3)', () => {
+  const template = fs.readFileSync(SPRINT_TEMPLATE_PATH, 'utf8');
+  assert.match(template, /^\|\s*Selo do contrato\s*\|\s*\[pendente até aprovação\]\s*\|/m);
 });
 
 function backlogWithRows(rows) {
