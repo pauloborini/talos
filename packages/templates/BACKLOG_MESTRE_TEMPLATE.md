@@ -2,9 +2,9 @@
 
 Backlog macro de **[NOME_DO_PROJETO_OU_FEATURE]**.
 
-Este arquivo é **índice estratégico + estado consolidado**. Ele organiza fases, sprints, dependências, prioridade e próxima sprint executável. O detalhe vivo de cada sprint mora em `SPRINT_S<NN>_<slug>.md`; o PRD e o PLAN nascem depois, recortados por sprint.
+Este arquivo é **índice estratégico + estado consolidado**. Ele organiza fases, sprints, dependências, prioridade e próxima sprint executável. O detalhe vivo de cada sprint mora em `SPRINT_S<NN>_<slug>.md` (contrato de produto §7); o PLAN nasce depois, recortado por sprint + código real.
 
-Use este template para transformar conversa, ideia, briefing, roadmap ou PRD macro em uma sequência pequena, rastreável e executável pelo Talos.
+Use este template para transformar conversa, ideia, briefing, roadmap ou spec/PRD-ish macro em uma sequência pequena, rastreável e executável pelo Talos.
 
 ---
 
@@ -15,8 +15,7 @@ Use este template para transformar conversa, ideia, briefing, roadmap ou PRD mac
 | Artefato | Papel | Não deve conter |
 |---|---|---|
 | Backlog mestre | Estratégia macro, índice de sprints, estado e dependências | Critério completo de aceite, plano técnico, logs de execução |
-| Sprint file | Escopo vivo da sprint, DoR/DoD, riscos, gates, links, `eval_manifest` | Implementação detalhada task-a-task |
-| PRD da sprint | Produto, comportamento, decisões e aceite de negócio | Classes, comandos, paths técnicos |
+| Sprint file | Escopo vivo da sprint, contrato §7 (o quê/por quê/aceite), DoR/DoD, riscos, gates, links, `eval_manifest` | Implementação detalhada task-a-task |
 | PLAN da sprint | Execução técnica, tasks, invariantes, validação local | Macro roadmap, decisões de produto duplicadas |
 | State file | Evidência factual de execução/validação | Planejamento novo ou justificativa retrospectiva |
 
@@ -24,16 +23,16 @@ Use este template para transformar conversa, ideia, briefing, roadmap ou PRD mac
 
 1. Decisões formais aprovadas: [link/arquivo]
 2. Contratos externos/backend/specs: [link/arquivo]
-3. PRD da sprint corrente: [link/arquivo]
-4. Sprint file corrente: [link/arquivo]
+3. Contrato §7 do sprint file corrente (aprovado + selo): [link/arquivo]
+4. Sprint file corrente (demais seções): [link/arquivo]
 5. Este backlog mestre
 6. Notas exploratórias/rascunhos: [link/arquivo]
 
 Observações:
 
 - Backlog não cria regra de negócio sozinho.
-- Sprint file é a ponte entre macro e PRD.
-- PRD aprovado vence sprint file em produto/aceite.
+- Sprint file (contrato §7) é a ponte entre macro e PLAN.
+- Contrato §7 aprovado+selo vence demais seções do sprint em produto/aceite.
 - PLAN aprovado vence sprint file em execução técnica.
 - Toda divergência relevante deve virar decisão registrada ou bloqueio.
 
@@ -76,11 +75,11 @@ Observações:
 
 1. Macro fica no backlog; execução fica na sprint.
 2. Cada sprint tem objetivo único, pequeno e testável.
-3. Sprint grande deve ser quebrada antes de PRD/PLAN.
+3. Sprint grande deve ser quebrada antes de PLAN.
 4. Dependência bloqueante precisa ter dono, status e ação.
 5. `Must` sem dependência pronta não fura fila por urgência verbal.
-6. PRD só nasce de sprint file/`sprint` recortado (`backlog-item` é alias legado).
-7. PLAN só nasce de PRD aprovado + leitura do código real.
+6. Contrato §7 só fecha em sprint file/`sprint` recortado (`backlog-item` é alias legado).
+7. PLAN só nasce de contrato §7 aprovado+selo + leitura do código real.
 8. Evidência vence narrativa: claim importante precisa apontar para artefato, gate ou state.
 9. Aprendizado entre sprints entra no sprint file/backlog, não em memória solta.
 10. Decisão fechada não é reaberta sem registro histórico.
@@ -95,11 +94,11 @@ Observações:
 
 Estado lateral: `blocked`.
 
-| Estado | Significado | Pode gerar PRD? | Pode executar? |
+| Estado | Significado | Contrato §7 pronto? | Pode executar? |
 |---|---|---:|---:|
 | backlog | Identificada, ainda sem DoR verde | não | não |
-| ready | DoR verde e dependências satisfeitas | sim | após PRD/PLAN |
-| doing | Em execução | não gerar novo PRD sem decisão | sim |
+| ready | DoR verde e dependências satisfeitas | sim (aprovado+selo) | após §7/PLAN conforme o modo |
+| doing | Em execução | não reabrir §7 sem decisão | sim |
 | review | Implementada, aguardando validação/revisão | não | não mutar fora repair |
 | done | DoD verde e evidência registrada | não | não |
 | blocked | Bloqueada por decisão/dependência | não | não |
@@ -116,7 +115,7 @@ Estado lateral: `blocked`.
 
 ### 5.3 Definition of Done global
 
-- [ ] PRD aprovado, quando aplicável.
+- [ ] Contrato §7 aprovado + selo, quando aplicável.
 - [ ] PLAN executado, quando aplicável.
 - [ ] Validator frio concluído.
 - [ ] Evidências/state linkados no sprint file.
@@ -162,6 +161,7 @@ Legenda:
 - **Ganho/Esforço:** `Alto`, `Médio`, `Baixo`.
 - **Prioridade:** `P0`, `P1`, `P2`, `P3`.
 - **Gate:** último gate relevante ou `—`.
+- **PRD:** coluna legado posicional (compat MCP) — usar `pendente` ou `—`; aceite mora no sprint §7.
 - **Sprint file/PLAN/State:** paths vivos ou `pendente`.
 
 ---
@@ -186,7 +186,7 @@ Legenda:
 | Motivo | [por que esta sprint vence pelas regras acima] |
 | Dependências satisfeitas | [sim/não + resumo] |
 | Sprint file | [path] |
-| Próxima ação | [gerar PRD / atualizar sprint file / resolver bloqueio / executar PLAN] |
+| Próxima ação | [maturar §7 / atualizar sprint file / resolver bloqueio / executar PLAN] |
 
 ---
 
@@ -238,14 +238,14 @@ Atualizar este backlog quando:
 
 - nova sprint for criada, quebrada, bloqueada ou concluída;
 - prioridade/dependência mudar;
-- PRD/PLAN/state nascer ou mudar de path;
-- sprint file mudar status;
+- PLAN/state nascer ou mudar de path;
+- sprint file mudar status ou selar contrato §7;
 - decisão macro alterar sequência.
 
 Não atualizar este backlog para:
 
 - listar tasks técnicas do PLAN;
-- copiar critérios completos do PRD;
+- copiar critérios completos do contrato §7;
 - registrar logs detalhados de execução;
 - guardar achados que pertencem só a uma sprint.
 
@@ -257,9 +257,10 @@ Não atualizar este backlog para:
 - Sprint `done` não muda escopo sem nova sprint ou registro histórico explícito.
 - Status do backlog e do sprint file devem bater.
 - Todo `Depende de` referencia sprint existente ou `DEP-*`.
-- Todo PRD/PLAN listado deve existir ou estar marcado como `pendente`.
+- Todo PLAN listado deve existir ou estar marcado como `pendente`.
+- Coluna `PRD` no registro é **legado posicional** (compat helpers MCP): manter `pendente` ou `—`; não gerar PRD.
 - Toda sprint `ready` precisa ter sprint file linkado.
-- Entrada macro não gera PRD direto; primeiro vira backlog + sprint file.
+- Entrada macro não avança ao plano direto; primeiro vira backlog + sprint file (contrato §7).
 
 ---
 

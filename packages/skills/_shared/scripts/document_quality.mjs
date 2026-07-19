@@ -270,7 +270,7 @@ export function validateSprintFileConformance(markdown, {
     '10. Policy manifest',
     '11. Guia e sensores',
     '12. Evidence-to-claim',
-    '13. PRD e PLAN',
+    '13. PLAN',
     '14. Execução e validação',
     '15. Aprendizados e handoff para próximas sprints',
     '16. Histórico',
@@ -359,7 +359,6 @@ export function validateSprintFileConformance(markdown, {
   }
 
   for (const [label, nextAction] of [
-    ['PRD', 'informar_prd_ou_pendente'],
     ['PLAN', 'informar_plan_ou_pendente'],
     ['State / evidência', 'informar_state_ou_pendente'],
   ]) {

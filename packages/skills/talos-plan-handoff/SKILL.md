@@ -7,7 +7,7 @@ description: Skill `talos-plan-handoff`. Produz um handoff executável da famíl
 
 Use esta skill quando o usuário pedir um plano executável da cadeia `talos-*`.
 
-O artefato segue `PLAN_TEMPLATE.md` e `BOUNDARY_PRD_PLAN.md` — **localize ambos em `<raiz-do-plugin>/packages/templates/`**. O plano **não** depende de memória do chat para prefixo, modo ou executor.
+O artefato segue `PLAN_TEMPLATE.md` e `BOUNDARY_SPRINT_PLAN.md` — **localize ambos em `<raiz-do-plugin>/packages/templates/`**. O plano **não** depende de memória do chat para prefixo, modo ou executor.
 
 Fontes obrigatórias do PLAN — duas combinações válidas, conforme `source_mode`:
 
@@ -21,9 +21,9 @@ Um plano `standalone` só é consumível pelo modo `execute` do orquestrador (l�
 ## Resolução Canônica de Templates
 
 * Fonte única: `packages/templates/` empacotado no plugin Talos.
-* Resolver `PLAN_TEMPLATE.md` e `BOUNDARY_PRD_PLAN.md` a partir da raiz do plugin/bundle, antes de olhar qualquer arquivo do repo consumidor.
+* Resolver `PLAN_TEMPLATE.md` e `BOUNDARY_SPRINT_PLAN.md` a partir da raiz do plugin/bundle, antes de olhar qualquer arquivo do repo consumidor.
 * Template local do repo consumidor nunca sobrepõe o template empacotado.
-* Se `packages/templates/PLAN_TEMPLATE.md` ou `packages/templates/BOUNDARY_PRD_PLAN.md` não existir, abortar com erro claro: `Template canônico ausente: <nome-do-template>`.
+* Se `packages/templates/PLAN_TEMPLATE.md` ou `packages/templates/BOUNDARY_SPRINT_PLAN.md` não existir, abortar com erro claro: `Template canônico ausente: <nome-do-template>`.
 * Não usar fallback silencioso para cópias antigas, vault local ou templates globais.
 
 ## State persistence
@@ -117,7 +117,7 @@ Regras:
 
 ### 5. Tarefas de execução
 
-Tarefas `#### T01.` … `#### TNN.` com schema de `BOUNDARY_PRD_PLAN.md` canônico empacotado:
+Tarefas `#### T01.` … `#### TNN.` com schema de `BOUNDARY_SPRINT_PLAN.md` canônico empacotado:
 
 - **Objetivo**
 - **Referência** (módulo/padrão no monorepo — evite listas longas de paths; o executor descobre no repo)
@@ -164,7 +164,7 @@ Toda task que prova claim ou toca boundary sensível deve trazer `Eval/Policy`. 
 
 ## O que NÃO incluir (propositalmente)
 
-- Handoff prompt final no artefato (o executor lê o arquivo; ver `BOUNDARY_PRD_PLAN.md` no repo ativo).
+- Handoff prompt final no artefato (o executor lê o arquivo; ver `BOUNDARY_SPRINT_PLAN.md` no repo ativo).
 - Gate de prontidão do autor do plano.
 - Lista integral de rules do `project-rules` (o executor carrega via `AGENTS.md`).
 - Cópia integral do escopo/fora de escopo do sprint file.
