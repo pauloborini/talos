@@ -382,7 +382,7 @@ const HOST_ADAPTERS = {
         mechanism: 'invoke_subagent bloqueante por design do host — sem polling, sem callback',
       },
     },
-    // question_prompt: usado pela talos-prd-interview para fazer perguntas ao usuário.
+    // question_prompt: usado pela talos-sprint-interview para fazer perguntas ao usuário.
     // No Antigravity, usar ask_question (ferramenta nativa de perguntas interativas).
     // IMPORTANTE — resume_after_interview: após receber respostas via ask_question,
     // persistir no PRD e RETOMAR O PIPELINE IMEDIATAMENTE sem nova confirmação.

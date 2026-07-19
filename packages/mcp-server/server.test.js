@@ -52,6 +52,9 @@ import {
   validateAcceptanceSeal,
   computeAcceptanceSeal,
   extractAcceptanceBlock,
+  applyInterviewRound,
+  approveAcceptanceContract,
+  closedDecisionIds,
 } from '../skills/_shared/scripts/document_quality.mjs';
 import { fileURLToPath } from 'node:url';
 
@@ -1610,6 +1613,37 @@ test('talos_verify_sprint_file: aprovado intacto → passed (AC-2.2.2)', () => {
 test('SPRINT_TEMPLATE: §1 contém Selo do contrato (AC-2.2.3)', () => {
   const template = fs.readFileSync(SPRINT_TEMPLATE_PATH, 'utf8');
   assert.match(template, /^\|\s*Selo do contrato\s*\|\s*\[pendente até aprovação\]\s*\|/m);
+});
+
+test('applyInterviewRound: grava decisão D* na §7 (AC-4.2.1)', () => {
+  const base = sprintDoc({ contratoStatus: 'draft' });
+  const updated = applyInterviewRound(base, [
+    { decision_id: 'D1', value: 'Harness usa gate binário observável' },
+  ], '2026-07-19');
+  assert.match(updated, /^\| D1 \| Harness usa gate binário observável \|$/m);
+  assert.ok(closedDecisionIds(updated).has('D1'));
+  const section7 = updated.slice(updated.indexOf('## 7.'));
+  assert.match(section7, /^\| D1 \| Harness usa gate binário observável \|$/m);
+});
+
+test('applyInterviewRound: approve sela contrato com validateAcceptanceSeal (AC-4.2.2)', () => {
+  const base = sprintDoc({ contratoStatus: 'draft' });
+  const updated = applyInterviewRound(base, [
+    { decision_id: 'D1', value: 'Harness usa gate binário observável' },
+  ], '2026-07-19', { approve: true });
+  assert.match(updated, /^\|\s*Contrato status\s*\|\s*aprovado\s*\|$/im);
+  assert.match(updated, /^\|\s*Selo do contrato\s*\|\s*sha256:[a-f0-9]{64}\s*\|$/im);
+  const seal = validateAcceptanceSeal(updated);
+  assert.equal(seal.sealed, true);
+  assert.equal(seal.tampered, false);
+  const approvedOnly = approveAcceptanceContract(
+    applyInterviewRound(base, [{ decision_id: 'D1', value: 'Harness usa gate binário observável' }], '2026-07-19'),
+  );
+  assert.equal(validateAcceptanceSeal(approvedOnly).tampered, false);
+  assert.equal(
+    computeAcceptanceSeal(updated),
+    updated.match(/^\|\s*Selo do contrato\s*\|\s*(sha256:[a-f0-9]{64})\s*\|$/im)[1],
+  );
 });
 
 function backlogWithRows(rows) {

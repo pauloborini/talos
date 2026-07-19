@@ -378,7 +378,7 @@ if (sliceReviewSkill != null && !/node scripts\/classify_findings\.mjs/.test(sli
 }
 if (nodeFindingsGate == null) errors.push('portabilidade-regressão: gate Node de findings ausente');
 
-const interviewSkill = read('packages/skills/talos-prd-interview/SKILL.md');
+const interviewSkill = read('packages/skills/talos-sprint-interview/SKILL.md');
 if (interviewSkill != null) {
   if (/AskUserQuestion/.test(interviewSkill)) errors.push('interview-regressão: skill hardcoda AskUserQuestion');
   for (const token of ['talos_capabilities', 'question_prompt', 'persistInterviewRound', 'pendingInterviewQuestions']) {
@@ -387,7 +387,7 @@ if (interviewSkill != null) {
 }
 const backlogSkill = read('packages/skills/talos-backlog-generator/SKILL.md');
 if (backlogSkill != null) {
-  for (const token of ['routing.document_flow.priority = backlog_first', 'próxima sprint executável', 'talos_verify_backlog_index', 'talos_select_next_sprint', 'Não gerar PRD/plano/código']) {
+  for (const token of ['routing.document_flow.priority = backlog_first', 'próxima sprint executável', 'talos_verify_backlog_index', 'talos_select_next_sprint', 'Não gerar plano/código']) {
     if (!backlogSkill.includes(token)) {
       errors.push(`backlog-regressão: talos-backlog-generator não cita '${token}'`);
     }

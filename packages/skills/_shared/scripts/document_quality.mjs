@@ -518,16 +518,66 @@ export function resolveSprintAuthority({ sprintId, explicitPath, canonicalPath, 
   return matches[0];
 }
 
-export function closedDecisionIds(prd) {
-  return new Set([...prd.matchAll(/^\|\s*(D\d+)\s*\|\s*(?!<|\[)(.+?)\s*\|\s*$/gm)].map((match) => match[1]));
+function setTableValue(markdown, label, value) {
+  const re = new RegExp(
+    `^(\\|\\s*${label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\|\\s*)(.*?)(\\s*\\|\\s*)$`,
+    'im',
+  );
+  if (re.test(markdown)) return markdown.replace(re, `$1${value}$3`);
+  const contratoStatus = /^\|\s*Contrato status\s*\|.*$/im;
+  if (contratoStatus.test(markdown)) {
+    return markdown.replace(contratoStatus, (row) => `${row}\n| ${label} | ${value} |`);
+  }
+  return `${markdown.trimEnd()}\n| ${label} | ${value} |\n`;
 }
 
-export function pendingInterviewQuestions(prd, questions) {
-  const closed = closedDecisionIds(prd);
+/** Prefer §7 (contrato) quando presente; senão varre o documento inteiro. */
+export function closedDecisionIds(markdown) {
+  const scope = extractSectionMarkdown(markdown, 7) ?? markdown;
+  return new Set([...scope.matchAll(/^\|\s*(D\d+)\s*\|\s*(?!<|\[)(.+?)\s*\|\s*$/gm)].map((match) => match[1]));
+}
+
+export function pendingInterviewQuestions(markdown, questions) {
+  const closed = closedDecisionIds(markdown);
   return questions.filter((question) => !closed.has(question.decision_id));
 }
 
-export function applyInterviewRound(prd, answers, date = new Date().toISOString().slice(0, 10)) {
+/**
+ * Aprova o contrato §7: `Contrato status: aprovado` + `Selo do contrato` (sha256 do §7).
+ * Status/selo vivem no §1 — fora do bloco hasheado — mesma normalização de `validateAcceptanceSeal`.
+ */
+export function approveAcceptanceContract(markdown) {
+  let updated = setTableValue(markdown, 'Contrato status', 'aprovado');
+  const seal = computeAcceptanceSeal(updated);
+  if (!seal) throw new Error('ACCEPTANCE_BLOCK_MISSING');
+  updated = setTableValue(updated, 'Selo do contrato', seal);
+  return updated;
+}
+
+function applyDecisionRow(markdown, decisionId, value) {
+  const replacement = `| ${decisionId} | ${value} |`;
+  const section7 = extractSectionMarkdown(markdown, 7);
+  const scope = section7 ?? markdown;
+  const row = new RegExp(`^\\|\\s*${decisionId}\\s*\\|.*$`, 'm');
+  let nextScope;
+  if (row.test(scope)) {
+    nextScope = scope.replace(row, replacement);
+  } else if (/(\| ID \| Decisão \|\n\|[-| ]+\|)/.test(scope)) {
+    nextScope = scope.replace(/(\| ID \| Decisão \|\n\|[-| ]+\|)/, `$1\n${replacement}`);
+  } else {
+    throw new Error(`DECISION_TABLE_MISSING:${decisionId}`);
+  }
+  if (section7 == null) return nextScope;
+  return markdown.slice(0, markdown.indexOf(section7)) + nextScope + markdown.slice(markdown.indexOf(section7) + section7.length);
+}
+
+/**
+ * Persiste respostas D* no markdown do sprint file (§7.1).
+ * Se o contrato estava `aprovado`, volta a `draft` e limpa o selo antes de editar.
+ * Com `{ approve: true }`, fecha com `approveAcceptanceContract` (selo byte-idêntico ao Plano 2).
+ */
+export function applyInterviewRound(markdown, answers, date = new Date().toISOString().slice(0, 10), options = {}) {
+  const { approve = false } = options;
   const ids = new Set();
   for (const answer of answers) {
     if (!answer || typeof answer.decision_id !== 'string' || !/^D\d+$/.test(answer.decision_id)) throw new Error('INVALID_DECISION_ID');
@@ -535,25 +585,29 @@ export function applyInterviewRound(prd, answers, date = new Date().toISOString(
     if (typeof answer.value !== 'string' || !answer.value.trim()) throw new Error(`EMPTY_DECISION_VALUE:${answer.decision_id}`);
     ids.add(answer.decision_id);
   }
-  let updated = prd;
+  let updated = markdown;
+  const status = tableValue(updated, 'Contrato status');
+  if (status && /^aprovado$/i.test(status.trim())) {
+    updated = setTableValue(updated, 'Contrato status', 'draft');
+    updated = setTableValue(updated, 'Selo do contrato', 'pendente até aprovação');
+  }
   for (const answer of answers) {
-    const row = new RegExp(`^\\|\\s*${answer.decision_id}\\s*\\|.*$`, 'm');
-    const replacement = `| ${answer.decision_id} | ${answer.value} |`;
-    updated = row.test(updated) ? updated.replace(row, replacement) : updated.replace(/(\| ID \| Decisão \|\n\|[-| ]+\|)/, `$1\n${replacement}`);
+    updated = applyDecisionRow(updated, answer.decision_id, answer.value);
   }
   const log = `${date} — entrevista: ${answers.map((answer) => answer.decision_id).join(', ')} persistida(s)`;
   updated = /\*\*Histórico:\*\*/.test(updated)
     ? updated.replace(/(\*\*Histórico:\*\*[^\n]*)/, `$1 · ${log}`)
     : `${updated.trimEnd()}\n\n**Histórico:** ${log}\n`;
+  if (approve) updated = approveAcceptanceContract(updated);
   return updated;
 }
 
-export function persistInterviewRound(prdPath, answers, date = new Date().toISOString().slice(0, 10)) {
-  const absolute = path.resolve(prdPath);
+export function persistInterviewRound(sprintPath, answers, date = new Date().toISOString().slice(0, 10), options = {}) {
+  const absolute = path.resolve(sprintPath);
   const temporary = path.join(path.dirname(absolute), `.${path.basename(absolute)}.${process.pid}.${Date.now()}.tmp`);
   try {
     const current = fs.readFileSync(absolute, 'utf8');
-    const updated = applyInterviewRound(current, answers, date);
+    const updated = applyInterviewRound(current, answers, date, options);
     const materialized = closedDecisionIds(updated);
     const missingBeforeWrite = answers.filter((answer) => !materialized.has(answer.decision_id));
     if (missingBeforeWrite.length > 0) {
