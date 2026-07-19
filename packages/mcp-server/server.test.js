@@ -29,7 +29,7 @@ import {
   BANNER_EVENTS,
   renderBanner,
   verifyArtifact,
-  scanPrd,
+  scanAcceptance,
   verifyTemplateConformance,
   verifySprintFile,
   verifyBacklogIndex,
@@ -765,50 +765,62 @@ test('WORKFLOW_CONFIG: modo execute presente; audit e interview-only/interview_o
   assert.equal(WORKFLOW_CONFIG.skills.audit, 'talos-audit');
 });
 
-test('documentFlowForRouting: macro input prioriza backlog antes de PRD/plano', () => {
+test('documentFlowForRouting: macro input prioriza backlog antes de sprint/plano', () => {
   const full = documentFlowForRouting('full', 'idea');
   assert.equal(full.priority, 'backlog_first');
   assert.deepEqual(full.skills, [
     'talos-backlog-generator',
-    'talos-sprint-prd-generator',
-    'talos-prd-interview',
+    'talos-sprint-interview',
     'talos-plan-handoff',
   ]);
-  assert.deepEqual(full.artifacts, ['BACKLOG_MESTRE_*.md', 'SPRINT_S<NN>_*.md', 'PRD_*.md', 'PLAN_*.md']);
+  assert.deepEqual(full.artifacts, ['BACKLOG_MESTRE_*.md', 'SPRINT_S<NN>_*.md', 'PLAN_*.md']);
+  assert.ok(!full.skills.includes('talos-sprint-prd-generator'));
+  assert.ok(!full.artifacts.includes('PRD_*.md'));
 
   const direct = documentFlowForRouting('direct', 'roadmap');
   assert.equal(direct.priority, 'backlog_first');
   assert.deepEqual(direct.skills, [
     'talos-backlog-generator',
-    'talos-sprint-prd-generator',
-    'talos-prd-interview',
+    'talos-sprint-interview',
   ]);
+  assert.ok(!direct.artifacts.includes('PRD_*.md'));
 });
 
 test('documentFlowForRouting: backlog existente preserva execução pequena por sprint', () => {
   const flow = documentFlowForRouting('full', 'backlog-item', 'backlog');
   assert.equal(flow.priority, 'sprint_from_backlog');
   assert.ok(!flow.skills.includes('talos-backlog-generator'));
-  assert.deepEqual(flow.artifacts, ['SPRINT_S<NN>_*.md', 'PRD_*.md', 'PLAN_*.md']);
+  assert.deepEqual(flow.artifacts, ['SPRINT_S<NN>_*.md', 'PLAN_*.md']);
+  assert.ok(flow.skills.includes('talos-sprint-interview'));
+  assert.ok(!flow.artifacts.includes('PRD_*.md'));
 });
 
 test('documentFlowForRouting: input sprint é alias estrito de backlog-item', () => {
   const full = documentFlowForRouting('full', 'sprint');
   assert.equal(full.priority, 'sprint_from_backlog');
   assert.ok(!full.skills.includes('talos-backlog-generator'));
-  assert.deepEqual(full.artifacts, ['SPRINT_S<NN>_*.md', 'PRD_*.md', 'PLAN_*.md']);
+  assert.deepEqual(full.artifacts, ['SPRINT_S<NN>_*.md', 'PLAN_*.md']);
 
   const direct = documentFlowForRouting('direct', 'sprint');
   assert.equal(direct.priority, 'sprint_from_backlog');
   assert.ok(!direct.skills.includes('talos-backlog-generator'));
-  assert.deepEqual(direct.artifacts, ['SPRINT_S<NN>_*.md', 'PRD_*.md']);
+  assert.deepEqual(direct.artifacts, ['SPRINT_S<NN>_*.md']);
+});
+
+test('documentFlowForRouting: fallback é recorte_first sem PRD (AC-3.1.3/3.1.4)', () => {
+  const flow = documentFlowForRouting('full', 'plan');
+  assert.equal(flow.priority, 'recorte_first');
+  assert.ok(flow.skills.includes('talos-sprint-interview'));
+  assert.ok(!flow.skills.includes('talos-sprint-prd-generator'));
+  assert.ok(!flow.artifacts.includes('PRD_*.md'));
+  assert.notEqual(flow.priority, 'prd_first');
 });
 
 test('expectedNextPhase: execute → plan_execute sem regredir full/direct/interview (T02)', () => {
   assert.equal(expectedNextPhase({ mode: 'execute' }, {}), 'plan_execute');
   assert.equal(expectedNextPhase({ mode: 'full' }, {}), 'plan_handoff');
   assert.equal(expectedNextPhase({ mode: 'direct' }, {}), 'plan_execute');
-  assert.equal(expectedNextPhase({ mode: 'interview-only' }, {}), 'prd_interview');
+  assert.equal(expectedNextPhase({ mode: 'interview-only' }, {}), 'sprint_interview');
   assert.equal(expectedNextPhase({ mode: 'audit' }, {}), 'audit_report');
   // next_phase explícito do dispatch sempre prevalece
   assert.equal(expectedNextPhase({ mode: 'execute' }, { next_phase: 'slice_review' }), 'slice_review');
@@ -858,47 +870,6 @@ test('talos_preflight materializa document_flow backlog_first para macro input',
   assert.equal(expectedNextPhase(result.routing, {}), 'plan_handoff');
 });
 
-test('contrato interview-only materializa PRD real e passa artifact+TC antes da entrevista (Etapa 1 T04)', () => {
-  const root = tmpRoot();
-  const runId = 'interview-only-real-prd';
-  preflight({ run_id: runId, project_root: root, mode: 'interview-only', host: 'codex' });
-  const prdPath = path.join(root, 'PRD_BRAINSTORM.md');
-  assert.equal(verifyArtifact({ run_id: runId, project_root: root, artifact_path: prdPath, artifact_kind: 'prd' }).status, 'blocked');
-  fs.writeFileSync(prdPath, [
-    '# PRD: Brainstorm',
-    '| Campo | Valor |',
-    '|---|---|',
-    '| **Status** | Em decisão |',
-    '## 1. Contexto e objetivo',
-    'Objetivo inicial da entrevista.',
-    '## 2. Escopo',
-    'Escopo preliminar.',
-    '## 3. Decisões de produto (fechadas)',
-    '| ID | Decisão |',
-    '|---|---|',
-    '| D1 | Levar este draft para entrevista estruturada |',
-    '## 4. Fluxos e cenários UX',
-    'Fluxo inicial.',
-    '## 5. Contrato funcional e invariantes',
-    'Contrato inicial.',
-    '## 6. Critérios de aceite (negócio)',
-    '**Produto**', '- [ ] Objetivo confirmado.',
-    '**UX**', '- [ ] Fluxo confirmado.',
-    '**Dados**', '- [ ] Dados confirmados.',
-    '**Regressão de produto**', '- [ ] Regressões confirmadas.',
-  ].join('\n'));
-  const artifact = verifyArtifact({ run_id: runId, project_root: root, artifact_path: prdPath, artifact_kind: 'prd' });
-  const conformance = verifyTemplateConformance({
-    run_id: runId, project_root: root, artifact_path: prdPath, artifact_type: 'prd',
-  });
-  assert.equal(artifact.status, 'passed');
-  assert.equal(conformance.status, 'passed');
-  fs.writeFileSync(path.join(root, 'PRD_INVALIDO.md'), '# PRD incompleto\n');
-  assert.equal(verifyTemplateConformance({
-    run_id: runId, project_root: root, artifact_path: path.join(root, 'PRD_INVALIDO.md'), artifact_type: 'prd',
-  }).status, 'blocked');
-});
-
 test('guaranteeLevelForMode: execute/full/direct = full_pipeline (T04)', () => {
   assert.equal(guaranteeLevelForMode('execute'), 'full_pipeline');
   assert.equal(guaranteeLevelForMode('full'), 'full_pipeline');
@@ -935,10 +906,9 @@ const CONFORMANT_PLAN = [
   '',
   '| Campo | Valor |',
   '|-------|-------|',
-  '| **PRD** | [PRD_x.md](./PRD_x.md) |',
   '| **Sprint file** | [SPRINT_S01_runtime.md](./SPRINT_S01_runtime.md) — `eval_manifest` §9 |',
   '',
-  'Política: [BOUNDARY_PRD_PLAN.md](./TEMPLATES/BOUNDARY_PRD_PLAN.md).',
+  'Política: [BOUNDARY_SPRINT_PLAN.md](./TEMPLATES/BOUNDARY_SPRINT_PLAN.md).',
   '',
   '## 1. Tradução executiva',
   '## 2. Invariantes de execução',
@@ -953,7 +923,24 @@ const CONFORMANT_PLAN = [
   '',
 ].join('\n');
 
-test('classifyArtifactContent: plano renomeado (sem prefixo PLAN_) classifica como plan via verdade forte (T03, PRD §5)', () => {
+test('contrato interview-only: TC rejeita artifact_type prd (AC-3.2.1)', () => {
+  const root = tmpRoot();
+  const runId = 'interview-only-tc-plan-only';
+  preflight({ run_id: runId, project_root: root, mode: 'interview-only', host: 'codex' });
+  const planPath = path.join(root, 'PLAN_BRAINSTORM.md');
+  fs.writeFileSync(planPath, CONFORMANT_PLAN);
+  assert.equal(verifyTemplateConformance({
+    run_id: runId, project_root: root, artifact_path: planPath, artifact_type: 'plan',
+  }).status, 'passed');
+  assert.throws(
+    () => verifyTemplateConformance({
+      run_id: runId, project_root: root, artifact_path: planPath, artifact_type: 'prd',
+    }),
+    (err) => err?.code === -32602 || /artifact_type inválido/.test(String(err?.message ?? err)),
+  );
+});
+
+test('classifyArtifactContent: plano renomeado (sem prefixo PLAN_) classifica como plan via verdade forte (T03)', () => {
   const r = classifyArtifactContent(CONFORMANT_PLAN, 'docs/algo_renomeado.md');
   assert.equal(r.artifact_type, 'plan');
   assert.equal(r.signal, 'template_conformance');
@@ -965,10 +952,11 @@ test('classifyArtifactContent: nome PLAN_*.md é só dica fraca, não verdade (T
   assert.equal(r.signal, 'weak_name_hint');
 });
 
-test('classifyArtifactContent: PRD por marcadores de template (T03)', () => {
+test('classifyArtifactContent: PRD-ish classifica como idea (D9 / AC-3.1.4)', () => {
   const prd = '# PRD: algo\n\n## 3. Decisões de produto\n\n| ID | Decisão |\n|----|---------|\n| D1 | x |';
   const r = classifyArtifactContent(prd, 'docs/PRD_algo.md');
-  assert.equal(r.artifact_type, 'prd');
+  assert.equal(r.artifact_type, 'idea');
+  assert.equal(r.signal, 'spec_markers');
 });
 
 test('classifyArtifactContent: backlog por marcadores (T03)', () => {
@@ -985,26 +973,25 @@ test('classifyArtifactContent: input sem marcadores → unknown (T03)', () => {
 
 const BANNER_RE = /^▸ talos: /;
 
-test('BANNER_TEMPLATES: banco tem exatamente os 11 eventos do PRD §4 (T06)', () => {
+test('BANNER_TEMPLATES: banco tem exatamente os 11 eventos lógicos (T06 / AC-3.3.2)', () => {
   // 12 entradas: os 11 eventos do banco + a variante preflight ok/fail conta como
-  // dois templates (preflight_ok/preflight_fail) e prd como dois (prd_ok/prd_lacunas).
-  // O PRD §4 enumera 11 EVENTOS lógicos; o banco materializa cada variante de status.
+  // dois templates (preflight_ok/preflight_fail) e aceite como dois (aceite_ok/aceite_lacunas).
   const eventos = [
     'roteia', 'roteia_troca', 'preflight_ok', 'preflight_fail',
-    'prd_lacunas', 'prd_ok', 'entrevista', 'plano', 'exec',
+    'aceite_lacunas', 'aceite_ok', 'entrevista', 'plano', 'exec',
     'validacao', 'review', 'done',
   ];
   for (const ev of eventos) {
     assert.ok(Object.prototype.hasOwnProperty.call(BANNER_TEMPLATES, ev), `falta evento ${ev}`);
     assert.match(BANNER_TEMPLATES[ev], BANNER_RE, `template ${ev} sem prefixo canônico`);
   }
-  // Os 11 eventos lógicos do PRD: roteia, roteia c/ troca, preflight, prd, entrevista,
-  // plano, exec, validação, review, done + preflight_ok/fail e prd_ok/lacunas como pares.
   assert.deepEqual(BANNER_EVENTS, eventos);
   assert.equal(BANNER_EVENTS.length, 12);
+  assert.ok(!Object.prototype.hasOwnProperty.call(BANNER_TEMPLATES, 'prd_ok'));
+  assert.ok(!Object.prototype.hasOwnProperty.call(BANNER_TEMPLATES, 'prd_lacunas'));
 });
 
-test('renderBanner: preenche slots e devolve string pt-BR canônica (T06)', () => {
+test('renderBanner: preenche slots e devolve string pt-BR canônica (T06 / AC-3.3.3)', () => {
   assert.equal(
     renderBanner('roteia', { tipo: 'plan', modo: 'execute' }),
     '▸ talos: roteamento · input=plan → modo=execute',
@@ -1015,8 +1002,8 @@ test('renderBanner: preenche slots e devolve string pt-BR canônica (T06)', () =
   );
   assert.equal(renderBanner('preflight_ok', { caps: 'subagent+mcp' }), '▸ talos: preflight · ok (subagent+mcp)');
   assert.equal(renderBanner('preflight_fail', { motivo: 'x' }), '▸ talos: preflight · BLOCK · x');
-  assert.equal(renderBanner('prd_lacunas', { n: 3 }), '▸ talos: prd · 3 lacunas');
-  assert.equal(renderBanner('prd_ok', {}), '▸ talos: prd · ok');
+  assert.equal(renderBanner('aceite_lacunas', { n: 3 }), '▸ talos: aceite · 3 lacunas');
+  assert.equal(renderBanner('aceite_ok', {}), '▸ talos: aceite · ok');
   assert.equal(renderBanner('exec', { i: 2, n: 5 }), '▸ talos: exec · slice 2/5');
   assert.equal(renderBanner('validacao', { status: 'pass' }), '▸ talos: validação · pass');
   assert.equal(renderBanner('review', { status: 'ok' }), '▸ talos: review · ok');
@@ -1058,10 +1045,9 @@ const CONFORMANT_PLAN_DOC = [
   '',
   '| Campo | Valor |',
   '|-------|-------|',
-  '| **PRD** | [PRD_x.md](./PRD_x.md) |',
   '| **Sprint file** | [SPRINT_S01_runtime.md](./SPRINT_S01_runtime.md) — `eval_manifest` §9 |',
   '',
-  'Política: [BOUNDARY_PRD_PLAN.md](./TEMPLATES/BOUNDARY_PRD_PLAN.md).',
+  'Política: [BOUNDARY_SPRINT_PLAN.md](./TEMPLATES/BOUNDARY_SPRINT_PLAN.md).',
   '',
   '## 1. Tradução executiva',
   '## 2. Invariantes de execução',
@@ -1277,20 +1263,34 @@ test('talos_verify_artifact: ausente → banner de BLOCK não-vazio (T07)', () =
   assert.match(r.banner, /^▸ talos: preflight · BLOCK · /);
 });
 
-test('talos_scan_prd: 0 bloqueantes → banner prd · ok (T07)', () => {
+test('talos_scan_acceptance: 0 bloqueantes na §7 → banner aceite · ok (AC-3.3.1)', () => {
   const root = tmpRoot();
-  fs.writeFileSync(path.join(root, 'PRD.md'), VALID_PRD);
-  const r = scanPrd({ run_id: 'r1', project_root: root, prd_path: 'PRD.md' });
+  fs.writeFileSync(path.join(root, 'SPRINT.md'), sprintDoc({ contratoStatus: 'draft' }));
+  const r = scanAcceptance({ run_id: 'r1', project_root: root, sprint_path: 'SPRINT.md' });
   assert.equal(r.status, 'passed');
-  assert.equal(r.banner, '▸ talos: prd · ok');
+  assert.equal(r.banner, '▸ talos: aceite · ok');
+  assert.equal(r.sprint_path, 'SPRINT.md');
 });
 
-test('talos_scan_prd: PRD vazio → banner prd · {n} lacunas (T07)', () => {
+test('talos_scan_acceptance: sprint vazio → banner aceite · {n} lacunas (AC-3.3.1)', () => {
   const root = tmpRoot();
-  fs.writeFileSync(path.join(root, 'PRD.md'), '   ');
-  const r = scanPrd({ run_id: 'r1', project_root: root, prd_path: 'PRD.md' });
+  fs.writeFileSync(path.join(root, 'SPRINT.md'), '   ');
+  const r = scanAcceptance({ run_id: 'r1', project_root: root, sprint_path: 'SPRINT.md' });
   assert.equal(r.status, 'blocked');
-  assert.match(r.banner, /^▸ talos: prd · \d+ lacunas$/);
+  assert.match(r.banner, /^▸ talos: aceite · \d+ lacunas$/);
+});
+
+test('talos_scan_acceptance: ambiguidade TBD na §7 bloqueia (AC-3.3.1)', () => {
+  const root = tmpRoot();
+  const ambiguous = sprintDoc().replace(
+    '| D1 | Runtime harness entrega gate observável |',
+    '| D1 | Runtime harness TBD a confirmar |',
+  );
+  fs.writeFileSync(path.join(root, 'SPRINT.md'), ambiguous);
+  const r = scanAcceptance({ run_id: 'r1', project_root: root, sprint_path: 'SPRINT.md' });
+  assert.equal(r.status, 'blocked');
+  assert.ok(r.blocking_count >= 1);
+  assert.match(r.banner, /^▸ talos: aceite · \d+ lacunas$/);
 });
 
 test('talos_verify_template_conformance: plano conforme → banner plano (T07)', () => {
@@ -1301,26 +1301,27 @@ test('talos_verify_template_conformance: plano conforme → banner plano (T07)',
   assert.equal(r.banner, '▸ talos: plano · validado (TC pass)');
 });
 
-test('talos_verify_template_conformance: modo sprint exige Sprint file/EVAL em PRD e PLAN', () => {
+test('talos_verify_template_conformance: modo sprint exige Sprint file/EVAL no PLAN (AC-3.2.2/3.2.3)', () => {
   const root = tmpRoot();
-  fs.writeFileSync(path.join(root, 'PRD_ok.md'), STRICT_PRD_DOC);
   fs.writeFileSync(path.join(root, 'PLAN_ok.md'), CONFORMANT_PLAN_DOC);
-  assert.equal(verifyTemplateConformance({
-    run_id: 'r1', project_root: root, artifact_path: 'PRD_ok.md', artifact_type: 'prd',
-    required_status: 'Aprovado para implementação', require_sprint_file: true,
-  }).status, 'passed');
   assert.equal(verifyTemplateConformance({
     run_id: 'r1', project_root: root, artifact_path: 'PLAN_ok.md', artifact_type: 'plan',
     require_sprint_file: true,
   }).status, 'passed');
 
-  fs.writeFileSync(path.join(root, 'PRD_sem_sprint.md'), STRICT_PRD_DOC.replace(/\| \*\*Sprint file\*\*.*\n/, '').replace(/EVAL-001/g, ''));
-  const prdBlocked = verifyTemplateConformance({
-    run_id: 'r1', project_root: root, artifact_path: 'PRD_sem_sprint.md', artifact_type: 'prd',
-    required_status: 'Aprovado para implementação', require_sprint_file: true,
+  assert.throws(
+    () => verifyTemplateConformance({
+      run_id: 'r1', project_root: root, artifact_path: 'PLAN_ok.md', artifact_type: 'prd',
+    }),
+    (err) => err?.code === -32602 || /artifact_type inválido/.test(String(err?.message ?? err)),
+  );
+
+  fs.writeFileSync(path.join(root, 'PLAN_sem_sprint.md'), CONFORMANT_PLAN_DOC.replace(/\| \*\*Sprint file\*\*.*\n/, ''));
+  const planNoSprint = verifyTemplateConformance({
+    run_id: 'r1', project_root: root, artifact_path: 'PLAN_sem_sprint.md', artifact_type: 'plan',
   });
-  assert.equal(prdBlocked.status, 'blocked');
-  assert.ok(prdBlocked.pendencies.some((p) => p.category === 'sprint_file'));
+  assert.equal(planNoSprint.status, 'blocked');
+  assert.ok(planNoSprint.pendencies.some((p) => p.category === 'sprint_file'));
 
   fs.writeFileSync(path.join(root, 'PLAN_sem_eval.md'), CONFORMANT_PLAN_DOC.replace(/\| \*\*Sprint file\*\*.*\n/, '').replace(/- \*\*Eval\/Policy:\*\*.*\n/, '').replace(/EVAL-001/g, ''));
   const planBlocked = verifyTemplateConformance({
@@ -3817,14 +3818,14 @@ test('version-conflict: run antigo inativo de versão anterior não bloqueia run
   assert.equal(r.status, 'passed', 'run novo passa apesar do resíduo 0.6.2 inativo');
 });
 
-// Banner cosmético: verificar um PRD não pode ecoar "plano · validado".
-test('banner: verify_artifact com artifact_kind=prd ecoa banner de PRD; default mantém plano', () => {
+// Banner cosmético: verificar um sprint/contrato não pode ecoar "plano · validado".
+test('banner: verify_artifact com artifact_kind=sprint ecoa banner de aceite; default mantém plano', () => {
   const root = tmpRoot();
-  fs.writeFileSync(path.join(root, 'PRD_x.md'), VALID_PRD);
+  fs.writeFileSync(path.join(root, 'SPRINT_x.md'), sprintDoc());
   fs.writeFileSync(path.join(root, 'PLAN_x.md'), CONFORMANT_PLAN_DOC);
-  const prd = verifyArtifact({ run_id: 'bk', project_root: root, artifact_path: 'PRD_x.md', artifact_kind: 'prd' });
-  assert.equal(prd.status, 'passed');
-  assert.equal(prd.banner, '▸ talos: prd · ok');
+  const sprint = verifyArtifact({ run_id: 'bk', project_root: root, artifact_path: 'SPRINT_x.md', artifact_kind: 'sprint' });
+  assert.equal(sprint.status, 'passed');
+  assert.equal(sprint.banner, '▸ talos: aceite · ok');
   const plan = verifyArtifact({ run_id: 'bk', project_root: root, artifact_path: 'PLAN_x.md' });
   assert.equal(plan.banner, '▸ talos: plano · validado (TC pass)', 'default (sem kind) preserva banner de plano');
 });
