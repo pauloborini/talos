@@ -254,7 +254,7 @@ Tabela viva para fechar o loop entre promessa e prova.
 |---|---|
 | Status | [pendente / draft / aprovado / implementado] |
 | Path | [path] |
-| Geração | [manual / talos-sprint-prd-generator] |
+| Geração | [manual / talos-sprint-interview] |
 | Observações | [resumo — preferir §7 como SSoT de aceite] |
 
 ### PLAN
