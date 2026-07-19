@@ -182,6 +182,19 @@ function sprintConformancePending(category, item, line, message, nextAction = 'c
   return { category, item, line, message, next_action: nextAction };
 }
 
+function isStandaloneBacklog(value) {
+  return typeof value === 'string' && /^Não aplicável \(standalone\)$/i.test(value.trim());
+}
+
+function extractSectionMarkdown(markdown, sectionNumber) {
+  const start = new RegExp(`^##\\s+${sectionNumber}\\.\\s`, 'im').exec(markdown);
+  if (!start) return null;
+  const from = start.index;
+  const tail = markdown.slice(from + start[0].length);
+  const next = /\n##\s+\d+\./.exec(tail);
+  return next ? markdown.slice(from, from + start[0].length + next.index) : markdown.slice(from);
+}
+
 export function validateSprintFileConformance(markdown, {
   sprintPath = null,
   sprintId = null,
@@ -196,7 +209,7 @@ export function validateSprintFileConformance(markdown, {
     '4. Contexto e fontes',
     '5. Dependências e bloqueios',
     '6. Decisões da sprint',
-    '7. Critérios candidatos para PRD',
+    '7. Contrato de produto (congelado)',
     '8. Definition of Ready',
     '9. Eval manifest',
     '10. Policy manifest',
@@ -232,8 +245,51 @@ export function validateSprintFileConformance(markdown, {
   }
 
   const backlog = tableValue(markdown, 'Backlog mestre');
-  if (!backlog || sprintFilePending(backlog)) {
+  const standalone = isStandaloneBacklog(backlog);
+  if (!standalone && (!backlog || sprintFilePending(backlog))) {
     pendencies.push(sprintConformancePending('metadados', 'Backlog mestre', lineOf(markdown, /^\|\s*Backlog mestre\s*\|/i), 'Backlog mestre ausente no sprint file.', 'vincular_backlog_mestre'));
+  }
+
+  const contratoStatus = tableValue(markdown, 'Contrato status');
+  if (!contratoStatus || !/^(draft|aprovado)$/i.test(contratoStatus)) {
+    pendencies.push(sprintConformancePending(
+      'contrato_produto',
+      'Contrato status',
+      lineOf(markdown, /^\|\s*Contrato status\s*\|/i),
+      `Contrato status inválido ou ausente: ${contratoStatus ?? '<ausente>'} (esperado draft|aprovado).`,
+      'preencher_contrato_status',
+    ));
+  }
+
+  const section7 = extractSectionMarkdown(markdown, 7) ?? '';
+  if (!/\|\s*D\d+\s*\|/.test(section7)) {
+    pendencies.push(sprintConformancePending(
+      'contrato_produto',
+      'decisoes',
+      lineOf(markdown, /^##\s+7\./i),
+      'Contrato §7 sem decisão de produto D* (| D<n> |).',
+      'preencher_decisoes_produto',
+    ));
+  }
+  for (const group of ['Produto', 'UX', 'Dados', 'Regressão de produto']) {
+    if (!new RegExp(`\\*\\*${group}\\*\\*`, 'i').test(section7)) {
+      pendencies.push(sprintConformancePending(
+        'contrato_produto',
+        'aceite',
+        lineOf(markdown, /^##\s+7\./i),
+        `Contrato §7 sem grupo de aceite **${group}**.`,
+        'preencher_aceite_binario',
+      ));
+    }
+  }
+  if (!/^- \[[ xX]\]/m.test(section7)) {
+    pendencies.push(sprintConformancePending(
+      'contrato_produto',
+      'aceite',
+      lineOf(markdown, /^##\s+7\./i),
+      'Contrato §7 sem checkbox de aceite observável.',
+      'preencher_aceite_binario',
+    ));
   }
 
   for (const [label, nextAction] of [
@@ -280,7 +336,7 @@ export function validateSprintFileConformance(markdown, {
     pendencies.push(sprintConformancePending('evidence_to_claim', 'tabela', lineOf(markdown, /^##\s+12\./i), 'Tabela Evidence-to-claim ausente ou inválida.', 'criar_evidence_to_claim'));
   }
 
-  if (backlogPath && backlogMarkdown != null) {
+  if (!standalone && backlogPath && backlogMarkdown != null) {
     const rows = parseSprintRows(backlogMarkdown);
     const row = rows.find((entry) => entry.id === expectedSprintId);
     if (!row) {
