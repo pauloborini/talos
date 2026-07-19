@@ -394,7 +394,7 @@ if (backlogSkill != null) {
   }
 }
 if (orchestratorSkill != null) {
-  for (const token of ['routing.document_flow.priority = backlog_first', 'talos-backlog-generator', 'talos_verify_backlog_index', 'talos_select_next_sprint', 'talos_update_sprint_status', 'Não gerar PRD direto do macro input']) {
+  for (const token of ['routing.document_flow.priority = backlog_first', 'talos-backlog-generator', 'talos_verify_backlog_index', 'talos_select_next_sprint', 'talos_update_sprint_status', 'Não avançar ao plano direto do macro input']) {
     if (!orchestratorSkill.includes(token)) {
       errors.push(`backlog-regressão: orquestrador não cita '${token}'`);
     }

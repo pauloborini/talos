@@ -1,6 +1,6 @@
 # Talos Orchestrator
 
-Orquestra pipelines completos de desenvolvimento de features no projeto Talos, automatizando a sequência de skills (backlog macro → sprint file → PRD → planejamento → execução → validação fria → review) sob demanda.
+Orquestra pipelines completos de desenvolvimento de features no projeto Talos, automatizando a sequência de skills (backlog macro → sprint file §7 → planejamento → execução → validação fria → review) sob demanda.
 
 ## Quick Start
 
@@ -10,13 +10,11 @@ Orquestra pipelines completos de desenvolvimento de features no projeto Talos, a
 
 Pipeline completo executado automaticamente:
 1. Resolve S05 no backlog e valida o sprint file vivo
-2. Gera PRD a partir do sprint file
-3. Valida PRD (inclui TC com `require_sprint_file:true`)
-4. Executa entrevista se houver decisões em aberto
-5. Cria plano com Eval/Policy por task
-6. Executa plano e grava state com `eval_results`/`policy_scope`
-7. Despacha validator frio
-8. (Opcional) Executa review
+2. Valida/matura o contrato §7 (entrevista se necessário)
+3. Cria plano com Eval/Policy por task (`require_sprint_file:true`)
+4. Executa plano e grava state com `eval_results`/`policy_scope`
+5. Despacha validator frio (nota contra §7)
+6. (Opcional) Executa review
 
 ## Sintaxe
 
@@ -26,21 +24,23 @@ Pipeline completo executado automaticamente:
 
 ### Modes
 
-- `full` — Pipeline completo (sprint file → PRD → plano → executor → validator → review opcional)
-- `direct` — Pipeline enxuto (sprint file/PRD → executor → validator → review opcional)
-- `interview-only` — Entrevista direta (brainstorm, resolução de decisões)
+- `full` — Pipeline completo (sprint file §7 → plano → executor → validator → review opcional)
+- `direct` — Pipeline enxuto (sprint file §7 → executor → validator → review opcional)
+- `interview-only` — Entrevista direta (brainstorm → sprint standalone §7)
+- `execute` — Executa `PLAN_*.md` pronto
+- `audit` — Auditoria sem correção
 
 ### Input Types
 
 - `sprint` — Sprint ID (ex: S05) ancorado no backlog e em sprint file vivo
 - `backlog-item` — alias legado de `sprint`
-- `idea` — Indicação/brainstorm curto
-- `prd` — Path para PRD existente
+- `idea` — Indicação/brainstorm curto ou spec/PRD-ish legado
+- `plan` — Path para plano pronto (modo `execute`)
 - `brainstorm` — Texto livre (só para interview-only)
 
 ### Flags
 
-- `--interview` — Força entrevista de PRD mesmo sem ambiguidades
+- `--interview` — Força entrevista do contrato §7 do sprint mesmo sem ambiguidades
 - `--review` — Executa slice-review ao final
 - `--help` — Mostra sintaxe completa
 
@@ -56,22 +56,16 @@ Output:
 ```
 ✅ Talos: claude full sprint completed
 
-📄 PRD: /path/to/PRD_S05_login.md
+📄 Sprint: /path/to/SPRINT_S05_login.md
 📋 Plan: /path/to/PLAN_S05_login.md
 🚀 Output: [summary do executor]
 
 Status:
-  ✅ PRD valid
+  ✅ Sprint file / contrato §7 valid
   ✅ Ambiguidades resolvidas (2 decisões coletadas)
   ✅ Plano generated
   ✅ Executor output ready (required in full/direct)
   ⏭️  Slice review: not executed
-```
-
-### Direct pipeline com PRD existente + review
-
-```
-/talos direct prd "/path/to/PRD_S05.md" --review
 ```
 
 ### Direct pipeline com sprint S05
@@ -105,35 +99,33 @@ Status:
    ↓
 4. Validate Sprint file (`talos_verify_sprint_file`)
    ↓
-5. Generate PRD (`talos-sprint-prd-generator`)
+5. Scan aceite (`talos_scan_acceptance` / G5)
    ↓
-6. Validate PRD (G5 + TC `require_sprint_file:true`)
+6. Interview (automático se ambiguidades OU --interview)
+   └─ Atualiza §7 + sela ao aprovar (`talos-sprint-interview`)
    ↓
-7. Interview (automático se ambiguidades OU --interview)
-   └─ Atualiza PRD com decisões coletadas
+7. Plan (`talos-plan-handoff`)
    ↓
-8. Plan (`talos-plan-handoff`)
+8. Validate Plan (TC `require_sprint_file:true`)
    ↓
-9. Validate Plan (TC `require_sprint_file:true`)
+9. Execute obrigatório em `full` (`talos-plan-execute`, state com `eval_results`)
    ↓
-10. Execute obrigatório em `full` (`talos-plan-execute`, state com `eval_results`)
+10. Validator frio (`talos-task-validator` vs §7)
    ↓
-11. Validator frio (`talos-task-validator`)
+11. Update sprint status (`talos_update_sprint_status`)
    ↓
-12. Update sprint status (`talos_update_sprint_status`)
-   ↓
-13. Review (se --review)
+12. Review (se --review)
    └─ `talos-slice-review`
    ↓
-14. Output (resumo + próximos passos)
+13. Output (resumo + próximos passos)
 ```
 
 ### Direct Mode
 
 ```
-1. Parse/Generate PRD
+1. Parse / Sprint file / Contrato §7
    ↓
-2. Validate PRD + Interview (condicional)
+2. Validate aceite + Interview (condicional)
    ↓
 3. Execute (`talos-direct-execute`, mantendo `phase: plan_execute`)
    ↓
@@ -149,11 +141,11 @@ Status:
 ### Interview-Only Mode
 
 ```
-1. Cria draft mínimo pelo `PRD_TEMPLATE.md` quando a entrada é brainstorm
+1. Cria draft mínimo pelo `SPRINT_TEMPLATE.md` (standalone §7) quando a entrada é brainstorm
    ↓
-2. Entrevista `talos-prd-interview` com `prd_path` válido
+2. Entrevista `talos-sprint-interview` com `sprint_file_path` válido
    ↓
-3. Output (PRD esboço + decisões)
+3. Output (sprint file §7 aprovado+selo)
 ```
 
 ## Sequências canônicas
@@ -162,20 +154,18 @@ Talos é família única. Cliente (Claude Code, Cursor, Codex App) é apenas o h
 
 | Mode | Sequência |
 |------|-----------|
-| `full` | `talos-sprint-prd-generator` → `talos-prd-interview` quando necessário → `talos-plan-handoff` → `talos-plan-execute` → `talos-task-validator` → `talos-findings-repair` (no `fail`) → `talos-slice-review` somente com `--review` |
-| `direct` | PRD/spec existente → `talos-direct-execute` → `talos-task-validator` → `talos-findings-repair` (no `fail`) → `talos-slice-review` somente com `--review` |
-| `interview-only` | draft PRD mínimo (se brainstorm) → `talos-prd-interview` |
+| `full` | `talos-sprint-interview` quando necessário → `talos-plan-handoff` → `talos-plan-execute` → `talos-task-validator` → `talos-findings-repair` (no `fail`) → `talos-slice-review` somente com `--review` |
+| `direct` | sprint/contrato §7 → `talos-direct-execute` → `talos-task-validator` → `talos-findings-repair` (no `fail`) → `talos-slice-review` somente com `--review` |
+| `interview-only` | draft sprint standalone §7 (se brainstorm) → `talos-sprint-interview` |
 
 ## Validação automática
 
-Plugin detecta ambiguidades em:
-- **Contexto e objetivo (§1):** TBD, "a confirmar", vago
-- **Escopo (§2):** incompleto, "depende de"
-- **Decisões (§3):** vazio ou muito vago
-- **Fluxos e cenários UX (§4):** gaps, "a definir"
-- **Contrato funcional e invariantes (§5):** "ainda não definido", "mock"
+Plugin detecta ambiguidades no contrato §7 do sprint file:
+- **Decisões D*:** TBD, "a confirmar", vago
+- **Cenários UX:** gaps, "a definir"
+- **Aceite binário:** incompleto, "depende de"
 
-Se encontra ambiguidades → o orquestrador conduz `talos-prd-interview` automaticamente no fio principal.
+Se encontra ambiguidades → o orquestrador conduz `talos-sprint-interview` automaticamente no fio principal.
 
 ## Lógica de decisão
 
@@ -223,11 +213,11 @@ Plugin automatiza tudo. Você valida output.
 | Skill | Função |
 |-------|--------|
 | `talos-backlog-generator` | Cria backlog mestre a partir de ideia, prompt, conversa ou briefing; roda explicitamente ou como primeira fase documental em macro input `backlog_first` |
-| `talos-sprint-prd-generator` | Gera PRD a partir de sprint/indicação |
-| `talos-prd-interview` | Entrevista de PRD (resolve ambiguidades) |
+| `talos-sprint-interview` | Matura o contrato §7 do sprint file (resolve ambiguidades; aprova+sela) |
 | `talos-audit` | Audita target/boundary sem patch: lê regras locais, detecta stack, produz achados com `arquivo:linha`; com `--handoff`, grava `.talos/plans/PLAN_AUDIT_*.md` TC-conforme sem executar |
-| `talos-plan-handoff` | Cria plano executável |
+| `talos-plan-handoff` | Cria plano executável a partir do contrato §7 + código |
 | `talos-plan-execute` | Executa plano (com `talos-task-validator` sub-agent) |
+| `talos-direct-execute` | Executa direto a partir do sprint/contrato §7 (modo `direct`) |
 | `talos-findings-repair` | Corrige findings P0/P1/P2 após `fail` do validator dentro do boundary executado |
 | `talos-task-validator` | Validador frio sibling; lê `state_path`, emite veredito estruturado e nunca corrige |
 | `talos-slice-review` | Review fria de implementação quando `--review` está presente |
@@ -240,8 +230,8 @@ Plugin usa configuração embutida no MCP para modos, skills `talos-*` e validad
 
 - **Sprint não encontrado:** reporta sprints disponíveis
 - **Skill falha:** para, reporta erro, oferece retry/skip/abort
-- **PRD inválido:** reporta sections faltando
-- **Ambiguidades não resolvidas:** pergunta próximos passos
+- **Sprint file / contrato §7 inválido:** reporta pendências do gate (`talos_verify_sprint_file` / `talos_scan_acceptance`)
+- **Ambiguidades não resolvidas:** dispara `talos-sprint-interview`, propaga e continua
 
 ## Dúvidas?
 
@@ -309,7 +299,7 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `talos-*` para o
 
 ### Novidades v0.9.4 — audit handoff TC-conforme + perfis de stack
 
-- `/talos audit --handoff` passa a escrever `.talos/plans/PLAN_AUDIT_<slug>.md` **conforme ao `PLAN_TEMPLATE.md`** (cabeçalho com `| **PRD** | N/A — origem auditoria |`, ref a `BOUNDARY_PRD_PLAN.md`, §1–§6/§8, tasks `#### T01.`): passa no gate TC e é de fato consumível por `/talos execute plan`. Fecha a promessa quebrada da estrutura ad-hoc anterior, que falharia o gate.
+- `/talos audit --handoff` passa a escrever `.talos/plans/PLAN_AUDIT_<slug>.md` **conforme ao `PLAN_TEMPLATE.md`** (cabeçalho com `| **Sprint file** | N/A — origem auditoria |`, ref a `BOUNDARY_SPRINT_PLAN.md`, §1–§6/§8, tasks `#### T01.`): passa no gate TC e é de fato consumível por `/talos execute plan`. Fecha a promessa quebrada da estrutura ad-hoc anterior, que falharia o gate.
 - Perfis de stack ganham 6 linhas detectáveis — `go`, `rust`, `java_kotlin`, `firebase`, `supabase`, `rest_openapi` — no baseline universal e no validador frio, ativadas só por manifests/deps/comandos reais no boundary.
 - `audit`/`interview-only` não declaram `guarantee_level` (não há execução a garantir); descrição do `talos_preflight` endurecida para refletir a impl.
 
@@ -348,11 +338,11 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `talos-*` para o
 - `talos-backlog-generator` cria backlog mestre a partir de ideia, prompt ou conversa quando acionado explicitamente ou como primeira fase documental em macro input `backlog_first`.
 - O backlog padrão vai para `.talos/backlog/BACKLOG_MESTRE_<slug>.md` quando o usuário não informa path.
 - `BACKLOG_MESTRE_TEMPLATE.md` inclui MoSCoW, esforço x ganho, dependências, riscos e próxima sprint executável.
-- Em `full`/`direct`, macro input sem backlog canônico passa por backlog antes do PRD; `sprint`/`backlog-item`, PRD e plano existentes continuam começando no artefato já recortado.
+- Em `full`/`direct`, macro input sem backlog canônico passa por backlog antes do contrato §7; `sprint`/`backlog-item` e plano existentes continuam começando no artefato já recortado.
 
 ### Novidades v0.6.1 — fronteira documental no orquestrador
 
-- Fases documentais (`PRD`, entrevista, `PLAN_*.md`) são conduzidas no orquestrador; o primeiro sub-agent obrigatório do `full` nasce em `talos-plan-execute`.
+- Fases documentais (`contrato §7`, entrevista, `PLAN_*.md`) são conduzidas no orquestrador; o primeiro sub-agent obrigatório do `full` nasce em `talos-plan-execute`.
 - Os únicos sub-agents do pipeline são `talos-plan-execute`/`talos-direct-execute`, `talos-task-validator`, `talos-findings-repair` e `talos-slice-review`.
 - A topologia é **sibling** em todos os hosts: o orquestrador coordena o validator irmão a partir do `state_path` retornado pelo executor e só reabre execução em `fail`. Host sem join síncrono é rejeitado no preflight (gate JOIN).
 - `talos_preflight`/dispatchability distinguem skills documentais de skills executoras, evitando exigir sub-agent para entrevista/plano.

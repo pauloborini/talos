@@ -16,7 +16,6 @@ Regra: este arquivo guarda **escopo, estado, decisões locais, dependências, ga
 | Backlog mestre | [path + anchor da linha S<NN> — ou `Não aplicável (standalone)`] |
 | Contrato status | [draft / aprovado] |
 | Selo do contrato | [pendente até aprovação] |
-| PRD | [pendente ou path] |
 | PLAN | [pendente ou path] |
 | State / evidência | [pendente ou path] |
 | Fase | [F0/F1/F2/F3/F4/F5] |
@@ -244,20 +243,9 @@ Tabela viva para fechar o loop entre promessa e prova.
 
 ---
 
-## 13. PRD e PLAN
+## 13. PLAN
 
-> O aceite de produto mora na §7 deste sprint file (não em PRD). A subseção PRD abaixo é legado de transição até a remoção completa do artefato.
-
-### PRD
-
-| Campo | Valor |
-|---|---|
-| Status | [pendente / draft / aprovado / implementado] |
-| Path | [path] |
-| Geração | [manual / talos-sprint-interview] |
-| Observações | [resumo — preferir §7 como SSoT de aceite] |
-
-### PLAN
+> O aceite de produto mora na §7 deste sprint file. Esta seção só rastreia o PLAN de execução.
 
 | Campo | Valor |
 |---|---|
@@ -276,7 +264,6 @@ Tabela viva para fechar o loop entre promessa e prova.
 |---|---|---|
 | Sprint file válido | [pending/pass/fail] | [path/resultado] |
 | Contrato §7 | [pending/pass/fail] | [status + selo] |
-| PRD válido | [pending/pass/fail] | [path/resultado — legado] |
 | PLAN válido | [pending/pass/fail] | [path/resultado] |
 | Execução concluída | [pending/pass/fail] | [state path] |
 | Validator frio | [pending/pass/fail] | [veredito/path] |

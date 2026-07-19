@@ -1,14 +1,13 @@
-# Fronteira Backlog × Sprint × PRD × PLAN
+# Fronteira Backlog × Sprint × PLAN
 
-Política documental para backlog, sprint files, PRDs e handoff de execução. Referência: exemplos em [PRD/GARANTIAFACIL/EXEMPLO/](../PRD/GARANTIAFACIL/EXEMPLO/).
+Política documental para backlog, sprint files e handoff de execução.
 
 ## Papéis
 
 | Artefato | Dono mental | Pergunta que responde |
 |----------|-------------|------------------------|
 | **Backlog mestre** | Produto / coordenação | Qual é a sequência macro, prioridade, estado e dependência entre sprints? |
-| **Sprint file** | Produto + engenharia | Qual é o recorte vivo desta sprint, seus gates, riscos, evidências esperadas e links? |
-| **PRD** | Product Manager | O quê, por quê, para quem, o que não pode quebrar? |
+| **Sprint file** | Produto + engenharia | Qual é o recorte vivo desta sprint, o contrato de produto (§7: o quê/por quê/aceite), gates, riscos, evidências e links? |
 | **PLAN** | Engenharia / executor | Como entregar no código, em que ordem, com que invariantes técnicos? |
 | **State file** | Executor / validator | O que foi executado, validado e provado em disco? |
 
@@ -16,7 +15,7 @@ Política documental para backlog, sprint files, PRDs e handoff de execução. R
 
 - Objetivo macro, fases, dependências e prioridade.
 - Registro de sprints na seção `## 7. Registro de sprints`.
-- Links para `SPRINT_S<NN>_<slug>.md`, PRD, PLAN e state quando existirem.
+- Links para `SPRINT_S<NN>_<slug>.md`, PLAN e state quando existirem.
 - Próxima sprint executável e motivo.
 - Decisões e riscos macro.
 
@@ -30,9 +29,10 @@ Política documental para backlog, sprint files, PRDs e handoff de execução. R
 ## Sprint file — o que entra
 
 - Objetivo único, escopo/fora de escopo e limite de tamanho.
-- Links bidirecionais com backlog, PRD, PLAN e state.
+- Links bidirecionais com backlog, PLAN e state.
 - Dependências, bloqueios e decisões locais.
-- Critérios candidatos para PRD.
+- **Contrato de produto congelado (§7):** decisões D*, cenários UX (loading/vazio/erro) e aceite binário — responde "o quê / por quê / o que não pode quebrar".
+- `Selo do contrato` (sha256 write-once após aprovação).
 - `eval_manifest`, `policy_manifest`, sensores de drift e evidence-to-claim.
 - DoR/DoD vivo da sprint.
 
@@ -40,44 +40,23 @@ Política documental para backlog, sprint files, PRDs e handoff de execução. R
 
 - Implementação task-a-task.
 - Código, classes, imports, migrations ou comandos detalhados.
-- Cópia integral do PRD ou PLAN.
+- Cópia integral do PLAN.
 - Roadmap macro que pertence ao backlog.
-
-## PRD — o que entra (modelo enxuto de 6 seções + apêndice)
-
-- **§1 Contexto e objetivo** — hoje, impacto de não fazer, objetivo, resultado observável, sucesso.
-- **§2 Escopo** — em escopo / fora de escopo (sem "Não objetivos"; invariante vira §5).
-- **§3 Decisões de produto (D\*)** — casa única; demais seções referenciam por `D-id`.
-- **§4 Fluxos e cenários UX** — por cenário, com loading/vazio/erro.
-- **§5 Contrato funcional e invariantes** — regras de dados + invariantes de negócio/segurança numa casa só.
-- **§6 Critérios de aceite (negócio)** — checklist testável (Produto/UX/Dados/Regressão).
-- **§7 Apêndice (opcional)** — riscos, dependências, referências, histórico.
 
 > **Regra anti-repetição:** cada verdade tem uma casa; as demais seções referenciam por `§`/`D-id`, não re-enumeram.
 
-O PRD nasce do sprint file, não do macro input cru. O sprint file fornece recorte, contexto, critérios candidatos e `eval_manifest`; o PRD fecha o contrato de produto.
-
-## PRD — o que NÃO entra
-
-- Packages, camadas, clean architecture, GetX, nomes de classes/arquivos.
-- `flutter analyze`, comandos de teste, paths do monorepo.
-- Tabela “evidências” com dezenas de arquivos `.dart`.
-- § “Impacto de arquitetura” — isso é PLAN.
-- Repetir o conteúdo do PLAN.
-- Duplicar YAML inteiro do `eval_manifest`; referencie IDs EVAL-*.
-
-**Teto orientativo:** ~120–150 linhas por sprint média (modelo enxuto).
+O contrato §7 é a casa de produto. Variante standalone: `Backlog mestre: Não aplicável (standalone)`.
 
 ## PLAN — o que entra
 
-- Link ao PRD + referência `PRD §3` (não recopiar tabela D* inteira).
-- Link ao sprint file + `eval_manifest` usado.
+- Link ao sprint file + referência `Sprint §7` (não recopiar tabela D* inteira).
+- `eval_manifest` usado (quando `sprint-bound`).
 - Tradução executiva (padrão de referência no monorepo + diffs vs módulo espelho).
-- Invariantes de **execução** derivados do PRD.
+- Invariantes de **execução** derivados do contrato §7.
 - Pitfalls (anti-padrão → correto).
 - Estado na **abertura da sprint** (3–6 bullets); se já implementado, checklist de verificação.
 - **Tarefas T01…** no schema abaixo (detalhadas).
-- Contratos técnicos só onde o PRD deixa ambiguidade.
+- Contratos técnicos só onde o sprint deixa ambiguidade.
 - Validação única + checklist do validator.
 - **Slices** (opcional) se `execution_mode: orchestrated-per-slice`.
 
@@ -86,10 +65,10 @@ O PRD nasce do sprint file, não do macro input cru. O sprint file fornece recor
 - Handoff prompt no final (“leia o plano e execute…”).
 - Gate de prontidão do autor do plano.
 - Lista §3 com todas as rules do `project-rules` (o executor carrega AGENTS).
-- Cópia integral do escopo/fora de escopo do PRD.
+- Cópia integral do escopo/fora de escopo do sprint.
 - Inventário global de todos os arquivos tocados (o executor descobre no repo).
 - Duplicar três checklists idênticas.
-- Transformar `eval_manifest` em checklist paralelo desconectado do PRD §6 e PLAN §8.
+- Transformar `eval_manifest` em checklist paralelo desconectado do Sprint §7 e PLAN §8.
 
 **Teto orientativo:** ~250–350 linhas (M); até ~450 (L com slices).
 
@@ -97,11 +76,8 @@ O PRD nasce do sprint file, não do macro input cru. O sprint file fornece recor
 
 ```text
 Backlog §7    ──seleção──►    Sprint file SNN
-Sprint §7/§9  ──base──►       PRD §2/§6
+Sprint §7     ──contrato──►   PLAN §2 invariantes + §1 diffs + §5/§8
 Sprint §9/§10 ──gates──►      PLAN §2/§8
-PRD §3 (D*)   ──referência──► PLAN §2 invariantes + §1 diffs
-PRD §4–6      ──referência──► PLAN §5 (done) + §8 checklist
-PRD §5        ──funcional──►  PLAN §6 contratos técnicos
 PLAN/state    ──evidência──►  Sprint §12 + backlog §7 status
 ```
 
@@ -123,7 +99,6 @@ Cada `#### TNN.` deve ter, quando aplicável:
 
 ## Templates
 
-- [PRD_TEMPLATE.md](./PRD_TEMPLATE.md)
 - [PLAN_TEMPLATE.md](./PLAN_TEMPLATE.md)
 - [BACKLOG_MESTRE_TEMPLATE.md](./BACKLOG_MESTRE_TEMPLATE.md)
 - [SPRINT_TEMPLATE.md](./SPRINT_TEMPLATE.md)
@@ -131,10 +106,9 @@ Cada `#### TNN.` deve ter, quando aplicável:
 ## Pipeline
 
 1. Backlog seleciona próxima sprint.
-2. Sprint file fecha recorte vivo e DoR.
-3. PRD aprovado fecha produto.
-4. PLAN deriva de PRD + sprint file + código real.
-5. Execução: `talos-plan-execute` lê PLAN + PRD §4–6; `project-rules` via AGENTS.
-6. Validator/state alimentam sprint file e backlog.
+2. Sprint file fecha recorte vivo, DoR e contrato §7 (aprovado + selo).
+3. PLAN deriva de contrato §7 + sprint file + código real.
+4. Execução: `talos-plan-execute` lê PLAN + Sprint §7; `project-rules` via AGENTS.
+5. Validator frio nota código contra o contrato congelado §7; state alimenta sprint file e backlog.
 
-Geradores (`talos-backlog-generator`, `talos-sprint-prd-generator`, `talos-plan-handoff`) devem seguir estes templates, não o formato legado (14 seções, ou §X de arquitetura no PRD).
+Geradores (`talos-backlog-generator`, `talos-sprint-interview`, `talos-plan-handoff`) devem seguir estes templates.
