@@ -20,35 +20,22 @@ const SENSITIVE_KEY = /(authorization|credential|password|secret|token|api[_-]?k
 // permanece sujeita a redação para não expor segredos de payloads de usuário.
 const NON_SENSITIVE_KEYS = new Set(['dispatch_token']);
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
-const PRD_PATTERNS = {
-  section_1_context: ['TBD', 'a confirmar', 'talvez', 'não definido'],
-  section_2_scope: ['pode ser', 'depende de', 'ainda não', 'incompleto'],
-  section_3_decisions: ['vago'],
-  section_4_experience: ['a definir', 'gap', 'depende de'],
-  section_5_contracts: ['ainda não definido', 'mock apenas', 'a confirmar'],
+// Gate G5: padrões de ambiguidade bloqueante no bloco de contrato (§7) do sprint file.
+const ACCEPTANCE_PATTERNS = {
+  section_7_decisions: ['vago', 'TBD', 'a confirmar', 'talvez', 'não definido', '[...]'],
+  section_7_ux: ['a definir', 'gap', 'depende de', 'TBD', 'a confirmar', '[...]'],
+  section_7_aceite: ['TBD', 'a confirmar', 'ainda não', 'incompleto', 'pode ser', '[...]'],
 };
 const SECTION_LABELS = {
-  section_1_context: '§1 Contexto e objetivo',
-  section_2_scope: '§2 Escopo',
-  section_3_decisions: '§3 Decisões de produto',
-  section_4_experience: '§4 Fluxos e cenários UX',
-  section_5_contracts: '§5 Contrato funcional e invariantes',
+  section_7_decisions: '§7.1 Decisões de produto',
+  section_7_ux: '§7.2 Cenários UX',
+  section_7_aceite: '§7.3 Aceite binário',
 };
 const SECTION_HEADING = {
-  section_1_context: /^##\s+1\.\s+/,
-  section_2_scope: /^##\s+2\.\s+/,
-  section_3_decisions: /^##\s+3\.\s+/,
-  section_4_experience: /^##\s+4\.\s+/,
-  section_5_contracts: /^##\s+5\.\s+/,
+  section_7_decisions: /^###\s+7\.1\s+/,
+  section_7_ux: /^###\s+7\.2(?:\.\d+)?\s+/,
+  section_7_aceite: /^###\s+7\.3\s+/,
 };
-const REQUIRED_PRD_SECTIONS = [
-  ['1', 'Contexto e objetivo'],
-  ['2', 'Escopo'],
-  ['3', 'Decisões de produto'],
-  ['4', 'Fluxos e cenários UX'],
-  ['5', 'Contrato funcional e invariantes'],
-  ['6', 'Critérios de aceite'],
-];
 const REQUIRED_PLAN_SECTIONS = [
   ['1', 'Tradução executiva'],
   ['2', 'Invariantes de execução'],
@@ -63,8 +50,7 @@ const WORKFLOW_CONFIG = {
   path: 'builtin:talos',
   skills: {
     backlog_generator: 'talos-backlog-generator',
-    prd_generator: 'talos-sprint-prd-generator',
-    prd_interview: 'talos-prd-interview',
+    sprint_interview: 'talos-sprint-interview',
     plan_handoff: 'talos-plan-handoff',
     plan_execute: 'talos-plan-execute',
     direct_execute: 'talos-direct-execute',
@@ -141,8 +127,8 @@ const BANNER_TEMPLATES = {
   roteia_troca: '▸ talos: roteamento · pediu={x} mas input={y} → modo={z}',
   preflight_ok: '▸ talos: preflight · ok ({caps})',
   preflight_fail: '▸ talos: preflight · BLOCK · {motivo}',
-  prd_lacunas: '▸ talos: prd · {n} lacunas',
-  prd_ok: '▸ talos: prd · ok',
+  aceite_lacunas: '▸ talos: aceite · {n} lacunas',
+  aceite_ok: '▸ talos: aceite · ok',
   entrevista: '▸ talos: entrevista · {n} perguntas',
   plano: '▸ talos: plano · validado (TC pass)',
   exec: '▸ talos: exec · slice {i}/{n}',
@@ -152,18 +138,17 @@ const BANNER_TEMPLATES = {
 };
 const BANNER_EVENTS = Object.keys(BANNER_TEMPLATES);
 
-// Modo-alvo do roteamento por tipo de input (PRD D3/D6): o tipo de fato manda
-// sobre o modo pedido. plan → execute (executa plano pronto); prd/backlog → full
-// (gera/usa plano). Data-driven: alimenta o slot {modo} do banner `roteia`.
+// Modo-alvo do roteamento por tipo de input: o tipo de fato manda sobre o modo
+// pedido. plan → execute (executa plano pronto); backlog → full (gera/usa plano).
+// Spec/PRD-ish classifica como idea → direct (D9). Data-driven: alimenta o slot
+// {modo} do banner `roteia`.
 const ROUTED_MODE_BY_TYPE = {
   plan: 'execute',
-  prd: 'full',
   backlog: 'full',
-  // idea = descrição livre (não é arquivo). Roteia para `direct` (implementa a partir da
-  // descrição/spec, sem artefato de plano separado). Não é "input ilegível".
+  // idea = descrição livre ou spec (não é arquivo de plano). Roteia para `direct`.
   idea: 'direct',
 };
-const BACKLOG_PRIORITY_INPUT_TYPES = new Set(['idea', 'briefing', 'roadmap', 'conversation', 'prd-macro']);
+const BACKLOG_PRIORITY_INPUT_TYPES = new Set(['idea', 'briefing', 'roadmap', 'conversation', 'spec-macro']);
 const BACKLOG_STATES = new Set(['backlog', 'ready', 'doing', 'review', 'done', 'blocked']);
 const BACKLOG_MOSCOW = new Set(['Must', 'Should', 'Could', "Won't now"]);
 const BACKLOG_LEVEL = new Set(['alto', 'médio', 'baixo']);
@@ -194,14 +179,12 @@ function documentFlowForRouting(mode, inputType = null, artifactType = null) {
       reason: 'entrada_macro_sem_backlog_canonico',
       skills: [
         WORKFLOW_CONFIG.skills.backlog_generator,
-        WORKFLOW_CONFIG.skills.prd_generator,
-        WORKFLOW_CONFIG.skills.prd_interview,
+        WORKFLOW_CONFIG.skills.sprint_interview,
         ...(mode === 'full' ? [WORKFLOW_CONFIG.skills.plan_handoff] : []),
       ],
       artifacts: [
         'BACKLOG_MESTRE_*.md',
         'SPRINT_S<NN>_*.md',
-        'PRD_*.md',
         ...(mode === 'full' ? ['PLAN_*.md'] : []),
       ],
     };
@@ -211,27 +194,24 @@ function documentFlowForRouting(mode, inputType = null, artifactType = null) {
       priority: 'sprint_from_backlog',
       reason: 'backlog_canonico_ja_fornecido',
       skills: [
-        WORKFLOW_CONFIG.skills.prd_generator,
-        WORKFLOW_CONFIG.skills.prd_interview,
+        WORKFLOW_CONFIG.skills.sprint_interview,
         ...(mode === 'full' ? [WORKFLOW_CONFIG.skills.plan_handoff] : []),
       ],
       artifacts: [
         'SPRINT_S<NN>_*.md',
-        'PRD_*.md',
         ...(mode === 'full' ? ['PLAN_*.md'] : []),
       ],
     };
   }
   return {
-    priority: 'prd_first',
+    priority: 'recorte_first',
     reason: 'entrada_ja_recortada_ou_modo_sem_backlog',
     skills: [
-      WORKFLOW_CONFIG.skills.prd_generator,
-      WORKFLOW_CONFIG.skills.prd_interview,
+      WORKFLOW_CONFIG.skills.sprint_interview,
       ...(mode === 'full' ? [WORKFLOW_CONFIG.skills.plan_handoff] : []),
     ],
     artifacts: [
-      'PRD_*.md',
+      'SPRINT_S<NN>_*.md',
       ...(mode === 'full' ? ['PLAN_*.md'] : []),
     ],
   };
@@ -402,7 +382,7 @@ const HOST_ADAPTERS = {
         mechanism: 'invoke_subagent bloqueante por design do host — sem polling, sem callback',
       },
     },
-    // question_prompt: usado pela talos-prd-interview para fazer perguntas ao usuário.
+    // question_prompt: usado pela talos-sprint-interview para fazer perguntas ao usuário.
     // No Antigravity, usar ask_question (ferramenta nativa de perguntas interativas).
     // IMPORTANTE — resume_after_interview: após receber respostas via ask_question,
     // persistir no PRD e RETOMAR O PIPELINE IMEDIATAMENTE sem nova confirmação.
@@ -1583,13 +1563,13 @@ function verifyArtifact(args = {}) {
   const artifactPath = requiredString(args, 'artifact_path');
   const absolutePath = resolveConsumerPath(artifactPath, args);
   const timestamp = nowIso();
-  // Banner correto por tipo de artefato: verificar um PRD não pode ecoar
-  // "plano · validado". `artifact_kind` é opcional e aditivo — `prd` → banner de
-  // PRD; ausente/`plan` mantém o banner de plano (compat com callers antigos que
+  // Banner correto por tipo de artefato: verificar sprint/contrato não pode ecoar
+  // "plano · validado". `artifact_kind` é opcional e aditivo — `sprint` → banner de
+  // aceite; ausente/`plan` mantém o banner de plano (compat com callers antigos que
   // só verificavam plano).
   const artifactKind = optionalString(args, 'artifact_kind');
-  const okBanner = artifactKind === 'prd'
-    ? renderBanner('prd_ok', {})
+  const okBanner = artifactKind === 'sprint'
+    ? renderBanner('aceite_ok', {})
     : artifactKind === 'json'
       ? renderBanner('validacao', { status: 'json_ok' })
       : renderBanner('plano', {});
@@ -1664,7 +1644,7 @@ function verifyArtifact(args = {}) {
   return result;
 }
 
-function splitPrdSections(content) {
+function splitAcceptanceSections(content) {
   const sections = {};
   let current = null;
   const lines = content.split(/\r?\n/);
@@ -1689,11 +1669,11 @@ function lineIsExcluded(line) {
 function scanSectionPatterns(sections) {
   const matches = [];
 
-  for (const [sectionKey, patterns] of Object.entries(PRD_PATTERNS)) {
+  for (const [sectionKey, patterns] of Object.entries(ACCEPTANCE_PATTERNS)) {
     const lines = sections[sectionKey] ?? [];
     const sectionText = lines.map((line) => line.text).join('\n').trim();
 
-    if (sectionKey === 'section_3_decisions') {
+    if (sectionKey === 'section_7_decisions') {
       const hasDecisionRows = /\|\s*D\d+\s*\|/.test(sectionText);
       if (!hasDecisionRows) {
         matches.push({
@@ -1709,6 +1689,16 @@ function scanSectionPatterns(sections) {
     for (const { line, text } of lines) {
       if (lineIsExcluded(text)) continue;
       const lower = text.toLowerCase();
+      // Q- aberta no contrato §7 também é ambiguidade bloqueante.
+      if (/\bQ-\d+\b/.test(text) && !/\b(fechada|resolvida|done)\b/i.test(text)) {
+        matches.push({
+          section: SECTION_LABELS[sectionKey],
+          pattern: 'Q- aberta',
+          line,
+          excerpt: text.trim().slice(0, 240),
+          reason: 'Pergunta em aberto no contrato de produto bloqueia avanço.',
+        });
+      }
       for (const pattern of patterns) {
         if (lower.includes(pattern.toLowerCase())) {
           matches.push({
@@ -1726,10 +1716,10 @@ function scanSectionPatterns(sections) {
   return matches;
 }
 
-function scanPrd(args = {}) {
+function scanAcceptance(args = {}) {
   const runId = validateRunId(args.run_id);
-  const prdPath = requiredString(args, 'prd_path');
-  const absolutePath = resolveConsumerPath(prdPath, args);
+  const sprintPath = requiredString(args, 'sprint_path');
+  const absolutePath = resolveConsumerPath(sprintPath, args);
   const timestamp = nowIso();
   let result;
 
@@ -1739,30 +1729,30 @@ function scanPrd(args = {}) {
       result = {
         gate: 'G5',
         status: 'blocked',
-        prd_path: prdPath,
+        sprint_path: sprintPath,
         timestamp,
         blocking_count: 1,
-        banner: renderBanner('prd_lacunas', { n: 1 }),
+        banner: renderBanner('aceite_lacunas', { n: 1 }),
         blocking_matches: [{
           section: 'documento',
           pattern: '(empty file)',
           line: null,
           excerpt: '',
-          reason: 'PRD vazio não pode avançar como documento pronto.',
+          reason: 'Sprint file vazio não pode avançar como contrato pronto.',
         }],
         next_action: 'entrevista',
       };
     } else {
-      const blockingMatches = scanSectionPatterns(splitPrdSections(content));
+      const blockingMatches = scanSectionPatterns(splitAcceptanceSections(content));
       result = {
         gate: 'G5',
         status: blockingMatches.length === 0 ? 'passed' : 'blocked',
-        prd_path: prdPath,
+        sprint_path: sprintPath,
         timestamp,
         blocking_count: blockingMatches.length,
         banner: blockingMatches.length === 0
-          ? renderBanner('prd_ok', {})
-          : renderBanner('prd_lacunas', { n: blockingMatches.length }),
+          ? renderBanner('aceite_ok', {})
+          : renderBanner('aceite_lacunas', { n: blockingMatches.length }),
         blocking_matches: blockingMatches,
         next_action: blockingMatches.length === 0 ? 'avançar' : 'entrevista',
         message: blockingMatches.length === 0
@@ -1774,18 +1764,18 @@ function scanPrd(args = {}) {
     result = {
       gate: 'G5',
       status: 'blocked',
-      prd_path: prdPath,
+      sprint_path: sprintPath,
       timestamp,
       blocking_count: 1,
-      banner: renderBanner('prd_lacunas', { n: 1 }),
+      banner: renderBanner('aceite_lacunas', { n: 1 }),
       blocking_matches: [{
         section: 'documento',
         pattern: '(read error)',
         line: null,
         excerpt: '',
-        reason: `PRD ilegível: ${prdPath}`,
+        reason: `Sprint file ilegível: ${sprintPath}`,
       }],
-      error: `PRD ausente ou ilegível: ${prdPath}`,
+      error: `Sprint file ausente ou ilegível: ${sprintPath}`,
       cause: error.message,
       next_action: 'entrevista',
     };
@@ -1824,76 +1814,6 @@ function verifyRequiredSections(headings, requiredSections) {
     ));
 }
 
-function verifyPrdConformance(content, requiredStatus, { requireSprintFile = false } = {}) {
-  const pendencies = verifyRequiredSections(collectHeadings(content), REQUIRED_PRD_SECTIONS);
-
-  if (requiredStatus && !hasRequiredStatus(content, requiredStatus)) {
-    pendencies.push(conformancePending(
-      'status',
-      requiredStatus,
-      null,
-      `Status documental requerido ausente: ${requiredStatus}`,
-      'ajustar_status_documental',
-    ));
-  }
-
-  if (!/\|\s*D\d+\s*\|/.test(content)) {
-    pendencies.push(conformancePending(
-      'decisões',
-      'D*',
-      null,
-      'PRD sem decisões D* fechadas.',
-      'registrar_decisoes_fechadas',
-    ));
-  }
-
-  for (const group of ['Produto', 'UX', 'Dados', 'Regressão de produto']) {
-    if (!new RegExp(`\\*\\*${group}\\*\\*`, 'i').test(content)) {
-      pendencies.push(conformancePending(
-        'critérios_de_aceite',
-        group,
-        null,
-        `Grupo de critérios ausente: ${group}`,
-        'completar_criterios_de_aceite',
-      ));
-    }
-  }
-
-  const checkboxCount = (content.match(/^- \[[ xX]\]\s+\S/gm) ?? []).length;
-  if (checkboxCount === 0) {
-    pendencies.push(conformancePending(
-      'critérios_de_aceite',
-      'checkboxes',
-      null,
-      'Critérios de aceite observáveis não encontrados.',
-      'completar_criterios_de_aceite',
-    ));
-  }
-
-  if (requireSprintFile) {
-    if (!/\|\s*\*\*Sprint file\*\*\s*\|/i.test(content)) {
-      pendencies.push(conformancePending(
-        'sprint_file',
-        'Sprint file',
-        null,
-        'PRD sem link/campo Sprint file no cabeçalho.',
-        'vincular_sprint_file',
-      ));
-    }
-    if (!/\bEval source\b/i.test(content) && !/\bEVAL-\d+\b/.test(content)) {
-      pendencies.push(conformancePending(
-        'eval_manifest',
-        'EVAL-*',
-        null,
-        'PRD sem referência ao eval_manifest/EVAL-* da sprint.',
-        'referenciar_eval_manifest',
-      ));
-    }
-  }
-
-  return pendencies;
-}
-
 function verifyPlanConformance(content, { requireSprintFile = false } = {}) {
   // §7 Slices só é obrigatória em `execution_mode: orchestrated-per-slice` (template).
   // Em `sequencial` a seção é dispensável — não force "§7 Não aplicável" só para passar
@@ -1904,26 +1824,17 @@ function verifyPlanConformance(content, { requireSprintFile = false } = {}) {
     : REQUIRED_PLAN_SECTIONS.filter(([number]) => number !== '7');
   const pendencies = verifyRequiredSections(collectHeadings(content), requiredSections);
 
-  if (!/\|\s*\*\*PRD\*\*\s*\|/.test(content)) {
+  if (!/\|\s*\*\*Sprint file\*\*\s*\|/i.test(content)) {
     pendencies.push(conformancePending(
-      'referência_prd',
-      'PRD',
+      'sprint_file',
+      'Sprint file',
       null,
-      'Plano sem link/campo PRD no cabeçalho.',
-      'vincular_prd',
+      'Plano sem link/campo Sprint file no cabeçalho.',
+      'vincular_sprint_file',
     ));
   }
 
   if (requireSprintFile) {
-    if (!/\|\s*\*\*Sprint file\*\*\s*\|/i.test(content)) {
-      pendencies.push(conformancePending(
-        'sprint_file',
-        'Sprint file',
-        null,
-        'Plano sem link/campo Sprint file no cabeçalho.',
-        'vincular_sprint_file',
-      ));
-    }
     if (!/\bEval\/Policy\b/i.test(content)) {
       pendencies.push(conformancePending(
         'eval_policy',
@@ -1954,12 +1865,12 @@ function verifyPlanConformance(content, { requireSprintFile = false } = {}) {
     ));
   }
 
-  if (!/BOUNDARY_PRD_PLAN\.md/.test(content)) {
+  if (!/BOUNDARY_SPRINT_PLAN\.md/.test(content)) {
     pendencies.push(conformancePending(
       'boundary',
-      'BOUNDARY_PRD_PLAN.md',
+      'BOUNDARY_SPRINT_PLAN.md',
       null,
-      'Plano sem referência à fronteira PRD/PLAN.',
+      'Plano sem referência à fronteira Sprint/PLAN.',
       'vincular_boundary',
     ));
   }
@@ -1971,8 +1882,8 @@ function verifyTemplateConformance(args = {}) {
   const runId = validateRunId(args.run_id);
   const artifactPath = requiredString(args, 'artifact_path');
   const artifactType = requiredString(args, 'artifact_type');
-  if (!['prd', 'plan'].includes(artifactType)) {
-    throw rpcError(-32602, 'artifact_type inválido: use prd ou plan');
+  if (!['plan'].includes(artifactType)) {
+    throw rpcError(-32602, 'artifact_type inválido: use plan');
   }
 
   const requiredStatus = optionalString(args, 'required_status');
@@ -2001,9 +1912,7 @@ function verifyTemplateConformance(args = {}) {
         next_action: 'corrigir_artefato',
       };
     } else {
-      const pendencies = artifactType === 'prd'
-        ? verifyPrdConformance(content, requiredStatus, { requireSprintFile })
-        : verifyPlanConformance(content, { requireSprintFile });
+      const pendencies = verifyPlanConformance(content, { requireSprintFile });
       result = {
         gate: 'template_conformance',
         status: pendencies.length === 0 ? 'passed' : 'blocked',
@@ -2021,6 +1930,7 @@ function verifyTemplateConformance(args = {}) {
       };
     }
   } catch (error) {
+    if (error?.code === -32602) throw error;
     result = {
       gate: 'template_conformance',
       status: 'blocked',
@@ -2628,13 +2538,14 @@ function selectNextSprint(args = {}) {
   return result;
 }
 
-// Detecta tipo de input para roteamento (PRD D4/D5). Hierarquia de confiança:
+// Detecta tipo de input para roteamento. Hierarquia de confiança:
 //   (1) verdade forte: conformidade de template de plano passa → 'plan';
 //   (2) dica: cabeçalho/frontmatter canônico de plano → 'plan';
-//   (3) dica fraca: nome casando PLAN_*.md → 'plan';
-//   PRD/backlog por marcadores de template; senão 'unknown'.
-// Nome de arquivo nunca basta sozinho nem engana (PRD §5 Contrato): só conta como dica
-// fraca e cede para a verdade forte. Reusa verifyPlanConformance para (1).
+//   (3) sprint file vivo (contrato §7) → 'backlog' (rota sprint_from_backlog);
+//   (4) spec/PRD-ish (`# PRD:`) → 'idea' (D9: tipo prd removido);
+//   (5) backlog por marcadores; (6) dica fraca PLAN_*.md; senão 'unknown'.
+// Nome de arquivo nunca basta sozinho: só conta como dica fraca e cede para a
+// verdade forte. Reusa verifyPlanConformance para (1).
 function classifyArtifactContent(content, fileName = '') {
   const text = content ?? '';
 
@@ -2644,22 +2555,29 @@ function classifyArtifactContent(content, fileName = '') {
   }
 
   // (2) Dica de cabeçalho/frontmatter canônico de plano.
-  const planHeaderHint = /\|\s*\*\*PRD\*\*\s*\|/.test(text)
+  const planHeaderHint = /\|\s*\*\*Sprint file\*\*\s*\|/i.test(text)
     || /^#\s+PLAN[\s_]/im.test(text)
     || /\bexecution_mode\b/.test(text);
   if (planHeaderHint && /####\s+T\d+\./.test(text)) {
     return { artifact_type: 'plan', signal: 'header_hint' };
   }
 
-  // PRD: marcadores do template canônico de PRD.
-  const prdHint = /^#\s+PRD[:\s]/im.test(text)
-    || /\|\s*D\d+\s*\|/.test(text)
-    || /Decisões de produto/i.test(text);
-  if (prdHint) {
-    return { artifact_type: 'prd', signal: 'prd_markers' };
+  // (3) Sprint file vivo: contrato absorvido — roteia como backlog (sprint_from_backlog).
+  const sprintHint = /##\s+7\.\s+Contrato de produto/i.test(text)
+    || /\|\s*Sprint ID\s*\|/i.test(text)
+    || /^#\s+Sprint\b/im.test(text);
+  if (sprintHint) {
+    return { artifact_type: 'backlog', signal: 'sprint_file_markers' };
   }
 
-  // Backlog: marcadores do template canônico de backlog/roadmap.
+  // (4) Spec/PRD-ish legado → idea (D9; tipo prd removido do vocabulário de entrada).
+  const specHint = /^#\s+PRD[:\s]/im.test(text)
+    || (/##\s+3\.\s+Decisões de produto/i.test(text) && /\|\s*D\d+\s*\|/.test(text));
+  if (specHint) {
+    return { artifact_type: 'idea', signal: 'spec_markers' };
+  }
+
+  // (5) Backlog: marcadores do template canônico de backlog/roadmap.
   const backlogHint = /\bBACKLOG[\s_]/i.test(text)
     || /\bSprint\s+S\d+/i.test(text)
     || /\bRoadmap\b/i.test(text);
@@ -2667,7 +2585,7 @@ function classifyArtifactContent(content, fileName = '') {
     return { artifact_type: 'backlog', signal: 'backlog_markers' };
   }
 
-  // (3) Dica fraca: nome PLAN_*.md, só se nada mais classificou.
+  // (6) Dica fraca: nome PLAN_*.md, só se nada mais classificou.
   if (/(^|\/)PLAN_[^/]*\.md$/i.test(fileName)) {
     return { artifact_type: 'plan', signal: 'weak_name_hint' };
   }
@@ -2705,8 +2623,8 @@ function classifyInput(args = {}) {
   try {
     const content = fs.readFileSync(absolutePath, 'utf8');
     const { artifact_type, signal } = classifyArtifactContent(content, inputPath);
-    // Modo-alvo por tipo de input (PRD D3/D6): o fato manda. plan → execute;
-    // prd/backlog → full (gera/usa plano). Data-driven; sem ramo solto.
+    // Modo-alvo por tipo de input: o fato manda. plan → execute;
+    // backlog → full; idea/spec → direct. Data-driven; sem ramo solto.
     const routedMode = ROUTED_MODE_BY_TYPE[artifact_type] ?? null;
     result = {
       gate: 'classify_input',
@@ -2923,7 +2841,7 @@ function expectedNextPhase(routing, dispatch) {
   if (routing.mode === 'direct') return 'plan_execute';
   if (routing.mode === 'execute') return 'plan_execute';
   if (routing.mode === 'audit') return 'audit_report';
-  return 'prd_interview';
+  return 'sprint_interview';
 }
 
 function initialExecutorLiveness(timestamp) {
@@ -4840,7 +4758,7 @@ function dispatchBanner(result) {
   if (result.phase === 'plan_handoff') {
     return renderBanner('plano', {});
   }
-  // demais fases (prd_interview etc.): exec genérico da fase em andamento.
+  // demais fases (sprint_interview etc.): exec genérico da fase em andamento.
   return renderBanner('exec', { i: 1, n: 1 });
 }
 
@@ -4988,27 +4906,27 @@ function toolsList() {
             run_id: { type: 'string', minLength: 1 },
             project_root: { type: 'string', minLength: 1 },
             artifact_path: { type: 'string', minLength: 1 },
-            artifact_kind: { enum: ['prd', 'plan', 'json'] },
+            artifact_kind: { enum: ['sprint', 'plan', 'json'] },
           },
         },
       },
       {
-        name: 'talos_scan_prd',
-        description: 'G5: ambiguidades bloqueantes no PRD.',
+        name: 'talos_scan_acceptance',
+        description: 'G5: ambiguidades bloqueantes no contrato §7 do sprint file.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
-          required: ['run_id', 'prd_path'],
+          required: ['run_id', 'sprint_path'],
           properties: {
             run_id: { type: 'string', minLength: 1 },
             project_root: { type: 'string', minLength: 1 },
-            prd_path: { type: 'string', minLength: 1 },
+            sprint_path: { type: 'string', minLength: 1 },
           },
         },
       },
       {
         name: 'talos_verify_template_conformance',
-        description: 'TC: PRD/plano contra template.',
+        description: 'TC: plano contra template.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
@@ -5017,7 +4935,7 @@ function toolsList() {
             run_id: { type: 'string', minLength: 1 },
             project_root: { type: 'string', minLength: 1 },
             artifact_path: { type: 'string', minLength: 1 },
-            artifact_type: { type: 'string', enum: ['prd', 'plan'] },
+            artifact_type: { type: 'string', enum: ['plan'] },
             required_status: { type: 'string' },
             require_sprint_file: { type: 'boolean' },
           },
@@ -5092,7 +5010,7 @@ function toolsList() {
       },
       {
         name: 'talos_classify_input',
-        description: 'Classifica input: backlog|prd|plan|unknown.',
+        description: 'Classifica input: backlog|plan|idea|unknown.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
@@ -5115,8 +5033,8 @@ function toolsList() {
             run_id: { type: 'string', minLength: 1 },
             project_root: { type: 'string', minLength: 1 },
             mode: { type: 'string', enum: WORKFLOW_CONFIG.modes },
-            input_type: { type: 'string', enum: ['backlog-item', 'sprint', 'idea', 'briefing', 'roadmap', 'conversation', 'prd-macro', 'prd', 'plan', 'brainstorm', 'target'] },
-            artifact_type: { type: 'string', enum: ['backlog', 'prd', 'plan', 'idea', 'unknown'] },
+            input_type: { type: 'string', enum: ['backlog-item', 'sprint', 'idea', 'briefing', 'roadmap', 'conversation', 'spec-macro', 'plan', 'brainstorm', 'target'] },
+            artifact_type: { type: 'string', enum: ['backlog', 'plan', 'idea', 'unknown'] },
             expected_version: { type: 'string' },
             host: { type: 'string', enum: HOST_NAMES },
             // additionalProperties:false é enforçado pelo client MCP; o servidor ainda
@@ -5228,7 +5146,7 @@ function handleRequest(message) {
           name === 'talos_capabilities' ? capabilities(args) :
             name === 'talos_run_state' ? runState(args) :
               name === 'talos_verify_artifact' ? verifyArtifact(args) :
-                name === 'talos_scan_prd' ? scanPrd(args) :
+                name === 'talos_scan_acceptance' ? scanAcceptance(args) :
                   name === 'talos_verify_template_conformance' ? verifyTemplateConformance(args) :
                     name === 'talos_verify_sprint_file' ? verifySprintFile(args) :
                       name === 'talos_verify_backlog_index' ? verifyBacklogIndex(args) :
@@ -5322,8 +5240,20 @@ function startStdioLoop() {
 
 // Só inicia o loop stdio quando executado como entrypoint (node server.js).
 // Importado por testes (node --test), o módulo expõe funções puras sem bootar I/O.
-const isEntrypoint = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
-if (isEntrypoint) startStdioLoop();
+function isMainModule() {
+  if (!process.argv[1]) return false;
+  const entry = path.resolve(process.argv[1]);
+  const modulePath = fileURLToPath(import.meta.url);
+  if (entry === modulePath) return true;
+  try {
+    // Parall/Cursor: HOME pode ser symlink (Library/p2 → Application Support/Parall/N).
+    // argv[1] fica no path lógico; import.meta.url no físico — sem realpath o stdio não sobe.
+    return fs.realpathSync(entry) === fs.realpathSync(modulePath);
+  } catch {
+    return false;
+  }
+}
+if (isMainModule()) startStdioLoop();
 
 export {
   HOST_ADAPTERS,
@@ -5346,7 +5276,7 @@ export {
   BANNER_EVENTS,
   renderBanner,
   verifyArtifact,
-  scanPrd,
+  scanAcceptance,
   verifyTemplateConformance,
   verifySprintFile,
   verifyBacklogIndex,

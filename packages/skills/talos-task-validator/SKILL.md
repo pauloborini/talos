@@ -11,7 +11,7 @@ description: Skill `talos-task-validator`. Validador frio de slice executada por
 
 Use this skill as an isolated sibling subagent dispatched by the **orchestrator** from the `state_path` the executor writes and returns (`validator_handoff_required`), after all tasks in a slice are implemented and locally gated. It is never invoked by the executor.
 
-Purpose: perform a cold, structured validation pass of the delivered slice against the **frozen Sprint §7 product contract** (and the plan technical sections). Business acceptance is judged from §7; the seal keeps that target stable. Do not treat PLAN §8 alone as the acceptance SSoT. 
+Purpose: perform a cold, structured validation pass of the delivered slice against the **frozen Sprint §7 product contract** (and the plan technical sections). Business acceptance is judged from §7; the seal keeps that target stable. Do not treat PLAN §8 alone as the acceptance SSoT.
 
 ---
 

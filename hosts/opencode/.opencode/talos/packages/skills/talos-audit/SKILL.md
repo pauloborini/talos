@@ -131,18 +131,18 @@ Se zero achados, diga explicitamente `Nenhum achado P0/P1/P2/P3 com evidência s
 
 Quando `--handoff` estiver presente, escrever em `.talos/plans/PLAN_AUDIT_<slug>.md` um plano **conforme ao `PLAN_TEMPLATE.md` canônico** (resolver em `<raiz-do-plugin>/packages/templates/`), para que passe no gate TC (`talos_verify_template_conformance`) e seja consumível por `/talos execute plan <path>` ou por `talos-plan-execute`. O plano só pode conter tasks derivadas dos achados evidenciados. Se a escrita falhar, reportar bloqueio e não fingir que há handoff executável.
 
-A auditoria **não tem PRD**: a fonte de verdade é o relatório de auditoria + achados + regras locais reais. O plano espelha o template, mas reancorado na auditoria — **sem inventar decisões `D*` nem referências PRD inexistentes**.
+A auditoria **não tem sprint de produto**: a fonte de verdade é o relatório de auditoria + achados + regras locais reais. O plano espelha o template, mas reancorado na auditoria — **sem inventar decisões `D*` nem referências de contrato inexistentes**.
 
 ### Cabeçalho obrigatório (gate TC)
 
-O gate TC exige literalmente a linha `| **PRD** |`, referência a `BOUNDARY_PRD_PLAN.md` e tarefas `#### T01.`. Em `execution_mode: sequencial`, a §7 Slices é dispensável.
+O gate TC exige literalmente a linha `| **Sprint file** |`, referência a `BOUNDARY_SPRINT_PLAN.md` e tarefas `#### T01.`. Em `execution_mode: sequencial`, a §7 Slices é dispensável.
 
 ```md
 # PLAN AUDIT — <target> (correção de auditoria)
 
 | Campo | Valor |
 |-------|-------|
-| **PRD** | N/A — origem auditoria; ver **Source audit** abaixo |
+| **Sprint file** | N/A — origem auditoria; ver **Source audit** abaixo |
 | **Package / app** | `<boundary auditado>` |
 | **Tipo** | `audit-fix` |
 | **execution_mode** | `sequencial (T01→TN)` |
@@ -150,7 +150,7 @@ O gate TC exige literalmente a linha `| **PRD** |`, referência a `BOUNDARY_PRD_
 
 **Escopo técnico:** boundary da auditoria. **Fora:** <o que ficou fora do target/scope>.
 
-Política: [BOUNDARY_PRD_PLAN.md](./BOUNDARY_PRD_PLAN.md).
+Política: [BOUNDARY_SPRINT_PLAN.md](./BOUNDARY_SPRINT_PLAN.md).
 
 ## Metadados de execução
 - Plan prefix: `talos`
@@ -160,11 +160,11 @@ Política: [BOUNDARY_PRD_PLAN.md](./BOUNDARY_PRD_PLAN.md).
 - Source audit: `<título/path/data do relatório>`
 ```
 
-> `N/A — origem auditoria` satisfaz o regex do TC declarando a proveniência sem inventar PRD.
+> `N/A — origem auditoria` satisfaz o regex do TC declarando a proveniência sem inventar sprint file.
 
 ### Seções obrigatórias (§1–§6, §8)
 
-Sem PRD, as âncoras "derivados do PRD" do template passam a apontar para achados/regras locais:
+Sem contrato de produto prévio, as âncoras "derivados do Sprint §7" do template passam a apontar para achados/regras locais:
 
 - **§1 Tradução executiva** — 1 parágrafo do que será corrigido + resultado observável; referência ao relatório de auditoria.
 - **§2 Invariantes de execução** — invariantes derivados das regras locais reais e do boundary (não de `D*`).

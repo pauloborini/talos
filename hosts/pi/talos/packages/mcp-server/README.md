@@ -1,20 +1,20 @@
 # Talos MCP Server
 
-Servidor MCP do plugin Talos v0.13.0.
+Servidor MCP do plugin Talos v0.14.0.
 
 ## Tools
 
 - `talos_ping`: retorna saúde, identidade, versão e a superfície de tools (`capabilities` derivado de `toolsList()`).
 - `talos_capabilities`: contrato de adapter por host (`schema_version: 5`); detecção de host, `validator_dispatch {dispatcher, join}`, flags e pré-requisitos.
-- `talos_classify_input`: classifica o input em `backlog|prd|plan|unknown` para roteamento de modo (Fase 0).
+- `talos_classify_input`: classifica o input em `backlog|plan|idea|unknown` para roteamento de modo (Fase 0).
 - `talos_run_state`: cria, atualiza (merge top-level) ou consulta estado de run em `.talos/state/` no cwd do projeto consumidor; expõe `validator_recovery` do slot ativo.
 - `talos_verify_artifact`: Gate G1; verifica se artefato obrigatório existe e é legível (`artifact_kind` opcional para banner correto).
-- `talos_verify_template_conformance`: Gate TC; PRD/PLAN só avançam com template conforme e `pending_count: 0`; em fluxo de sprint use `require_sprint_file:true` para exigir link de sprint file e referências `EVAL-*`.
+- `talos_verify_template_conformance`: Gate TC; PLAN só avança com template conforme e `pending_count: 0`; em fluxo de sprint use `require_sprint_file:true` para exigir referências `EVAL-*`/`Eval/Policy`.
 - `talos_verify_sprint_file`: Gate de sprint viva; valida `SPRINT_S<NN>_*.md`, `eval_manifest`, `policy_manifest`, evidence-to-claim e vínculo com backlog quando fornecido.
 - `talos_verify_backlog_index`: Gate de backlog enxuto; valida `BACKLOG_MESTRE_*.md` como índice macro, sprint files linkados, deps internas, ciclo e status espelhado backlog↔sprint.
 - `talos_select_next_sprint`: Gate de seleção; escolhe a próxima sprint executável com `state=ready`, deps internas `done`, sprint file válido e DoR verde.
 - `talos_update_sprint_status`: Gate pós-validação; sincroniza status no `BACKLOG_MESTRE` e no `SPRINT_SNN`, exigindo `state_path` + veredito frio terminal para `done`.
-- `talos_scan_prd`: Gate G5; escaneia PRD por padrões determinísticos de ambiguidade bloqueante.
+- `talos_scan_acceptance`: Gate G5; escaneia o contrato §7 do sprint file por padrões determinísticos de ambiguidade bloqueante.
 - `talos_preflight`: Gate G10; valida modo, versão, lock ativo e mapa oficial de skills talos-*; `guarantee_level` só aparece em modos com execução.
 - `talos_lock_dispatch`: Gates G7/G8/G12; controla fase ativa, checkpoints de liveness do executor, ordem de dispatch e validator antes de review (`state_path_created` exige `state_path` legível).
 - `talos_lock_validator`: Gate G4 sibling; um validator por vez, `dispatch_token` obrigatório, máximo de 2 attempts, repair obrigatório entre fail e retry, proof-of-work (challenge sha256 do boundary recomputado no complete; re-dispatch bounded → `challenge_exhausted`).
