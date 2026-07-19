@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.14.0 - 2026-07-19
+
+> ⚠️ **BREAKING (contrato documental):** o artefato `PRD_*.md` deixa de ser etapa do pipeline. O sprint file absorve o contrato de produto (§7 congelado + selo sha256). Schema MCP `talos_capabilities` permanece v5; topologia sibling (G4), dispatch e locks intactos. Bump minor pré-1.0 é proposital (SemVer 0.y.z permite breaking sem major).
+
+Tipo: **breaking de contrato documental** + packaging multi-host. Schema MCP: v5 (inalterado). Contrato de execução (G4/DISPATCH/PREREQ/JOIN): preservado.
+
+Resumo: corta o PRD como artefato e etapa. `full`/`direct`/`execute` completam sem gerar nem exigir `PRD_*.md`; o sprint file carrega decisões D*, cenários UX e aceite binário na §7 write-once; o validador frio nota código contra esse contrato selado.
+
+Mudanças:
+- **Sprint file = contrato de produto** — `SPRINT_TEMPLATE.md` §7 "Contrato de produto (congelado)"; `validateSprintFileConformance` exige D* + UX + aceite binário + `Contrato status`; `validateAcceptanceSeal` bloqueia tamper (`FROZEN_ACCEPTANCE_TAMPERED`).
+- **Roteamento sem PRD** — `documentFlowForRouting` não emite `prd_generator`/`PRD_*.md`; `sprint_interview` no lugar de `prd_interview`; tipo de input `prd` removido.
+- **Gates MCP retargetados** — `talos_verify_template_conformance` aceita só `plan`; `verifyPlanConformance` exige `**Sprint file**`; `talos_scan_prd` → `talos_scan_acceptance` (escaneia §7).
+- **Skills** — `talos-prd-interview` → `talos-sprint-interview`; `talos-sprint-prd-generator` removido; plan-handoff/direct-execute/task-validator/backlog retargetados para §7.
+- **Orquestrador/templates** — fases sem PRD; `BOUNDARY_PRD_PLAN.md` → `BOUNDARY_SPRINT_PLAN.md`; `PRD_TEMPLATE.md` removido; interview-only cria sprint file standalone.
+- **Bundles regenerados** — `dist/talos-{claude,codex,opencode,pi,zcode,vscode}.plugin`, `SHA256SUMS`, `plugins/talos/**` e `hosts/{opencode,pi,zcode,vscode}/**` em `0.14.0`.
+
+Impacto:
+- Consumidores/docs que assumiam etapa PRD devem migrar para o contrato §7 do sprint file.
+- Nenhum adapter `HOST_ADAPTERS` muda; 8 hosts mantêm join/dispatch/prereq.
+
+**Nota de migração (BREAKING):**
+1. Sprint files legados com §7 "Critérios candidatos para PRD" → reescrever §7 "Contrato de produto (congelado)" (usar PRD legado como insumo, se houver).
+2. Aprovar contrato → `Contrato status: aprovado` + `Selo do contrato: sha256:<hash>` (via `talos-sprint-interview`).
+3. Planos novos linkam `**Sprint file**` (não `**PRD**`).
+4. PRDs existentes viram insumo manual e saem do pipeline (arquivar fora; não usamos `archive/` automaticamente).
+5. Input `prd` removido — trate como ideia/spec livre.
+6. Standalone vive no sprint file (`Backlog link: Não aplicável (standalone)`), não em PRD.
+
+Arquivos/artefatos:
+- `VERSION`, `.claude-plugin/plugin.json`, `package.json`, `packages/mcp-server/package.json`
+- `CLAUDE.md`, `AGENTS.md`, `README.md`, `COMMANDS.md`, `packages/orchestrator/README.md`
+- `packages/mcp-server/server.js`, `packages/skills/**`, `packages/templates/**`, `packages/orchestrator/**`
+- `hosts/**`, `plugins/talos/**`, `dist/**` (espelhos regenerados por `build/build-plugins.sh`)
+
+Validação:
+- `node build/bump-version.mjs 0.14.0` + `bash build/build-plugins.sh` — ok.
+- `node build/check-consistency.mjs` — ok.
+- `node build/smoke-hosts.mjs` — ok (claude/cursor/codex/zcode/opencode/pi + generic).
+- `node build/conformance-matrix.mjs` — ok (claude/codex/opencode/pi/zcode/vscode/generic × 10).
+- `bash build/test-all.sh` — ok (incl. smoke-install + checksums 6 plugins).
+- `claude plugin validate ./ --strict` — ok.
+- Smoke ponta a ponta Claude Code (`/talos direct`) — pendente (ambiente Cursor; ver Impl Plano 6).
+
 ## 0.13.0 - 2026-07-03
 
 Tipo: **runtime + packaging**. **Sem breaking**. Schema MCP: v5 (inalterado). Contrato de execução: preservado.

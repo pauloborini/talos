@@ -239,9 +239,16 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `talos-*` para o
 
 ---
 
-**Plugin version:** 0.13.0
+**Plugin version:** 0.14.0
 **Author:** Paulo Borini
-**Last updated:** 2026-07-03
+**Last updated:** 2026-07-19
+
+### Novidades v0.14.0 — sprint file absorve o PRD (BREAKING documental)
+
+- **PRD removido do pipeline** — `full`/`direct`/`execute` não geram nem exigem `PRD_*.md`; contrato de produto vive na §7 do sprint file (congelado + selo sha256).
+- **Skills retargetadas** — `talos-sprint-interview` (ex-`talos-prd-interview`); generator de PRD removido; validador frio nota contra §7.
+- **Gates MCP** — TC só `plan`; scan → `talos_scan_acceptance`; plano linka `**Sprint file**`. Schema v5 / sibling G4 intactos.
+- **Migração** — ver `CHANGELOG.md` 0.14.0 e bloco "Migração 0.13.x → 0.14.0" em `CLAUDE.md`/`AGENTS.md`.
 
 ### Novidades v0.13.0 — host VS Code (8º host)
 

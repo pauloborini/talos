@@ -1,0 +1,7 @@
+interface:
+  display_name: "Talos Sprint Interview"
+  short_description: "Entrevista e sela o contrato §7 do sprint file"
+  default_prompt: "Use $talos-sprint-interview para validar a §7 deste sprint file, cruzar com o código e fechar ambiguidades críticas em rodadas curtas de múltipla escolha; ao fechar, aprove e sele o contrato."
+
+policy:
+  allow_implicit_invocation: true

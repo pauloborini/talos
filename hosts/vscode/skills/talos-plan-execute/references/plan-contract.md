@@ -1,10 +1,10 @@
 # Plan Contract
 
-Input plans must follow `talos-plan-handoff` and align with `PLAN_TEMPLATE.md` / `BOUNDARY_PRD_PLAN.md` (compact template, sections 1–8). Locate both in the Talos plugin bundle at `packages/templates/`; do not use workspace-local templates as primary sources.
+Input plans must follow `talos-plan-handoff` and align with `PLAN_TEMPLATE.md` / `BOUNDARY_SPRINT_PLAN.md` (compact template, sections 1–8). Locate both in the Talos plugin bundle at `packages/templates/`; do not use workspace-local templates as primary sources.
 
-If `packages/templates/PLAN_TEMPLATE.md` or `packages/templates/BOUNDARY_PRD_PLAN.md` is absent from the bundle, stop with a clear `Template canônico ausente: <nome-do-template>` error. Do not fall back silently to old local, vault, or global copies.
+If `packages/templates/PLAN_TEMPLATE.md` or `packages/templates/BOUNDARY_SPRINT_PLAN.md` is absent from the bundle, stop with a clear `Template canônico ausente: <nome-do-template>` error. Do not fall back silently to old local, vault, or global copies.
 
-Legacy 15-section plans (handoff prompt, architecture impact block in PRD, etc.) are **not** the target format.
+Legacy 15-section plans (handoff prompt, architecture impact block in old PRD, etc.) are **not** the target format.
 
 ## Required execution metadata
 
@@ -20,17 +20,17 @@ Near the top of the artifact:
 
 | § | Purpose |
 |---|---------|
-| 1 | Executive translation (`Tradução executiva`) — scope link to PRD, reference module, diffs vs mirror |
-| 2 | Execution invariants (derived from `PRD §3` — cite D* IDs, do not paste full table) |
+| 1 | Executive translation (`Tradução executiva`) — scope link to Sprint file / §7, reference module, diffs vs mirror |
+| 2 | Execution invariants (derived from `Sprint §7` — cite D* IDs, do not paste full table) |
 | 3 | Pitfalls (anti-pattern → fix) |
 | 4 | State at sprint opening (3–6 bullets; not a global file inventory) |
 | 5 | Execution tasks `#### T01.` … `TNN` |
-| 6 | Technical contracts (only where PRD → code is ambiguous) |
-| 8 | Validation and validator checklist (derived from `PRD §6` + §2 invariants) |
+| 6 | Technical contracts (only where Sprint §7 → code is ambiguous) |
+| 8 | Validation and validator checklist (derived from `Sprint §7` aceite + §2 invariants) |
 
 Section 7 (Slices) is required only when `execution_mode: orchestrated-per-slice`.
 
-**Not required:** handoff prompt, planner readiness gate, full `project-rules` rules dump, full PRD scope copy, global touched-files inventory.
+**Not required:** handoff prompt, planner readiness gate, full `project-rules` rules dump, full Sprint §7 scope copy, global touched-files inventory.
 
 **Optional:** section 9 open questions / real blockers (executor must stop if active blockers remain).
 
@@ -57,7 +57,7 @@ Paths may appear in **Referência** or **Validação local**; prefer module-leve
 
 | Contract need | Plan section |
 |---------------|--------------|
-| Translation, PRD links, reference module | §1 |
+| Translation, Sprint file / §7 links, reference module | §1 |
 | Execution invariants | §2 |
 | Pitfalls | §3 |
 | Current codebase state | §4 |
@@ -65,7 +65,7 @@ Paths may appear in **Referência** or **Validação local**; prefer module-leve
 | Technical contracts | §6 |
 | Slice boundaries | §7 (orchestrated mode) |
 | Validator checklist | §8 |
-| Business acceptance (when §8 is thin) | PRD §4–6 (read PRD path from plan header) |
+| Business acceptance (when §8 is thin) | Sprint §7 (read Sprint file path from plan header) |
 
 ## Why this matters
 

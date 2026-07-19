@@ -2,16 +2,17 @@
 
 | Campo | Valor |
 |-------|-------|
-| **PRD** | [PRD_<ID>_<slug>.md](./<caminho-relativo>) — decisões **PRD §3** (D*) |
 | **Sprint file** | [SPRINT_S<NN>_<slug>.md](./<caminho-relativo>) — `eval_manifest` §9 — ou `Não aplicável (standalone)` quando `Source mode: standalone` |
 | **Package / app** | `<packages/... \| apps/...>` |
 | **Tipo** | `<feature \| ui \| navigation \| …>` |
 | **execution_mode** | `<sequencial (T01→TN) \| orchestrated-per-slice>` |
 | **Data** | <YYYY-MM-DD> |
 
-**Escopo técnico:** PRD §2 + sprint file §3. **Fora:** <bullets derivados do PRD fora de escopo — não recopiar §2 inteiro>.
+**Escopo técnico:** Sprint §3 + contrato §7. **Fora:** <bullets derivados do fora de escopo do sprint — não recopiar §3 inteiro>.
 
-Política: [BOUNDARY_PRD_PLAN.md](./BOUNDARY_PRD_PLAN.md). Exemplos: [PRD/GARANTIAFACIL/EXEMPLO/](../PRD/GARANTIAFACIL/EXEMPLO/).
+**Eval source:** Sprint §7/§9 (ou `Sprint §7 (standalone)` quando sem backlog).
+
+Política: [BOUNDARY_SPRINT_PLAN.md](./BOUNDARY_SPRINT_PLAN.md).
 
 ---
 
@@ -19,13 +20,13 @@ Política: [BOUNDARY_PRD_PLAN.md](./BOUNDARY_PRD_PLAN.md). Exemplos: [PRD/GARANT
 
 <O que será implementado em 1 parágrafo + resultado observável técnico.>
 
-**Fonte de recorte:** <Sprint file §2–§4 + PRD §2/§3>
+**Fonte de recorte:** <Sprint file §2–§4 + contrato §7>
 
 **Padrão de referência no monorepo:** <ex.: “espelhar módulo X em …”>
 
 **Diferenças obrigatórias vs referência (não copiar cegamente)**
 
-| Tema | Referência (rejeitar) | Esta entrega (PRD) |
+| Tema | Referência (rejeitar) | Esta entrega (Sprint §7) |
 |------|----------------------|-------------------|
 | <…> | <…> | <D* ou regra> |
 
@@ -33,13 +34,13 @@ Política: [BOUNDARY_PRD_PLAN.md](./BOUNDARY_PRD_PLAN.md). Exemplos: [PRD/GARANT
 
 ---
 
-## 2. Invariantes de execução (derivados do PRD)
+## 2. Invariantes de execução (derivados do Sprint §7)
 
-- <invariante técnico derivado de PRD §3/§5 — ex.: sem refetch ao filtrar>
-- <`sprint-bound`: invariante/gate derivado de sprint file §9/§10 — ex.: preservar boundary X. `standalone`: invariante/gate derivado direto de PRD §5>
+- <invariante técnico derivado de Sprint §7 D*/cenários — ex.: sem refetch ao filtrar>
+- <`sprint-bound`: invariante/gate derivado de sprint file §9/§10 — ex.: preservar boundary X. `standalone`: invariante/gate derivado direto de Sprint §7>
 - <…>
 
-> Não recopiar a tabela de decisões do PRD nem o YAML do sprint file; referenciar `PRD §3 D12` e, em `sprint-bound`, `Sprint §9 EVAL-001`. Em `standalone`, referenciar só `PRD §3`/`PRD §5`.
+> Não recopiar a tabela de decisões do contrato nem o YAML do sprint file; referenciar `Sprint §7 D12` e, em `sprint-bound`, `Sprint §9 EVAL-001`. Em `standalone`, referenciar só `Sprint §7`.
 
 ---
 
@@ -52,7 +53,7 @@ Política: [BOUNDARY_PRD_PLAN.md](./BOUNDARY_PRD_PLAN.md). Exemplos: [PRD/GARANT
 
 ## 4. Estado na abertura da sprint (pré-implementação)
 
-> Se a entrega **já estiver no código**, não reimplementar: usar como checklist de verificação contra PRD §6 e PLAN §8. O executor **lê o repo** e confirma o que falta.
+> Se a entrega **já estiver no código**, não reimplementar: usar como checklist de verificação contra Sprint §7.3 e PLAN §8. O executor **lê o repo** e confirma o que falta.
 
 - **Sprint status:** <status do sprint file + bloqueios relevantes>
 - <3–6 bullets do que bloqueia hoje — comportamento ou ausência, não lista de 15 arquivos>
@@ -69,8 +70,8 @@ Política: [BOUNDARY_PRD_PLAN.md](./BOUNDARY_PRD_PLAN.md). Exemplos: [PRD/GARANT
 - **Referência:** <módulo/padrão no monorepo — opcional>
 - **Pré-condições:** <nenhuma \| T0X>
 - **Mudança esperada:** <o que muda de forma concreta>
-- **Invariantes preservados:** <§2 ou PRD>
-- **Eval/Policy:** <`sprint-bound`: Sprint §9 EVAL-* / §10 policy relevante. `standalone`: PRD §6 relevante>
+- **Invariantes preservados:** <§2 ou Sprint §7>
+- **Eval/Policy:** <`sprint-bound`: Sprint §9 EVAL-* / §10 policy relevante. `standalone`: Sprint §7 aceite relevante>
 - **Não mudar:** <…>
 - **Não fazer:** <atalhos proibidos>
 - **Dependências:** <nenhuma \| T0X>
@@ -89,7 +90,7 @@ Política: [BOUNDARY_PRD_PLAN.md](./BOUNDARY_PRD_PLAN.md). Exemplos: [PRD/GARANT
 
 #### TNN. Validação final
 
-- **Objetivo:** gates locais + regressão de entregas dependentes + aceite manual mínimo (PRD §6; em `sprint-bound` também Sprint §9).
+- **Objetivo:** gates locais + regressão de entregas dependentes + aceite manual mínimo (Sprint §7.3; em `sprint-bound` também Sprint §9).
 - **Dependências:** T01–T(N-1)
 - **Critério de done:** zero issues; testes verdes
 - **Validação local:**
@@ -98,12 +99,12 @@ Política: [BOUNDARY_PRD_PLAN.md](./BOUNDARY_PRD_PLAN.md). Exemplos: [PRD/GARANT
   cd <package> && flutter test
   ```
 - **Verificação manual (recomendada):**
-  1. <passo alinhado ao PRD §4>
+  1. <passo alinhado aos cenários UX do Sprint §7.2>
   2. <…>
 
 ---
 
-## 6. Contratos técnicos (só ambiguidade PRD → código)
+## 6. Contratos técnicos (só ambiguidade Sprint §7 → código)
 
 ### 6.1 <Domínio / persistência / API>
 
@@ -131,14 +132,14 @@ Ordem: **A → B → …**. Validator: boundary do diff por slice + §2 e §7.
 
 ## 8. Validação e checklist (validator)
 
-Referência **PRD §6** + invariantes **§2** deste plano. Em `sprint-bound`, soma `eval_manifest` do sprint file §9. Em `standalone`, declarar `Eval source: PRD §6` — sem manifest de sprint.
+Referência **Sprint §7** + invariantes **§2** deste plano. Em `sprint-bound`, soma `eval_manifest` do sprint file §9. Em `standalone`, declarar `Eval source: Sprint §7` — sem manifest de sprint obrigatório além do contrato.
 
 ```bash
 cd <package> && flutter analyze
 cd <package> && flutter test
 ```
 
-- [ ] <critério derivado de PRD D*/§6 ou Sprint §9 EVAL-*>
+- [ ] <critério derivado de Sprint §7 D*/aceite ou Sprint §9 EVAL-*>
 - [ ] <…>
 
 ---
@@ -148,6 +149,6 @@ cd <package> && flutter test
 - Handoff prompt final
 - Gate de prontidão do planejador
 - § “Regras carregadas” do `project-rules` (AGENTS carrega)
-- Cópia da tabela D* do PRD
+- Cópia da tabela D* do contrato §7
 - Cópia integral do `eval_manifest`/`policy_manifest`
 - Inventário global de arquivos tocados

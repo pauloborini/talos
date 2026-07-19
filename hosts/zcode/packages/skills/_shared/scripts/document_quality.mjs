@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -182,6 +183,73 @@ function sprintConformancePending(category, item, line, message, nextAction = 'c
   return { category, item, line, message, next_action: nextAction };
 }
 
+function isStandaloneBacklog(value) {
+  return typeof value === 'string' && /^Não aplicável \(standalone\)$/i.test(value.trim());
+}
+
+function extractSectionMarkdown(markdown, sectionNumber) {
+  const start = new RegExp(`^##\\s+${sectionNumber}\\.\\s`, 'im').exec(markdown);
+  if (!start) return null;
+  const from = start.index;
+  const tail = markdown.slice(from + start[0].length);
+  const next = /\n##\s+\d+\./.exec(tail);
+  return next ? markdown.slice(from, from + start[0].length + next.index) : markdown.slice(from);
+}
+
+function normalizeAcceptanceBlock(text) {
+  return text
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map((line) => line.trimEnd())
+    .join('\n')
+    .trim();
+}
+
+/** Extrai o bloco §7 (contrato) normalizado — mesma normalização na gravação e na verificação. */
+export function extractAcceptanceBlock(markdown) {
+  const start = /^##\s+7\.\s/im.exec(markdown);
+  if (!start) return null;
+  const from = start.index;
+  const tail = markdown.slice(from);
+  const afterHeading = tail.slice(start[0].length);
+  const next = /\n##\s/.exec(afterHeading);
+  const raw = next ? tail.slice(0, start[0].length + next.index) : tail;
+  return normalizeAcceptanceBlock(raw);
+}
+
+/** Retorna `sha256:<hex>` do bloco §7, ou null se §7 ausente. */
+export function computeAcceptanceSeal(markdown) {
+  const block = extractAcceptanceBlock(markdown);
+  if (block == null) return null;
+  const hash = crypto.createHash('sha256').update(block, 'utf8').digest('hex');
+  return `sha256:${hash}`;
+}
+
+/**
+ * Selo write-once do contrato de produto.
+ * - draft (ou status ≠ aprovado): selo ignorado → { sealed:false, tampered:false }
+ * - aprovado sem selo válido: { sealed:false, tampered:true }
+ * - aprovado com selo: compara sha256 do §7 → tampered se divergir
+ */
+export function validateAcceptanceSeal(markdown) {
+  const status = tableValue(markdown, 'Contrato status');
+  if (!status || !/^aprovado$/i.test(status.trim())) {
+    return { sealed: false, tampered: false };
+  }
+  const sealRaw = tableValue(markdown, 'Selo do contrato');
+  if (!sealRaw || !/^sha256:[a-f0-9]{64}$/i.test(sealRaw.trim())) {
+    return { sealed: false, tampered: true };
+  }
+  const expected = computeAcceptanceSeal(markdown);
+  if (!expected) {
+    return { sealed: false, tampered: true };
+  }
+  return {
+    sealed: true,
+    tampered: expected.toLowerCase() !== sealRaw.trim().toLowerCase(),
+  };
+}
+
 export function validateSprintFileConformance(markdown, {
   sprintPath = null,
   sprintId = null,
@@ -196,13 +264,13 @@ export function validateSprintFileConformance(markdown, {
     '4. Contexto e fontes',
     '5. Dependências e bloqueios',
     '6. Decisões da sprint',
-    '7. Critérios candidatos para PRD',
+    '7. Contrato de produto (congelado)',
     '8. Definition of Ready',
     '9. Eval manifest',
     '10. Policy manifest',
     '11. Guia e sensores',
     '12. Evidence-to-claim',
-    '13. PRD e PLAN',
+    '13. PLAN',
     '14. Execução e validação',
     '15. Aprendizados e handoff para próximas sprints',
     '16. Histórico',
@@ -232,12 +300,65 @@ export function validateSprintFileConformance(markdown, {
   }
 
   const backlog = tableValue(markdown, 'Backlog mestre');
-  if (!backlog || sprintFilePending(backlog)) {
+  const standalone = isStandaloneBacklog(backlog);
+  if (!standalone && (!backlog || sprintFilePending(backlog))) {
     pendencies.push(sprintConformancePending('metadados', 'Backlog mestre', lineOf(markdown, /^\|\s*Backlog mestre\s*\|/i), 'Backlog mestre ausente no sprint file.', 'vincular_backlog_mestre'));
   }
 
+  const contratoStatus = tableValue(markdown, 'Contrato status');
+  if (!contratoStatus || !/^(draft|aprovado)$/i.test(contratoStatus)) {
+    pendencies.push(sprintConformancePending(
+      'contrato_produto',
+      'Contrato status',
+      lineOf(markdown, /^\|\s*Contrato status\s*\|/i),
+      `Contrato status inválido ou ausente: ${contratoStatus ?? '<ausente>'} (esperado draft|aprovado).`,
+      'preencher_contrato_status',
+    ));
+  }
+
+  const section7 = extractSectionMarkdown(markdown, 7) ?? '';
+  if (!/\|\s*D\d+\s*\|/.test(section7)) {
+    pendencies.push(sprintConformancePending(
+      'contrato_produto',
+      'decisoes',
+      lineOf(markdown, /^##\s+7\./i),
+      'Contrato §7 sem decisão de produto D* (| D<n> |).',
+      'preencher_decisoes_produto',
+    ));
+  }
+  for (const group of ['Produto', 'UX', 'Dados', 'Regressão de produto']) {
+    if (!new RegExp(`\\*\\*${group}\\*\\*`, 'i').test(section7)) {
+      pendencies.push(sprintConformancePending(
+        'contrato_produto',
+        'aceite',
+        lineOf(markdown, /^##\s+7\./i),
+        `Contrato §7 sem grupo de aceite **${group}**.`,
+        'preencher_aceite_binario',
+      ));
+    }
+  }
+  if (!/^- \[[ xX]\]/m.test(section7)) {
+    pendencies.push(sprintConformancePending(
+      'contrato_produto',
+      'aceite',
+      lineOf(markdown, /^##\s+7\./i),
+      'Contrato §7 sem checkbox de aceite observável.',
+      'preencher_aceite_binario',
+    ));
+  }
+
+  const sealResult = validateAcceptanceSeal(markdown);
+  if (sealResult.tampered) {
+    pendencies.push(sprintConformancePending(
+      'contrato_congelado',
+      'FROZEN_ACCEPTANCE_TAMPERED',
+      lineOf(markdown, /^##\s+7\./i),
+      'Contrato aprovado foi alterado sem re-aprovação (selo divergente).',
+      'reaprovar_contrato',
+    ));
+  }
+
   for (const [label, nextAction] of [
-    ['PRD', 'informar_prd_ou_pendente'],
     ['PLAN', 'informar_plan_ou_pendente'],
     ['State / evidência', 'informar_state_ou_pendente'],
   ]) {
@@ -280,7 +401,7 @@ export function validateSprintFileConformance(markdown, {
     pendencies.push(sprintConformancePending('evidence_to_claim', 'tabela', lineOf(markdown, /^##\s+12\./i), 'Tabela Evidence-to-claim ausente ou inválida.', 'criar_evidence_to_claim'));
   }
 
-  if (backlogPath && backlogMarkdown != null) {
+  if (!standalone && backlogPath && backlogMarkdown != null) {
     const rows = parseSprintRows(backlogMarkdown);
     const row = rows.find((entry) => entry.id === expectedSprintId);
     if (!row) {
@@ -396,16 +517,66 @@ export function resolveSprintAuthority({ sprintId, explicitPath, canonicalPath, 
   return matches[0];
 }
 
-export function closedDecisionIds(prd) {
-  return new Set([...prd.matchAll(/^\|\s*(D\d+)\s*\|\s*(?!<|\[)(.+?)\s*\|\s*$/gm)].map((match) => match[1]));
+function setTableValue(markdown, label, value) {
+  const re = new RegExp(
+    `^(\\|\\s*${label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\|\\s*)(.*?)(\\s*\\|\\s*)$`,
+    'im',
+  );
+  if (re.test(markdown)) return markdown.replace(re, `$1${value}$3`);
+  const contratoStatus = /^\|\s*Contrato status\s*\|.*$/im;
+  if (contratoStatus.test(markdown)) {
+    return markdown.replace(contratoStatus, (row) => `${row}\n| ${label} | ${value} |`);
+  }
+  return `${markdown.trimEnd()}\n| ${label} | ${value} |\n`;
 }
 
-export function pendingInterviewQuestions(prd, questions) {
-  const closed = closedDecisionIds(prd);
+/** Prefer §7 (contrato) quando presente; senão varre o documento inteiro. */
+export function closedDecisionIds(markdown) {
+  const scope = extractSectionMarkdown(markdown, 7) ?? markdown;
+  return new Set([...scope.matchAll(/^\|\s*(D\d+)\s*\|\s*(?!<|\[)(.+?)\s*\|\s*$/gm)].map((match) => match[1]));
+}
+
+export function pendingInterviewQuestions(markdown, questions) {
+  const closed = closedDecisionIds(markdown);
   return questions.filter((question) => !closed.has(question.decision_id));
 }
 
-export function applyInterviewRound(prd, answers, date = new Date().toISOString().slice(0, 10)) {
+/**
+ * Aprova o contrato §7: `Contrato status: aprovado` + `Selo do contrato` (sha256 do §7).
+ * Status/selo vivem no §1 — fora do bloco hasheado — mesma normalização de `validateAcceptanceSeal`.
+ */
+export function approveAcceptanceContract(markdown) {
+  let updated = setTableValue(markdown, 'Contrato status', 'aprovado');
+  const seal = computeAcceptanceSeal(updated);
+  if (!seal) throw new Error('ACCEPTANCE_BLOCK_MISSING');
+  updated = setTableValue(updated, 'Selo do contrato', seal);
+  return updated;
+}
+
+function applyDecisionRow(markdown, decisionId, value) {
+  const replacement = `| ${decisionId} | ${value} |`;
+  const section7 = extractSectionMarkdown(markdown, 7);
+  const scope = section7 ?? markdown;
+  const row = new RegExp(`^\\|\\s*${decisionId}\\s*\\|.*$`, 'm');
+  let nextScope;
+  if (row.test(scope)) {
+    nextScope = scope.replace(row, replacement);
+  } else if (/(\| ID \| Decisão \|\n\|[-| ]+\|)/.test(scope)) {
+    nextScope = scope.replace(/(\| ID \| Decisão \|\n\|[-| ]+\|)/, `$1\n${replacement}`);
+  } else {
+    throw new Error(`DECISION_TABLE_MISSING:${decisionId}`);
+  }
+  if (section7 == null) return nextScope;
+  return markdown.slice(0, markdown.indexOf(section7)) + nextScope + markdown.slice(markdown.indexOf(section7) + section7.length);
+}
+
+/**
+ * Persiste respostas D* no markdown do sprint file (§7.1).
+ * Se o contrato estava `aprovado`, volta a `draft` e limpa o selo antes de editar.
+ * Com `{ approve: true }`, fecha com `approveAcceptanceContract` (selo byte-idêntico ao Plano 2).
+ */
+export function applyInterviewRound(markdown, answers, date = new Date().toISOString().slice(0, 10), options = {}) {
+  const { approve = false } = options;
   const ids = new Set();
   for (const answer of answers) {
     if (!answer || typeof answer.decision_id !== 'string' || !/^D\d+$/.test(answer.decision_id)) throw new Error('INVALID_DECISION_ID');
@@ -413,25 +584,29 @@ export function applyInterviewRound(prd, answers, date = new Date().toISOString(
     if (typeof answer.value !== 'string' || !answer.value.trim()) throw new Error(`EMPTY_DECISION_VALUE:${answer.decision_id}`);
     ids.add(answer.decision_id);
   }
-  let updated = prd;
+  let updated = markdown;
+  const status = tableValue(updated, 'Contrato status');
+  if (status && /^aprovado$/i.test(status.trim())) {
+    updated = setTableValue(updated, 'Contrato status', 'draft');
+    updated = setTableValue(updated, 'Selo do contrato', 'pendente até aprovação');
+  }
   for (const answer of answers) {
-    const row = new RegExp(`^\\|\\s*${answer.decision_id}\\s*\\|.*$`, 'm');
-    const replacement = `| ${answer.decision_id} | ${answer.value} |`;
-    updated = row.test(updated) ? updated.replace(row, replacement) : updated.replace(/(\| ID \| Decisão \|\n\|[-| ]+\|)/, `$1\n${replacement}`);
+    updated = applyDecisionRow(updated, answer.decision_id, answer.value);
   }
   const log = `${date} — entrevista: ${answers.map((answer) => answer.decision_id).join(', ')} persistida(s)`;
   updated = /\*\*Histórico:\*\*/.test(updated)
     ? updated.replace(/(\*\*Histórico:\*\*[^\n]*)/, `$1 · ${log}`)
     : `${updated.trimEnd()}\n\n**Histórico:** ${log}\n`;
+  if (approve) updated = approveAcceptanceContract(updated);
   return updated;
 }
 
-export function persistInterviewRound(prdPath, answers, date = new Date().toISOString().slice(0, 10)) {
-  const absolute = path.resolve(prdPath);
+export function persistInterviewRound(sprintPath, answers, date = new Date().toISOString().slice(0, 10), options = {}) {
+  const absolute = path.resolve(sprintPath);
   const temporary = path.join(path.dirname(absolute), `.${path.basename(absolute)}.${process.pid}.${Date.now()}.tmp`);
   try {
     const current = fs.readFileSync(absolute, 'utf8');
-    const updated = applyInterviewRound(current, answers, date);
+    const updated = applyInterviewRound(current, answers, date, options);
     const materialized = closedDecisionIds(updated);
     const missingBeforeWrite = answers.filter((answer) => !materialized.has(answer.decision_id));
     if (missingBeforeWrite.length > 0) {
