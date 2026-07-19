@@ -46,7 +46,13 @@ import {
   ping,
   toolsList,
 } from './server.js';
-import { parseSprintRows } from '../skills/_shared/scripts/document_quality.mjs';
+import { parseSprintRows, validateSprintFileConformance } from '../skills/_shared/scripts/document_quality.mjs';
+import { fileURLToPath } from 'node:url';
+
+const SPRINT_TEMPLATE_PATH = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '../templates/SPRINT_TEMPLATE.md',
+);
 
 function lockValidator(args) {
   if (args.action === 'start' && args.state_path) {
@@ -1105,7 +1111,31 @@ function sprintDoc({
   backlog = 'BACKLOG.md#S01',
   status = 'ready',
   dorStatus = null,
+  contratoStatus = 'draft',
+  includeContrato = true,
+  omitDecisions = false,
+  omitAceiteGroup = null,
 } = {}) {
+  const contratoBlock = includeContrato ? [
+    '## 7. Contrato de produto (congelado)',
+    '### 7.1 Decisões de produto (D*)',
+    '| ID | Decisão |',
+    '|---|---|',
+    ...(omitDecisions ? [] : ['| D1 | Runtime harness entrega gate observável |']),
+    '### 7.2 Cenários UX',
+    '### 7.2.1 Carregar harness',
+    '- **Entrada:** operador abre o harness',
+    '- **Comportamento:** loading / vazio / erro',
+    '- **Sucesso:** gate passa',
+    '### 7.3 Aceite binário',
+    ...(omitAceiteGroup === 'Produto' ? [] : ['**Produto**', '- [ ] Gate observável']),
+    ...(omitAceiteGroup === 'UX' ? [] : ['**UX**', '- [ ] Loading e erro visíveis']),
+    ...(omitAceiteGroup === 'Dados' ? [] : ['**Dados**', '- [ ] Manifest coerente']),
+    ...(omitAceiteGroup === 'Regressão de produto' ? [] : ['**Regressão de produto**', '- [ ] Parser antigo preservado']),
+  ] : [
+    '## 7. Contrato de produto (congelado)',
+    'sem contrato',
+  ];
   return [
     `# Sprint viva — ${id} — Runtime harness`,
     '',
@@ -1116,6 +1146,7 @@ function sprintDoc({
     '| Nome | Runtime harness |',
     `| Status | ${status} |`,
     `| Backlog mestre | ${backlog} |`,
+    `| Contrato status | ${contratoStatus} |`,
     '| PRD | pendente |',
     '| PLAN | pendente |',
     '| State / evidência | pendente |',
@@ -1142,8 +1173,7 @@ function sprintDoc({
     '| ID | Decisão | Fonte | Impacto | Status |',
     '|---|---|---|---|---|',
     '| SD-001 | seguir | backlog | baixo | aprovada |',
-    '## 7. Critérios candidatos para PRD',
-    '- [ ] Critério',
+    ...contratoBlock,
     '## 8. Definition of Ready',
     '- [ ] Próxima ação explícita.',
     ...(dorStatus ? [`**Status DoR:** ${dorStatus}`] : []),
@@ -1364,6 +1394,112 @@ test('talos_verify_sprint_file: backlog link ausente falha', () => {
   });
   assert.equal(r.status, 'blocked');
   assert.ok(r.pendencies.some((p) => p.category === 'backlog_link'));
+});
+
+test('SPRINT_TEMPLATE: §7 contrato congelado com 7.1/7.2/7.3 e 4 grupos de aceite (AC-1.1.1)', () => {
+  const template = fs.readFileSync(SPRINT_TEMPLATE_PATH, 'utf8');
+  assert.match(template, /^## 7\. Contrato de produto \(congelado\)\s*$/m);
+  assert.match(template, /^### 7\.1 Decisões de produto \(D\*\)\s*$/m);
+  assert.match(template, /^### 7\.2 Cenários UX\s*$/m);
+  assert.match(template, /^### 7\.3 Aceite binário\s*$/m);
+  for (const group of ['Produto', 'UX', 'Dados', 'Regressão de produto']) {
+    assert.match(template, new RegExp(`\\*\\*${group}\\*\\*`));
+  }
+});
+
+test('SPRINT_TEMPLATE: §1 contém Contrato status (AC-1.1.2)', () => {
+  const template = fs.readFileSync(SPRINT_TEMPLATE_PATH, 'utf8');
+  assert.match(template, /^\|\s*Contrato status\s*\|\s*\[draft \/ aprovado\]\s*\|/m);
+});
+
+test('SPRINT_TEMPLATE: numeração 1–16 preservada; §9/§10/§12/§13/§16 intactas (AC-1.1.3)', () => {
+  const template = fs.readFileSync(SPRINT_TEMPLATE_PATH, 'utf8');
+  for (const heading of [
+    '## 1. Metadados',
+    '## 2. Objetivo e valor',
+    '## 3. Escopo da sprint',
+    '## 4. Contexto e fontes',
+    '## 5. Dependências e bloqueios',
+    '## 6. Decisões da sprint',
+    '## 7. Contrato de produto (congelado)',
+    '## 8. Definition of Ready',
+    '## 9. Eval manifest',
+    '## 10. Policy manifest',
+    '## 11. Guia e sensores',
+    '## 12. Evidence-to-claim',
+    '## 13. PRD e PLAN',
+    '## 14. Execução e validação',
+    '## 15. Aprendizados e handoff para próximas sprints',
+    '## 16. Histórico',
+  ]) {
+    assert.match(template, new RegExp(`^${heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`, 'm'));
+  }
+  assert.doesNotMatch(template, /^## 7\. Critérios candidatos para PRD\s*$/m);
+});
+
+test('validateSprintFileConformance: contrato §7 completo → valid:true (AC-1.2.1)', () => {
+  const r = validateSprintFileConformance(sprintDoc({ contratoStatus: 'draft' }));
+  assert.equal(r.valid, true);
+  assert.equal(r.pending_count, 0);
+});
+
+test('validateSprintFileConformance: sem D* → pendência decisoes (AC-1.2.2)', () => {
+  const r = validateSprintFileConformance(sprintDoc({ omitDecisions: true }));
+  assert.equal(r.valid, false);
+  assert.ok(r.pendencies.some((p) => p.category === 'contrato_produto' && p.item === 'decisoes'));
+});
+
+test('validateSprintFileConformance: sem grupo de aceite → pendência aceite (AC-1.2.3)', () => {
+  const r = validateSprintFileConformance(sprintDoc({ omitAceiteGroup: 'Dados' }));
+  assert.equal(r.valid, false);
+  assert.ok(r.pendencies.some((p) => p.category === 'contrato_produto' && p.item === 'aceite'));
+});
+
+test('validateSprintFileConformance: standalone sem pendência de backlink (AC-1.2.4)', () => {
+  const markdown = sprintDoc({ backlog: 'Não aplicável (standalone)' });
+  const r = validateSprintFileConformance(markdown, {
+    sprintPath: 'SPRINT_S01_standalone.md',
+    sprintId: 'S01',
+    backlogPath: 'BACKLOG.md',
+    backlogMarkdown: BACKLOG_WITH_SPRINT_FILE.replace('S01', 'S99'),
+  });
+  assert.equal(r.valid, true);
+  assert.ok(!r.pendencies.some((p) => p.category === 'backlog_link'));
+  assert.ok(!r.pendencies.some((p) => p.item === 'Backlog mestre'));
+});
+
+test('validateSprintFileConformance: manifests e evidence-to-claim preservados (AC-1.2.5)', () => {
+  const withoutEval = validateSprintFileConformance(sprintDoc({ includeEval: false }));
+  assert.ok(withoutEval.pendencies.some((p) => p.category === 'eval_manifest'));
+
+  const withoutPolicy = validateSprintFileConformance(
+    sprintDoc().replace(/```yaml\npolicy_manifest:[\s\S]*?```/, 'sem policy'),
+  );
+  assert.ok(withoutPolicy.pendencies.some((p) => p.category === 'policy_manifest'));
+
+  const withoutEvidence = validateSprintFileConformance(
+    sprintDoc().replace(
+      '| Claim | Onde foi prometido | Evidência esperada | Evidência real | Status |',
+      '| Claim | Fonte | Esperada | Real | Estado |',
+    ),
+  );
+  assert.ok(withoutEvidence.pendencies.some((p) => p.category === 'evidence_to_claim'));
+});
+
+test('talos_verify_sprint_file: contrato completo passa no gate público (AC-1.2.1 seam)', () => {
+  const root = tmpRoot();
+  fs.mkdirSync(path.join(root, '.talos/backlog/sprints'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md'), sprintDoc());
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), BACKLOG_WITH_SPRINT_FILE);
+  const r = verifySprintFile({
+    run_id: 'r1',
+    project_root: root,
+    sprint_path: '.talos/backlog/sprints/SPRINT_S01_runtime.md',
+    sprint_id: 'S01',
+    backlog_path: 'BACKLOG.md',
+  });
+  assert.equal(r.status, 'passed');
+  assert.equal(r.pending_count, 0);
 });
 
 function backlogWithRows(rows) {
