@@ -58,7 +58,7 @@ O `prompt_template` (de `talos_capabilities.subagent_dispatch.fallback`) aponta 
 
 - `skill_id`
 - `skill_md_path` ou indicação nativa equivalente da skill
-- `prd_path` / `plan_path` / flags da fase
+- `sprint_file_path` / `plan_path` / flags da fase (legado: `prd_path` só se o host ainda repassar; aceite mora no §7 — não gerar PRD)
 - instrução: "primeira ação: carregar a skill completa; segunda ação: executar a skill"
 
 ## Descoberta de `SKILL.md`

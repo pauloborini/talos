@@ -164,14 +164,27 @@ test('Sprint PRD: múltiplos backlogs conflitantes bloqueiam autoridade', () => 
 });
 
 test('interview: persiste resposta e não repete decisão fechada', () => {
-  const prd = '## 3. Decisões de produto (fechadas)\n\n| ID | Decisão |\n|---|---|\n| D1 | Escolha anterior |\n\n## 4. Fluxos\n';
+  const sprint = [
+    '## 1. Metadados',
+    '| Campo | Valor |',
+    '|---|---|',
+    '| Contrato status | draft |',
+    '| Selo do contrato | pendente até aprovação |',
+    '',
+    '## 7. Contrato de produto (congelado)',
+    '### 7.1 Decisões de produto (D*)',
+    '| ID | Decisão |',
+    '|---|---|',
+    '| D1 | Escolha anterior |',
+    '',
+  ].join('\n');
   const questions = [{ decision_id: 'D1' }, { decision_id: 'D2' }];
-  assert.deepEqual(pendingInterviewQuestions(prd, questions), [{ decision_id: 'D2' }]);
+  assert.deepEqual(pendingInterviewQuestions(sprint, questions), [{ decision_id: 'D2' }]);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'talos-interview-'));
-  const prdPath = path.join(dir, 'PRD.md');
-  fs.writeFileSync(prdPath, prd);
-  const updated = persistInterviewRound(prdPath, [{ decision_id: 'D2', value: 'Nova escolha' }], '2026-06-22');
-  assert.equal(fs.readFileSync(prdPath, 'utf8'), updated);
+  const sprintPath = path.join(dir, 'SPRINT.md');
+  fs.writeFileSync(sprintPath, sprint);
+  const updated = persistInterviewRound(sprintPath, [{ decision_id: 'D2', value: 'Nova escolha' }], '2026-06-22');
+  assert.equal(fs.readFileSync(sprintPath, 'utf8'), updated);
   assert.deepEqual([...closedDecisionIds(updated)].sort(), ['D1', 'D2']);
   assert.deepEqual(pendingInterviewQuestions(updated, questions), []);
   assert.match(updated, /entrevista: D2 persistida/);
@@ -180,12 +193,18 @@ test('interview: persiste resposta e não repete decisão fechada', () => {
     import fs from 'node:fs';
     import { pendingInterviewQuestions } from ${JSON.stringify(moduleUrl)};
     process.stdout.write(JSON.stringify(pendingInterviewQuestions(fs.readFileSync(process.argv[1], 'utf8'), [{ decision_id: 'D2' }])));
-  `, prdPath], { encoding: 'utf8' });
+  `, sprintPath], { encoding: 'utf8' });
   assert.deepEqual(JSON.parse(freshProcess), []);
   const invalidPath = path.join(dir, 'INVALID.md');
-  fs.writeFileSync(invalidPath, '# PRD sem tabela de decisões\n');
-  assert.throws(() => persistInterviewRound(invalidPath, [{ decision_id: 'D3', value: 'x' }]), /DECISION_NOT_MATERIALIZED/);
-  assert.equal(fs.readFileSync(invalidPath, 'utf8'), '# PRD sem tabela de decisões\n');
-  assert.throws(() => persistInterviewRound(path.join(dir, 'missing', 'PRD.md'), [{ decision_id: 'D3', value: 'x' }]), /INTERVIEW_PERSISTENCE_FAILED/);
+  fs.writeFileSync(invalidPath, '# Sprint sem tabela de decisões\n');
+  assert.throws(
+    () => persistInterviewRound(invalidPath, [{ decision_id: 'D3', value: 'x' }]),
+    /INTERVIEW_PERSISTENCE_FAILED:DECISION_TABLE_MISSING:D3/,
+  );
+  assert.equal(fs.readFileSync(invalidPath, 'utf8'), '# Sprint sem tabela de decisões\n');
+  assert.throws(
+    () => persistInterviewRound(path.join(dir, 'missing', 'SPRINT.md'), [{ decision_id: 'D3', value: 'x' }]),
+    /INTERVIEW_PERSISTENCE_FAILED/,
+  );
   fs.rmSync(dir, { recursive: true, force: true });
 });

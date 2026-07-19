@@ -56,8 +56,10 @@ copy_mcp_runtime() {
   local destination_parent="$1"
   cp -R "$ROOT/packages/mcp-server" "$destination_parent/"
   rm -f "$destination_parent/mcp-server"/*.test.js
+  rm -f "$destination_parent/mcp-server/run.test.mjs"
   rm -rf "$destination_parent/mcp-server/fixtures"
   rm -rf "$destination_parent/mcp-server/.talos"
+  chmod +x "$destination_parent/mcp-server/run.sh"
 }
 
 assert_no_runtime_state() {

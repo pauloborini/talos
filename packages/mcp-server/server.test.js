@@ -29,11 +29,12 @@ import {
   BANNER_EVENTS,
   renderBanner,
   verifyArtifact,
-  scanPrd,
+  scanAcceptance,
   verifyTemplateConformance,
   verifySprintFile,
   verifyBacklogIndex,
   selectNextSprint,
+  nextActionForSelectedSprint,
   updateSprintStatus,
   classifyInput,
   preflight,
@@ -46,7 +47,22 @@ import {
   ping,
   toolsList,
 } from './server.js';
-import { parseSprintRows } from '../skills/_shared/scripts/document_quality.mjs';
+import {
+  parseSprintRows,
+  validateSprintFileConformance,
+  validateAcceptanceSeal,
+  computeAcceptanceSeal,
+  extractAcceptanceBlock,
+  applyInterviewRound,
+  approveAcceptanceContract,
+  closedDecisionIds,
+} from '../skills/_shared/scripts/document_quality.mjs';
+import { fileURLToPath } from 'node:url';
+
+const SPRINT_TEMPLATE_PATH = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '../templates/SPRINT_TEMPLATE.md',
+);
 
 function lockValidator(args) {
   if (args.action === 'start' && args.state_path) {
@@ -165,7 +181,7 @@ test('capabilities: schema_version atual e campos do contrato v5', () => {
   assert.ok(cap.validator_dispatch);
   assert.ok(cap.question_prompt);
   assert.equal(cap.question_prompt.mode, 'structured');
-  assert.equal(cap.question_prompt.persistence, 'prd_after_each_round');
+  assert.equal(cap.question_prompt.persistence, 'sprint_after_each_round');
   assert.ok(cap.hooks);
   assert.deepEqual(cap.prerequisites, PREREQUISITES);
   assert.deepEqual(cap.known_hosts, HOST_NAMES);
@@ -753,50 +769,62 @@ test('WORKFLOW_CONFIG: modo execute presente; audit e interview-only/interview_o
   assert.equal(WORKFLOW_CONFIG.skills.audit, 'talos-audit');
 });
 
-test('documentFlowForRouting: macro input prioriza backlog antes de PRD/plano', () => {
+test('documentFlowForRouting: macro input prioriza backlog antes de sprint/plano', () => {
   const full = documentFlowForRouting('full', 'idea');
   assert.equal(full.priority, 'backlog_first');
   assert.deepEqual(full.skills, [
     'talos-backlog-generator',
-    'talos-sprint-prd-generator',
-    'talos-prd-interview',
+    'talos-sprint-interview',
     'talos-plan-handoff',
   ]);
-  assert.deepEqual(full.artifacts, ['BACKLOG_MESTRE_*.md', 'SPRINT_S<NN>_*.md', 'PRD_*.md', 'PLAN_*.md']);
+  assert.deepEqual(full.artifacts, ['BACKLOG_MESTRE_*.md', 'SPRINT_S<NN>_*.md', 'PLAN_*.md']);
+  assert.ok(!full.skills.includes('talos-sprint-prd-generator'));
+  assert.ok(!full.artifacts.includes('PRD_*.md'));
 
   const direct = documentFlowForRouting('direct', 'roadmap');
   assert.equal(direct.priority, 'backlog_first');
   assert.deepEqual(direct.skills, [
     'talos-backlog-generator',
-    'talos-sprint-prd-generator',
-    'talos-prd-interview',
+    'talos-sprint-interview',
   ]);
+  assert.ok(!direct.artifacts.includes('PRD_*.md'));
 });
 
 test('documentFlowForRouting: backlog existente preserva execução pequena por sprint', () => {
   const flow = documentFlowForRouting('full', 'backlog-item', 'backlog');
   assert.equal(flow.priority, 'sprint_from_backlog');
   assert.ok(!flow.skills.includes('talos-backlog-generator'));
-  assert.deepEqual(flow.artifacts, ['SPRINT_S<NN>_*.md', 'PRD_*.md', 'PLAN_*.md']);
+  assert.deepEqual(flow.artifacts, ['SPRINT_S<NN>_*.md', 'PLAN_*.md']);
+  assert.ok(flow.skills.includes('talos-sprint-interview'));
+  assert.ok(!flow.artifacts.includes('PRD_*.md'));
 });
 
 test('documentFlowForRouting: input sprint é alias estrito de backlog-item', () => {
   const full = documentFlowForRouting('full', 'sprint');
   assert.equal(full.priority, 'sprint_from_backlog');
   assert.ok(!full.skills.includes('talos-backlog-generator'));
-  assert.deepEqual(full.artifacts, ['SPRINT_S<NN>_*.md', 'PRD_*.md', 'PLAN_*.md']);
+  assert.deepEqual(full.artifacts, ['SPRINT_S<NN>_*.md', 'PLAN_*.md']);
 
   const direct = documentFlowForRouting('direct', 'sprint');
   assert.equal(direct.priority, 'sprint_from_backlog');
   assert.ok(!direct.skills.includes('talos-backlog-generator'));
-  assert.deepEqual(direct.artifacts, ['SPRINT_S<NN>_*.md', 'PRD_*.md']);
+  assert.deepEqual(direct.artifacts, ['SPRINT_S<NN>_*.md']);
+});
+
+test('documentFlowForRouting: fallback é recorte_first sem PRD (AC-3.1.3/3.1.4)', () => {
+  const flow = documentFlowForRouting('full', 'plan');
+  assert.equal(flow.priority, 'recorte_first');
+  assert.ok(flow.skills.includes('talos-sprint-interview'));
+  assert.ok(!flow.skills.includes('talos-sprint-prd-generator'));
+  assert.ok(!flow.artifacts.includes('PRD_*.md'));
+  assert.notEqual(flow.priority, 'prd_first');
 });
 
 test('expectedNextPhase: execute → plan_execute sem regredir full/direct/interview (T02)', () => {
   assert.equal(expectedNextPhase({ mode: 'execute' }, {}), 'plan_execute');
   assert.equal(expectedNextPhase({ mode: 'full' }, {}), 'plan_handoff');
   assert.equal(expectedNextPhase({ mode: 'direct' }, {}), 'plan_execute');
-  assert.equal(expectedNextPhase({ mode: 'interview-only' }, {}), 'prd_interview');
+  assert.equal(expectedNextPhase({ mode: 'interview-only' }, {}), 'sprint_interview');
   assert.equal(expectedNextPhase({ mode: 'audit' }, {}), 'audit_report');
   // next_phase explícito do dispatch sempre prevalece
   assert.equal(expectedNextPhase({ mode: 'execute' }, { next_phase: 'slice_review' }), 'slice_review');
@@ -846,47 +874,6 @@ test('talos_preflight materializa document_flow backlog_first para macro input',
   assert.equal(expectedNextPhase(result.routing, {}), 'plan_handoff');
 });
 
-test('contrato interview-only materializa PRD real e passa artifact+TC antes da entrevista (Etapa 1 T04)', () => {
-  const root = tmpRoot();
-  const runId = 'interview-only-real-prd';
-  preflight({ run_id: runId, project_root: root, mode: 'interview-only', host: 'codex' });
-  const prdPath = path.join(root, 'PRD_BRAINSTORM.md');
-  assert.equal(verifyArtifact({ run_id: runId, project_root: root, artifact_path: prdPath, artifact_kind: 'prd' }).status, 'blocked');
-  fs.writeFileSync(prdPath, [
-    '# PRD: Brainstorm',
-    '| Campo | Valor |',
-    '|---|---|',
-    '| **Status** | Em decisão |',
-    '## 1. Contexto e objetivo',
-    'Objetivo inicial da entrevista.',
-    '## 2. Escopo',
-    'Escopo preliminar.',
-    '## 3. Decisões de produto (fechadas)',
-    '| ID | Decisão |',
-    '|---|---|',
-    '| D1 | Levar este draft para entrevista estruturada |',
-    '## 4. Fluxos e cenários UX',
-    'Fluxo inicial.',
-    '## 5. Contrato funcional e invariantes',
-    'Contrato inicial.',
-    '## 6. Critérios de aceite (negócio)',
-    '**Produto**', '- [ ] Objetivo confirmado.',
-    '**UX**', '- [ ] Fluxo confirmado.',
-    '**Dados**', '- [ ] Dados confirmados.',
-    '**Regressão de produto**', '- [ ] Regressões confirmadas.',
-  ].join('\n'));
-  const artifact = verifyArtifact({ run_id: runId, project_root: root, artifact_path: prdPath, artifact_kind: 'prd' });
-  const conformance = verifyTemplateConformance({
-    run_id: runId, project_root: root, artifact_path: prdPath, artifact_type: 'prd',
-  });
-  assert.equal(artifact.status, 'passed');
-  assert.equal(conformance.status, 'passed');
-  fs.writeFileSync(path.join(root, 'PRD_INVALIDO.md'), '# PRD incompleto\n');
-  assert.equal(verifyTemplateConformance({
-    run_id: runId, project_root: root, artifact_path: path.join(root, 'PRD_INVALIDO.md'), artifact_type: 'prd',
-  }).status, 'blocked');
-});
-
 test('guaranteeLevelForMode: execute/full/direct = full_pipeline (T04)', () => {
   assert.equal(guaranteeLevelForMode('execute'), 'full_pipeline');
   assert.equal(guaranteeLevelForMode('full'), 'full_pipeline');
@@ -923,10 +910,9 @@ const CONFORMANT_PLAN = [
   '',
   '| Campo | Valor |',
   '|-------|-------|',
-  '| **PRD** | [PRD_x.md](./PRD_x.md) |',
   '| **Sprint file** | [SPRINT_S01_runtime.md](./SPRINT_S01_runtime.md) — `eval_manifest` §9 |',
   '',
-  'Política: [BOUNDARY_PRD_PLAN.md](./TEMPLATES/BOUNDARY_PRD_PLAN.md).',
+  'Política: [BOUNDARY_SPRINT_PLAN.md](./TEMPLATES/BOUNDARY_SPRINT_PLAN.md).',
   '',
   '## 1. Tradução executiva',
   '## 2. Invariantes de execução',
@@ -941,7 +927,24 @@ const CONFORMANT_PLAN = [
   '',
 ].join('\n');
 
-test('classifyArtifactContent: plano renomeado (sem prefixo PLAN_) classifica como plan via verdade forte (T03, PRD §5)', () => {
+test('contrato interview-only: TC rejeita artifact_type prd (AC-3.2.1)', () => {
+  const root = tmpRoot();
+  const runId = 'interview-only-tc-plan-only';
+  preflight({ run_id: runId, project_root: root, mode: 'interview-only', host: 'codex' });
+  const planPath = path.join(root, 'PLAN_BRAINSTORM.md');
+  fs.writeFileSync(planPath, CONFORMANT_PLAN);
+  assert.equal(verifyTemplateConformance({
+    run_id: runId, project_root: root, artifact_path: planPath, artifact_type: 'plan',
+  }).status, 'passed');
+  assert.throws(
+    () => verifyTemplateConformance({
+      run_id: runId, project_root: root, artifact_path: planPath, artifact_type: 'prd',
+    }),
+    (err) => err?.code === -32602 || /artifact_type inválido/.test(String(err?.message ?? err)),
+  );
+});
+
+test('classifyArtifactContent: plano renomeado (sem prefixo PLAN_) classifica como plan via verdade forte (T03)', () => {
   const r = classifyArtifactContent(CONFORMANT_PLAN, 'docs/algo_renomeado.md');
   assert.equal(r.artifact_type, 'plan');
   assert.equal(r.signal, 'template_conformance');
@@ -953,10 +956,11 @@ test('classifyArtifactContent: nome PLAN_*.md é só dica fraca, não verdade (T
   assert.equal(r.signal, 'weak_name_hint');
 });
 
-test('classifyArtifactContent: PRD por marcadores de template (T03)', () => {
+test('classifyArtifactContent: PRD-ish classifica como idea (D9 / AC-3.1.4)', () => {
   const prd = '# PRD: algo\n\n## 3. Decisões de produto\n\n| ID | Decisão |\n|----|---------|\n| D1 | x |';
   const r = classifyArtifactContent(prd, 'docs/PRD_algo.md');
-  assert.equal(r.artifact_type, 'prd');
+  assert.equal(r.artifact_type, 'idea');
+  assert.equal(r.signal, 'spec_markers');
 });
 
 test('classifyArtifactContent: backlog por marcadores (T03)', () => {
@@ -973,26 +977,25 @@ test('classifyArtifactContent: input sem marcadores → unknown (T03)', () => {
 
 const BANNER_RE = /^▸ talos: /;
 
-test('BANNER_TEMPLATES: banco tem exatamente os 11 eventos do PRD §4 (T06)', () => {
+test('BANNER_TEMPLATES: banco tem exatamente os 11 eventos lógicos (T06 / AC-3.3.2)', () => {
   // 12 entradas: os 11 eventos do banco + a variante preflight ok/fail conta como
-  // dois templates (preflight_ok/preflight_fail) e prd como dois (prd_ok/prd_lacunas).
-  // O PRD §4 enumera 11 EVENTOS lógicos; o banco materializa cada variante de status.
+  // dois templates (preflight_ok/preflight_fail) e aceite como dois (aceite_ok/aceite_lacunas).
   const eventos = [
     'roteia', 'roteia_troca', 'preflight_ok', 'preflight_fail',
-    'prd_lacunas', 'prd_ok', 'entrevista', 'plano', 'exec',
+    'aceite_lacunas', 'aceite_ok', 'entrevista', 'plano', 'exec',
     'validacao', 'review', 'done',
   ];
   for (const ev of eventos) {
     assert.ok(Object.prototype.hasOwnProperty.call(BANNER_TEMPLATES, ev), `falta evento ${ev}`);
     assert.match(BANNER_TEMPLATES[ev], BANNER_RE, `template ${ev} sem prefixo canônico`);
   }
-  // Os 11 eventos lógicos do PRD: roteia, roteia c/ troca, preflight, prd, entrevista,
-  // plano, exec, validação, review, done + preflight_ok/fail e prd_ok/lacunas como pares.
   assert.deepEqual(BANNER_EVENTS, eventos);
   assert.equal(BANNER_EVENTS.length, 12);
+  assert.ok(!Object.prototype.hasOwnProperty.call(BANNER_TEMPLATES, 'prd_ok'));
+  assert.ok(!Object.prototype.hasOwnProperty.call(BANNER_TEMPLATES, 'prd_lacunas'));
 });
 
-test('renderBanner: preenche slots e devolve string pt-BR canônica (T06)', () => {
+test('renderBanner: preenche slots e devolve string pt-BR canônica (T06 / AC-3.3.3)', () => {
   assert.equal(
     renderBanner('roteia', { tipo: 'plan', modo: 'execute' }),
     '▸ talos: roteamento · input=plan → modo=execute',
@@ -1003,8 +1006,8 @@ test('renderBanner: preenche slots e devolve string pt-BR canônica (T06)', () =
   );
   assert.equal(renderBanner('preflight_ok', { caps: 'subagent+mcp' }), '▸ talos: preflight · ok (subagent+mcp)');
   assert.equal(renderBanner('preflight_fail', { motivo: 'x' }), '▸ talos: preflight · BLOCK · x');
-  assert.equal(renderBanner('prd_lacunas', { n: 3 }), '▸ talos: prd · 3 lacunas');
-  assert.equal(renderBanner('prd_ok', {}), '▸ talos: prd · ok');
+  assert.equal(renderBanner('aceite_lacunas', { n: 3 }), '▸ talos: aceite · 3 lacunas');
+  assert.equal(renderBanner('aceite_ok', {}), '▸ talos: aceite · ok');
   assert.equal(renderBanner('exec', { i: 2, n: 5 }), '▸ talos: exec · slice 2/5');
   assert.equal(renderBanner('validacao', { status: 'pass' }), '▸ talos: validação · pass');
   assert.equal(renderBanner('review', { status: 'ok' }), '▸ talos: review · ok');
@@ -1046,10 +1049,9 @@ const CONFORMANT_PLAN_DOC = [
   '',
   '| Campo | Valor |',
   '|-------|-------|',
-  '| **PRD** | [PRD_x.md](./PRD_x.md) |',
   '| **Sprint file** | [SPRINT_S01_runtime.md](./SPRINT_S01_runtime.md) — `eval_manifest` §9 |',
   '',
-  'Política: [BOUNDARY_PRD_PLAN.md](./TEMPLATES/BOUNDARY_PRD_PLAN.md).',
+  'Política: [BOUNDARY_SPRINT_PLAN.md](./TEMPLATES/BOUNDARY_SPRINT_PLAN.md).',
   '',
   '## 1. Tradução executiva',
   '## 2. Invariantes de execução',
@@ -1105,8 +1107,42 @@ function sprintDoc({
   backlog = 'BACKLOG.md#S01',
   status = 'ready',
   dorStatus = null,
+  contratoStatus = 'draft',
+  includeContrato = true,
+  omitDecisions = false,
+  omitAceiteGroup = null,
+  /** undefined = auto-selo quando aprovado; null = omitir campo; string = valor literal */
+  selo = undefined,
 } = {}) {
-  return [
+  const contratoBlock = includeContrato ? [
+    '## 7. Contrato de produto (congelado)',
+    '### 7.1 Decisões de produto (D*)',
+    '| ID | Decisão |',
+    '|---|---|',
+    ...(omitDecisions ? [] : ['| D1 | Runtime harness entrega gate observável |']),
+    '### 7.2 Cenários UX',
+    '### 7.2.1 Carregar harness',
+    '- **Entrada:** operador abre o harness',
+    '- **Comportamento:** loading / vazio / erro',
+    '- **Sucesso:** gate passa',
+    '### 7.3 Aceite binário',
+    ...(omitAceiteGroup === 'Produto' ? [] : ['**Produto**', '- [ ] Gate observável']),
+    ...(omitAceiteGroup === 'UX' ? [] : ['**UX**', '- [ ] Loading e erro visíveis']),
+    ...(omitAceiteGroup === 'Dados' ? [] : ['**Dados**', '- [ ] Manifest coerente']),
+    ...(omitAceiteGroup === 'Regressão de produto' ? [] : ['**Regressão de produto**', '- [ ] Parser antigo preservado']),
+  ] : [
+    '## 7. Contrato de produto (congelado)',
+    'sem contrato',
+  ];
+  const sealMeta = [];
+  if (selo === null) {
+    // omitir campo (AC-2.1.3)
+  } else if (typeof selo === 'string') {
+    sealMeta.push(`| Selo do contrato | ${selo} |`);
+  } else if (contratoStatus !== 'aprovado') {
+    sealMeta.push('| Selo do contrato | pendente até aprovação |');
+  }
+  let doc = [
     `# Sprint viva — ${id} — Runtime harness`,
     '',
     '## 1. Metadados',
@@ -1116,6 +1152,8 @@ function sprintDoc({
     '| Nome | Runtime harness |',
     `| Status | ${status} |`,
     `| Backlog mestre | ${backlog} |`,
+    `| Contrato status | ${contratoStatus} |`,
+    ...sealMeta,
     '| PRD | pendente |',
     '| PLAN | pendente |',
     '| State / evidência | pendente |',
@@ -1142,8 +1180,7 @@ function sprintDoc({
     '| ID | Decisão | Fonte | Impacto | Status |',
     '|---|---|---|---|---|',
     '| SD-001 | seguir | backlog | baixo | aprovada |',
-    '## 7. Critérios candidatos para PRD',
-    '- [ ] Critério',
+    ...contratoBlock,
     '## 8. Definition of Ready',
     '- [ ] Próxima ação explícita.',
     ...(dorStatus ? [`**Status DoR:** ${dorStatus}`] : []),
@@ -1178,7 +1215,7 @@ function sprintDoc({
     '| Claim | Onde foi prometido | Evidência esperada | Evidência real | Status |',
     '|---|---|---|---|---|',
     '| gate passa | sprint | node --test | pendente | pending |',
-    '## 13. PRD e PLAN',
+    '## 13. PLAN',
     '| Campo | Valor |',
     '|---|---|',
     '| Status | pendente |',
@@ -1194,8 +1231,15 @@ function sprintDoc({
     '| Data | Autor | Mudança |',
     '|---|---|---|',
     '| 2026-06-29 | Talos | Criação |',
-    '',
   ].join('\n');
+  if (contratoStatus === 'aprovado' && selo === undefined) {
+    const computed = computeAcceptanceSeal(doc);
+    doc = doc.replace(
+      `| Contrato status | ${contratoStatus} |`,
+      `| Contrato status | ${contratoStatus} |\n| Selo do contrato | ${computed} |`,
+    );
+  }
+  return doc;
 }
 
 const BACKLOG_WITH_SPRINT_FILE = [
@@ -1223,20 +1267,34 @@ test('talos_verify_artifact: ausente → banner de BLOCK não-vazio (T07)', () =
   assert.match(r.banner, /^▸ talos: preflight · BLOCK · /);
 });
 
-test('talos_scan_prd: 0 bloqueantes → banner prd · ok (T07)', () => {
+test('talos_scan_acceptance: 0 bloqueantes na §7 → banner aceite · ok (AC-3.3.1)', () => {
   const root = tmpRoot();
-  fs.writeFileSync(path.join(root, 'PRD.md'), VALID_PRD);
-  const r = scanPrd({ run_id: 'r1', project_root: root, prd_path: 'PRD.md' });
+  fs.writeFileSync(path.join(root, 'SPRINT.md'), sprintDoc({ contratoStatus: 'draft' }));
+  const r = scanAcceptance({ run_id: 'r1', project_root: root, sprint_path: 'SPRINT.md' });
   assert.equal(r.status, 'passed');
-  assert.equal(r.banner, '▸ talos: prd · ok');
+  assert.equal(r.banner, '▸ talos: aceite · ok');
+  assert.equal(r.sprint_path, 'SPRINT.md');
 });
 
-test('talos_scan_prd: PRD vazio → banner prd · {n} lacunas (T07)', () => {
+test('talos_scan_acceptance: sprint vazio → banner aceite · {n} lacunas (AC-3.3.1)', () => {
   const root = tmpRoot();
-  fs.writeFileSync(path.join(root, 'PRD.md'), '   ');
-  const r = scanPrd({ run_id: 'r1', project_root: root, prd_path: 'PRD.md' });
+  fs.writeFileSync(path.join(root, 'SPRINT.md'), '   ');
+  const r = scanAcceptance({ run_id: 'r1', project_root: root, sprint_path: 'SPRINT.md' });
   assert.equal(r.status, 'blocked');
-  assert.match(r.banner, /^▸ talos: prd · \d+ lacunas$/);
+  assert.match(r.banner, /^▸ talos: aceite · \d+ lacunas$/);
+});
+
+test('talos_scan_acceptance: ambiguidade TBD na §7 bloqueia (AC-3.3.1)', () => {
+  const root = tmpRoot();
+  const ambiguous = sprintDoc().replace(
+    '| D1 | Runtime harness entrega gate observável |',
+    '| D1 | Runtime harness TBD a confirmar |',
+  );
+  fs.writeFileSync(path.join(root, 'SPRINT.md'), ambiguous);
+  const r = scanAcceptance({ run_id: 'r1', project_root: root, sprint_path: 'SPRINT.md' });
+  assert.equal(r.status, 'blocked');
+  assert.ok(r.blocking_count >= 1);
+  assert.match(r.banner, /^▸ talos: aceite · \d+ lacunas$/);
 });
 
 test('talos_verify_template_conformance: plano conforme → banner plano (T07)', () => {
@@ -1247,26 +1305,27 @@ test('talos_verify_template_conformance: plano conforme → banner plano (T07)',
   assert.equal(r.banner, '▸ talos: plano · validado (TC pass)');
 });
 
-test('talos_verify_template_conformance: modo sprint exige Sprint file/EVAL em PRD e PLAN', () => {
+test('talos_verify_template_conformance: modo sprint exige Sprint file/EVAL no PLAN (AC-3.2.2/3.2.3)', () => {
   const root = tmpRoot();
-  fs.writeFileSync(path.join(root, 'PRD_ok.md'), STRICT_PRD_DOC);
   fs.writeFileSync(path.join(root, 'PLAN_ok.md'), CONFORMANT_PLAN_DOC);
-  assert.equal(verifyTemplateConformance({
-    run_id: 'r1', project_root: root, artifact_path: 'PRD_ok.md', artifact_type: 'prd',
-    required_status: 'Aprovado para implementação', require_sprint_file: true,
-  }).status, 'passed');
   assert.equal(verifyTemplateConformance({
     run_id: 'r1', project_root: root, artifact_path: 'PLAN_ok.md', artifact_type: 'plan',
     require_sprint_file: true,
   }).status, 'passed');
 
-  fs.writeFileSync(path.join(root, 'PRD_sem_sprint.md'), STRICT_PRD_DOC.replace(/\| \*\*Sprint file\*\*.*\n/, '').replace(/EVAL-001/g, ''));
-  const prdBlocked = verifyTemplateConformance({
-    run_id: 'r1', project_root: root, artifact_path: 'PRD_sem_sprint.md', artifact_type: 'prd',
-    required_status: 'Aprovado para implementação', require_sprint_file: true,
+  assert.throws(
+    () => verifyTemplateConformance({
+      run_id: 'r1', project_root: root, artifact_path: 'PLAN_ok.md', artifact_type: 'prd',
+    }),
+    (err) => err?.code === -32602 || /artifact_type inválido/.test(String(err?.message ?? err)),
+  );
+
+  fs.writeFileSync(path.join(root, 'PLAN_sem_sprint.md'), CONFORMANT_PLAN_DOC.replace(/\| \*\*Sprint file\*\*.*\n/, ''));
+  const planNoSprint = verifyTemplateConformance({
+    run_id: 'r1', project_root: root, artifact_path: 'PLAN_sem_sprint.md', artifact_type: 'plan',
   });
-  assert.equal(prdBlocked.status, 'blocked');
-  assert.ok(prdBlocked.pendencies.some((p) => p.category === 'sprint_file'));
+  assert.equal(planNoSprint.status, 'blocked');
+  assert.ok(planNoSprint.pendencies.some((p) => p.category === 'sprint_file'));
 
   fs.writeFileSync(path.join(root, 'PLAN_sem_eval.md'), CONFORMANT_PLAN_DOC.replace(/\| \*\*Sprint file\*\*.*\n/, '').replace(/- \*\*Eval\/Policy:\*\*.*\n/, '').replace(/EVAL-001/g, ''));
   const planBlocked = verifyTemplateConformance({
@@ -1366,6 +1425,228 @@ test('talos_verify_sprint_file: backlog link ausente falha', () => {
   assert.ok(r.pendencies.some((p) => p.category === 'backlog_link'));
 });
 
+test('SPRINT_TEMPLATE: §7 contrato congelado com 7.1/7.2/7.3 e 4 grupos de aceite (AC-1.1.1)', () => {
+  const template = fs.readFileSync(SPRINT_TEMPLATE_PATH, 'utf8');
+  assert.match(template, /^## 7\. Contrato de produto \(congelado\)\s*$/m);
+  assert.match(template, /^### 7\.1 Decisões de produto \(D\*\)\s*$/m);
+  assert.match(template, /^### 7\.2 Cenários UX\s*$/m);
+  assert.match(template, /^### 7\.3 Aceite binário\s*$/m);
+  for (const group of ['Produto', 'UX', 'Dados', 'Regressão de produto']) {
+    assert.match(template, new RegExp(`\\*\\*${group}\\*\\*`));
+  }
+});
+
+test('SPRINT_TEMPLATE: §1 contém Contrato status (AC-1.1.2)', () => {
+  const template = fs.readFileSync(SPRINT_TEMPLATE_PATH, 'utf8');
+  assert.match(template, /^\|\s*Contrato status\s*\|\s*\[draft \/ aprovado\]\s*\|/m);
+});
+
+test('SPRINT_TEMPLATE: numeração 1–16 preservada; §9/§10/§12/§13/§16 intactas (AC-1.1.3)', () => {
+  const template = fs.readFileSync(SPRINT_TEMPLATE_PATH, 'utf8');
+  for (const heading of [
+    '## 1. Metadados',
+    '## 2. Objetivo e valor',
+    '## 3. Escopo da sprint',
+    '## 4. Contexto e fontes',
+    '## 5. Dependências e bloqueios',
+    '## 6. Decisões da sprint',
+    '## 7. Contrato de produto (congelado)',
+    '## 8. Definition of Ready',
+    '## 9. Eval manifest',
+    '## 10. Policy manifest',
+    '## 11. Guia e sensores',
+    '## 12. Evidence-to-claim',
+    '## 13. PLAN',
+    '## 14. Execução e validação',
+    '## 15. Aprendizados e handoff para próximas sprints',
+    '## 16. Histórico',
+  ]) {
+    assert.match(template, new RegExp(`^${heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`, 'm'));
+  }
+  assert.doesNotMatch(template, /^## 7\. Critérios candidatos para PRD\s*$/m);
+});
+
+test('validateSprintFileConformance: contrato §7 completo → valid:true (AC-1.2.1)', () => {
+  const r = validateSprintFileConformance(sprintDoc({ contratoStatus: 'draft' }));
+  assert.equal(r.valid, true);
+  assert.equal(r.pending_count, 0);
+});
+
+test('validateSprintFileConformance: sem D* → pendência decisoes (AC-1.2.2)', () => {
+  const r = validateSprintFileConformance(sprintDoc({ omitDecisions: true }));
+  assert.equal(r.valid, false);
+  assert.ok(r.pendencies.some((p) => p.category === 'contrato_produto' && p.item === 'decisoes'));
+});
+
+test('validateSprintFileConformance: sem grupo de aceite → pendência aceite (AC-1.2.3)', () => {
+  const r = validateSprintFileConformance(sprintDoc({ omitAceiteGroup: 'Dados' }));
+  assert.equal(r.valid, false);
+  assert.ok(r.pendencies.some((p) => p.category === 'contrato_produto' && p.item === 'aceite'));
+});
+
+test('validateSprintFileConformance: standalone sem pendência de backlink (AC-1.2.4)', () => {
+  const markdown = sprintDoc({ backlog: 'Não aplicável (standalone)' });
+  const r = validateSprintFileConformance(markdown, {
+    sprintPath: 'SPRINT_S01_standalone.md',
+    sprintId: 'S01',
+    backlogPath: 'BACKLOG.md',
+    backlogMarkdown: BACKLOG_WITH_SPRINT_FILE.replace('S01', 'S99'),
+  });
+  assert.equal(r.valid, true);
+  assert.ok(!r.pendencies.some((p) => p.category === 'backlog_link'));
+  assert.ok(!r.pendencies.some((p) => p.item === 'Backlog mestre'));
+});
+
+test('validateSprintFileConformance: manifests e evidence-to-claim preservados (AC-1.2.5)', () => {
+  const withoutEval = validateSprintFileConformance(sprintDoc({ includeEval: false }));
+  assert.ok(withoutEval.pendencies.some((p) => p.category === 'eval_manifest'));
+
+  const withoutPolicy = validateSprintFileConformance(
+    sprintDoc().replace(/```yaml\npolicy_manifest:[\s\S]*?```/, 'sem policy'),
+  );
+  assert.ok(withoutPolicy.pendencies.some((p) => p.category === 'policy_manifest'));
+
+  const withoutEvidence = validateSprintFileConformance(
+    sprintDoc().replace(
+      '| Claim | Onde foi prometido | Evidência esperada | Evidência real | Status |',
+      '| Claim | Fonte | Esperada | Real | Estado |',
+    ),
+  );
+  assert.ok(withoutEvidence.pendencies.some((p) => p.category === 'evidence_to_claim'));
+});
+
+test('talos_verify_sprint_file: contrato completo passa no gate público (AC-1.2.1 seam)', () => {
+  const root = tmpRoot();
+  fs.mkdirSync(path.join(root, '.talos/backlog/sprints'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md'), sprintDoc());
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), BACKLOG_WITH_SPRINT_FILE);
+  const r = verifySprintFile({
+    run_id: 'r1',
+    project_root: root,
+    sprint_path: '.talos/backlog/sprints/SPRINT_S01_runtime.md',
+    sprint_id: 'S01',
+    backlog_path: 'BACKLOG.md',
+  });
+  assert.equal(r.status, 'passed');
+  assert.equal(r.pending_count, 0);
+});
+
+test('validateAcceptanceSeal: aprovado + bloco intacto → tampered:false (AC-2.1.1)', () => {
+  const markdown = sprintDoc({ contratoStatus: 'aprovado' });
+  const block = extractAcceptanceBlock(markdown);
+  assert.ok(block && block.startsWith('## 7.'));
+  const seal = validateAcceptanceSeal(markdown);
+  assert.equal(seal.sealed, true);
+  assert.equal(seal.tampered, false);
+  assert.match(computeAcceptanceSeal(markdown), /^sha256:[a-f0-9]{64}$/);
+});
+
+test('validateAcceptanceSeal: aprovado + bloco alterado 1 char → tampered:true (AC-2.1.2)', () => {
+  const intact = sprintDoc({ contratoStatus: 'aprovado' });
+  assert.equal(validateAcceptanceSeal(intact).tampered, false);
+  const adulterated = intact.replace(
+    '| D1 | Runtime harness entrega gate observável |',
+    '| D1 | Runtime harness entrega gate observávelX |',
+  );
+  const seal = validateAcceptanceSeal(adulterated);
+  assert.equal(seal.sealed, true);
+  assert.equal(seal.tampered, true);
+});
+
+test('validateAcceptanceSeal: aprovado sem Selo do contrato → tampered:true (AC-2.1.3)', () => {
+  const markdown = sprintDoc({ contratoStatus: 'aprovado', selo: null });
+  const seal = validateAcceptanceSeal(markdown);
+  assert.equal(seal.sealed, false);
+  assert.equal(seal.tampered, true);
+});
+
+test('validateAcceptanceSeal: draft ignora selo → tampered:false (AC-2.1.4)', () => {
+  const markdown = sprintDoc({
+    contratoStatus: 'draft',
+    selo: 'sha256:0000000000000000000000000000000000000000000000000000000000000000',
+  });
+  const seal = validateAcceptanceSeal(markdown);
+  assert.equal(seal.sealed, false);
+  assert.equal(seal.tampered, false);
+});
+
+test('talos_verify_sprint_file: aprovado adulterado → blocked FROZEN_ACCEPTANCE_TAMPERED (AC-2.2.1)', () => {
+  const root = tmpRoot();
+  fs.mkdirSync(path.join(root, '.talos/backlog/sprints'), { recursive: true });
+  const intact = sprintDoc({ contratoStatus: 'aprovado' });
+  const adulterated = intact.replace(
+    '| D1 | Runtime harness entrega gate observável |',
+    '| D1 | Runtime harness entrega gate observávelX |',
+  );
+  fs.writeFileSync(path.join(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md'), adulterated);
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), BACKLOG_WITH_SPRINT_FILE);
+  const r = verifySprintFile({
+    run_id: 'r1',
+    project_root: root,
+    sprint_path: '.talos/backlog/sprints/SPRINT_S01_runtime.md',
+    sprint_id: 'S01',
+    backlog_path: 'BACKLOG.md',
+  });
+  assert.equal(r.status, 'blocked');
+  assert.ok(r.pendencies.some((p) =>
+    p.category === 'contrato_congelado' && p.item === 'FROZEN_ACCEPTANCE_TAMPERED'));
+});
+
+test('talos_verify_sprint_file: aprovado intacto → passed (AC-2.2.2)', () => {
+  const root = tmpRoot();
+  fs.mkdirSync(path.join(root, '.talos/backlog/sprints'), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md'),
+    sprintDoc({ contratoStatus: 'aprovado' }),
+  );
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), BACKLOG_WITH_SPRINT_FILE);
+  const r = verifySprintFile({
+    run_id: 'r1',
+    project_root: root,
+    sprint_path: '.talos/backlog/sprints/SPRINT_S01_runtime.md',
+    sprint_id: 'S01',
+    backlog_path: 'BACKLOG.md',
+  });
+  assert.equal(r.status, 'passed');
+  assert.equal(r.pending_count, 0);
+});
+
+test('SPRINT_TEMPLATE: §1 contém Selo do contrato (AC-2.2.3)', () => {
+  const template = fs.readFileSync(SPRINT_TEMPLATE_PATH, 'utf8');
+  assert.match(template, /^\|\s*Selo do contrato\s*\|\s*\[pendente até aprovação\]\s*\|/m);
+});
+
+test('applyInterviewRound: grava decisão D* na §7 (AC-4.2.1)', () => {
+  const base = sprintDoc({ contratoStatus: 'draft' });
+  const updated = applyInterviewRound(base, [
+    { decision_id: 'D1', value: 'Harness usa gate binário observável' },
+  ], '2026-07-19');
+  assert.match(updated, /^\| D1 \| Harness usa gate binário observável \|$/m);
+  assert.ok(closedDecisionIds(updated).has('D1'));
+  const section7 = updated.slice(updated.indexOf('## 7.'));
+  assert.match(section7, /^\| D1 \| Harness usa gate binário observável \|$/m);
+});
+
+test('applyInterviewRound: approve sela contrato com validateAcceptanceSeal (AC-4.2.2)', () => {
+  const base = sprintDoc({ contratoStatus: 'draft' });
+  const updated = applyInterviewRound(base, [
+    { decision_id: 'D1', value: 'Harness usa gate binário observável' },
+  ], '2026-07-19', { approve: true });
+  assert.match(updated, /^\|\s*Contrato status\s*\|\s*aprovado\s*\|$/im);
+  assert.match(updated, /^\|\s*Selo do contrato\s*\|\s*sha256:[a-f0-9]{64}\s*\|$/im);
+  const seal = validateAcceptanceSeal(updated);
+  assert.equal(seal.sealed, true);
+  assert.equal(seal.tampered, false);
+  const approvedOnly = approveAcceptanceContract(
+    applyInterviewRound(base, [{ decision_id: 'D1', value: 'Harness usa gate binário observável' }], '2026-07-19'),
+  );
+  assert.equal(validateAcceptanceSeal(approvedOnly).tampered, false);
+  assert.equal(
+    computeAcceptanceSeal(updated),
+    updated.match(/^\|\s*Selo do contrato\s*\|\s*(sha256:[a-f0-9]{64})\s*\|$/im)[1],
+  );
+});
+
 function backlogWithRows(rows) {
   return [
     '## 7. Registro de sprints',
@@ -1376,11 +1657,20 @@ function backlogWithRows(rows) {
   ].join('\n');
 }
 
-function writeSprintFixture(root, id, { status = 'ready', dorStatus = 'verde' } = {}) {
+function writeSprintFixture(root, id, {
+  status = 'ready',
+  dorStatus = 'verde',
+  contratoStatus = 'draft',
+  plan = 'pendente',
+} = {}) {
   fs.mkdirSync(path.join(root, '.talos/backlog/sprints'), { recursive: true });
+  let doc = sprintDoc({ id, backlog: `BACKLOG.md#${id}`, status, dorStatus, contratoStatus });
+  if (plan !== 'pendente') {
+    doc = doc.replace('| PLAN | pendente |', `| PLAN | ${plan} |`);
+  }
   fs.writeFileSync(
     path.join(root, `.talos/backlog/sprints/SPRINT_${id}_runtime.md`),
-    sprintDoc({ id, backlog: `BACKLOG.md#${id}`, status, dorStatus }),
+    doc,
   );
 }
 
@@ -1419,6 +1709,92 @@ test('talos_select_next_sprint: escolhe sprint ready com maior prioridade determ
   assert.equal(r.status, 'passed');
   assert.equal(r.selected.sprint_id, 'S02');
   assert.deepEqual(r.candidates, ['S02', 'S01']);
+  assert.equal(r.next_action, 'sprint_interview');
+  assert.notEqual(r.next_action, 'gerar_prd');
+  assert.equal(r.selected.contrato_status, 'draft');
+  assert.equal(r.selected.contrato_sealed, false);
+});
+
+test('talos_select_next_sprint: §7 draft → sprint_interview (nunca gerar_prd)', () => {
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S13', { status: 'ready', dorStatus: 'verde', contratoStatus: 'draft' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S13 | Contrato draft | F0 | objetivo | Must | Alto | Baixo | P0 | — | — | ready | — | `.talos/backlog/sprints/SPRINT_S13_runtime.md` | pendente | pendente |',
+  ]));
+  const r = selectNextSprint({ run_id: 'r1', project_root: root, backlog_path: 'BACKLOG.md' });
+  assert.equal(r.status, 'passed');
+  assert.equal(r.next_action, 'sprint_interview');
+  assert.equal(r.selected.prd_path, null);
+  assert.ok(!String(r.next_action).includes('prd'));
+});
+
+test('talos_select_next_sprint: §7 aprovado+selo sem PLAN → plan_handoff', () => {
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S01', { status: 'ready', dorStatus: 'verde', contratoStatus: 'aprovado' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | — | — | ready | — | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+  const r = selectNextSprint({ run_id: 'r1', project_root: root, backlog_path: 'BACKLOG.md' });
+  assert.equal(r.status, 'passed');
+  assert.equal(r.selected.contrato_status, 'aprovado');
+  assert.equal(r.selected.contrato_sealed, true);
+  assert.equal(r.next_action, 'plan_handoff');
+});
+
+test('talos_select_next_sprint: PLAN real → plan_execute', () => {
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S01', {
+    status: 'ready',
+    dorStatus: 'verde',
+    contratoStatus: 'aprovado',
+    plan: '.talos/plans/PLAN_S01_runtime.md',
+  });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | — | — | ready | — | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | `.talos/plans/PLAN_S01_runtime.md` | pendente |',
+  ]));
+  const r = selectNextSprint({ run_id: 'r1', project_root: root, backlog_path: 'BACKLOG.md' });
+  assert.equal(r.status, 'passed');
+  assert.equal(r.next_action, 'plan_execute');
+  assert.equal(r.selected.plan_path, '.talos/plans/PLAN_S01_runtime.md');
+});
+
+test('nextActionForSelectedSprint: matriz canônica 0.14 mode-aware', () => {
+  const draft = { contrato_status: 'draft', contrato_sealed: false, plan: null };
+  const sealed = { contrato_status: 'aprovado', contrato_sealed: true, plan: null };
+  const sealedPending = { contrato_status: 'aprovado', contrato_sealed: true, plan: 'pendente' };
+  const sealedWithPlan = { contrato_status: 'aprovado', contrato_sealed: true, plan: 'PLAN_S01.md' };
+  const sealedNoSeal = { contrato_status: 'aprovado', contrato_sealed: false, plan: null };
+
+  assert.equal(nextActionForSelectedSprint(draft), 'sprint_interview');
+  assert.equal(nextActionForSelectedSprint(sealedPending), 'plan_handoff');
+  assert.equal(nextActionForSelectedSprint(sealedWithPlan), 'plan_execute');
+  assert.equal(nextActionForSelectedSprint(sealedNoSeal), 'sprint_interview');
+
+  assert.equal(nextActionForSelectedSprint(sealed, 'direct'), 'plan_execute');
+  assert.equal(nextActionForSelectedSprint(sealedWithPlan, 'direct'), 'plan_execute');
+  assert.equal(nextActionForSelectedSprint(draft, 'direct'), 'sprint_interview');
+
+  assert.equal(nextActionForSelectedSprint(sealed, 'interview-only'), 'sprint_interview');
+  assert.equal(nextActionForSelectedSprint(sealedWithPlan, 'full'), 'plan_execute');
+  assert.equal(nextActionForSelectedSprint(sealed, 'full'), 'plan_handoff');
+});
+
+test('talos_select_next_sprint: mode=direct + §7 selado → plan_execute (não plan_handoff)', () => {
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S01', { status: 'ready', dorStatus: 'verde', contratoStatus: 'aprovado' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | — | — | ready | — | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+  const r = selectNextSprint({
+    run_id: 'r1',
+    project_root: root,
+    backlog_path: 'BACKLOG.md',
+    mode: 'direct',
+  });
+  assert.equal(r.status, 'passed');
+  assert.equal(r.next_action, 'plan_execute');
+  assert.notEqual(r.next_action, 'plan_handoff');
+  assert.notEqual(r.next_action, 'gerar_prd');
 });
 
 test('talos_select_next_sprint: dependência interna não done bloqueia seleção', () => {
@@ -1448,7 +1824,6 @@ test('talos_update_sprint_status: sincroniza done no backlog e sprint file com e
     sprint_id: 'S01',
     status: 'done',
     validator_verdict: 'pass',
-    prd_path: 'PRD_S01.md',
     plan_path: 'PLAN_S01.md',
     state_path: '.talos/state/S01.json',
     evidence: 'validator pass',
@@ -1460,14 +1835,38 @@ test('talos_update_sprint_status: sincroniza done no backlog e sprint file com e
   const row = parseSprintRows(backlog)[0];
   assert.equal(row.state, 'done');
   assert.equal(row.gate, 'validator:pass');
-  assert.equal(row.prd, 'PRD_S01.md');
+  assert.equal(row.prd, 'pendente');
   assert.equal(row.plan, 'PLAN_S01.md');
   assert.equal(row.state_file, '.talos/state/S01.json');
   const sprint = fs.readFileSync(path.join(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md'), 'utf8');
   assert.match(sprint, /^\| Status \| done \|$/m);
+  assert.doesNotMatch(sprint, /^\|\s*PRD\s*\|\s*PRD_S01\.md\s*\|/m);
   assert.match(sprint, /\| Sprint status update \| validator:pass \| validator pass \|/);
   assert.match(sprint, /\| Talos MCP \| Status -> done; validator=pass; evidence=validator pass \|/);
   assert.equal(verifyBacklogIndex({ run_id: 'r1', project_root: root, backlog_path: 'BACKLOG.md' }).status, 'passed');
+});
+
+test('talos_update_sprint_status: prd_path legado só atualiza coluna do backlog', () => {
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S01', { status: 'ready', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | ready | ready | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+  const r = updateSprintStatus({
+    run_id: 'r1',
+    project_root: root,
+    backlog_path: 'BACKLOG.md',
+    sprint_id: 'S01',
+    status: 'doing',
+    prd_path: 'legado-ignorado-no-sprint.md',
+    plan_path: 'PLAN_S01.md',
+  });
+  assert.equal(r.status, 'passed');
+  const row = parseSprintRows(fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8'))[0];
+  assert.equal(row.prd, 'legado-ignorado-no-sprint.md');
+  assert.equal(row.plan, 'PLAN_S01.md');
+  const sprint = fs.readFileSync(path.join(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md'), 'utf8');
+  assert.doesNotMatch(sprint, /legado-ignorado-no-sprint/);
 });
 
 test('talos_update_sprint_status: done sem validator terminal bloqueia e não muta', () => {
@@ -3572,14 +3971,14 @@ test('version-conflict: run antigo inativo de versão anterior não bloqueia run
   assert.equal(r.status, 'passed', 'run novo passa apesar do resíduo 0.6.2 inativo');
 });
 
-// Banner cosmético: verificar um PRD não pode ecoar "plano · validado".
-test('banner: verify_artifact com artifact_kind=prd ecoa banner de PRD; default mantém plano', () => {
+// Banner cosmético: verificar um sprint/contrato não pode ecoar "plano · validado".
+test('banner: verify_artifact com artifact_kind=sprint ecoa banner de aceite; default mantém plano', () => {
   const root = tmpRoot();
-  fs.writeFileSync(path.join(root, 'PRD_x.md'), VALID_PRD);
+  fs.writeFileSync(path.join(root, 'SPRINT_x.md'), sprintDoc());
   fs.writeFileSync(path.join(root, 'PLAN_x.md'), CONFORMANT_PLAN_DOC);
-  const prd = verifyArtifact({ run_id: 'bk', project_root: root, artifact_path: 'PRD_x.md', artifact_kind: 'prd' });
-  assert.equal(prd.status, 'passed');
-  assert.equal(prd.banner, '▸ talos: prd · ok');
+  const sprint = verifyArtifact({ run_id: 'bk', project_root: root, artifact_path: 'SPRINT_x.md', artifact_kind: 'sprint' });
+  assert.equal(sprint.status, 'passed');
+  assert.equal(sprint.banner, '▸ talos: aceite · ok');
   const plan = verifyArtifact({ run_id: 'bk', project_root: root, artifact_path: 'PLAN_x.md' });
   assert.equal(plan.banner, '▸ talos: plano · validado (TC pass)', 'default (sem kind) preserva banner de plano');
 });

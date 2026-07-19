@@ -57,27 +57,27 @@
   {
     "name": "Talos — talos Claude full (sprint)",
     "keyword": "!aw-wf-claude",
-    "text": "/talos claude full sprint {cursor}"
+    "text": "/talos full sprint {cursor}"
   },
   {
-    "name": "Talos — talos Claude direct PRD",
+    "name": "Talos — talos Claude direct (sprint §7)",
     "keyword": "!aw-wf-claude-d",
-    "text": "/talos claude direct prd {clipboard} --review"
+    "text": "/talos direct sprint {clipboard} --review"
   },
   {
     "name": "Talos — talos Codex full (sprint)",
     "keyword": "!aw-wf-codex",
-    "text": "talos codex full sprint {cursor}"
+    "text": "/talos full sprint {cursor}"
   },
   {
-    "name": "Talos — talos Codex direct PRD",
+    "name": "Talos — talos Codex direct (sprint §7)",
     "keyword": "!aw-wf-codex-d",
-    "text": "talos codex direct prd {clipboard} --review"
+    "text": "/talos direct sprint {clipboard} --review"
   },
   {
     "name": "Talos — talos Codex interview-only",
     "keyword": "!aw-wf-codex-i",
-    "text": "talos codex interview-only brainstorm {cursor}"
+    "text": "/talos interview-only brainstorm {cursor}"
   },
   {
     "name": "Talos — repo path (clipboard)",

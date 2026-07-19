@@ -9,8 +9,8 @@
 
 | Modo | Quem | O que faz | Saída |
 |------|------|-----------|--------|
-| **Varredura** | Agente (ou você) | Cruza backlog mestre, recorte das próximas sprints, PRDs e planos quando existirem, código e contratos; abre/atualiza/fecha **entradas** no índice | Este arquivo (enxuto) |
-| **Entrevista** | Você + agente | Escolhe **1–4 IDs** `aberta`; agente relê âncoras + repositório; pergunta com **AskQuestion** | Decisão no chat → linha no **Histórico** → PRD/backlog/DEC |
+| **Varredura** | Agente (ou você) | Cruza backlog mestre, recorte das próximas sprints, contratos §7 e planos quando existirem, código e contratos; abre/atualiza/fecha **entradas** no índice | Este arquivo (enxuto) |
+| **Entrevista** | Você + agente | Escolhe **1–4 IDs** `aberta`; agente relê âncoras + repositório; pergunta com **AskQuestion** | Decisão no chat → linha no **Histórico** → sprint §7/backlog/DEC |
 
 **Regra anti-desatualização:** antes de cada rodada de entrevista, o agente **revalida** as âncoras e o código dos IDs escolhidos. Se a evidência mudou, atualiza a lacuna no registro **antes** de perguntar.
 
@@ -29,7 +29,7 @@
 | Campo | Valor |
 |-------|-------|
 | **Última varredura** | YYYY-MM-DD |
-| **Escopo da varredura** | ex.: backlog mestre §20, PRD HML-01 se existir, sprints S04–S08 |
+| **Escopo da varredura** | ex.: backlog mestre §20, sprint §7 HML-01 se existir, sprints S04–S08 |
 | **Próxima rodada sugerida** | IDs: `Q-…`, `Q-…` (máx. 4 por sessão ~15 min) |
 
 ---
@@ -56,14 +56,14 @@
 |-------|-------|
 | **Status** | `aberta` |
 | **Severidade** | ❌ / ⚠️ |
-| **Bloqueia** | sprint, PRD, gate, contrato — uma linha. Se útil, prefixar categoria secundária: `[sequencia] ...` |
-| **Âncoras** | links relativos: backlog mestre, sprint, PRD se existir, DEC, plano, doc de produto, código ou contrato |
+| **Bloqueia** | sprint, contrato §7, gate — uma linha. Se útil, prefixar categoria secundária: `[sequencia] ...` |
+| **Âncoras** | links relativos: backlog mestre, sprint file, DEC, plano, doc de produto, código ou contrato |
 | **Lacuna** | O que falta decidir (2–4 frases). Sem listar alternativas. Descrever decisão pendente, não tarefa de implementação. |
 | **Evidência (snapshot)** | Uma linha factual da última varredura (path, migration, status sprint, endpoint, env ou ausência verificável) |
 | **Última verificação em entrevista** | _vazio até 1ª rodada_ |
 
 **Decisão registrada:** _preencher só após entrevista_  
-**Propagado em:** _PRD §… / backlog DEC-… / outro_
+**Propagado em:** _sprint §7 / backlog DEC-… / outro_
 
 ---
 
@@ -105,11 +105,11 @@
 
 ### Varredura (atualizar registro)
 
-1. Ler obrigatoriamente o backlog mestre e o recorte da janela atual; usar PRDs e planos apenas quando existirem.
+1. Ler obrigatoriamente o backlog mestre e o recorte da janela atual; usar contratos §7 e planos apenas quando existirem.
 2. Limitar a análise ao sprint atual e aos próximos sprints, com máximo de 5 sprints no total.
 3. Revalidar código, contratos, migrations, envs ou ausências verificáveis antes de abrir pergunta material.
 4. Para cada lacuna nova: criar entrada com ID estável (`Q-<FASE>-<NN>` ou `Q-<SPRINT>-<NN>`).
-5. Antes de abrir pergunta, tentar invalidá-la: decisão já tomada, código já fechou o tema, falta apenas execução, ou a dúvida existe só porque não há PRD.
+5. Antes de abrir pergunta, tentar invalidá-la: decisão já tomada, código já fechou o tema, falta apenas execução, ou a dúvida existe só porque o contrato §7 ainda está draft.
 6. Para cada lacuna fechada no código/docs: marcar `obsoleta` ou remover do índice e notar no Histórico.
 7. Atualizar **Meta**, **Índice**, **Evidências**; **não** escrever opções nem recomendações.
 
@@ -119,13 +119,13 @@
 2. **PREP:** reler âncoras + grep/read nos paths relevantes; ajustar **Lacuna** / **Evidência** se mudou.
 3. **PERGUNTA:** `AskQuestion` (até 4 itens); em cada prompt: pergunta + impacto + opções + **recomendação ancorada na evidência lida agora** (skill `*-open-questions-interview`).
 4. Parar o turno (`⏸️ Aguardando respostas`).
-5. Após respostas: preencher **Decisão registrada**, status `resolvida`, linha no **Histórico**, pedir propagação explícita se necessário (backlog DEC, PRD §3, etc.).
+5. Após respostas: preencher **Decisão registrada**, status `resolvida`, linha no **Histórico**, pedir propagação explícita se necessário (backlog DEC, sprint §7, etc.).
 
 ### O que é proibido neste arquivo
 
 - Tabelas `| Opção |` ou blocos **Recomendação** / **Opção A/B/C** por pergunta
 - Texto de entrevista já "respondido" no passado sem estar no Histórico
-- Duplicar o conteúdo do PRD — só âncoras e lacuna
+- Duplicar o conteúdo do contrato §7 — só âncoras e lacuna
 - Criar novos campos, colunas ou seções para categoria; use a serialização textual nos campos existentes
 
 ---
