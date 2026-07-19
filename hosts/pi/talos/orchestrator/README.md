@@ -245,7 +245,7 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `talos-*` para o
 
 ### Novidades v0.14.1 — `select_next_sprint` sem `gerar_prd`
 
-- **Patch de contrato** — `talos_select_next_sprint` deixa de retornar `next_action: "gerar_prd"`; deriva `sprint_interview` / `plan_handoff` / `plan_execute` do §7 + PLAN.
+- **Patch de contrato** — `talos_select_next_sprint` deixa de retornar `next_action: "gerar_prd"`; deriva `sprint_interview` / `plan_handoff` / `plan_execute` do §7 + PLAN + `mode` (direct nunca sugere plan_handoff). Orquestrador consome o verbo obrigatoriamente.
 - **Legado** — `prd_path` no payload/update permanece posicional no backlog; aceite mora no §7.
 - Schema MCP v5 e topologia sibling intactos.
 

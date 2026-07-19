@@ -15,7 +15,7 @@ Auditoria universal, framework-agnóstica. Esta skill lê o repositório real, a
 /talos audit <target> --scope <descrição>
 ```
 
-`target` pode ser arquivo, diretório, pacote, módulo, feature, PRD/plano como referência ou descrição que aponte para um boundary localizável. Se não for possível resolver o boundary em disco, pare e peça um target mais preciso.
+`target` pode ser arquivo, diretório, pacote, módulo, feature, sprint/plano como referência ou descrição que aponte para um boundary localizável. Se não for possível resolver o boundary em disco, pare e peça um target mais preciso.
 
 ## Contrato duro
 

@@ -4,7 +4,7 @@
 
 ## Missão
 
-Talos é uma **pipeline de desenvolvimento determinística** (PRD → plano → execução → validação fria), empacotada como plugin **público e gratuito** no GitHub, instalável por qualquer pessoa. Nasceu de skills usadas de forma manual e separada; o objetivo é **automatizar e tornar 100% determinístico**.
+Talos é uma **pipeline de desenvolvimento determinística** (sprint §7 → plano → execução → validação fria), empacotada como plugin **público e gratuito** no GitHub, instalável por qualquer pessoa. Nasceu de skills usadas de forma manual e separada; o objetivo é **automatizar e tornar 100% determinístico**.
 
 Duas metas inegociáveis, sempre juntas:
 

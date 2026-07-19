@@ -2,18 +2,21 @@
 
 ## 0.14.1 - 2026-07-19
 
-Tipo: **patch de confiabilidade de contrato** (só MCP + docs; schema v5 intacto).
+Tipo: **patch de confiabilidade de contrato** (MCP + orquestrador + entry points; schema v5 intacto).
 
-Resumo: remove o resíduo `next_action: "gerar_prd"` pós-remoção do PRD. `talos_select_next_sprint` deriva a próxima ação do estado do sprint selecionado.
+Resumo: remove o resíduo `next_action: "gerar_prd"` pós-remoção do PRD e fecha desalinhamentos de entry point/orquestrador que ainda ensinavam ou ignoravam a cadeia §7.
 
 Mudanças:
-- **`talos_select_next_sprint`** — `next_action` canônico: §7 draft → `sprint_interview`; §7 aprovado+selo sem PLAN → `plan_handoff`; PLAN real → `plan_execute`. Nunca `gerar_prd`.
+- **`talos_select_next_sprint`** — `next_action` canônico e **mode-aware** (`mode` opcional): §7 draft → `sprint_interview`; `direct` + §7 selado → `plan_execute` (nunca `plan_handoff`); `full` + §7 selado sem PLAN → `plan_handoff`; PLAN real → `plan_execute`. Nunca `gerar_prd`.
+- **Orquestrador** — gate `SELECT_NEXT_SPRINT` obriga consumir `next_action` + passar `mode`; fluxos `full`/`direct` ramificam pelo verbo MCP.
 - **Payload `selected`** — adiciona `contrato_status` / `contrato_sealed`; `prd_path` permanece como legado posicional do backlog (documentado).
 - **`talos_update_sprint_status`** — `prd_path` só atualiza a coluna legado do backlog; não grava campo PRD no sprint file.
-- **Docs** — README raiz, MCP README, `STATE_FILE_SCHEMA`, `SPRINT_TEMPLATE` (gate morto `conformance:prd`), `subagent_dispatch`, `PERGUNTAS_EM_ABERTO_TEMPLATE` alinhados a §7.
+- **Capabilities** — `question_prompt.persistence`: `prd_after_each_round` → `sprint_after_each_round`.
+- **Entry points** — README (`talos_scan_acceptance`, G5 §7); manifests Claude/Codex/ZCode (sem `direct prd` / copy PRD); shim `talos-direct-execute` + `openai.yaml` retargetados a §7; Raycast snippets sem `direct prd`/família legada.
+- **Docs** — MCP README, `STATE_FILE_SCHEMA`, `SPRINT_TEMPLATE`, `subagent_dispatch`, missão CLAUDE/AGENTS alinhados a §7.
 
 Impacto:
-- Orquestradores/consumidores que seguiam `gerar_prd` ao pé da letra passam a receber o verbo correto.
+- Orquestradores/consumidores que seguiam `gerar_prd` ou `/talos direct prd` ao pé da letra passam ao verbo/caminho corretos.
 - Nenhuma skill/artefato PRD reintroduzido.
 
 ## 0.14.0 - 2026-07-19
