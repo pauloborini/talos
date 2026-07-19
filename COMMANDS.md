@@ -30,7 +30,7 @@ npx github:pauloborini/talos init vscode --global
 
 ```
 
-Smoke pós-update: `talos_ping` → `version: 0.13.0`; `talos_capabilities` → `schema_version: 5` (sibling-only).
+Smoke pós-update: `talos_ping` → `version: 0.14.1`; `talos_capabilities` → `schema_version: 5` (sibling-only).
 
 ---
 

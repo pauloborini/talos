@@ -1,6 +1,6 @@
 ---
 name: talos-direct-execute
-description: Executor direto da família Talos (modo direct). Despachado em contexto isolado pelo orquestrador para implementar um PRD/tarefa escopada sem artefato de plano separado — toda mutação de código acontece aqui, nunca no fio do orquestrador (Gate G9). Primeira ação: carregar a skill completa talos-direct-execute. Antes do relatório final, escreve o state_path e retorna validator_handoff_required; o orquestrador despacha a validação fria sibling (talos-task-validator, Gate G4).
+description: Executor direto da família Talos (modo direct). Despachado em contexto isolado pelo orquestrador para implementar um contrato §7 de sprint file / tarefa escopada sem artefato de plano separado — toda mutação de código acontece aqui, nunca no fio do orquestrador (Gate G9). Primeira ação: carregar a skill completa talos-direct-execute. Antes do relatório final, escreve o state_path e retorna validator_handoff_required; o orquestrador despacha a validação fria sibling (talos-task-validator, Gate G4).
 tools: Read, Write, Edit, Grep, Glob, Bash, Skill, Agent, mcp__plugin_talos_talos
 ---
 
@@ -20,11 +20,11 @@ Carregue a skill completa `talos-direct-execute` e siga-a integralmente:
 - **Claude Code:** invoque a tool `Skill` com `talos-direct-execute`.
 - **Outros hosts:** use o mecanismo nativo de skills do host para carregar `talos-direct-execute`.
 
-Proibido "agir como a skill" a partir deste resumo — o `SKILL.md` é o contrato real (ledger de obrigações do PRD, gates finitos, reparo limitado). Se não conseguir carregar a skill, aborte com erro explícito; não emule inline.
+Proibido "agir como a skill" a partir deste resumo — o `SKILL.md` é o contrato real (ledger de obrigações do Sprint §7, gates finitos, reparo limitado). Se não conseguir carregar a skill, aborte com erro explícito; não emule inline.
 
 ## Input
 
-O orquestrador passa o PRD/spec/path escopado e as flags da fase. Use `talos_run_state` como fonte primária do estado da run.
+O orquestrador passa o sprint file / contrato §7 / path escopado e as flags da fase. Use `talos_run_state` como fonte primária do estado da run.
 
 ## Validação fria (Gate G4)
 

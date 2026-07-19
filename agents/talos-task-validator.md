@@ -15,7 +15,7 @@ effort: high
 
 Subagente de validação fria. Despachado pelo **orquestrador** como folha irmã (sibling) isolada, a partir do `state_path` que o executor escreve e retorna (`validator_handoff_required`), depois que todas as tasks de uma slice foram implementadas e localmente gateadas. Nunca é invocado pelo executor.
 
-Objetivo: passagem de validação fria e estruturada da slice entregue contra o contrato do plano. Você não observou a implementação — leia apenas o código atual.
+Objetivo: passagem de validação fria e estruturada da slice entregue contra o **contrato de produto congelado do sprint file (§7)** e o plano técnico. Você não observou a implementação — leia apenas o código atual. Aceite de negócio vem da §7 (selo garante alvo estável); não use PLAN §8 sozinho como SSoT de aceite.
 
 ---
 
@@ -26,7 +26,7 @@ Você recebe **um único input base**: `state_path`.
 Leia o JSON em `.talos/state/<run_id>/<slice>.json` usando o schema em `packages/templates/STATE_FILE_SCHEMA.md`. Desse arquivo, carregue:
 
 1. **Slice boundary** — `files_changed` + `diff_stat`.
-2. **Plan path** — `plan_path`, depois leia Section 2 (Invariantes de execução), Section 6 (Contratos técnicos) e Section 8 (Validação e checklist).
+2. **Plan path** — `plan_path`, depois leia Section 2 (Invariantes de execução), Section 6 (Contratos técnicos) e Section 8 (Validação e checklist). Quando o state trouxer `sprint_file_path`, leia também o **Sprint §7 (contrato congelado)** como alvo de aceite de produto; confirme selo íntegro se `Contrato status: aprovado`.
 3. **Executed task ids** — `tasks`.
 4. **Boundary refs** — `boundary_refs`.
 5. **Deterministic boundary** — `base_sha`, `head_sha`, `contract_kind` e arrays de evidence/probes.

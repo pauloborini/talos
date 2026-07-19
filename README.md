@@ -4,9 +4,9 @@
 
 # Talos
 
-Plugin **Talos** v0.13.0 — pipeline determinístico (PRD → plano → execução → validação) com skills `talos-*`, templates e MCP. Um pacote, oito hosts: **Claude Code**, **Cursor**, **Codex App**, **Antigravity (Gemini)**, **ZCode**, **OpenCode**, **Pi CLI** e **VS Code**.
+Plugin **Talos** v0.14.1 — pipeline determinístico (contrato §7 → plano → execução → validação) com skills `talos-*`, templates e MCP. Um pacote, oito hosts: **Claude Code**, **Cursor**, **Codex App**, **Antigravity (Gemini)**, **ZCode**, **OpenCode**, **Pi CLI** e **VS Code**.
 
-**Versão:** [`VERSION`](VERSION) (`0.13.0`) · **Repo:** https://github.com/pauloborini/talos
+**Versão:** [`VERSION`](VERSION) (`0.14.1`) · **Repo:** https://github.com/pauloborini/talos
 
 ## Hosts
 
@@ -124,28 +124,27 @@ Comando (Claude Code / Cursor): `/talos <mode> <input-type> [input] [flags]`
 
 No Codex, Antigravity, opencode, pi, zcode e VS Code, invoque a skill do orquestrador com o mesmo padrão de argumentos (ex.: `/talos full sprint S05`). O verbo de dispatch do subagente é resolvido por `talos_capabilities` (host-agnóstico).
 
-Se você quiser começar fora do fluxo principal, as skills listadas abaixo são os atalhos explícitos para backlog, PRD, auditoria, plano, execução e revisão.
+Se você quiser começar fora do fluxo principal, as skills listadas abaixo são os atalhos explícitos para backlog, contrato §7 (entrevista), auditoria, plano, execução e revisão.
 
 ### Modos
 
 | Modo | Quando usar | O que faz |
 |------|-------------|-----------|
-| **`full`** | Sprint/backlog novo ou feature do zero | Gera PRD → valida/entrevista se preciso → **plano** (`.talos/plans/`) → **executa** o plano → review opcional |
-| **`direct`** | PRD já existe e está maduro | Valida PRD → entrevista só se houver gap → **executa direto** (sem fase de plan handoff) → review opcional |
+| **`full`** | Sprint/backlog novo ou feature do zero | Matura contrato §7 no sprint file (entrevista se preciso) → **plano** (`.talos/plans/`) → **executa** o plano → review opcional |
+| **`direct`** | Contrato §7 já aprovado+selo | Valida sprint/§7 → entrevista só se houver gap → **executa direto** (sem fase de plan handoff) → review opcional |
 | **`execute`** | Já tenho um `PLAN_*.md` pronto | Reverifica o plano (artefato + conformidade) → **executa o plano existente** → review opcional. **Não regera plano.** Único modo que aceita plano `Source mode: standalone` (sem sprint) — `full`/`direct` exigem sprint na entrada e rejeitam esse plano. |
-| `interview-only` | Só fechar decisões / brainstorm | Entrevista; não implementa |
+| `interview-only` | Só fechar decisões / brainstorm | Entrevista o contrato §7; não implementa |
 | **`audit`** | Quero diagnóstico sem patch | Audita target/boundary contra regras locais + stack detectada + Ponytail pass; `--handoff` grava `.talos/plans/PLAN_AUDIT_*.md` sem executar |
 
-**Dica:** `full` = “quero PRD + plano + código”. `direct` = “já tenho PRD aprovado, implementa”. `execute` = “já tenho o plano, só executa”. `audit` = “diagnostica, não corrige”.
+**Dica:** `full` = “quero contrato §7 + plano + código”. `direct` = “já tenho §7 aprovado, implementa”. `execute` = “já tenho o plano, só executa”. `audit` = “diagnostica, não corrige”.
 
-> **Roteamento por tipo de input (v0.4.1+):** o tipo do arquivo que você passa **prevalece** sobre o modo digitado. Apontar um `PLAN_*.md` em `direct`/`full` (mesmo renomeado) auto-roteia para `execute` com um aviso de uma linha — nunca gera “plano de plano”. Pedir `execute` sobre um backlog/PRD roteia de volta para `full`/`direct`.
+> **Roteamento por tipo de input (v0.4.1+):** o tipo do arquivo que você passa **prevalece** sobre o modo digitado. Apontar um `PLAN_*.md` em `direct`/`full` (mesmo renomeado) auto-roteia para `execute` com um aviso de uma linha — nunca gera “plano de plano”. Pedir `execute` sobre um backlog/sprint roteia de volta para `full`/`direct`.
 
 ### Input types
 
 - `sprint` — ID de sprint já ancorado no backlog e em sprint file vivo (ex.: `S05`)
 - `backlog-item` — alias legado de `sprint`
 - `idea` — indicação curta em texto
-- `prd` — caminho para `PRD_*.md` existente (principal em **`direct`**)
 - `plan` — caminho para `PLAN_*.md` existente (principal em **`execute`**)
 - `target` — arquivo/diretório/feature/módulo auditável (só em **`audit`**)
 - `brainstorm` — texto livre (só com `interview-only`)
@@ -153,7 +152,7 @@ Se você quiser começar fora do fluxo principal, as skills listadas abaixo são
 ### Flags
 
 - `--review` — roda `talos-slice-review` no final
-- `--interview` — força entrevista de PRD mesmo sem ambiguidades detectadas
+- `--interview` — força entrevista do contrato §7 mesmo sem ambiguidades detectadas
 - `--help` — sintaxe completa
 
 ### Exemplos
@@ -170,19 +169,13 @@ Sprint já recortada; implementar direto sem gerar plano separado:
 /talos direct sprint "S05"
 ```
 
-PRD já escrito no repo; implementar sem gerar plano separado:
+Mesmo sprint, com review fria da slice no final:
 
 ```
-/talos direct prd "./docs/PRD_S05_login.md"
+/talos direct sprint "S05" --review
 ```
 
-Mesmo PRD, com review fria da slice no final:
-
-```
-/talos direct prd "./docs/PRD_S05_login.md" --review
-```
-
-Ideia solta, ainda sem PRD formal (gera PRD e segue o fluxo completo):
+Ideia solta (cria/atualiza backlog + sprint file, matura §7 e segue o fluxo completo):
 
 ```
 /talos full idea "cache de sessão com TTL configurável"
@@ -200,14 +193,14 @@ Só alinhar decisões antes de planejar:
 /talos interview-only brainstorm "dark mode só no web ou mobile também?"
 ```
 
-PRD avulso (sem sprint/backlog) até execução, sem passar por `full`/`direct`:
+Sprint standalone (sem backlog mestre) até execução, sem passar por `full`/`direct`:
 
 ```
 /talos interview-only brainstorm "ideia direto de conversa"
-→ matura o PRD; campo Sprint file fica "Não aplicável (standalone)"
+→ matura o sprint file; Backlog mestre fica "Não aplicável (standalone)"
 
 talos-plan-handoff (uso direto, fora do /talos)
-→ lê o PRD, detecta source_mode: standalone, escreve PLAN_*.md com Source mode: standalone
+→ lê o contrato §7, detecta source_mode: standalone, escreve PLAN_*.md com Source mode: standalone
 
 /talos execute plan "./.talos/plans/PLAN_<ID>_<slug>.md"
 → único modo que aceita plano standalone; full/direct exigem sprint e rejeitam esse plano na entrada
@@ -218,41 +211,40 @@ talos-plan-handoff (uso direto, fora do /talos)
 1. Confirme o MCP antes de começar (`talos_ping`); sem MCP o orquestrador para no pré-flight.
 2. Artefatos ficam no projeto consumidor: planos em `.talos/plans/`, estado em `.talos/state/<run_id>/`.
 3. Em `full`, não espere código antes do `PLAN_*.md` validado — é gate explícito.
-4. Ambiguidades no PRD disparam entrevista automaticamente; use `--interview` se quiser forçar.
+4. Ambiguidades no contrato §7 disparam entrevista automaticamente; use `--interview` se quiser forçar.
 5. Toda execução passa pelo validador frio (`talos-task-validator`) antes de declarar a slice pronta.
 
 ### Princípio Fire-and-Continue
 
-O pipeline avança fase a fase **sem pedir permissão**. As únicas paradas são gates duros (`blocked`) ou bloqueios reais de ambiente. Decisões em aberto no PRD geram entrevista automática e o fluxo **continua** — o orquestrador não para para pedir confirmação. Isso vale para todos os modos e hosts.
+O pipeline avança fase a fase **sem pedir permissão**. As únicas paradas são gates duros (`blocked`) ou bloqueios reais de ambiente. Decisões em aberto no contrato §7 geram entrevista automática e o fluxo **continua** — o orquestrador não para para pedir confirmação. Isso vale para todos os modos e hosts.
 
 ### Backlog em 2 camadas
 
 O Talos estrutura a demanda em duas camadas complementares:
 
 - **Backlog mestre** (`BACKLOG_MESTRE_*.md`): índice estratégico enxuto com fases, tabela de sprints, dependências, priorização MoSCoW e links para sprint files. É o mapa do produto.
-- **Sprint files**: arquivos vivos dedicados por sprint — a fonte de verdade contextual que o pipeline lê para gerar PRDs, planos e executar slices. Cada sprint file respeita o template canônico e é validado pelo gate `SPRINT_FILE`.
+- **Sprint files**: arquivos vivos dedicados por sprint — a fonte de verdade contextual (escopo + **contrato de produto §7**) que o pipeline lê para entrevistar, planejar e executar slices. Cada sprint file respeita o template canônico e é validado pelo gate `SPRINT_FILE`.
 
-Gates MCP dedicados (`talos_verify_backlog_index`, `talos_verify_sprint_file`, `talos_select_next_sprint`, `talos_update_sprint_status`) garantem consistência entre as duas camadas. O gate `DEP` bloqueia execução de sprints cujas dependências de backlog não estejam concluídas.
+Gates MCP dedicados (`talos_verify_backlog_index`, `talos_verify_sprint_file`, `talos_select_next_sprint`, `talos_update_sprint_status`) garantem consistência entre as duas camadas. O gate `DEP` bloqueia execução de sprints cujas dependências de backlog não estejam concluídas. Após `talos_select_next_sprint`, `next_action` deriva do estado: §7 draft → `sprint_interview`; §7 aprovado+selo sem PLAN → `plan_handoff`; PLAN pronto → `plan_execute`.
 
 ### Skills da cadeia
 
-Cadeia automática de execução: `talos-sprint-prd-generator` → `talos-prd-interview` → `talos-plan-handoff` → `talos-plan-execute` (full) ou `talos-direct-execute` (direct) → `talos-task-validator` → `talos-findings-repair` (só após `fail`, em qualquer host) → `talos-slice-review` (opcional)
+Cadeia automática de execução: `talos-sprint-interview` → `talos-plan-handoff` → `talos-plan-execute` (full) ou `talos-direct-execute` (direct) → `talos-task-validator` → `talos-findings-repair` (só após `fail`, em qualquer host) → `talos-slice-review` (opcional)
 
 Modo sem execução: `talos-audit` roda no fio principal, não altera código, não chama executor e pode gravar handoff Talos-style em `.talos/plans/` com `--handoff`.
 
-No modo `full`, as etapas documentais (`PRD`, entrevista, `PLAN_*.md`) ficam no agente principal/orquestrador. O primeiro sub-agent obrigatório nasce só na fase de execução (`talos-plan-execute`).
+No modo `full`, as etapas documentais (maturar §7, entrevista, `PLAN_*.md`) ficam no agente principal/orquestrador. O primeiro sub-agent obrigatório nasce só na fase de execução (`talos-plan-execute`).
 
 ### Skills com uso direto
 
 Além da cadeia automática, estas skills também podem ser chamadas diretamente para tarefas específicas. Algumas delas aparecem no fluxo principal em outro contexto, mas vale saber quando usar cada uma:
 
-- `talos-backlog-generator` — cria `BACKLOG_MESTRE_*.md` a partir de uma conversa, briefing, roadmap ou lista solta de requisitos. Use quando o objetivo for organizar demanda antes de virar PRD.
-- `talos-sprint-prd-generator` — transforma um sprint ID como `S01`/`S02` em PRD de sprint. Use quando o escopo já está amarrado ao roadmap e você quer o PRD da rodada.
-- `talos-prd-interview` — valida e amadurece um PRD antes de planejar. Use quando você quer fechar ambiguidades, dependências ou decisões de produto.
+- `talos-backlog-generator` — cria `BACKLOG_MESTRE_*.md` + sprint files a partir de uma conversa, briefing, roadmap ou lista solta de requisitos. Use quando o objetivo for organizar demanda antes de maturarmos o contrato §7.
+- `talos-sprint-interview` — valida e amadurece o contrato §7 do sprint file; ao aprovar, grava selo sha256. Use quando você quer fechar ambiguidades, dependências ou decisões de produto.
 - `talos-audit` — audita arquivo, diretório, pacote, módulo, feature ou boundary localizável sem corrigir código. Lê regras locais reais, **detecta stack deterministicamente** por manifests/configs (Flutter, Node, Python, Go, Rust, Java/Kotlin, Firebase, Supabase, REST/OpenAPI), analisa arquitetura/contratos/erros/segurança/testes/observabilidade, faz Ponytail pass final e só promove achado com evidência `arquivo:linha`. Regras só ativam com sinal real no boundary. Com `--handoff`, grava `.talos/plans/PLAN_AUDIT_*.md` TC-conforme para correção posterior; não chama executor.
-- `talos-plan-handoff` — converte um PRD validado em plano executável. Use quando a intenção é preparar a execução, não ainda codar. Aceita PRD `sprint-bound` (com sprint file) ou `standalone` (PRD declara explicitamente `Sprint file: Não aplicável (standalone)`); plano `standalone` só é executável via modo `execute` — `full`/`direct` exigem sprint na entrada.
-- `talos-direct-execute` — executa diretamente quando o PRD já está maduro. Use quando você quer pular a fase de plan handoff.
-- `talos-task-validator` — faz a validação fria da slice executada. Use como veredito final de conformidade, nunca como ação manual de rotina.
+- `talos-plan-handoff` — converte o contrato §7 (sprint file) em plano executável. Use quando a intenção é preparar a execução, não ainda codar. Aceita sprint `sprint-bound` ou `standalone` (`Backlog mestre: Não aplicável (standalone)`); plano `standalone` só é executável via modo `execute` — `full`/`direct` exigem sprint na entrada.
+- `talos-direct-execute` — executa diretamente quando o contrato §7 já está maduro/selado. Use quando você quer pular a fase de plan handoff.
+- `talos-task-validator` — faz a validação fria da slice executada (nota código contra o §7). Use como veredito final de conformidade, nunca como ação manual de rotina.
 - `talos-findings-repair` — corrige findings P0/P1/P2 depois de um `fail` do validator sem reabrir a execução completa. Use só no caminho de retry.
 - `talos-slice-review` — faz a revisão fria opcional depois da execução. Use quando quiser uma segunda passada focada em riscos e regressões.
 
@@ -287,7 +279,7 @@ Cada gate é uma verificação determinística de contrato. Se um gate retorna `
 | **SPRINT_FILE** | Sprint file conforme template canônico | Entrada |
 | **DEP** | Dependências de backlog satisfeitas (não-done = hard-fail) | Entrada |
 | **TC** | Conformidade com template canônico | Documental |
-| **G5** | PRD sem ambiguidades não-resolvidas | Documental |
+| **G5** | Contrato §7 sem ambiguidades não-resolvidas (`talos_scan_acceptance`) | Documental |
 | **G7** | Contrato pós-plano verificado | Documental |
 | **G4** | Validador frio isolado (sibling) + proof-of-work | Execução |
 | **G8** | Boundary de execução respeitado | Execução |
@@ -325,7 +317,7 @@ Templates canônicos em [`packages/templates/`](packages/templates/) — fonte �
 | `talos_preflight` | Pré-flight obrigatório (gates PREREQ, JOIN, DISPATCH, VERSION_DRIFT, LOCK_CONFLICT) |
 | `talos_verify_artifact` | Verifica existência e validade de artefato (G1) |
 | `talos_verify_template_conformance` | Conformidade com template canônico (TC) |
-| `talos_scan_prd` | Scaneia PRD por ambiguidades (G5) |
+| `talos_scan_acceptance` | Scaneia contrato §7 / aceite por ambiguidades (G5) |
 | `talos_assert_after_plan` | Verifica contrato pós-plano (G7) |
 | `talos_run_state` | Persiste estado de execução em disco |
 | `talos_lock_dispatch` | Gerencia lock de dispatch (G12 — liveness) |
