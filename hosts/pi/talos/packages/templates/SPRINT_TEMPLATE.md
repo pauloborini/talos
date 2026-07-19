@@ -208,7 +208,6 @@ policy_manifest:
     - "[sem apagar dados / sem migrar contrato / sem segredo em log]"
   required_gates:
     - "talos_verify_sprint_file"
-    - "talos_verify_template_conformance:prd"
     - "talos_verify_template_conformance:plan"
     - "talos-task-validator"
 ```

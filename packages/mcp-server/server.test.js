@@ -34,6 +34,7 @@ import {
   verifySprintFile,
   verifyBacklogIndex,
   selectNextSprint,
+  nextActionForSelectedSprint,
   updateSprintStatus,
   classifyInput,
   preflight,
@@ -1656,11 +1657,20 @@ function backlogWithRows(rows) {
   ].join('\n');
 }
 
-function writeSprintFixture(root, id, { status = 'ready', dorStatus = 'verde' } = {}) {
+function writeSprintFixture(root, id, {
+  status = 'ready',
+  dorStatus = 'verde',
+  contratoStatus = 'draft',
+  plan = 'pendente',
+} = {}) {
   fs.mkdirSync(path.join(root, '.talos/backlog/sprints'), { recursive: true });
+  let doc = sprintDoc({ id, backlog: `BACKLOG.md#${id}`, status, dorStatus, contratoStatus });
+  if (plan !== 'pendente') {
+    doc = doc.replace('| PLAN | pendente |', `| PLAN | ${plan} |`);
+  }
   fs.writeFileSync(
     path.join(root, `.talos/backlog/sprints/SPRINT_${id}_runtime.md`),
-    sprintDoc({ id, backlog: `BACKLOG.md#${id}`, status, dorStatus }),
+    doc,
   );
 }
 
@@ -1699,6 +1709,60 @@ test('talos_select_next_sprint: escolhe sprint ready com maior prioridade determ
   assert.equal(r.status, 'passed');
   assert.equal(r.selected.sprint_id, 'S02');
   assert.deepEqual(r.candidates, ['S02', 'S01']);
+  assert.equal(r.next_action, 'sprint_interview');
+  assert.notEqual(r.next_action, 'gerar_prd');
+  assert.equal(r.selected.contrato_status, 'draft');
+  assert.equal(r.selected.contrato_sealed, false);
+});
+
+test('talos_select_next_sprint: §7 draft → sprint_interview (nunca gerar_prd)', () => {
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S13', { status: 'ready', dorStatus: 'verde', contratoStatus: 'draft' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S13 | Contrato draft | F0 | objetivo | Must | Alto | Baixo | P0 | — | — | ready | — | `.talos/backlog/sprints/SPRINT_S13_runtime.md` | pendente | pendente |',
+  ]));
+  const r = selectNextSprint({ run_id: 'r1', project_root: root, backlog_path: 'BACKLOG.md' });
+  assert.equal(r.status, 'passed');
+  assert.equal(r.next_action, 'sprint_interview');
+  assert.equal(r.selected.prd_path, null);
+  assert.ok(!String(r.next_action).includes('prd'));
+});
+
+test('talos_select_next_sprint: §7 aprovado+selo sem PLAN → plan_handoff', () => {
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S01', { status: 'ready', dorStatus: 'verde', contratoStatus: 'aprovado' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | — | — | ready | — | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+  const r = selectNextSprint({ run_id: 'r1', project_root: root, backlog_path: 'BACKLOG.md' });
+  assert.equal(r.status, 'passed');
+  assert.equal(r.selected.contrato_status, 'aprovado');
+  assert.equal(r.selected.contrato_sealed, true);
+  assert.equal(r.next_action, 'plan_handoff');
+});
+
+test('talos_select_next_sprint: PLAN real → plan_execute', () => {
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S01', {
+    status: 'ready',
+    dorStatus: 'verde',
+    contratoStatus: 'aprovado',
+    plan: '.talos/plans/PLAN_S01_runtime.md',
+  });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | — | — | ready | — | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | `.talos/plans/PLAN_S01_runtime.md` | pendente |',
+  ]));
+  const r = selectNextSprint({ run_id: 'r1', project_root: root, backlog_path: 'BACKLOG.md' });
+  assert.equal(r.status, 'passed');
+  assert.equal(r.next_action, 'plan_execute');
+  assert.equal(r.selected.plan_path, '.talos/plans/PLAN_S01_runtime.md');
+});
+
+test('nextActionForSelectedSprint: matriz canônica 0.14', () => {
+  assert.equal(nextActionForSelectedSprint({ contrato_status: 'draft', contrato_sealed: false, plan: null }), 'sprint_interview');
+  assert.equal(nextActionForSelectedSprint({ contrato_status: 'aprovado', contrato_sealed: true, plan: 'pendente' }), 'plan_handoff');
+  assert.equal(nextActionForSelectedSprint({ contrato_status: 'aprovado', contrato_sealed: true, plan: 'PLAN_S01.md' }), 'plan_execute');
+  assert.equal(nextActionForSelectedSprint({ contrato_status: 'aprovado', contrato_sealed: false, plan: null }), 'sprint_interview');
 });
 
 test('talos_select_next_sprint: dependência interna não done bloqueia seleção', () => {
@@ -1728,7 +1792,6 @@ test('talos_update_sprint_status: sincroniza done no backlog e sprint file com e
     sprint_id: 'S01',
     status: 'done',
     validator_verdict: 'pass',
-    prd_path: 'PRD_S01.md',
     plan_path: 'PLAN_S01.md',
     state_path: '.talos/state/S01.json',
     evidence: 'validator pass',
@@ -1740,14 +1803,38 @@ test('talos_update_sprint_status: sincroniza done no backlog e sprint file com e
   const row = parseSprintRows(backlog)[0];
   assert.equal(row.state, 'done');
   assert.equal(row.gate, 'validator:pass');
-  assert.equal(row.prd, 'PRD_S01.md');
+  assert.equal(row.prd, 'pendente');
   assert.equal(row.plan, 'PLAN_S01.md');
   assert.equal(row.state_file, '.talos/state/S01.json');
   const sprint = fs.readFileSync(path.join(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md'), 'utf8');
   assert.match(sprint, /^\| Status \| done \|$/m);
+  assert.doesNotMatch(sprint, /^\|\s*PRD\s*\|\s*PRD_S01\.md\s*\|/m);
   assert.match(sprint, /\| Sprint status update \| validator:pass \| validator pass \|/);
   assert.match(sprint, /\| Talos MCP \| Status -> done; validator=pass; evidence=validator pass \|/);
   assert.equal(verifyBacklogIndex({ run_id: 'r1', project_root: root, backlog_path: 'BACKLOG.md' }).status, 'passed');
+});
+
+test('talos_update_sprint_status: prd_path legado só atualiza coluna do backlog', () => {
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S01', { status: 'ready', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | ready | ready | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+  const r = updateSprintStatus({
+    run_id: 'r1',
+    project_root: root,
+    backlog_path: 'BACKLOG.md',
+    sprint_id: 'S01',
+    status: 'doing',
+    prd_path: 'legado-ignorado-no-sprint.md',
+    plan_path: 'PLAN_S01.md',
+  });
+  assert.equal(r.status, 'passed');
+  const row = parseSprintRows(fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8'))[0];
+  assert.equal(row.prd, 'legado-ignorado-no-sprint.md');
+  assert.equal(row.plan, 'PLAN_S01.md');
+  const sprint = fs.readFileSync(path.join(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md'), 'utf8');
+  assert.doesNotMatch(sprint, /legado-ignorado-no-sprint/);
 });
 
 test('talos_update_sprint_status: done sem validator terminal bloqueia e não muta', () => {

@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.14.1 - 2026-07-19
+
+Tipo: **patch de confiabilidade de contrato** (só MCP + docs; schema v5 intacto).
+
+Resumo: remove o resíduo `next_action: "gerar_prd"` pós-remoção do PRD. `talos_select_next_sprint` deriva a próxima ação do estado do sprint selecionado.
+
+Mudanças:
+- **`talos_select_next_sprint`** — `next_action` canônico: §7 draft → `sprint_interview`; §7 aprovado+selo sem PLAN → `plan_handoff`; PLAN real → `plan_execute`. Nunca `gerar_prd`.
+- **Payload `selected`** — adiciona `contrato_status` / `contrato_sealed`; `prd_path` permanece como legado posicional do backlog (documentado).
+- **`talos_update_sprint_status`** — `prd_path` só atualiza a coluna legado do backlog; não grava campo PRD no sprint file.
+- **Docs** — README raiz, MCP README, `STATE_FILE_SCHEMA`, `SPRINT_TEMPLATE` (gate morto `conformance:prd`), `subagent_dispatch`, `PERGUNTAS_EM_ABERTO_TEMPLATE` alinhados a §7.
+
+Impacto:
+- Orquestradores/consumidores que seguiam `gerar_prd` ao pé da letra passam a receber o verbo correto.
+- Nenhuma skill/artefato PRD reintroduzido.
+
 ## 0.14.0 - 2026-07-19
 
 > ⚠️ **BREAKING (contrato documental):** o artefato `PRD_*.md` deixa de ser etapa do pipeline. O sprint file absorve o contrato de produto (§7 congelado + selo sha256). Schema MCP `talos_capabilities` permanece v5; topologia sibling (G4), dispatch e locks intactos. Bump minor pré-1.0 é proposital (SemVer 0.y.z permite breaking sem major).
