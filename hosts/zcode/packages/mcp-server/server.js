@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import {
   parseSprintRows,
   validateSprintFileConformance,
+  validateAcceptanceSeal,
 } from '../skills/_shared/scripts/document_quality.mjs';
 
 const SERVER_NAME = 'talos';
@@ -121,7 +122,7 @@ function expectedExecutorSkill(mode) {
 // pronta — nunca monta texto livre. Data-driven como HOST_ADAPTERS: tabela única
 // `event → template`, sem string de banner inline espalhada pelos gates.
 // Símbolo fixo `▸`, idioma pt-BR, exatamente uma linha por evento. Os 11 eventos
-// fechados do PRD §4. Slots no formato {nome} são preenchidos por renderBanner.
+// fechados do contrato §7. Slots no formato {nome} são preenchidos por renderBanner.
 const BANNER_TEMPLATES = {
   roteia: '▸ talos: roteamento · input={tipo} → modo={modo}',
   roteia_troca: '▸ talos: roteamento · pediu={x} mas input={y} → modo={z}',
@@ -2151,9 +2152,12 @@ function inspectBacklogIndex(args = {}) {
       sprint_file: sprintPath || null,
       sprint_file_status: pendingPathToken(row.sprint_file) ? 'missing' : 'unread',
       dor_status: null,
+      // prd: coluna legado posicional do backlog (compat); aceite mora no §7.
       prd: cleanBacklogPathToken(row.prd) || null,
       plan: cleanBacklogPathToken(row.plan) || null,
       state_file: cleanBacklogPathToken(row.state_file) || null,
+      contrato_status: null,
+      contrato_sealed: false,
     };
     if (!pendingPathToken(row.sprint_file)) {
       try {
@@ -2168,6 +2172,9 @@ function inspectBacklogIndex(args = {}) {
         info.sprint_file_status = validation.valid ? 'valid' : 'invalid';
         info.pending_count = validation.pending_count;
         info.dor_status = sprintDorStatus(sprintMarkdown);
+        info.contrato_status = sprintMetadataValue(sprintMarkdown, 'Contrato status');
+        const seal = validateAcceptanceSeal(sprintMarkdown);
+        info.contrato_sealed = seal.sealed && !seal.tampered;
         if (sprintStatus && sprintStatus !== row.state) {
           pendencies.push(conformancePending('status_drift', row.id, null, `Status divergente em ${row.id}: backlog=${row.state}, sprint_file=${sprintStatus}.`, 'sincronizar_status_backlog_sprint'));
         }
@@ -2254,6 +2261,21 @@ function compareSprintCandidates(a, b) {
   return 0;
 }
 
+/**
+ * Próxima ação canônica pós-seleção (pipeline 0.14+):
+ * - PLAN real → plan_execute
+ * - §7 aprovado + selo íntegro → plan_handoff
+ * - caso contrário (draft / sem selo) → sprint_interview
+ * Verbos alinhados a WORKFLOW_CONFIG / expectedNextPhase. Nunca `gerar_prd`.
+ */
+function nextActionForSelectedSprint(info) {
+  if (info?.plan && !pendingPathToken(info.plan)) return 'plan_execute';
+  if (/^aprovado$/i.test(info?.contrato_status ?? '') && info?.contrato_sealed === true) {
+    return 'plan_handoff';
+  }
+  return 'sprint_interview';
+}
+
 function derivedSprintGateStatus(status, validatorVerdict) {
   if (status === 'done') return `validator:${validatorVerdict}`;
   if (status === 'review') return 'validator:pending';
@@ -2313,7 +2335,6 @@ function appendToMarkdownSectionTable(markdown, sectionRe, rowCells) {
 
 function updatedSprintMarkdown(markdown, {
   status,
-  prdPath = null,
   planPath = null,
   statePath = null,
   evidence = null,
@@ -2321,7 +2342,7 @@ function updatedSprintMarkdown(markdown, {
   timestamp,
 }) {
   let next = replaceMarkdownTableValue(markdown, 'Status', status);
-  if (prdPath) next = replaceMarkdownTableValue(next, 'PRD', prdPath);
+  // prd_path não grava mais metadado no sprint (template 0.14 removeu campo PRD).
   if (planPath) next = replaceMarkdownTableValue(next, 'PLAN', planPath);
   if (statePath) next = replaceMarkdownTableValue(next, 'State / evidência', statePath);
   const evidenceText = evidence || statePath || validatorVerdict;
@@ -2385,6 +2406,7 @@ function updateSprintStatus(args = {}) {
     const sprintBefore = fs.readFileSync(sprintAbs, 'utf8');
     const nextBacklog = replaceBacklogSprintRow(backlogBefore, sprintId, (cells) => {
       const nextCells = [...cells];
+      // Coluna PRD (índice 8): legado posicional — só atualiza se o caller passar prd_path.
       nextCells[8] = args.prd_path ?? nextCells[8];
       nextCells[10] = status;
       nextCells[11] = args.gate_status ?? derivedSprintGateStatus(status, validatorVerdict);
@@ -2398,7 +2420,6 @@ function updateSprintStatus(args = {}) {
     }
     const nextSprint = updatedSprintMarkdown(sprintBefore, {
       status,
-      prdPath: args.prd_path,
       planPath: args.plan_path,
       statePath: args.state_path,
       evidence: args.evidence,
@@ -2501,9 +2522,12 @@ function selectNextSprint(args = {}) {
       selected: selected ? {
         sprint_id: selected.id,
         sprint_file_path: selected.sprint_file,
+        // Legado posicional do backlog; null/`—` é o esperado pós-0.14. Aceite = §7.
         prd_path: selected.prd,
         plan_path: selected.plan,
         state_path: selected.state_file,
+        contrato_status: selected.contrato_status,
+        contrato_sealed: selected.contrato_sealed === true,
         reason: 'ready + deps done + sprint file válido + DoR verde + maior prioridade determinística',
       } : null,
       candidates: candidates.map((item) => item.id),
@@ -2515,7 +2539,9 @@ function selectNextSprint(args = {}) {
       banner: blocked
         ? renderBanner('preflight_fail', { motivo: selected ? `backlog index: ${structuralPendencies.length} pendências` : 'nenhuma sprint executável' })
         : renderBanner('preflight_ok', { caps: `next=${selected.id}` }),
-      next_action: blocked ? (structuralPendencies[0]?.next_action ?? 'atualizar_sprint_file_ou_dependencias') : 'gerar_prd',
+      next_action: blocked
+        ? (structuralPendencies[0]?.next_action ?? 'atualizar_sprint_file_ou_dependencias')
+        : nextActionForSelectedSprint(selected),
     };
   } catch (error) {
     result = {
@@ -5000,7 +5026,8 @@ function toolsList() {
             status: { type: 'string', enum: [...BACKLOG_STATES] },
             validator_verdict: { type: 'string', enum: [...VALIDATOR_VERDICTS] },
             gate_status: { type: 'string', minLength: 1 },
-            prd_path: { type: 'string', minLength: 1 },
+            // Legado: só atualiza coluna PRD do backlog (compat posicional). Não gera artefato PRD.
+            prd_path: { type: 'string', minLength: 1, description: 'Legado posicional do backlog; opcional. Aceite mora no §7 do sprint file.' },
             plan_path: { type: 'string', minLength: 1 },
             state_path: { type: 'string', minLength: 1 },
             evidence: { type: 'string', minLength: 1 },
@@ -5281,6 +5308,7 @@ export {
   verifySprintFile,
   verifyBacklogIndex,
   selectNextSprint,
+  nextActionForSelectedSprint,
   updateSprintStatus,
   classifyInput,
   preflight,

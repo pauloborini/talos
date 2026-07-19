@@ -239,9 +239,15 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `talos-*` para o
 
 ---
 
-**Plugin version:** 0.14.0
+**Plugin version:** 0.14.1
 **Author:** Paulo Borini
 **Last updated:** 2026-07-19
+
+### Novidades v0.14.1 — `select_next_sprint` sem `gerar_prd`
+
+- **Patch de contrato** — `talos_select_next_sprint` deixa de retornar `next_action: "gerar_prd"`; deriva `sprint_interview` / `plan_handoff` / `plan_execute` do §7 + PLAN.
+- **Legado** — `prd_path` no payload/update permanece posicional no backlog; aceite mora no §7.
+- Schema MCP v5 e topologia sibling intactos.
 
 ### Novidades v0.14.0 — sprint file absorve o PRD (BREAKING documental)
 
