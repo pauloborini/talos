@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.14.2 - 2026-07-20
+
+Tipo: **packaging**. **Sem breaking**. Schema MCP: v5 (inalterado).
+
+Resumo: corrige spawn do MCP em paths com espaço (ex.: `Application Support` no Parallels/macOS) e cita `description` dos agents no frontmatter YAML para parse estável.
+
+Mudanças:
+- **MCP spawn** — manifests Claude passam a usar `command: "/bin/bash"` + `args: ["${CLAUDE_PLUGIN_ROOT}/packages/mcp-server/run.sh"]` em vez de colocar o path do script em `command` (ENOENT quando o path contém espaços).
+- **`run.sh`** — comentário documentando a regra de spawn para hosts/Parallels.
+- **Agents** — `description` entre aspas no frontmatter dos 5 agents da família (`talos-direct-execute`, `talos-plan-execute`, `talos-findings-repair`, `talos-slice-review`, `talos-task-validator`) e espelhos em `plugins/` + `hosts/`.
+
+Impacto:
+- Instalação/atualização em diretórios com espaço deixa de quebrar o MCP stdio.
+- Sem mudança de contrato MCP, gates ou topologia sibling.
+
+Arquivos/artefatos:
+- `.claude-plugin/plugin.json`, `plugin-manifests/claude/plugin.json`, `packages/mcp-server/run.sh`
+- `agents/*.md`, `plugins/talos/agents/*.md`, `hosts/{opencode,pi,zcode,vscode}/**/agents/*.md`
+- `VERSION`, bundles `dist/**`, catálogos regenerados
+
+Validação:
+- `node build/bump-version.mjs 0.14.2` + `bash build/build-plugins.sh` — ok.
+- `node build/check-consistency.mjs` — ok.
+- `node --test packages/mcp-server/server.test.js` — 230/230.
+- `node build/smoke-hosts.mjs` — ok.
+- `node build/conformance-matrix.mjs` — ok (7 hosts × 10).
+- `shasum -a 256 -c dist/SHA256SUMS` + `unzip -t` nos 6 `.plugin` — ok.
+- `npm pack` + `npm exec` tarball (`talos --help`, `init opencode/codex --dry-run`) — ok.
+- `claude plugin validate ./ --strict` — ok.
+- `codex plugin validate` — CLI sem subcomando `validate` (registrado).
+
 ## 0.14.1 - 2026-07-19
 
 Tipo: **patch de confiabilidade de contrato** (MCP + orquestrador + entry points; schema v5 intacto).
