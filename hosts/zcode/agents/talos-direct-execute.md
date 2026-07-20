@@ -1,6 +1,6 @@
 ---
 name: talos-direct-execute
-description: Executor direto da família Talos (modo direct). Despachado em contexto isolado pelo orquestrador para implementar um contrato §7 de sprint file / tarefa escopada sem artefato de plano separado — toda mutação de código acontece aqui, nunca no fio do orquestrador (Gate G9). Primeira ação: carregar a skill completa talos-direct-execute. Antes do relatório final, escreve o state_path e retorna validator_handoff_required; o orquestrador despacha a validação fria sibling (talos-task-validator, Gate G4).
+description: "Executor direto da família Talos (modo direct). Despachado em contexto isolado pelo orquestrador para implementar um contrato §7 de sprint file / tarefa escopada sem artefato de plano separado — toda mutação de código acontece aqui, nunca no fio do orquestrador (Gate G9). Primeira ação: carregar a skill completa talos-direct-execute. Antes do relatório final, escreve o state_path e retorna validator_handoff_required; o orquestrador despacha a validação fria sibling (talos-task-validator, Gate G4)."
 tools: Read, Write, Edit, Grep, Glob, Bash, Skill, Agent, mcp__plugin_talos_talos
 ---
 

@@ -1,5 +1,5 @@
 ---
-description: Reparador enxuto da família Talos. Despachado pelo orquestrador apenas após `talos-task-validator` retornar `fail` em topologia sibling. Corrige findings P0/P1/P2 dentro do boundary da slice sem carregar `talos-plan-execute`/`talos-direct-execute` e sem despachar novo validator.
+description: "Reparador enxuto da família Talos. Despachado pelo orquestrador apenas após `talos-task-validator` retornar `fail` em topologia sibling. Corrige findings P0/P1/P2 dentro do boundary da slice sem carregar `talos-plan-execute`/`talos-direct-execute` e sem despachar novo validator."
 mode: subagent
 temperature: 0.1
 ---

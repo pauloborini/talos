@@ -1,5 +1,5 @@
 ---
-description: Validador frio de slice executada por talos-plan-execute ou talos-direct-execute. Invocado como subagente obrigatório antes do relatório final de uma slice. Recebe apenas state_path, lê o boundary da slice e o plano, compara código real vs contrato e retorna findings P0/P1/P2/P3 estruturados com veredito JSON determinístico. Não corrige código. Não propõe diff.
+description: "Validador frio de slice executada por talos-plan-execute ou talos-direct-execute. Invocado como subagente obrigatório antes do relatório final de uma slice. Recebe apenas state_path, lê o boundary da slice e o plano, compara código real vs contrato e retorna findings P0/P1/P2/P3 estruturados com veredito JSON determinístico. Não corrige código. Não propõe diff."
 mode: subagent
 temperature: 0.1
 ---
