@@ -1,6 +1,6 @@
 {
   "name": "talos",
-  "version": "0.14.1",
+  "version": "0.14.2",
   "description": "Orquestra pipelines de desenvolvimento de features no Talos (sprint file com contrato de produto, entrevista, plano, execução, repair, review), auditoria universal e geração explícita de backlog mestre. Bundle único: skills talos-* + orquestrador + templates canônicos + validator subagente. Pipeline orientado a artefato com gates G1–G11.",
   "author": {
     "name": "Paulo Borini"
@@ -21,8 +21,10 @@
   ],
   "mcpServers": {
     "talos": {
-      "command": "${CLAUDE_PLUGIN_ROOT}/packages/mcp-server/run.sh",
-      "args": [],
+      "command": "/bin/bash",
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/packages/mcp-server/run.sh"
+      ],
       "transport": "stdio"
     }
   }

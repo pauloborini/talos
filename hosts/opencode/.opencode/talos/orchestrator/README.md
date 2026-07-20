@@ -239,9 +239,15 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `talos-*` para o
 
 ---
 
-**Plugin version:** 0.14.1
+**Plugin version:** 0.14.2
 **Author:** Paulo Borini
-**Last updated:** 2026-07-19
+**Last updated:** 2026-07-20
+
+### Novidades v0.14.2 — MCP spawn com path com espaço
+
+- **Packaging** — spawn do MCP via `/bin/bash` + path do `run.sh` em `args[]` (evita ENOENT em paths com espaço, ex. Parallels/`Application Support`).
+- **Agents** — `description` citada no frontmatter YAML dos 5 agents da família.
+- Schema MCP v5 e topologia sibling intactos.
 
 ### Novidades v0.14.1 — `select_next_sprint` sem `gerar_prd`
 
