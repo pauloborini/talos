@@ -1,5 +1,5 @@
 ---
-description: Revisor frio de slice da família Talos (--review). Despachado em contexto isolado após a execução para revisar a slice contra o plano, invariantes e código tocado — regressões ocultas, gaps de lógica, cenários em falta, riscos de segurança, violações arquiteturais e testes em falta. Read-only: não edita código nem despacha outros sub-agents. Primeira ação: carregar a skill completa talos-slice-review.
+description: "Revisor frio de slice da família Talos (--review). Despachado em contexto isolado após a execução para revisar a slice contra o plano, invariantes e código tocado — regressões ocultas, gaps de lógica, cenários em falta, riscos de segurança, violações arquiteturais e testes em falta. Read-only: não edita código nem despacha outros sub-agents. Primeira ação: carregar a skill completa talos-slice-review."
 mode: subagent
 temperature: 0.1
 ---

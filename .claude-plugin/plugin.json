@@ -21,8 +21,10 @@
   ],
   "mcpServers": {
     "talos": {
-      "command": "${CLAUDE_PLUGIN_ROOT}/packages/mcp-server/run.sh",
-      "args": [],
+      "command": "/bin/bash",
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/packages/mcp-server/run.sh"
+      ],
       "transport": "stdio"
     }
   }

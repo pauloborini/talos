@@ -1,6 +1,6 @@
 ---
 name: talos-plan-execute
-description: Executor de plano da família Talos. Despachado em contexto isolado pelo orquestrador após o plano validado — toda mutação de código (editar, rodar build/testes, commitar) acontece aqui, nunca no fio do orquestrador (Gate G9). Primeira ação: carregar a skill completa talos-plan-execute. Antes do relatório final, escreve o state_path e retorna validator_handoff_required; o orquestrador despacha a validação fria sibling (talos-task-validator, Gate G4).
+description: "Executor de plano da família Talos. Despachado em contexto isolado pelo orquestrador após o plano validado — toda mutação de código (editar, rodar build/testes, commitar) acontece aqui, nunca no fio do orquestrador (Gate G9). Primeira ação: carregar a skill completa talos-plan-execute. Antes do relatório final, escreve o state_path e retorna validator_handoff_required; o orquestrador despacha a validação fria sibling (talos-task-validator, Gate G4)."
 tools: Read, Write, Edit, Grep, Glob, Bash, Skill, Agent, mcp__plugin_talos_talos
 ---
 
