@@ -1,0 +1,3308 @@
+{
+  "schema_version": "1.0.0",
+  "generated_at": "2026-07-22T15:21:36.601Z",
+  "root_path": "/Users/pauloborini/Documents/projetos/talos",
+  "file_count": 550,
+  "files": [
+    {
+      "relative_path": ".agents/plugins/marketplace.json",
+      "content_hash": "95c74d8267aac4b4cc40bf855f492a1ff10f7f568bd0e85085b5f5e9f148ced2",
+      "size_bytes": 533,
+      "mtime_ms": 1782910952845.1086
+    },
+    {
+      "relative_path": ".app-vault/docs/AUDITORIA_MATURIDADE_PLUGIN_INSTALACAO.md",
+      "content_hash": "b80e84de7b078ce236defe7abcaac5baba693e9b351e7239ac6983d530d97126",
+      "size_bytes": 16778,
+      "mtime_ms": 1782910952845.8823
+    },
+    {
+      "relative_path": ".claude-plugin/marketplace.json",
+      "content_hash": "6180028bb01c224b26973dcc27d2fca1db85010d9088be084cba432b3e856596",
+      "size_bytes": 559,
+      "mtime_ms": 1782910952846.241
+    },
+    {
+      "relative_path": ".claude-plugin/plugin.json",
+      "content_hash": "a88e99617c3ed8ebf228f5359932f376be34f09ad7108356013e1e02df38e85e",
+      "size_bytes": 879,
+      "mtime_ms": 1784553375437.3855
+    },
+    {
+      "relative_path": ".gitattributes",
+      "content_hash": "bd491149f85471eed10fdec8320815d1b67c8fd7f45772dacfaadb49f123a428",
+      "size_bytes": 533,
+      "mtime_ms": 1781557467303.5576
+    },
+    {
+      "relative_path": ".github/workflows/ci.yml",
+      "content_hash": "1129720bb1376fe588d8004f1e6a74015e1ab88258de1b221a2f5eeffe0339c5",
+      "size_bytes": 3161,
+      "mtime_ms": 1782910934977.8828
+    },
+    {
+      "relative_path": ".github/workflows/release.yml",
+      "content_hash": "9d19ca09bd5e026ee52daeeee067dd7aa5e20d91c72b69394bffc95ad2d199e8",
+      "size_bytes": 5092,
+      "mtime_ms": 1782928567196.5068
+    },
+    {
+      "relative_path": ".gitignore",
+      "content_hash": "c8b53044e5267c869d7c61ae63f84b443a3875be3eb0e68186c6d942d4b32542",
+      "size_bytes": 330,
+      "mtime_ms": 1782910952847.1501
+    },
+    {
+      "relative_path": ".npmignore",
+      "content_hash": "cd16f5f707bb4984eedbcd060262c98d575427f21fc55f6b123b676a229a5071",
+      "size_bytes": 1600,
+      "mtime_ms": 1782910952847.4065
+    },
+    {
+      "relative_path": "AGENTS.md",
+      "content_hash": "8431c29d7c3374d3d36e13f86f215e2ed15e97472cba908ab3540f341574f76a",
+      "size_bytes": 7685,
+      "mtime_ms": 1784553414467.8467
+    },
+    {
+      "relative_path": "agents/talos-direct-execute.md",
+      "content_hash": "f56061c9ff3521c78af00a23f028c2473a479e462f49348c1dfdf3973c2e3988",
+      "size_bytes": 2423,
+      "mtime_ms": 1784511633045.9668
+    },
+    {
+      "relative_path": "agents/talos-findings-repair.md",
+      "content_hash": "87383223ba46d45127c80ebbaf2871d8d1ebbe077ad676755286ce6251b38f90",
+      "size_bytes": 2162,
+      "mtime_ms": 1784511633045.251
+    },
+    {
+      "relative_path": "agents/talos-plan-execute.md",
+      "content_hash": "8ef070cb8933d0b00584b1c4d683b00a00d9731a1a169a90c58c3b9e61630ad5",
+      "size_bytes": 2633,
+      "mtime_ms": 1784511633045.8428
+    },
+    {
+      "relative_path": "agents/talos-slice-review.md",
+      "content_hash": "f11e3d740ba8a001300abe1d14a886263e7d7a3d00bfd6e7517ca4380c80563e",
+      "size_bytes": 1802,
+      "mtime_ms": 1784511633045.091
+    },
+    {
+      "relative_path": "agents/talos-task-validator.md",
+      "content_hash": "1c4834746a18c0e6661c0ab730301c25ed392edc7508a9bd6ace55ccc7c5feef",
+      "size_bytes": 9873,
+      "mtime_ms": 1784511633045.5542
+    },
+    {
+      "relative_path": "archive/v0.1.10/.agents/plugins/marketplace.json",
+      "content_hash": "5761308ec11da69ad288d40b12f4a6f3aa8e79e112b5598a31d46c061362e945",
+      "size_bytes": 350,
+      "mtime_ms": 1782910952851.6265
+    },
+    {
+      "relative_path": "archive/v0.1.10/.claude-plugin/marketplace.json",
+      "content_hash": "b075d2c4e31be58270cd60f93103f2a25cf588fa294c6e0ac0edb3b9d6f551c7",
+      "size_bytes": 326,
+      "mtime_ms": 1782910952852.174
+    },
+    {
+      "relative_path": "archive/v0.1.10/plugins/talos/.codex-plugin/plugin.json",
+      "content_hash": "407dd4c0ab8b1d08d4a412c6be3bf50b08a7e9028f3855a70992c42c34fcf048",
+      "size_bytes": 1135,
+      "mtime_ms": 1782910952852.517
+    },
+    {
+      "relative_path": "archive/v0.1.10/plugins/talos/commands/workflow.md",
+      "content_hash": "73237a74f9bef2ca5db5a408ad59ea83d444ccc60d264510a4024c8423675f24",
+      "size_bytes": 2491,
+      "mtime_ms": 1782910952853.0085
+    },
+    {
+      "relative_path": "archive/v0.1.10/plugins/talos/defaults/paths.md",
+      "content_hash": "65f08121665594b082a696f2ec321835c8938e38c57d678fbfce6a35116ed32e",
+      "size_bytes": 971,
+      "mtime_ms": 1782910952853.2808
+    },
+    {
+      "relative_path": "archive/v0.1.10/plugins/talos/README.md",
+      "content_hash": "4e7a423f47db8b8ca2d887630b6b470495cfe6471a0bb99d854cca052e642637",
+      "size_bytes": 11282,
+      "mtime_ms": 1782910952852.7673
+    },
+    {
+      "relative_path": "archive/v0.1.10/plugins/talos/references/subagent_dispatch.md",
+      "content_hash": "08a111459449ba5f2bc45ceaa5d040e546e16a3752cdd25c653fabc3124305dd",
+      "size_bytes": 1118,
+      "mtime_ms": 1782910952853.5168
+    },
+    {
+      "relative_path": "archive/v0.1.10/plugins/talos/skills/talos/SKILL.md",
+      "content_hash": "77e08f1d9e44734b4f136088d456fa491b34a5c1876efd78efe702d0c0e6e6e5",
+      "size_bytes": 22329,
+      "mtime_ms": 1782910952853.9934
+    },
+    {
+      "relative_path": "archive/v0.1.10/plugins/talos/talos_workflows_config.md",
+      "content_hash": "ffcbdf21f675c75bc9875647379b1de50ad945a590470f2f44349c1db73c8d6e",
+      "size_bytes": 14346,
+      "mtime_ms": 1782910952854.3137
+    },
+    {
+      "relative_path": "archive/v0.1.10/talos-claude.plugin",
+      "content_hash": "fafae92ff7c2e0bf23fc776daf00a8ce35a62a2ab458650590a92bd41eb95c11",
+      "size_bytes": 22911,
+      "mtime_ms": 1782910952854.7415
+    },
+    {
+      "relative_path": "archive/v0.1.10/talos-claude/.claude-plugin/plugin.json",
+      "content_hash": "a750cb9ddb0335cbd9b9289729cc8102ba212e860ab031ae867ce9b3d48964c0",
+      "size_bytes": 537,
+      "mtime_ms": 1782910952855.5857
+    },
+    {
+      "relative_path": "archive/v0.1.10/talos-claude/commands/workflow.md",
+      "content_hash": "73237a74f9bef2ca5db5a408ad59ea83d444ccc60d264510a4024c8423675f24",
+      "size_bytes": 2491,
+      "mtime_ms": 1782910952855.9287
+    },
+    {
+      "relative_path": "archive/v0.1.10/talos-claude/defaults/paths.md",
+      "content_hash": "65f08121665594b082a696f2ec321835c8938e38c57d678fbfce6a35116ed32e",
+      "size_bytes": 971,
+      "mtime_ms": 1782910952856.043
+    },
+    {
+      "relative_path": "archive/v0.1.10/talos-claude/README.md",
+      "content_hash": "4e7a423f47db8b8ca2d887630b6b470495cfe6471a0bb99d854cca052e642637",
+      "size_bytes": 11282,
+      "mtime_ms": 1782910952855.806
+    },
+    {
+      "relative_path": "archive/v0.1.10/talos-claude/references/subagent_dispatch.md",
+      "content_hash": "08a111459449ba5f2bc45ceaa5d040e546e16a3752cdd25c653fabc3124305dd",
+      "size_bytes": 1118,
+      "mtime_ms": 1782910952856.1687
+    },
+    {
+      "relative_path": "archive/v0.1.10/talos-claude/skills/talos/SKILL.md",
+      "content_hash": "77e08f1d9e44734b4f136088d456fa491b34a5c1876efd78efe702d0c0e6e6e5",
+      "size_bytes": 22329,
+      "mtime_ms": 1782910952856.3264
+    },
+    {
+      "relative_path": "archive/v0.1.10/talos-claude/talos_workflows_config.md",
+      "content_hash": "ffcbdf21f675c75bc9875647379b1de50ad945a590470f2f44349c1db73c8d6e",
+      "size_bytes": 14346,
+      "mtime_ms": 1782910952856.4556
+    },
+    {
+      "relative_path": "CHANGELOG.md",
+      "content_hash": "4b6aa690f0dcaa1b0ae8e94aee430185a0b4612bfd9c5886e8b5db673ddbea3f",
+      "size_bytes": 88616,
+      "mtime_ms": 1784553450740.194
+    },
+    {
+      "relative_path": "CLAUDE.md",
+      "content_hash": "0922d59e747ee72037c4ed75d9545702599ee0ae54accb6879e2899dab64dcc3",
+      "size_bytes": 7177,
+      "mtime_ms": 1784553411008.59
+    },
+    {
+      "relative_path": "COMMANDS.md",
+      "content_hash": "4a9673a7e54117dbdb248bb38ae44e0de02745ae6e49719aab9570ae83e74230",
+      "size_bytes": 5746,
+      "mtime_ms": 1784553375437.969
+    },
+    {
+      "relative_path": "docs/assets/atlas-logo.png",
+      "content_hash": "dd441a4d3467ed0bd636d27d5fd6b95da2834b166e9a27d6beb3e58864ed1815",
+      "size_bytes": 26711,
+      "mtime_ms": 1782910952861.8083
+    },
+    {
+      "relative_path": "hooks/claude/settings.snippet.json",
+      "content_hash": "ed4b383a2f117dd5c87ef3c0d59923290de3cd67e455ae4fa18f494b1a436b88",
+      "size_bytes": 510,
+      "mtime_ms": 1782910952862.4485
+    },
+    {
+      "relative_path": "hooks/claude/talos-hook.js",
+      "content_hash": "ce73ea164d9f8c284af49dd08fbf8bf6a7ce910365f629f8fa433700091932a3",
+      "size_bytes": 6707,
+      "mtime_ms": 1782910952862.698
+    },
+    {
+      "relative_path": "hooks/README.md",
+      "content_hash": "f67ccb9081f9e2f77c2770ba6635712067641e4fdcd60c9bb67a980fed2164c9",
+      "size_bytes": 1061,
+      "mtime_ms": 1782910952862.1235
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/agents/talos-direct-execute.md",
+      "content_hash": "bd4f81866be483114f27e93ce79d34a6752889f2a9f5329cee745a98c67335a0",
+      "size_bytes": 2346,
+      "mtime_ms": 1784553962693.1387
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/agents/talos-findings-repair.md",
+      "content_hash": "1860e0146d10beb9e5fd3388b458ce595ca40c2592f40fddfe760f6093bb52a0",
+      "size_bytes": 2091,
+      "mtime_ms": 1784553962692.4268
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/agents/talos-plan-execute.md",
+      "content_hash": "47bb0761188a0c0716f594d2d79c4d0034c5d76466ff4eb3b195a12bfd5c74ac",
+      "size_bytes": 2558,
+      "mtime_ms": 1784553962692.763
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/agents/talos-slice-review.md",
+      "content_hash": "641359bfcf5cbf9669b4149662526f91046954ccdac5de771c56afaf02da081c",
+      "size_bytes": 1747,
+      "mtime_ms": 1784553962692.2544
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/agents/talos-task-validator.md",
+      "content_hash": "af038be99b7d333af08f5b3ec6d417dbea81aa86ab1082942e411972bddd5af5",
+      "size_bytes": 9796,
+      "mtime_ms": 1784553962692.6091
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/skills/_shared/references/stack-profiles.md",
+      "content_hash": "1330d56b5044a3ee8741e5184382151c562f1173c296bd1ba0dcda372cd581b0",
+      "size_bytes": 3570,
+      "mtime_ms": 1784553962707.17
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/skills/_shared/scripts/document_quality.mjs",
+      "content_hash": "ffe42d1daa85681cd3fee0fcb6a2a9e71fc362a83f47bbde264fa39dca8b5705",
+      "size_bytes": 29588,
+      "mtime_ms": 1784553962707.512
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/skills/talos-audit/agents/openai.yaml",
+      "content_hash": "9b1affbac432524ba2dcfef8db7d9e8fe3e489784919d7cd8ea227f2dbb33f96",
+      "size_bytes": 298,
+      "mtime_ms": 1784553962700.5884
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/skills/talos-audit/SKILL.md",
+      "content_hash": "9832acc3797d23cf4d6bb2ca791ba91c4a6e366d662e25fd39f8d52110f78358",
+      "size_bytes": 8683,
+      "mtime_ms": 1784553962700.8691
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/skills/talos-backlog-generator/agents/openai.yaml",
+      "content_hash": "e535081783c15f430eedf13b5dc13ee0afc9a1c0ba38830b66c0f5b787f55103",
+      "size_bytes": 218,
+      "mtime_ms": 1784553962704.5476
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/skills/talos-backlog-generator/SKILL.md",
+      "content_hash": "4c0e77249dbbac0c60129c72e3ad6db7158d7326095322cf413a667b372d542d",
+      "size_bytes": 10219,
+      "mtime_ms": 1784553962704.7485
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/skills/talos-direct-execute/agents/openai.yaml",
+      "content_hash": "8820bfdc53ee28c0f2bdc491c8ed37e0c8b89ee65f5eec551b7b41798052be3c",
+      "size_bytes": 352,
+      "mtime_ms": 1784553962701.5242
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/skills/talos-direct-execute/SKILL.md",
+      "content_hash": "7a3b4c8c4d052a787453e78c19208c462609c17976d2941bde19b6d4dc10f70e",
+      "size_bytes": 14055,
+      "mtime_ms": 1784553962701.7766
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/skills/talos-findings-repair/agents/openai.yaml",
+      "content_hash": "632f27592bc648994474a510e35494b29610e076dbc4348ebeb92e87b042897d",
+      "size_bytes": 328,
+      "mtime_ms": 1784553962698.568
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/skills/talos-findings-repair/SKILL.md",
+      "content_hash": "746536d0fc454ef2aac6e2c01159b2ca6841acb4088220ba57db6649ea29c7cf",
+      "size_bytes": 6207,
+      "mtime_ms": 1784553962698.869
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/skills/talos-plan-execute/agents/openai.yaml",
+      "content_hash": "26fe3a158c3fa667727c38354443ae5ab4e0410b41be4038d97e8e79ad8c57e7",
+      "size_bytes": 349,
+      "mtime_ms": 1784553962705.824
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/skills/talos-plan-execute/references/plan-contract.md",
+      "content_hash": "add662ad3e6f9892933683953621b82b067bca8dd6c43f3a14d1ef079f16425b",
+      "size_bytes": 3713,
+      "mtime_ms": 1784553962705.3506
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/skills/talos-plan-execute/references/quality-gates.md",
+      "content_hash": "9501861b8869c7f8bc4a9326ab7dfbe1c33de143a4507b63ebb82050b2b89c69",
+      "size_bytes": 2314,
+      "mtime_ms": 1784553962705.1626
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/skills/talos-plan-execute/scripts/check_budget_state.py",
+      "content_hash": "3c73412166c0395e45c6df62b417dd61fd770a27aa32df34ce87497f449b1ba0",
+      "size_bytes": 2844,
+      "mtime_ms": 1784553962706.5425
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/skills/talos-plan-execute/scripts/extract_plan_contract.py",
+      "content_hash": "3745779d5eac7494be26f9e7e4571f222cf673525640e7ed4afbdd8aed4581da",
+      "size_bytes": 7056,
+      "mtime_ms": 1784553962706.3496
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/skills/talos-plan-execute/scripts/validate_gate_result.py",
+      "content_hash": "c660e655e53fbd9d5eee3527574c1ecc1ceb3671d55ec9e44134d8cf0de90f35",
+      "size_bytes": 1715,
+      "mtime_ms": 1784553962706.1577
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/skills/talos-plan-execute/SKILL.md",
+      "content_hash": "11d50b733f23663c8a0cae4df502830dff629a8e84a9586f07699bd6394d6867",
+      "size_bytes": 13827,
+      "mtime_ms": 1784553962706.7454
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/skills/talos-plan-handoff/agents/openai.yaml",
+      "content_hash": "68cbeac8608a2b82ee07345ca4db78364f35392e2d3270ca31816e011d40da4b",
+      "size_bytes": 403,
+      "mtime_ms": 1784553962699.539
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/skills/talos-plan-handoff/SKILL.md",
+      "content_hash": "7f308aefb886a6550647e27ce10f6c752b9c7512af0079507fbd438f87a60563",
+      "size_bytes": 13368,
+      "mtime_ms": 1784553962699.861
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/skills/talos-slice-review/agents/openai.yaml",
+      "content_hash": "ec0245cd05bb55e6524d31cca79d5704d4801404da40c923548b323118b4721d",
+      "size_bytes": 297,
+      "mtime_ms": 1784553962695.7314
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/skills/talos-slice-review/references/review-contract.md",
+      "content_hash": "8c6baeddcfd643483debd1381b548477438f53ad4b75b3c2739fb7e9a6dd1e6a",
+      "size_bytes": 1801,
+      "mtime_ms": 1784553962694.8435
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/skills/talos-slice-review/references/scenario-lenses.md",
+      "content_hash": "ff46a5399d1f4a722bf807855ea216ef644a15fab9907abdef39502622157b53",
+      "size_bytes": 2709,
+      "mtime_ms": 1784553962695.137
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/skills/talos-slice-review/scripts/classify_findings.mjs",
+      "content_hash": "f5f1b21d56ea7a6992b9dc2a10141115112c16e076d76f8c2d51e13c4d1b3148",
+      "size_bytes": 2337,
+      "mtime_ms": 1784553962697.3047
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/skills/talos-slice-review/scripts/classify_findings.py",
+      "content_hash": "d5644ae8cabdd29d902e0a9cbdf72b60b6ebdd7be033cc1c243aeac1f8c23dfc",
+      "size_bytes": 668,
+      "mtime_ms": 1784553962696.4915
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/skills/talos-slice-review/scripts/extract_review_slice.py",
+      "content_hash": "abbc17e48290c3f739acb892c3322da432b84d796d024ae80c81a1da84ded300",
+      "size_bytes": 5577,
+      "mtime_ms": 1784553962696.8894
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/skills/talos-slice-review/SKILL.md",
+      "content_hash": "bcadf60c95fac066d069660f16a1aa975a05464d8c79762a870fce7b98aa1149",
+      "size_bytes": 9527,
+      "mtime_ms": 1784553962697.7192
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/skills/talos-sprint-interview/agents/openai.yaml",
+      "content_hash": "d20693087c4549517b0964550e3184353d9f62f8d5d9d660626821e1ba5e5579",
+      "size_bytes": 382,
+      "mtime_ms": 1784553962693.823
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/skills/talos-sprint-interview/SKILL.md",
+      "content_hash": "1fcc836f662aaf29a57f1e921c2b69f823e9142822c0d94e06c4cff41d6808f7",
+      "size_bytes": 6254,
+      "mtime_ms": 1784553962694.0452
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/skills/talos-task-validator/agents/openai.yaml",
+      "content_hash": "9e6ec4b5f0e4337c36c984eabdfced36f053c63327048c7b6d5aedb73dbb19c7",
+      "size_bytes": 338,
+      "mtime_ms": 1784553962703.3557
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/skills/talos-task-validator/SKILL.md",
+      "content_hash": "b23c52730edff007fb1a6b6d0eb83d7ae02cb8dc0e6c1eed4767d21ca4f4bb8d",
+      "size_bytes": 14207,
+      "mtime_ms": 1784553962703.9106
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/skills/talos/SKILL.md",
+      "content_hash": "d3082964da5bdd8ccddee7d35afe1e75248f42947e19a89776726a2c9fdf41b1",
+      "size_bytes": 55283,
+      "mtime_ms": 1784553962694.3596
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/talos/orchestrator/commands/talos.md",
+      "content_hash": "00762382337480d362a733536926653693ffc0aa7565e3032714388dbc76a7c3",
+      "size_bytes": 3954,
+      "mtime_ms": 1784553962691.2466
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/talos/orchestrator/defaults/paths.md",
+      "content_hash": "f5cca8d37161ac0db6b5ca4c5967b90f75c6efd330dbf03720b32dbd783ff5a5",
+      "size_bytes": 993,
+      "mtime_ms": 1784553962690.7134
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/talos/orchestrator/README.md",
+      "content_hash": "3719c615a09c045697a2de4ccb59285fc403c0f526c68c9cf58c24cfdad61ac2",
+      "size_bytes": 23746,
+      "mtime_ms": 1784553962689.8594
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/talos/orchestrator/references/host-adapters.md",
+      "content_hash": "97d985b85c2fe963807c59f9b668b6f5e0807ed4f5f4c332544df69582faf4e7",
+      "size_bytes": 13036,
+      "mtime_ms": 1784553962688.7607
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/talos/orchestrator/references/qa_s13_matrix.md",
+      "content_hash": "2ddb4db84d477ae0eb86f62affe68a521364724c94aafcd24fbe5c498f92cec5",
+      "size_bytes": 11076,
+      "mtime_ms": 1784553962689.1882
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/talos/orchestrator/references/subagent_dispatch.md",
+      "content_hash": "113c3761ca5f287779a8329e9a9013328f5ea39f0ab472a9bd5767f6d22ae6cf",
+      "size_bytes": 4984,
+      "mtime_ms": 1784553962688.9863
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/talos/orchestrator/skills/talos/SKILL.md",
+      "content_hash": "d3082964da5bdd8ccddee7d35afe1e75248f42947e19a89776726a2c9fdf41b1",
+      "size_bytes": 55283,
+      "mtime_ms": 1784553962691.8184
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/talos/packages/mcp-server/package.json",
+      "content_hash": "d44c96aa66a5825ecbbcd825afc9f17f95714563a05b13d0dc0207c5b1855483",
+      "size_bytes": 243,
+      "mtime_ms": 1784553962672.195
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/talos/packages/mcp-server/README.md",
+      "content_hash": "04601d6c8d238ff310dd946ef329dbb8bc7f04caa5a4d4ab3a0cd78e318ad6f0",
+      "size_bytes": 4247,
+      "mtime_ms": 1784553962671.9387
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/talos/packages/mcp-server/run.sh",
+      "content_hash": "13593aab984a938af503f0d38093f645411402febdaeb4d70a0b619cf007058e",
+      "size_bytes": 2057,
+      "mtime_ms": 1784553962671.58
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/talos/packages/mcp-server/server.js",
+      "content_hash": "6c630f4dc8a84e427b9a8769af79b7ea4af09b734dfc022ebc61bdcd4f460e07",
+      "size_bytes": 212652,
+      "mtime_ms": 1784553962671.1265
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/talos/packages/skills/_shared/references/stack-profiles.md",
+      "content_hash": "1330d56b5044a3ee8741e5184382151c562f1173c296bd1ba0dcda372cd581b0",
+      "size_bytes": 3570,
+      "mtime_ms": 1784553962687.586
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/talos/packages/skills/_shared/scripts/document_quality.mjs",
+      "content_hash": "ffe42d1daa85681cd3fee0fcb6a2a9e71fc362a83f47bbde264fa39dca8b5705",
+      "size_bytes": 29588,
+      "mtime_ms": 1784553962688.1606
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/talos/packages/skills/talos-audit/agents/openai.yaml",
+      "content_hash": "9b1affbac432524ba2dcfef8db7d9e8fe3e489784919d7cd8ea227f2dbb33f96",
+      "size_bytes": 298,
+      "mtime_ms": 1784553962678.6943
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/talos/packages/skills/talos-audit/SKILL.md",
+      "content_hash": "9832acc3797d23cf4d6bb2ca791ba91c4a6e366d662e25fd39f8d52110f78358",
+      "size_bytes": 8683,
+      "mtime_ms": 1784553962679.1606
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/talos/packages/skills/talos-backlog-generator/agents/openai.yaml",
+      "content_hash": "e535081783c15f430eedf13b5dc13ee0afc9a1c0ba38830b66c0f5b787f55103",
+      "size_bytes": 218,
+      "mtime_ms": 1784553962682.254
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/talos/packages/skills/talos-backlog-generator/SKILL.md",
+      "content_hash": "4c0e77249dbbac0c60129c72e3ad6db7158d7326095322cf413a667b372d542d",
+      "size_bytes": 10219,
+      "mtime_ms": 1784553962682.6182
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/talos/packages/skills/talos-direct-execute/agents/openai.yaml",
+      "content_hash": "8820bfdc53ee28c0f2bdc491c8ed37e0c8b89ee65f5eec551b7b41798052be3c",
+      "size_bytes": 352,
+      "mtime_ms": 1784553962679.726
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/talos/packages/skills/talos-direct-execute/SKILL.md",
+      "content_hash": "7a3b4c8c4d052a787453e78c19208c462609c17976d2941bde19b6d4dc10f70e",
+      "size_bytes": 14055,
+      "mtime_ms": 1784553962679.9905
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/talos/packages/skills/talos-findings-repair/agents/openai.yaml",
+      "content_hash": "632f27592bc648994474a510e35494b29610e076dbc4348ebeb92e87b042897d",
+      "size_bytes": 328,
+      "mtime_ms": 1784553962676.6733
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/talos/packages/skills/talos-findings-repair/SKILL.md",
+      "content_hash": "746536d0fc454ef2aac6e2c01159b2ca6841acb4088220ba57db6649ea29c7cf",
+      "size_bytes": 6207,
+      "mtime_ms": 1784553962676.86
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/talos/packages/skills/talos-plan-execute/agents/openai.yaml",
+      "content_hash": "26fe3a158c3fa667727c38354443ae5ab4e0410b41be4038d97e8e79ad8c57e7",
+      "size_bytes": 349,
+      "mtime_ms": 1784553962685.3386
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/talos/packages/skills/talos-plan-execute/references/plan-contract.md",
+      "content_hash": "add662ad3e6f9892933683953621b82b067bca8dd6c43f3a14d1ef079f16425b",
+      "size_bytes": 3713,
+      "mtime_ms": 1784553962683.7217
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/talos/packages/skills/talos-plan-execute/references/quality-gates.md",
+      "content_hash": "9501861b8869c7f8bc4a9326ab7dfbe1c33de143a4507b63ebb82050b2b89c69",
+      "size_bytes": 2314,
+      "mtime_ms": 1784553962683.321
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/talos/packages/skills/talos-plan-execute/scripts/check_budget_state.py",
+      "content_hash": "3c73412166c0395e45c6df62b417dd61fd770a27aa32df34ce87497f449b1ba0",
+      "size_bytes": 2844,
+      "mtime_ms": 1784553962686.3308
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/talos/packages/skills/talos-plan-execute/scripts/extract_plan_contract.py",
+      "content_hash": "3745779d5eac7494be26f9e7e4571f222cf673525640e7ed4afbdd8aed4581da",
+      "size_bytes": 7056,
+      "mtime_ms": 1784553962686.1477
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/talos/packages/skills/talos-plan-execute/scripts/validate_gate_result.py",
+      "content_hash": "c660e655e53fbd9d5eee3527574c1ecc1ceb3671d55ec9e44134d8cf0de90f35",
+      "size_bytes": 1715,
+      "mtime_ms": 1784553962685.8884
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/talos/packages/skills/talos-plan-execute/SKILL.md",
+      "content_hash": "11d50b733f23663c8a0cae4df502830dff629a8e84a9586f07699bd6394d6867",
+      "size_bytes": 13827,
+      "mtime_ms": 1784553962686.7522
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/talos/packages/skills/talos-plan-handoff/agents/openai.yaml",
+      "content_hash": "68cbeac8608a2b82ee07345ca4db78364f35392e2d3270ca31816e011d40da4b",
+      "size_bytes": 403,
+      "mtime_ms": 1784553962677.3313
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/talos/packages/skills/talos-plan-handoff/SKILL.md",
+      "content_hash": "7f308aefb886a6550647e27ce10f6c752b9c7512af0079507fbd438f87a60563",
+      "size_bytes": 13368,
+      "mtime_ms": 1784553962677.6665
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/talos/packages/skills/talos-slice-review/agents/openai.yaml",
+      "content_hash": "ec0245cd05bb55e6524d31cca79d5704d4801404da40c923548b323118b4721d",
+      "size_bytes": 297,
+      "mtime_ms": 1784553962675.208
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/talos/packages/skills/talos-slice-review/references/review-contract.md",
+      "content_hash": "8c6baeddcfd643483debd1381b548477438f53ad4b75b3c2739fb7e9a6dd1e6a",
+      "size_bytes": 1801,
+      "mtime_ms": 1784553962674.6458
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/talos/packages/skills/talos-slice-review/references/scenario-lenses.md",
+      "content_hash": "ff46a5399d1f4a722bf807855ea216ef644a15fab9907abdef39502622157b53",
+      "size_bytes": 2709,
+      "mtime_ms": 1784553962674.8403
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/talos/packages/skills/talos-slice-review/scripts/classify_findings.mjs",
+      "content_hash": "f5f1b21d56ea7a6992b9dc2a10141115112c16e076d76f8c2d51e13c4d1b3148",
+      "size_bytes": 2337,
+      "mtime_ms": 1784553962675.8743
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/talos/packages/skills/talos-slice-review/scripts/classify_findings.py",
+      "content_hash": "d5644ae8cabdd29d902e0a9cbdf72b60b6ebdd7be033cc1c243aeac1f8c23dfc",
+      "size_bytes": 668,
+      "mtime_ms": 1784553962675.518
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/talos/packages/skills/talos-slice-review/scripts/extract_review_slice.py",
+      "content_hash": "abbc17e48290c3f739acb892c3322da432b84d796d024ae80c81a1da84ded300",
+      "size_bytes": 5577,
+      "mtime_ms": 1784553962675.7053
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/talos/packages/skills/talos-slice-review/SKILL.md",
+      "content_hash": "bcadf60c95fac066d069660f16a1aa975a05464d8c79762a870fce7b98aa1149",
+      "size_bytes": 9527,
+      "mtime_ms": 1784553962676.0884
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/talos/packages/skills/talos-sprint-interview/agents/openai.yaml",
+      "content_hash": "d20693087c4549517b0964550e3184353d9f62f8d5d9d660626821e1ba5e5579",
+      "size_bytes": 382,
+      "mtime_ms": 1784553962674.0703
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/talos/packages/skills/talos-sprint-interview/SKILL.md",
+      "content_hash": "1fcc836f662aaf29a57f1e921c2b69f823e9142822c0d94e06c4cff41d6808f7",
+      "size_bytes": 6254,
+      "mtime_ms": 1784553962674.2583
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/talos/packages/skills/talos-task-validator/agents/openai.yaml",
+      "content_hash": "9e6ec4b5f0e4337c36c984eabdfced36f053c63327048c7b6d5aedb73dbb19c7",
+      "size_bytes": 338,
+      "mtime_ms": 1784553962680.961
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/talos/packages/skills/talos-task-validator/SKILL.md",
+      "content_hash": "b23c52730edff007fb1a6b6d0eb83d7ae02cb8dc0e6c1eed4767d21ca4f4bb8d",
+      "size_bytes": 14207,
+      "mtime_ms": 1784553962681.5415
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/talos/packages/templates/BACKLOG_MESTRE_TEMPLATE.md",
+      "content_hash": "af281468b5b234fabc6d2001f0ebb765e48e87ed5b295a33e8202aebb9276423",
+      "size_bytes": 9833,
+      "mtime_ms": 1784553962672.927
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/talos/packages/templates/BOUNDARY_SPRINT_PLAN.md",
+      "content_hash": "54b2e656da52ce63e52c56b8db5465dddbf1f553c8ac6f150695dbfe43a4a6c4",
+      "size_bytes": 4886,
+      "mtime_ms": 1784553962672.542
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/talos/packages/templates/PERGUNTAS_EM_ABERTO_TEMPLATE.md",
+      "content_hash": "0be02f66620c892d2801fcefb72fb5408cb0106156531d05fd61c201e3743049",
+      "size_bytes": 6056,
+      "mtime_ms": 1784553962673.3591
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/talos/packages/templates/PLAN_TEMPLATE.md",
+      "content_hash": "98507f6da608e19ad1179816875459f25d9813bd1bbbb4ec5f05ae85f4c687a2",
+      "size_bytes": 5100,
+      "mtime_ms": 1784553962672.7283
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/talos/packages/templates/SPRINT_TEMPLATE.md",
+      "content_hash": "959c41226dd829ad7f95c3f6f375ac1e00733bc05a56af52f4982a4f6873da8e",
+      "size_bytes": 8453,
+      "mtime_ms": 1784553962673.5447
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/talos/packages/templates/STATE_FILE_SCHEMA.md",
+      "content_hash": "1a425308fc403d77ab0b6c1c1952965fcffd0a27a6ca429b7f80199f50eb9497",
+      "size_bytes": 6098,
+      "mtime_ms": 1784553962673.1528
+    },
+    {
+      "relative_path": "hosts/opencode/.opencode/talos/VERSION",
+      "content_hash": "232cca15f9cab0453d820d20649067576ec18d279ce3b1dc6d2931d1eb638721",
+      "size_bytes": 7,
+      "mtime_ms": 1784553962670.2048
+    },
+    {
+      "relative_path": "hosts/opencode/opencode.json",
+      "content_hash": "0b45dd9382790679baafdcc3184c362f3b3c3412659d8cda1529298ee24ce277",
+      "size_bytes": 274,
+      "mtime_ms": 1784553962707.749
+    },
+    {
+      "relative_path": "hosts/pi/.mcp.json",
+      "content_hash": "6269076da296b2a7b171dd204e54d2492a1e2270ba3042547a99d6509354ad8a",
+      "size_bytes": 177,
+      "mtime_ms": 1784553963037.9236
+    },
+    {
+      "relative_path": "hosts/pi/.pi/agents/talos-direct-execute.md",
+      "content_hash": "2da93f0b090aea042e44da8a3ca02b17c1196db20c1806d48e0140cef76d811e",
+      "size_bytes": 16147,
+      "mtime_ms": 1784553963054.2615
+    },
+    {
+      "relative_path": "hosts/pi/.pi/agents/talos-findings-repair.md",
+      "content_hash": "2417233f1eb5194bb8d8df9e7fdfb13c81d169bd260d3609ede6f47f6b05e272",
+      "size_bytes": 8205,
+      "mtime_ms": 1784553963052.7422
+    },
+    {
+      "relative_path": "hosts/pi/.pi/agents/talos-plan-execute.md",
+      "content_hash": "8e3ded194ae45592e55cd04ef25ded696dfbe903d465b91fb74f6370aee17a50",
+      "size_bytes": 16033,
+      "mtime_ms": 1784553963054.0046
+    },
+    {
+      "relative_path": "hosts/pi/.pi/agents/talos-slice-review.md",
+      "content_hash": "510b35c021202fd021ab10dafa450c449660fc7cb73eae893a2e2f96385ceb27",
+      "size_bytes": 11174,
+      "mtime_ms": 1784553963052.2363
+    },
+    {
+      "relative_path": "hosts/pi/.pi/agents/talos-task-validator.md",
+      "content_hash": "9cab0e8bca3dfcee6b74cc038b96ecd184d409bd05e54c2b6166be9cd73dd49f",
+      "size_bytes": 9825,
+      "mtime_ms": 1784553963053.4707
+    },
+    {
+      "relative_path": "hosts/pi/skills/_shared/references/stack-profiles.md",
+      "content_hash": "1330d56b5044a3ee8741e5184382151c562f1173c296bd1ba0dcda372cd581b0",
+      "size_bytes": 3570,
+      "mtime_ms": 1784553963050.6184
+    },
+    {
+      "relative_path": "hosts/pi/skills/_shared/scripts/document_quality.mjs",
+      "content_hash": "ffe42d1daa85681cd3fee0fcb6a2a9e71fc362a83f47bbde264fa39dca8b5705",
+      "size_bytes": 29588,
+      "mtime_ms": 1784553963051.222
+    },
+    {
+      "relative_path": "hosts/pi/skills/talos-audit/agents/openai.yaml",
+      "content_hash": "9b1affbac432524ba2dcfef8db7d9e8fe3e489784919d7cd8ea227f2dbb33f96",
+      "size_bytes": 298,
+      "mtime_ms": 1784553963043.8262
+    },
+    {
+      "relative_path": "hosts/pi/skills/talos-audit/SKILL.md",
+      "content_hash": "9832acc3797d23cf4d6bb2ca791ba91c4a6e366d662e25fd39f8d52110f78358",
+      "size_bytes": 8683,
+      "mtime_ms": 1784553963044.0256
+    },
+    {
+      "relative_path": "hosts/pi/skills/talos-backlog-generator/agents/openai.yaml",
+      "content_hash": "e535081783c15f430eedf13b5dc13ee0afc9a1c0ba38830b66c0f5b787f55103",
+      "size_bytes": 218,
+      "mtime_ms": 1784553963046.544
+    },
+    {
+      "relative_path": "hosts/pi/skills/talos-backlog-generator/SKILL.md",
+      "content_hash": "4c0e77249dbbac0c60129c72e3ad6db7158d7326095322cf413a667b372d542d",
+      "size_bytes": 10219,
+      "mtime_ms": 1784553963046.8586
+    },
+    {
+      "relative_path": "hosts/pi/skills/talos-direct-execute/agents/openai.yaml",
+      "content_hash": "8820bfdc53ee28c0f2bdc491c8ed37e0c8b89ee65f5eec551b7b41798052be3c",
+      "size_bytes": 352,
+      "mtime_ms": 1784553963044.4683
+    },
+    {
+      "relative_path": "hosts/pi/skills/talos-direct-execute/SKILL.md",
+      "content_hash": "7a3b4c8c4d052a787453e78c19208c462609c17976d2941bde19b6d4dc10f70e",
+      "size_bytes": 14055,
+      "mtime_ms": 1784553963044.729
+    },
+    {
+      "relative_path": "hosts/pi/skills/talos-findings-repair/agents/openai.yaml",
+      "content_hash": "632f27592bc648994474a510e35494b29610e076dbc4348ebeb92e87b042897d",
+      "size_bytes": 328,
+      "mtime_ms": 1784553963042.1448
+    },
+    {
+      "relative_path": "hosts/pi/skills/talos-findings-repair/SKILL.md",
+      "content_hash": "746536d0fc454ef2aac6e2c01159b2ca6841acb4088220ba57db6649ea29c7cf",
+      "size_bytes": 6207,
+      "mtime_ms": 1784553963042.3618
+    },
+    {
+      "relative_path": "hosts/pi/skills/talos-plan-execute/agents/openai.yaml",
+      "content_hash": "26fe3a158c3fa667727c38354443ae5ab4e0410b41be4038d97e8e79ad8c57e7",
+      "size_bytes": 349,
+      "mtime_ms": 1784553963048.6587
+    },
+    {
+      "relative_path": "hosts/pi/skills/talos-plan-execute/references/plan-contract.md",
+      "content_hash": "add662ad3e6f9892933683953621b82b067bca8dd6c43f3a14d1ef079f16425b",
+      "size_bytes": 3713,
+      "mtime_ms": 1784553963048.2817
+    },
+    {
+      "relative_path": "hosts/pi/skills/talos-plan-execute/references/quality-gates.md",
+      "content_hash": "9501861b8869c7f8bc4a9326ab7dfbe1c33de143a4507b63ebb82050b2b89c69",
+      "size_bytes": 2314,
+      "mtime_ms": 1784553963048.0098
+    },
+    {
+      "relative_path": "hosts/pi/skills/talos-plan-execute/scripts/check_budget_state.py",
+      "content_hash": "3c73412166c0395e45c6df62b417dd61fd770a27aa32df34ce87497f449b1ba0",
+      "size_bytes": 2844,
+      "mtime_ms": 1784553963049.584
+    },
+    {
+      "relative_path": "hosts/pi/skills/talos-plan-execute/scripts/extract_plan_contract.py",
+      "content_hash": "3745779d5eac7494be26f9e7e4571f222cf673525640e7ed4afbdd8aed4581da",
+      "size_bytes": 7056,
+      "mtime_ms": 1784553963049.303
+    },
+    {
+      "relative_path": "hosts/pi/skills/talos-plan-execute/scripts/validate_gate_result.py",
+      "content_hash": "c660e655e53fbd9d5eee3527574c1ecc1ceb3671d55ec9e44134d8cf0de90f35",
+      "size_bytes": 1715,
+      "mtime_ms": 1784553963048.9675
+    },
+    {
+      "relative_path": "hosts/pi/skills/talos-plan-execute/SKILL.md",
+      "content_hash": "11d50b733f23663c8a0cae4df502830dff629a8e84a9586f07699bd6394d6867",
+      "size_bytes": 13827,
+      "mtime_ms": 1784553963050.001
+    },
+    {
+      "relative_path": "hosts/pi/skills/talos-plan-handoff/agents/openai.yaml",
+      "content_hash": "68cbeac8608a2b82ee07345ca4db78364f35392e2d3270ca31816e011d40da4b",
+      "size_bytes": 403,
+      "mtime_ms": 1784553963042.8008
+    },
+    {
+      "relative_path": "hosts/pi/skills/talos-plan-handoff/SKILL.md",
+      "content_hash": "7f308aefb886a6550647e27ce10f6c752b9c7512af0079507fbd438f87a60563",
+      "size_bytes": 13368,
+      "mtime_ms": 1784553963043.1353
+    },
+    {
+      "relative_path": "hosts/pi/skills/talos-slice-review/agents/openai.yaml",
+      "content_hash": "ec0245cd05bb55e6524d31cca79d5704d4801404da40c923548b323118b4721d",
+      "size_bytes": 297,
+      "mtime_ms": 1784553963040.5044
+    },
+    {
+      "relative_path": "hosts/pi/skills/talos-slice-review/references/review-contract.md",
+      "content_hash": "8c6baeddcfd643483debd1381b548477438f53ad4b75b3c2739fb7e9a6dd1e6a",
+      "size_bytes": 1801,
+      "mtime_ms": 1784553963039.3293
+    },
+    {
+      "relative_path": "hosts/pi/skills/talos-slice-review/references/scenario-lenses.md",
+      "content_hash": "ff46a5399d1f4a722bf807855ea216ef644a15fab9907abdef39502622157b53",
+      "size_bytes": 2709,
+      "mtime_ms": 1784553963039.8684
+    },
+    {
+      "relative_path": "hosts/pi/skills/talos-slice-review/scripts/classify_findings.mjs",
+      "content_hash": "f5f1b21d56ea7a6992b9dc2a10141115112c16e076d76f8c2d51e13c4d1b3148",
+      "size_bytes": 2337,
+      "mtime_ms": 1784553963041.4575
+    },
+    {
+      "relative_path": "hosts/pi/skills/talos-slice-review/scripts/classify_findings.py",
+      "content_hash": "d5644ae8cabdd29d902e0a9cbdf72b60b6ebdd7be033cc1c243aeac1f8c23dfc",
+      "size_bytes": 668,
+      "mtime_ms": 1784553963040.9387
+    },
+    {
+      "relative_path": "hosts/pi/skills/talos-slice-review/scripts/extract_review_slice.py",
+      "content_hash": "abbc17e48290c3f739acb892c3322da432b84d796d024ae80c81a1da84ded300",
+      "size_bytes": 5577,
+      "mtime_ms": 1784553963041.252
+    },
+    {
+      "relative_path": "hosts/pi/skills/talos-slice-review/SKILL.md",
+      "content_hash": "bcadf60c95fac066d069660f16a1aa975a05464d8c79762a870fce7b98aa1149",
+      "size_bytes": 9527,
+      "mtime_ms": 1784553963041.6787
+    },
+    {
+      "relative_path": "hosts/pi/skills/talos-sprint-interview/agents/openai.yaml",
+      "content_hash": "d20693087c4549517b0964550e3184353d9f62f8d5d9d660626821e1ba5e5579",
+      "size_bytes": 382,
+      "mtime_ms": 1784553963038.4143
+    },
+    {
+      "relative_path": "hosts/pi/skills/talos-sprint-interview/SKILL.md",
+      "content_hash": "1fcc836f662aaf29a57f1e921c2b69f823e9142822c0d94e06c4cff41d6808f7",
+      "size_bytes": 6254,
+      "mtime_ms": 1784553963038.5864
+    },
+    {
+      "relative_path": "hosts/pi/skills/talos-task-validator/agents/openai.yaml",
+      "content_hash": "9e6ec4b5f0e4337c36c984eabdfced36f053c63327048c7b6d5aedb73dbb19c7",
+      "size_bytes": 338,
+      "mtime_ms": 1784553963045.3
+    },
+    {
+      "relative_path": "hosts/pi/skills/talos-task-validator/SKILL.md",
+      "content_hash": "b23c52730edff007fb1a6b6d0eb83d7ae02cb8dc0e6c1eed4767d21ca4f4bb8d",
+      "size_bytes": 14207,
+      "mtime_ms": 1784553963045.713
+    },
+    {
+      "relative_path": "hosts/pi/skills/talos/SKILL.md",
+      "content_hash": "d3082964da5bdd8ccddee7d35afe1e75248f42947e19a89776726a2c9fdf41b1",
+      "size_bytes": 55283,
+      "mtime_ms": 1784553963038.8633
+    },
+    {
+      "relative_path": "hosts/pi/talos/orchestrator/commands/talos.md",
+      "content_hash": "00762382337480d362a733536926653693ffc0aa7565e3032714388dbc76a7c3",
+      "size_bytes": 3954,
+      "mtime_ms": 1784553963037.331
+    },
+    {
+      "relative_path": "hosts/pi/talos/orchestrator/defaults/paths.md",
+      "content_hash": "f5cca8d37161ac0db6b5ca4c5967b90f75c6efd330dbf03720b32dbd783ff5a5",
+      "size_bytes": 993,
+      "mtime_ms": 1784553963037.0007
+    },
+    {
+      "relative_path": "hosts/pi/talos/orchestrator/README.md",
+      "content_hash": "3719c615a09c045697a2de4ccb59285fc403c0f526c68c9cf58c24cfdad61ac2",
+      "size_bytes": 23746,
+      "mtime_ms": 1784553963036.5488
+    },
+    {
+      "relative_path": "hosts/pi/talos/orchestrator/references/host-adapters.md",
+      "content_hash": "97d985b85c2fe963807c59f9b668b6f5e0807ed4f5f4c332544df69582faf4e7",
+      "size_bytes": 13036,
+      "mtime_ms": 1784553963035.9897
+    },
+    {
+      "relative_path": "hosts/pi/talos/orchestrator/references/qa_s13_matrix.md",
+      "content_hash": "2ddb4db84d477ae0eb86f62affe68a521364724c94aafcd24fbe5c498f92cec5",
+      "size_bytes": 11076,
+      "mtime_ms": 1784553963036.3481
+    },
+    {
+      "relative_path": "hosts/pi/talos/orchestrator/references/subagent_dispatch.md",
+      "content_hash": "113c3761ca5f287779a8329e9a9013328f5ea39f0ab472a9bd5767f6d22ae6cf",
+      "size_bytes": 4984,
+      "mtime_ms": 1784553963036.1628
+    },
+    {
+      "relative_path": "hosts/pi/talos/orchestrator/skills/talos/SKILL.md",
+      "content_hash": "d3082964da5bdd8ccddee7d35afe1e75248f42947e19a89776726a2c9fdf41b1",
+      "size_bytes": 55283,
+      "mtime_ms": 1784553963037.704
+    },
+    {
+      "relative_path": "hosts/pi/talos/packages/mcp-server/package.json",
+      "content_hash": "d44c96aa66a5825ecbbcd825afc9f17f95714563a05b13d0dc0207c5b1855483",
+      "size_bytes": 243,
+      "mtime_ms": 1784553963020.5215
+    },
+    {
+      "relative_path": "hosts/pi/talos/packages/mcp-server/README.md",
+      "content_hash": "04601d6c8d238ff310dd946ef329dbb8bc7f04caa5a4d4ab3a0cd78e318ad6f0",
+      "size_bytes": 4247,
+      "mtime_ms": 1784553963020.3552
+    },
+    {
+      "relative_path": "hosts/pi/talos/packages/mcp-server/run.sh",
+      "content_hash": "13593aab984a938af503f0d38093f645411402febdaeb4d70a0b619cf007058e",
+      "size_bytes": 2057,
+      "mtime_ms": 1784553963020.1548
+    },
+    {
+      "relative_path": "hosts/pi/talos/packages/mcp-server/server.js",
+      "content_hash": "6c630f4dc8a84e427b9a8769af79b7ea4af09b734dfc022ebc61bdcd4f460e07",
+      "size_bytes": 212652,
+      "mtime_ms": 1784553963019.942
+    },
+    {
+      "relative_path": "hosts/pi/talos/packages/skills/_shared/references/stack-profiles.md",
+      "content_hash": "1330d56b5044a3ee8741e5184382151c562f1173c296bd1ba0dcda372cd581b0",
+      "size_bytes": 3570,
+      "mtime_ms": 1784553963035.053
+    },
+    {
+      "relative_path": "hosts/pi/talos/packages/skills/_shared/scripts/document_quality.mjs",
+      "content_hash": "ffe42d1daa85681cd3fee0fcb6a2a9e71fc362a83f47bbde264fa39dca8b5705",
+      "size_bytes": 29588,
+      "mtime_ms": 1784553963035.4905
+    },
+    {
+      "relative_path": "hosts/pi/talos/packages/skills/talos-audit/agents/openai.yaml",
+      "content_hash": "9b1affbac432524ba2dcfef8db7d9e8fe3e489784919d7cd8ea227f2dbb33f96",
+      "size_bytes": 298,
+      "mtime_ms": 1784553963027.3833
+    },
+    {
+      "relative_path": "hosts/pi/talos/packages/skills/talos-audit/SKILL.md",
+      "content_hash": "9832acc3797d23cf4d6bb2ca791ba91c4a6e366d662e25fd39f8d52110f78358",
+      "size_bytes": 8683,
+      "mtime_ms": 1784553963027.8972
+    },
+    {
+      "relative_path": "hosts/pi/talos/packages/skills/talos-backlog-generator/agents/openai.yaml",
+      "content_hash": "e535081783c15f430eedf13b5dc13ee0afc9a1c0ba38830b66c0f5b787f55103",
+      "size_bytes": 218,
+      "mtime_ms": 1784553963031.1472
+    },
+    {
+      "relative_path": "hosts/pi/talos/packages/skills/talos-backlog-generator/SKILL.md",
+      "content_hash": "4c0e77249dbbac0c60129c72e3ad6db7158d7326095322cf413a667b372d542d",
+      "size_bytes": 10219,
+      "mtime_ms": 1784553963031.3638
+    },
+    {
+      "relative_path": "hosts/pi/talos/packages/skills/talos-direct-execute/agents/openai.yaml",
+      "content_hash": "8820bfdc53ee28c0f2bdc491c8ed37e0c8b89ee65f5eec551b7b41798052be3c",
+      "size_bytes": 352,
+      "mtime_ms": 1784553963029.073
+    },
+    {
+      "relative_path": "hosts/pi/talos/packages/skills/talos-direct-execute/SKILL.md",
+      "content_hash": "7a3b4c8c4d052a787453e78c19208c462609c17976d2941bde19b6d4dc10f70e",
+      "size_bytes": 14055,
+      "mtime_ms": 1784553963029.425
+    },
+    {
+      "relative_path": "hosts/pi/talos/packages/skills/talos-findings-repair/agents/openai.yaml",
+      "content_hash": "632f27592bc648994474a510e35494b29610e076dbc4348ebeb92e87b042897d",
+      "size_bytes": 328,
+      "mtime_ms": 1784553963026.1196
+    },
+    {
+      "relative_path": "hosts/pi/talos/packages/skills/talos-findings-repair/SKILL.md",
+      "content_hash": "746536d0fc454ef2aac6e2c01159b2ca6841acb4088220ba57db6649ea29c7cf",
+      "size_bytes": 6207,
+      "mtime_ms": 1784553963026.3193
+    },
+    {
+      "relative_path": "hosts/pi/talos/packages/skills/talos-plan-execute/agents/openai.yaml",
+      "content_hash": "26fe3a158c3fa667727c38354443ae5ab4e0410b41be4038d97e8e79ad8c57e7",
+      "size_bytes": 349,
+      "mtime_ms": 1784553963032.4011
+    },
+    {
+      "relative_path": "hosts/pi/talos/packages/skills/talos-plan-execute/references/plan-contract.md",
+      "content_hash": "add662ad3e6f9892933683953621b82b067bca8dd6c43f3a14d1ef079f16425b",
+      "size_bytes": 3713,
+      "mtime_ms": 1784553963032.0293
+    },
+    {
+      "relative_path": "hosts/pi/talos/packages/skills/talos-plan-execute/references/quality-gates.md",
+      "content_hash": "9501861b8869c7f8bc4a9326ab7dfbe1c33de143a4507b63ebb82050b2b89c69",
+      "size_bytes": 2314,
+      "mtime_ms": 1784553963031.821
+    },
+    {
+      "relative_path": "hosts/pi/talos/packages/skills/talos-plan-execute/scripts/check_budget_state.py",
+      "content_hash": "3c73412166c0395e45c6df62b417dd61fd770a27aa32df34ce87497f449b1ba0",
+      "size_bytes": 2844,
+      "mtime_ms": 1784553963033.3696
+    },
+    {
+      "relative_path": "hosts/pi/talos/packages/skills/talos-plan-execute/scripts/extract_plan_contract.py",
+      "content_hash": "3745779d5eac7494be26f9e7e4571f222cf673525640e7ed4afbdd8aed4581da",
+      "size_bytes": 7056,
+      "mtime_ms": 1784553963033.1316
+    },
+    {
+      "relative_path": "hosts/pi/talos/packages/skills/talos-plan-execute/scripts/validate_gate_result.py",
+      "content_hash": "c660e655e53fbd9d5eee3527574c1ecc1ceb3671d55ec9e44134d8cf0de90f35",
+      "size_bytes": 1715,
+      "mtime_ms": 1784553963032.8254
+    },
+    {
+      "relative_path": "hosts/pi/talos/packages/skills/talos-plan-execute/SKILL.md",
+      "content_hash": "11d50b733f23663c8a0cae4df502830dff629a8e84a9586f07699bd6394d6867",
+      "size_bytes": 13827,
+      "mtime_ms": 1784553963033.648
+    },
+    {
+      "relative_path": "hosts/pi/talos/packages/skills/talos-plan-handoff/agents/openai.yaml",
+      "content_hash": "68cbeac8608a2b82ee07345ca4db78364f35392e2d3270ca31816e011d40da4b",
+      "size_bytes": 403,
+      "mtime_ms": 1784553963026.7349
+    },
+    {
+      "relative_path": "hosts/pi/talos/packages/skills/talos-plan-handoff/SKILL.md",
+      "content_hash": "7f308aefb886a6550647e27ce10f6c752b9c7512af0079507fbd438f87a60563",
+      "size_bytes": 13368,
+      "mtime_ms": 1784553963026.9226
+    },
+    {
+      "relative_path": "hosts/pi/talos/packages/skills/talos-slice-review/agents/openai.yaml",
+      "content_hash": "ec0245cd05bb55e6524d31cca79d5704d4801404da40c923548b323118b4721d",
+      "size_bytes": 297,
+      "mtime_ms": 1784553963024.7908
+    },
+    {
+      "relative_path": "hosts/pi/talos/packages/skills/talos-slice-review/references/review-contract.md",
+      "content_hash": "8c6baeddcfd643483debd1381b548477438f53ad4b75b3c2739fb7e9a6dd1e6a",
+      "size_bytes": 1801,
+      "mtime_ms": 1784553963024.201
+    },
+    {
+      "relative_path": "hosts/pi/talos/packages/skills/talos-slice-review/references/scenario-lenses.md",
+      "content_hash": "ff46a5399d1f4a722bf807855ea216ef644a15fab9907abdef39502622157b53",
+      "size_bytes": 2709,
+      "mtime_ms": 1784553963024.4612
+    },
+    {
+      "relative_path": "hosts/pi/talos/packages/skills/talos-slice-review/scripts/classify_findings.mjs",
+      "content_hash": "f5f1b21d56ea7a6992b9dc2a10141115112c16e076d76f8c2d51e13c4d1b3148",
+      "size_bytes": 2337,
+      "mtime_ms": 1784553963025.471
+    },
+    {
+      "relative_path": "hosts/pi/talos/packages/skills/talos-slice-review/scripts/classify_findings.py",
+      "content_hash": "d5644ae8cabdd29d902e0a9cbdf72b60b6ebdd7be033cc1c243aeac1f8c23dfc",
+      "size_bytes": 668,
+      "mtime_ms": 1784553963025.137
+    },
+    {
+      "relative_path": "hosts/pi/talos/packages/skills/talos-slice-review/scripts/extract_review_slice.py",
+      "content_hash": "abbc17e48290c3f739acb892c3322da432b84d796d024ae80c81a1da84ded300",
+      "size_bytes": 5577,
+      "mtime_ms": 1784553963025.3086
+    },
+    {
+      "relative_path": "hosts/pi/talos/packages/skills/talos-slice-review/SKILL.md",
+      "content_hash": "bcadf60c95fac066d069660f16a1aa975a05464d8c79762a870fce7b98aa1149",
+      "size_bytes": 9527,
+      "mtime_ms": 1784553963025.682
+    },
+    {
+      "relative_path": "hosts/pi/talos/packages/skills/talos-sprint-interview/agents/openai.yaml",
+      "content_hash": "d20693087c4549517b0964550e3184353d9f62f8d5d9d660626821e1ba5e5579",
+      "size_bytes": 382,
+      "mtime_ms": 1784553963023.352
+    },
+    {
+      "relative_path": "hosts/pi/talos/packages/skills/talos-sprint-interview/SKILL.md",
+      "content_hash": "1fcc836f662aaf29a57f1e921c2b69f823e9142822c0d94e06c4cff41d6808f7",
+      "size_bytes": 6254,
+      "mtime_ms": 1784553963023.5332
+    },
+    {
+      "relative_path": "hosts/pi/talos/packages/skills/talos-task-validator/agents/openai.yaml",
+      "content_hash": "9e6ec4b5f0e4337c36c984eabdfced36f053c63327048c7b6d5aedb73dbb19c7",
+      "size_bytes": 338,
+      "mtime_ms": 1784553963030.0889
+    },
+    {
+      "relative_path": "hosts/pi/talos/packages/skills/talos-task-validator/SKILL.md",
+      "content_hash": "b23c52730edff007fb1a6b6d0eb83d7ae02cb8dc0e6c1eed4767d21ca4f4bb8d",
+      "size_bytes": 14207,
+      "mtime_ms": 1784553963030.5212
+    },
+    {
+      "relative_path": "hosts/pi/talos/packages/templates/BACKLOG_MESTRE_TEMPLATE.md",
+      "content_hash": "af281468b5b234fabc6d2001f0ebb765e48e87ed5b295a33e8202aebb9276423",
+      "size_bytes": 9833,
+      "mtime_ms": 1784553963021.5193
+    },
+    {
+      "relative_path": "hosts/pi/talos/packages/templates/BOUNDARY_SPRINT_PLAN.md",
+      "content_hash": "54b2e656da52ce63e52c56b8db5465dddbf1f553c8ac6f150695dbfe43a4a6c4",
+      "size_bytes": 4886,
+      "mtime_ms": 1784553963020.8965
+    },
+    {
+      "relative_path": "hosts/pi/talos/packages/templates/PERGUNTAS_EM_ABERTO_TEMPLATE.md",
+      "content_hash": "0be02f66620c892d2801fcefb72fb5408cb0106156531d05fd61c201e3743049",
+      "size_bytes": 6056,
+      "mtime_ms": 1784553963022.518
+    },
+    {
+      "relative_path": "hosts/pi/talos/packages/templates/PLAN_TEMPLATE.md",
+      "content_hash": "98507f6da608e19ad1179816875459f25d9813bd1bbbb4ec5f05ae85f4c687a2",
+      "size_bytes": 5100,
+      "mtime_ms": 1784553963021.1033
+    },
+    {
+      "relative_path": "hosts/pi/talos/packages/templates/SPRINT_TEMPLATE.md",
+      "content_hash": "959c41226dd829ad7f95c3f6f375ac1e00733bc05a56af52f4982a4f6873da8e",
+      "size_bytes": 8453,
+      "mtime_ms": 1784553963022.7534
+    },
+    {
+      "relative_path": "hosts/pi/talos/packages/templates/STATE_FILE_SCHEMA.md",
+      "content_hash": "1a425308fc403d77ab0b6c1c1952965fcffd0a27a6ca429b7f80199f50eb9497",
+      "size_bytes": 6098,
+      "mtime_ms": 1784553963022.1257
+    },
+    {
+      "relative_path": "hosts/pi/talos/VERSION",
+      "content_hash": "232cca15f9cab0453d820d20649067576ec18d279ce3b1dc6d2931d1eb638721",
+      "size_bytes": 7,
+      "mtime_ms": 1784553963019.5034
+    },
+    {
+      "relative_path": "hosts/vscode/.vscode/mcp.json",
+      "content_hash": "1d59853cd6df2ff93c85ba1671f726d2774b840c25661ba9dd146a64f055098f",
+      "size_bytes": 262,
+      "mtime_ms": 1784553963434.2095
+    },
+    {
+      "relative_path": "hosts/vscode/.vscode/talos/orchestrator/commands/talos.md",
+      "content_hash": "00762382337480d362a733536926653693ffc0aa7565e3032714388dbc76a7c3",
+      "size_bytes": 3954,
+      "mtime_ms": 1784553963433.0134
+    },
+    {
+      "relative_path": "hosts/vscode/.vscode/talos/orchestrator/defaults/paths.md",
+      "content_hash": "f5cca8d37161ac0db6b5ca4c5967b90f75c6efd330dbf03720b32dbd783ff5a5",
+      "size_bytes": 993,
+      "mtime_ms": 1784553963432.7104
+    },
+    {
+      "relative_path": "hosts/vscode/.vscode/talos/orchestrator/README.md",
+      "content_hash": "3719c615a09c045697a2de4ccb59285fc403c0f526c68c9cf58c24cfdad61ac2",
+      "size_bytes": 23746,
+      "mtime_ms": 1784553963432.4097
+    },
+    {
+      "relative_path": "hosts/vscode/.vscode/talos/orchestrator/references/host-adapters.md",
+      "content_hash": "97d985b85c2fe963807c59f9b668b6f5e0807ed4f5f4c332544df69582faf4e7",
+      "size_bytes": 13036,
+      "mtime_ms": 1784553963431.792
+    },
+    {
+      "relative_path": "hosts/vscode/.vscode/talos/orchestrator/references/qa_s13_matrix.md",
+      "content_hash": "2ddb4db84d477ae0eb86f62affe68a521364724c94aafcd24fbe5c498f92cec5",
+      "size_bytes": 11076,
+      "mtime_ms": 1784553963432.1978
+    },
+    {
+      "relative_path": "hosts/vscode/.vscode/talos/orchestrator/references/subagent_dispatch.md",
+      "content_hash": "113c3761ca5f287779a8329e9a9013328f5ea39f0ab472a9bd5767f6d22ae6cf",
+      "size_bytes": 4984,
+      "mtime_ms": 1784553963431.9902
+    },
+    {
+      "relative_path": "hosts/vscode/.vscode/talos/orchestrator/skills/talos/SKILL.md",
+      "content_hash": "d3082964da5bdd8ccddee7d35afe1e75248f42947e19a89776726a2c9fdf41b1",
+      "size_bytes": 55283,
+      "mtime_ms": 1784553963433.6704
+    },
+    {
+      "relative_path": "hosts/vscode/.vscode/talos/packages/mcp-server/package.json",
+      "content_hash": "d44c96aa66a5825ecbbcd825afc9f17f95714563a05b13d0dc0207c5b1855483",
+      "size_bytes": 243,
+      "mtime_ms": 1784553963417.8293
+    },
+    {
+      "relative_path": "hosts/vscode/.vscode/talos/packages/mcp-server/README.md",
+      "content_hash": "04601d6c8d238ff310dd946ef329dbb8bc7f04caa5a4d4ab3a0cd78e318ad6f0",
+      "size_bytes": 4247,
+      "mtime_ms": 1784553963417.6287
+    },
+    {
+      "relative_path": "hosts/vscode/.vscode/talos/packages/mcp-server/run.sh",
+      "content_hash": "13593aab984a938af503f0d38093f645411402febdaeb4d70a0b619cf007058e",
+      "size_bytes": 2057,
+      "mtime_ms": 1784553963417.4011
+    },
+    {
+      "relative_path": "hosts/vscode/.vscode/talos/packages/mcp-server/server.js",
+      "content_hash": "6c630f4dc8a84e427b9a8769af79b7ea4af09b734dfc022ebc61bdcd4f460e07",
+      "size_bytes": 212652,
+      "mtime_ms": 1784553963417.222
+    },
+    {
+      "relative_path": "hosts/vscode/.vscode/talos/packages/skills/_shared/references/stack-profiles.md",
+      "content_hash": "1330d56b5044a3ee8741e5184382151c562f1173c296bd1ba0dcda372cd581b0",
+      "size_bytes": 3570,
+      "mtime_ms": 1784553963431.044
+    },
+    {
+      "relative_path": "hosts/vscode/.vscode/talos/packages/skills/_shared/scripts/document_quality.mjs",
+      "content_hash": "ffe42d1daa85681cd3fee0fcb6a2a9e71fc362a83f47bbde264fa39dca8b5705",
+      "size_bytes": 29588,
+      "mtime_ms": 1784553963431.3499
+    },
+    {
+      "relative_path": "hosts/vscode/.vscode/talos/packages/skills/talos-audit/agents/openai.yaml",
+      "content_hash": "9b1affbac432524ba2dcfef8db7d9e8fe3e489784919d7cd8ea227f2dbb33f96",
+      "size_bytes": 298,
+      "mtime_ms": 1784553963424.9392
+    },
+    {
+      "relative_path": "hosts/vscode/.vscode/talos/packages/skills/talos-audit/SKILL.md",
+      "content_hash": "9832acc3797d23cf4d6bb2ca791ba91c4a6e366d662e25fd39f8d52110f78358",
+      "size_bytes": 8683,
+      "mtime_ms": 1784553963425.3284
+    },
+    {
+      "relative_path": "hosts/vscode/.vscode/talos/packages/skills/talos-backlog-generator/agents/openai.yaml",
+      "content_hash": "e535081783c15f430eedf13b5dc13ee0afc9a1c0ba38830b66c0f5b787f55103",
+      "size_bytes": 218,
+      "mtime_ms": 1784553963428.268
+    },
+    {
+      "relative_path": "hosts/vscode/.vscode/talos/packages/skills/talos-backlog-generator/SKILL.md",
+      "content_hash": "4c0e77249dbbac0c60129c72e3ad6db7158d7326095322cf413a667b372d542d",
+      "size_bytes": 10219,
+      "mtime_ms": 1784553963428.7542
+    },
+    {
+      "relative_path": "hosts/vscode/.vscode/talos/packages/skills/talos-direct-execute/agents/openai.yaml",
+      "content_hash": "8820bfdc53ee28c0f2bdc491c8ed37e0c8b89ee65f5eec551b7b41798052be3c",
+      "size_bytes": 352,
+      "mtime_ms": 1784553963425.9114
+    },
+    {
+      "relative_path": "hosts/vscode/.vscode/talos/packages/skills/talos-direct-execute/SKILL.md",
+      "content_hash": "7a3b4c8c4d052a787453e78c19208c462609c17976d2941bde19b6d4dc10f70e",
+      "size_bytes": 14055,
+      "mtime_ms": 1784553963426.1697
+    },
+    {
+      "relative_path": "hosts/vscode/.vscode/talos/packages/skills/talos-findings-repair/agents/openai.yaml",
+      "content_hash": "632f27592bc648994474a510e35494b29610e076dbc4348ebeb92e87b042897d",
+      "size_bytes": 328,
+      "mtime_ms": 1784553963423.6167
+    },
+    {
+      "relative_path": "hosts/vscode/.vscode/talos/packages/skills/talos-findings-repair/SKILL.md",
+      "content_hash": "746536d0fc454ef2aac6e2c01159b2ca6841acb4088220ba57db6649ea29c7cf",
+      "size_bytes": 6207,
+      "mtime_ms": 1784553963423.8103
+    },
+    {
+      "relative_path": "hosts/vscode/.vscode/talos/packages/skills/talos-plan-execute/agents/openai.yaml",
+      "content_hash": "26fe3a158c3fa667727c38354443ae5ab4e0410b41be4038d97e8e79ad8c57e7",
+      "size_bytes": 349,
+      "mtime_ms": 1784553963429.7673
+    },
+    {
+      "relative_path": "hosts/vscode/.vscode/talos/packages/skills/talos-plan-execute/references/plan-contract.md",
+      "content_hash": "add662ad3e6f9892933683953621b82b067bca8dd6c43f3a14d1ef079f16425b",
+      "size_bytes": 3713,
+      "mtime_ms": 1784553963429.508
+    },
+    {
+      "relative_path": "hosts/vscode/.vscode/talos/packages/skills/talos-plan-execute/references/quality-gates.md",
+      "content_hash": "9501861b8869c7f8bc4a9326ab7dfbe1c33de143a4507b63ebb82050b2b89c69",
+      "size_bytes": 2314,
+      "mtime_ms": 1784553963429.3364
+    },
+    {
+      "relative_path": "hosts/vscode/.vscode/talos/packages/skills/talos-plan-execute/scripts/check_budget_state.py",
+      "content_hash": "3c73412166c0395e45c6df62b417dd61fd770a27aa32df34ce87497f449b1ba0",
+      "size_bytes": 2844,
+      "mtime_ms": 1784553963430.439
+    },
+    {
+      "relative_path": "hosts/vscode/.vscode/talos/packages/skills/talos-plan-execute/scripts/extract_plan_contract.py",
+      "content_hash": "3745779d5eac7494be26f9e7e4571f222cf673525640e7ed4afbdd8aed4581da",
+      "size_bytes": 7056,
+      "mtime_ms": 1784553963430.2844
+    },
+    {
+      "relative_path": "hosts/vscode/.vscode/talos/packages/skills/talos-plan-execute/scripts/validate_gate_result.py",
+      "content_hash": "c660e655e53fbd9d5eee3527574c1ecc1ceb3671d55ec9e44134d8cf0de90f35",
+      "size_bytes": 1715,
+      "mtime_ms": 1784553963430.097
+    },
+    {
+      "relative_path": "hosts/vscode/.vscode/talos/packages/skills/talos-plan-execute/SKILL.md",
+      "content_hash": "11d50b733f23663c8a0cae4df502830dff629a8e84a9586f07699bd6394d6867",
+      "size_bytes": 13827,
+      "mtime_ms": 1784553963430.625
+    },
+    {
+      "relative_path": "hosts/vscode/.vscode/talos/packages/skills/talos-plan-handoff/agents/openai.yaml",
+      "content_hash": "68cbeac8608a2b82ee07345ca4db78364f35392e2d3270ca31816e011d40da4b",
+      "size_bytes": 403,
+      "mtime_ms": 1784553963424.1848
+    },
+    {
+      "relative_path": "hosts/vscode/.vscode/talos/packages/skills/talos-plan-handoff/SKILL.md",
+      "content_hash": "7f308aefb886a6550647e27ce10f6c752b9c7512af0079507fbd438f87a60563",
+      "size_bytes": 13368,
+      "mtime_ms": 1784553963424.387
+    },
+    {
+      "relative_path": "hosts/vscode/.vscode/talos/packages/skills/talos-slice-review/agents/openai.yaml",
+      "content_hash": "ec0245cd05bb55e6524d31cca79d5704d4801404da40c923548b323118b4721d",
+      "size_bytes": 297,
+      "mtime_ms": 1784553963422.245
+    },
+    {
+      "relative_path": "hosts/vscode/.vscode/talos/packages/skills/talos-slice-review/references/review-contract.md",
+      "content_hash": "8c6baeddcfd643483debd1381b548477438f53ad4b75b3c2739fb7e9a6dd1e6a",
+      "size_bytes": 1801,
+      "mtime_ms": 1784553963421.3286
+    },
+    {
+      "relative_path": "hosts/vscode/.vscode/talos/packages/skills/talos-slice-review/references/scenario-lenses.md",
+      "content_hash": "ff46a5399d1f4a722bf807855ea216ef644a15fab9907abdef39502622157b53",
+      "size_bytes": 2709,
+      "mtime_ms": 1784553963421.8435
+    },
+    {
+      "relative_path": "hosts/vscode/.vscode/talos/packages/skills/talos-slice-review/scripts/classify_findings.mjs",
+      "content_hash": "f5f1b21d56ea7a6992b9dc2a10141115112c16e076d76f8c2d51e13c4d1b3148",
+      "size_bytes": 2337,
+      "mtime_ms": 1784553963422.9692
+    },
+    {
+      "relative_path": "hosts/vscode/.vscode/talos/packages/skills/talos-slice-review/scripts/classify_findings.py",
+      "content_hash": "d5644ae8cabdd29d902e0a9cbdf72b60b6ebdd7be033cc1c243aeac1f8c23dfc",
+      "size_bytes": 668,
+      "mtime_ms": 1784553963422.6055
+    },
+    {
+      "relative_path": "hosts/vscode/.vscode/talos/packages/skills/talos-slice-review/scripts/extract_review_slice.py",
+      "content_hash": "abbc17e48290c3f739acb892c3322da432b84d796d024ae80c81a1da84ded300",
+      "size_bytes": 5577,
+      "mtime_ms": 1784553963422.7957
+    },
+    {
+      "relative_path": "hosts/vscode/.vscode/talos/packages/skills/talos-slice-review/SKILL.md",
+      "content_hash": "bcadf60c95fac066d069660f16a1aa975a05464d8c79762a870fce7b98aa1149",
+      "size_bytes": 9527,
+      "mtime_ms": 1784553963423.1726
+    },
+    {
+      "relative_path": "hosts/vscode/.vscode/talos/packages/skills/talos-sprint-interview/agents/openai.yaml",
+      "content_hash": "d20693087c4549517b0964550e3184353d9f62f8d5d9d660626821e1ba5e5579",
+      "size_bytes": 382,
+      "mtime_ms": 1784553963420.2454
+    },
+    {
+      "relative_path": "hosts/vscode/.vscode/talos/packages/skills/talos-sprint-interview/SKILL.md",
+      "content_hash": "1fcc836f662aaf29a57f1e921c2b69f823e9142822c0d94e06c4cff41d6808f7",
+      "size_bytes": 6254,
+      "mtime_ms": 1784553963420.5054
+    },
+    {
+      "relative_path": "hosts/vscode/.vscode/talos/packages/skills/talos-task-validator/agents/openai.yaml",
+      "content_hash": "9e6ec4b5f0e4337c36c984eabdfced36f053c63327048c7b6d5aedb73dbb19c7",
+      "size_bytes": 338,
+      "mtime_ms": 1784553963426.842
+    },
+    {
+      "relative_path": "hosts/vscode/.vscode/talos/packages/skills/talos-task-validator/SKILL.md",
+      "content_hash": "b23c52730edff007fb1a6b6d0eb83d7ae02cb8dc0e6c1eed4767d21ca4f4bb8d",
+      "size_bytes": 14207,
+      "mtime_ms": 1784553963427.3557
+    },
+    {
+      "relative_path": "hosts/vscode/.vscode/talos/packages/templates/BACKLOG_MESTRE_TEMPLATE.md",
+      "content_hash": "af281468b5b234fabc6d2001f0ebb765e48e87ed5b295a33e8202aebb9276423",
+      "size_bytes": 9833,
+      "mtime_ms": 1784553963418.7769
+    },
+    {
+      "relative_path": "hosts/vscode/.vscode/talos/packages/templates/BOUNDARY_SPRINT_PLAN.md",
+      "content_hash": "54b2e656da52ce63e52c56b8db5465dddbf1f553c8ac6f150695dbfe43a4a6c4",
+      "size_bytes": 4886,
+      "mtime_ms": 1784553963418.2112
+    },
+    {
+      "relative_path": "hosts/vscode/.vscode/talos/packages/templates/PERGUNTAS_EM_ABERTO_TEMPLATE.md",
+      "content_hash": "0be02f66620c892d2801fcefb72fb5408cb0106156531d05fd61c201e3743049",
+      "size_bytes": 6056,
+      "mtime_ms": 1784553963419.223
+    },
+    {
+      "relative_path": "hosts/vscode/.vscode/talos/packages/templates/PLAN_TEMPLATE.md",
+      "content_hash": "98507f6da608e19ad1179816875459f25d9813bd1bbbb4ec5f05ae85f4c687a2",
+      "size_bytes": 5100,
+      "mtime_ms": 1784553963418.503
+    },
+    {
+      "relative_path": "hosts/vscode/.vscode/talos/packages/templates/SPRINT_TEMPLATE.md",
+      "content_hash": "959c41226dd829ad7f95c3f6f375ac1e00733bc05a56af52f4982a4f6873da8e",
+      "size_bytes": 8453,
+      "mtime_ms": 1784553963419.4863
+    },
+    {
+      "relative_path": "hosts/vscode/.vscode/talos/packages/templates/STATE_FILE_SCHEMA.md",
+      "content_hash": "1a425308fc403d77ab0b6c1c1952965fcffd0a27a6ca429b7f80199f50eb9497",
+      "size_bytes": 6098,
+      "mtime_ms": 1784553963418.9949
+    },
+    {
+      "relative_path": "hosts/vscode/.vscode/talos/VERSION",
+      "content_hash": "232cca15f9cab0453d820d20649067576ec18d279ce3b1dc6d2931d1eb638721",
+      "size_bytes": 7,
+      "mtime_ms": 1784553963416.7825
+    },
+    {
+      "relative_path": "hosts/vscode/agents/talos-direct-execute.md",
+      "content_hash": "f56061c9ff3521c78af00a23f028c2473a479e462f49348c1dfdf3973c2e3988",
+      "size_bytes": 2423,
+      "mtime_ms": 1784553963405.5251
+    },
+    {
+      "relative_path": "hosts/vscode/agents/talos-findings-repair.md",
+      "content_hash": "87383223ba46d45127c80ebbaf2871d8d1ebbe077ad676755286ce6251b38f90",
+      "size_bytes": 2162,
+      "mtime_ms": 1784553963404.7583
+    },
+    {
+      "relative_path": "hosts/vscode/agents/talos-plan-execute.md",
+      "content_hash": "8ef070cb8933d0b00584b1c4d683b00a00d9731a1a169a90c58c3b9e61630ad5",
+      "size_bytes": 2633,
+      "mtime_ms": 1784553963405.325
+    },
+    {
+      "relative_path": "hosts/vscode/agents/talos-slice-review.md",
+      "content_hash": "f11e3d740ba8a001300abe1d14a886263e7d7a3d00bfd6e7517ca4380c80563e",
+      "size_bytes": 1802,
+      "mtime_ms": 1784553963404.5474
+    },
+    {
+      "relative_path": "hosts/vscode/agents/talos-task-validator.md",
+      "content_hash": "1c4834746a18c0e6661c0ab730301c25ed392edc7508a9bd6ace55ccc7c5feef",
+      "size_bytes": 9873,
+      "mtime_ms": 1784553963405.1072
+    },
+    {
+      "relative_path": "hosts/vscode/skills/_shared/references/stack-profiles.md",
+      "content_hash": "1330d56b5044a3ee8741e5184382151c562f1173c296bd1ba0dcda372cd581b0",
+      "size_bytes": 3570,
+      "mtime_ms": 1784553963415.9443
+    },
+    {
+      "relative_path": "hosts/vscode/skills/_shared/scripts/document_quality.mjs",
+      "content_hash": "ffe42d1daa85681cd3fee0fcb6a2a9e71fc362a83f47bbde264fa39dca8b5705",
+      "size_bytes": 29588,
+      "mtime_ms": 1784553963416.3743
+    },
+    {
+      "relative_path": "hosts/vscode/skills/talos-audit/agents/openai.yaml",
+      "content_hash": "9b1affbac432524ba2dcfef8db7d9e8fe3e489784919d7cd8ea227f2dbb33f96",
+      "size_bytes": 298,
+      "mtime_ms": 1784553963410.6912
+    },
+    {
+      "relative_path": "hosts/vscode/skills/talos-audit/SKILL.md",
+      "content_hash": "9832acc3797d23cf4d6bb2ca791ba91c4a6e366d662e25fd39f8d52110f78358",
+      "size_bytes": 8683,
+      "mtime_ms": 1784553963410.8843
+    },
+    {
+      "relative_path": "hosts/vscode/skills/talos-backlog-generator/agents/openai.yaml",
+      "content_hash": "e535081783c15f430eedf13b5dc13ee0afc9a1c0ba38830b66c0f5b787f55103",
+      "size_bytes": 218,
+      "mtime_ms": 1784553963412.7698
+    },
+    {
+      "relative_path": "hosts/vscode/skills/talos-backlog-generator/SKILL.md",
+      "content_hash": "4c0e77249dbbac0c60129c72e3ad6db7158d7326095322cf413a667b372d542d",
+      "size_bytes": 10219,
+      "mtime_ms": 1784553963412.9878
+    },
+    {
+      "relative_path": "hosts/vscode/skills/talos-direct-execute/agents/openai.yaml",
+      "content_hash": "8820bfdc53ee28c0f2bdc491c8ed37e0c8b89ee65f5eec551b7b41798052be3c",
+      "size_bytes": 352,
+      "mtime_ms": 1784553963411.3076
+    },
+    {
+      "relative_path": "hosts/vscode/skills/talos-direct-execute/SKILL.md",
+      "content_hash": "7a3b4c8c4d052a787453e78c19208c462609c17976d2941bde19b6d4dc10f70e",
+      "size_bytes": 14055,
+      "mtime_ms": 1784553963411.48
+    },
+    {
+      "relative_path": "hosts/vscode/skills/talos-findings-repair/agents/openai.yaml",
+      "content_hash": "632f27592bc648994474a510e35494b29610e076dbc4348ebeb92e87b042897d",
+      "size_bytes": 328,
+      "mtime_ms": 1784553963408.8389
+    },
+    {
+      "relative_path": "hosts/vscode/skills/talos-findings-repair/SKILL.md",
+      "content_hash": "746536d0fc454ef2aac6e2c01159b2ca6841acb4088220ba57db6649ea29c7cf",
+      "size_bytes": 6207,
+      "mtime_ms": 1784553963409.2976
+    },
+    {
+      "relative_path": "hosts/vscode/skills/talos-plan-execute/agents/openai.yaml",
+      "content_hash": "26fe3a158c3fa667727c38354443ae5ab4e0410b41be4038d97e8e79ad8c57e7",
+      "size_bytes": 349,
+      "mtime_ms": 1784553963414.172
+    },
+    {
+      "relative_path": "hosts/vscode/skills/talos-plan-execute/references/plan-contract.md",
+      "content_hash": "add662ad3e6f9892933683953621b82b067bca8dd6c43f3a14d1ef079f16425b",
+      "size_bytes": 3713,
+      "mtime_ms": 1784553963413.8708
+    },
+    {
+      "relative_path": "hosts/vscode/skills/talos-plan-execute/references/quality-gates.md",
+      "content_hash": "9501861b8869c7f8bc4a9326ab7dfbe1c33de143a4507b63ebb82050b2b89c69",
+      "size_bytes": 2314,
+      "mtime_ms": 1784553963413.7012
+    },
+    {
+      "relative_path": "hosts/vscode/skills/talos-plan-execute/scripts/check_budget_state.py",
+      "content_hash": "3c73412166c0395e45c6df62b417dd61fd770a27aa32df34ce87497f449b1ba0",
+      "size_bytes": 2844,
+      "mtime_ms": 1784553963414.8882
+    },
+    {
+      "relative_path": "hosts/vscode/skills/talos-plan-execute/scripts/extract_plan_contract.py",
+      "content_hash": "3745779d5eac7494be26f9e7e4571f222cf673525640e7ed4afbdd8aed4581da",
+      "size_bytes": 7056,
+      "mtime_ms": 1784553963414.7144
+    },
+    {
+      "relative_path": "hosts/vscode/skills/talos-plan-execute/scripts/validate_gate_result.py",
+      "content_hash": "c660e655e53fbd9d5eee3527574c1ecc1ceb3671d55ec9e44134d8cf0de90f35",
+      "size_bytes": 1715,
+      "mtime_ms": 1784553963414.469
+    },
+    {
+      "relative_path": "hosts/vscode/skills/talos-plan-execute/SKILL.md",
+      "content_hash": "11d50b733f23663c8a0cae4df502830dff629a8e84a9586f07699bd6394d6867",
+      "size_bytes": 13827,
+      "mtime_ms": 1784553963415.0955
+    },
+    {
+      "relative_path": "hosts/vscode/skills/talos-plan-handoff/agents/openai.yaml",
+      "content_hash": "68cbeac8608a2b82ee07345ca4db78364f35392e2d3270ca31816e011d40da4b",
+      "size_bytes": 403,
+      "mtime_ms": 1784553963410.0947
+    },
+    {
+      "relative_path": "hosts/vscode/skills/talos-plan-handoff/SKILL.md",
+      "content_hash": "7f308aefb886a6550647e27ce10f6c752b9c7512af0079507fbd438f87a60563",
+      "size_bytes": 13368,
+      "mtime_ms": 1784553963410.3213
+    },
+    {
+      "relative_path": "hosts/vscode/skills/talos-slice-review/agents/openai.yaml",
+      "content_hash": "ec0245cd05bb55e6524d31cca79d5704d4801404da40c923548b323118b4721d",
+      "size_bytes": 297,
+      "mtime_ms": 1784553963407.5984
+    },
+    {
+      "relative_path": "hosts/vscode/skills/talos-slice-review/references/review-contract.md",
+      "content_hash": "8c6baeddcfd643483debd1381b548477438f53ad4b75b3c2739fb7e9a6dd1e6a",
+      "size_bytes": 1801,
+      "mtime_ms": 1784553963407.1658
+    },
+    {
+      "relative_path": "hosts/vscode/skills/talos-slice-review/references/scenario-lenses.md",
+      "content_hash": "ff46a5399d1f4a722bf807855ea216ef644a15fab9907abdef39502622157b53",
+      "size_bytes": 2709,
+      "mtime_ms": 1784553963407.314
+    },
+    {
+      "relative_path": "hosts/vscode/skills/talos-slice-review/scripts/classify_findings.mjs",
+      "content_hash": "f5f1b21d56ea7a6992b9dc2a10141115112c16e076d76f8c2d51e13c4d1b3148",
+      "size_bytes": 2337,
+      "mtime_ms": 1784553963408.263
+    },
+    {
+      "relative_path": "hosts/vscode/skills/talos-slice-review/scripts/classify_findings.py",
+      "content_hash": "d5644ae8cabdd29d902e0a9cbdf72b60b6ebdd7be033cc1c243aeac1f8c23dfc",
+      "size_bytes": 668,
+      "mtime_ms": 1784553963407.9058
+    },
+    {
+      "relative_path": "hosts/vscode/skills/talos-slice-review/scripts/extract_review_slice.py",
+      "content_hash": "abbc17e48290c3f739acb892c3322da432b84d796d024ae80c81a1da84ded300",
+      "size_bytes": 5577,
+      "mtime_ms": 1784553963408.099
+    },
+    {
+      "relative_path": "hosts/vscode/skills/talos-slice-review/SKILL.md",
+      "content_hash": "bcadf60c95fac066d069660f16a1aa975a05464d8c79762a870fce7b98aa1149",
+      "size_bytes": 9527,
+      "mtime_ms": 1784553963408.4492
+    },
+    {
+      "relative_path": "hosts/vscode/skills/talos-sprint-interview/agents/openai.yaml",
+      "content_hash": "d20693087c4549517b0964550e3184353d9f62f8d5d9d660626821e1ba5e5579",
+      "size_bytes": 382,
+      "mtime_ms": 1784553963406.2393
+    },
+    {
+      "relative_path": "hosts/vscode/skills/talos-sprint-interview/SKILL.md",
+      "content_hash": "1fcc836f662aaf29a57f1e921c2b69f823e9142822c0d94e06c4cff41d6808f7",
+      "size_bytes": 6254,
+      "mtime_ms": 1784553963406.443
+    },
+    {
+      "relative_path": "hosts/vscode/skills/talos-task-validator/agents/openai.yaml",
+      "content_hash": "9e6ec4b5f0e4337c36c984eabdfced36f053c63327048c7b6d5aedb73dbb19c7",
+      "size_bytes": 338,
+      "mtime_ms": 1784553963412.0066
+    },
+    {
+      "relative_path": "hosts/vscode/skills/talos-task-validator/SKILL.md",
+      "content_hash": "b23c52730edff007fb1a6b6d0eb83d7ae02cb8dc0e6c1eed4767d21ca4f4bb8d",
+      "size_bytes": 14207,
+      "mtime_ms": 1784553963412.3652
+    },
+    {
+      "relative_path": "hosts/vscode/skills/talos/SKILL.md",
+      "content_hash": "d3082964da5bdd8ccddee7d35afe1e75248f42947e19a89776726a2c9fdf41b1",
+      "size_bytes": 55283,
+      "mtime_ms": 1784553963406.7402
+    },
+    {
+      "relative_path": "hosts/zcode/.zcode-plugin/plugin.json",
+      "content_hash": "f5d0a7abaecce3b2d5abb0bc9f46f0d922e61e85b83e0a7afffa1c30d5033521",
+      "size_bytes": 818,
+      "mtime_ms": 1784553963231.941
+    },
+    {
+      "relative_path": "hosts/zcode/agents/talos-direct-execute.md",
+      "content_hash": "f56061c9ff3521c78af00a23f028c2473a479e462f49348c1dfdf3973c2e3988",
+      "size_bytes": 2423,
+      "mtime_ms": 1784553963233.2834
+    },
+    {
+      "relative_path": "hosts/zcode/agents/talos-findings-repair.md",
+      "content_hash": "87383223ba46d45127c80ebbaf2871d8d1ebbe077ad676755286ce6251b38f90",
+      "size_bytes": 2162,
+      "mtime_ms": 1784553963232.448
+    },
+    {
+      "relative_path": "hosts/zcode/agents/talos-plan-execute.md",
+      "content_hash": "8ef070cb8933d0b00584b1c4d683b00a00d9731a1a169a90c58c3b9e61630ad5",
+      "size_bytes": 2633,
+      "mtime_ms": 1784553963232.9856
+    },
+    {
+      "relative_path": "hosts/zcode/agents/talos-slice-review.md",
+      "content_hash": "f11e3d740ba8a001300abe1d14a886263e7d7a3d00bfd6e7517ca4380c80563e",
+      "size_bytes": 1802,
+      "mtime_ms": 1784553963232.228
+    },
+    {
+      "relative_path": "hosts/zcode/agents/talos-task-validator.md",
+      "content_hash": "1c4834746a18c0e6661c0ab730301c25ed392edc7508a9bd6ace55ccc7c5feef",
+      "size_bytes": 9873,
+      "mtime_ms": 1784553963232.7537
+    },
+    {
+      "relative_path": "hosts/zcode/packages/mcp-server/package.json",
+      "content_hash": "d44c96aa66a5825ecbbcd825afc9f17f95714563a05b13d0dc0207c5b1855483",
+      "size_bytes": 243,
+      "mtime_ms": 1784553963235.5205
+    },
+    {
+      "relative_path": "hosts/zcode/packages/mcp-server/README.md",
+      "content_hash": "04601d6c8d238ff310dd946ef329dbb8bc7f04caa5a4d4ab3a0cd78e318ad6f0",
+      "size_bytes": 4247,
+      "mtime_ms": 1784553963235.297
+    },
+    {
+      "relative_path": "hosts/zcode/packages/mcp-server/run.sh",
+      "content_hash": "13593aab984a938af503f0d38093f645411402febdaeb4d70a0b619cf007058e",
+      "size_bytes": 2057,
+      "mtime_ms": 1784553963235.0146
+    },
+    {
+      "relative_path": "hosts/zcode/packages/mcp-server/server.js",
+      "content_hash": "6c630f4dc8a84e427b9a8769af79b7ea4af09b734dfc022ebc61bdcd4f460e07",
+      "size_bytes": 212652,
+      "mtime_ms": 1784553963234.5383
+    },
+    {
+      "relative_path": "hosts/zcode/packages/mcp-server/VERSION",
+      "content_hash": "232cca15f9cab0453d820d20649067576ec18d279ce3b1dc6d2931d1eb638721",
+      "size_bytes": 7,
+      "mtime_ms": 1784553963235.6736
+    },
+    {
+      "relative_path": "hosts/zcode/packages/orchestrator/commands/talos.md",
+      "content_hash": "00762382337480d362a733536926653693ffc0aa7565e3032714388dbc76a7c3",
+      "size_bytes": 3954,
+      "mtime_ms": 1784553963250.8694
+    },
+    {
+      "relative_path": "hosts/zcode/packages/orchestrator/defaults/paths.md",
+      "content_hash": "f5cca8d37161ac0db6b5ca4c5967b90f75c6efd330dbf03720b32dbd783ff5a5",
+      "size_bytes": 993,
+      "mtime_ms": 1784553963250.4978
+    },
+    {
+      "relative_path": "hosts/zcode/packages/orchestrator/README.md",
+      "content_hash": "3719c615a09c045697a2de4ccb59285fc403c0f526c68c9cf58c24cfdad61ac2",
+      "size_bytes": 23746,
+      "mtime_ms": 1784553963250.203
+    },
+    {
+      "relative_path": "hosts/zcode/packages/orchestrator/references/host-adapters.md",
+      "content_hash": "97d985b85c2fe963807c59f9b668b6f5e0807ed4f5f4c332544df69582faf4e7",
+      "size_bytes": 13036,
+      "mtime_ms": 1784553963249.6716
+    },
+    {
+      "relative_path": "hosts/zcode/packages/orchestrator/references/qa_s13_matrix.md",
+      "content_hash": "2ddb4db84d477ae0eb86f62affe68a521364724c94aafcd24fbe5c498f92cec5",
+      "size_bytes": 11076,
+      "mtime_ms": 1784553963250.0457
+    },
+    {
+      "relative_path": "hosts/zcode/packages/orchestrator/references/subagent_dispatch.md",
+      "content_hash": "113c3761ca5f287779a8329e9a9013328f5ea39f0ab472a9bd5767f6d22ae6cf",
+      "size_bytes": 4984,
+      "mtime_ms": 1784553963249.851
+    },
+    {
+      "relative_path": "hosts/zcode/packages/orchestrator/skills/talos/SKILL.md",
+      "content_hash": "d3082964da5bdd8ccddee7d35afe1e75248f42947e19a89776726a2c9fdf41b1",
+      "size_bytes": 55283,
+      "mtime_ms": 1784553963251.2837
+    },
+    {
+      "relative_path": "hosts/zcode/packages/skills/_shared/references/stack-profiles.md",
+      "content_hash": "1330d56b5044a3ee8741e5184382151c562f1173c296bd1ba0dcda372cd581b0",
+      "size_bytes": 3570,
+      "mtime_ms": 1784553963248.9343
+    },
+    {
+      "relative_path": "hosts/zcode/packages/skills/_shared/scripts/document_quality.mjs",
+      "content_hash": "ffe42d1daa85681cd3fee0fcb6a2a9e71fc362a83f47bbde264fa39dca8b5705",
+      "size_bytes": 29588,
+      "mtime_ms": 1784553963249.2346
+    },
+    {
+      "relative_path": "hosts/zcode/packages/skills/talos-audit/agents/openai.yaml",
+      "content_hash": "9b1affbac432524ba2dcfef8db7d9e8fe3e489784919d7cd8ea227f2dbb33f96",
+      "size_bytes": 298,
+      "mtime_ms": 1784553963242.5984
+    },
+    {
+      "relative_path": "hosts/zcode/packages/skills/talos-audit/SKILL.md",
+      "content_hash": "9832acc3797d23cf4d6bb2ca791ba91c4a6e366d662e25fd39f8d52110f78358",
+      "size_bytes": 8683,
+      "mtime_ms": 1784553963242.8372
+    },
+    {
+      "relative_path": "hosts/zcode/packages/skills/talos-backlog-generator/agents/openai.yaml",
+      "content_hash": "e535081783c15f430eedf13b5dc13ee0afc9a1c0ba38830b66c0f5b787f55103",
+      "size_bytes": 218,
+      "mtime_ms": 1784553963245.0518
+    },
+    {
+      "relative_path": "hosts/zcode/packages/skills/talos-backlog-generator/SKILL.md",
+      "content_hash": "4c0e77249dbbac0c60129c72e3ad6db7158d7326095322cf413a667b372d542d",
+      "size_bytes": 10219,
+      "mtime_ms": 1784553963245.4348
+    },
+    {
+      "relative_path": "hosts/zcode/packages/skills/talos-direct-execute/agents/openai.yaml",
+      "content_hash": "8820bfdc53ee28c0f2bdc491c8ed37e0c8b89ee65f5eec551b7b41798052be3c",
+      "size_bytes": 352,
+      "mtime_ms": 1784553963243.3555
+    },
+    {
+      "relative_path": "hosts/zcode/packages/skills/talos-direct-execute/SKILL.md",
+      "content_hash": "7a3b4c8c4d052a787453e78c19208c462609c17976d2941bde19b6d4dc10f70e",
+      "size_bytes": 14055,
+      "mtime_ms": 1784553963243.613
+    },
+    {
+      "relative_path": "hosts/zcode/packages/skills/talos-findings-repair/agents/openai.yaml",
+      "content_hash": "632f27592bc648994474a510e35494b29610e076dbc4348ebeb92e87b042897d",
+      "size_bytes": 328,
+      "mtime_ms": 1784553963240.696
+    },
+    {
+      "relative_path": "hosts/zcode/packages/skills/talos-findings-repair/SKILL.md",
+      "content_hash": "746536d0fc454ef2aac6e2c01159b2ca6841acb4088220ba57db6649ea29c7cf",
+      "size_bytes": 6207,
+      "mtime_ms": 1784553963241.2092
+    },
+    {
+      "relative_path": "hosts/zcode/packages/skills/talos-plan-execute/agents/openai.yaml",
+      "content_hash": "26fe3a158c3fa667727c38354443ae5ab4e0410b41be4038d97e8e79ad8c57e7",
+      "size_bytes": 349,
+      "mtime_ms": 1784553963246.9534
+    },
+    {
+      "relative_path": "hosts/zcode/packages/skills/talos-plan-execute/references/plan-contract.md",
+      "content_hash": "add662ad3e6f9892933683953621b82b067bca8dd6c43f3a14d1ef079f16425b",
+      "size_bytes": 3713,
+      "mtime_ms": 1784553963246.0754
+    },
+    {
+      "relative_path": "hosts/zcode/packages/skills/talos-plan-execute/references/quality-gates.md",
+      "content_hash": "9501861b8869c7f8bc4a9326ab7dfbe1c33de143a4507b63ebb82050b2b89c69",
+      "size_bytes": 2314,
+      "mtime_ms": 1784553963245.9155
+    },
+    {
+      "relative_path": "hosts/zcode/packages/skills/talos-plan-execute/scripts/check_budget_state.py",
+      "content_hash": "3c73412166c0395e45c6df62b417dd61fd770a27aa32df34ce87497f449b1ba0",
+      "size_bytes": 2844,
+      "mtime_ms": 1784553963248.1833
+    },
+    {
+      "relative_path": "hosts/zcode/packages/skills/talos-plan-execute/scripts/extract_plan_contract.py",
+      "content_hash": "3745779d5eac7494be26f9e7e4571f222cf673525640e7ed4afbdd8aed4581da",
+      "size_bytes": 7056,
+      "mtime_ms": 1784553963247.9788
+    },
+    {
+      "relative_path": "hosts/zcode/packages/skills/talos-plan-execute/scripts/validate_gate_result.py",
+      "content_hash": "c660e655e53fbd9d5eee3527574c1ecc1ceb3671d55ec9e44134d8cf0de90f35",
+      "size_bytes": 1715,
+      "mtime_ms": 1784553963247.7085
+    },
+    {
+      "relative_path": "hosts/zcode/packages/skills/talos-plan-execute/SKILL.md",
+      "content_hash": "11d50b733f23663c8a0cae4df502830dff629a8e84a9586f07699bd6394d6867",
+      "size_bytes": 13827,
+      "mtime_ms": 1784553963248.4194
+    },
+    {
+      "relative_path": "hosts/zcode/packages/skills/talos-plan-handoff/agents/openai.yaml",
+      "content_hash": "68cbeac8608a2b82ee07345ca4db78364f35392e2d3270ca31816e011d40da4b",
+      "size_bytes": 403,
+      "mtime_ms": 1784553963241.8525
+    },
+    {
+      "relative_path": "hosts/zcode/packages/skills/talos-plan-handoff/SKILL.md",
+      "content_hash": "7f308aefb886a6550647e27ce10f6c752b9c7512af0079507fbd438f87a60563",
+      "size_bytes": 13368,
+      "mtime_ms": 1784553963242.0964
+    },
+    {
+      "relative_path": "hosts/zcode/packages/skills/talos-slice-review/agents/openai.yaml",
+      "content_hash": "ec0245cd05bb55e6524d31cca79d5704d4801404da40c923548b323118b4721d",
+      "size_bytes": 297,
+      "mtime_ms": 1784553963238.6797
+    },
+    {
+      "relative_path": "hosts/zcode/packages/skills/talos-slice-review/references/review-contract.md",
+      "content_hash": "8c6baeddcfd643483debd1381b548477438f53ad4b75b3c2739fb7e9a6dd1e6a",
+      "size_bytes": 1801,
+      "mtime_ms": 1784553963238.2095
+    },
+    {
+      "relative_path": "hosts/zcode/packages/skills/talos-slice-review/references/scenario-lenses.md",
+      "content_hash": "ff46a5399d1f4a722bf807855ea216ef644a15fab9907abdef39502622157b53",
+      "size_bytes": 2709,
+      "mtime_ms": 1784553963238.386
+    },
+    {
+      "relative_path": "hosts/zcode/packages/skills/talos-slice-review/scripts/classify_findings.mjs",
+      "content_hash": "f5f1b21d56ea7a6992b9dc2a10141115112c16e076d76f8c2d51e13c4d1b3148",
+      "size_bytes": 2337,
+      "mtime_ms": 1784553963239.446
+    },
+    {
+      "relative_path": "hosts/zcode/packages/skills/talos-slice-review/scripts/classify_findings.py",
+      "content_hash": "d5644ae8cabdd29d902e0a9cbdf72b60b6ebdd7be033cc1c243aeac1f8c23dfc",
+      "size_bytes": 668,
+      "mtime_ms": 1784553963238.9548
+    },
+    {
+      "relative_path": "hosts/zcode/packages/skills/talos-slice-review/scripts/extract_review_slice.py",
+      "content_hash": "abbc17e48290c3f739acb892c3322da432b84d796d024ae80c81a1da84ded300",
+      "size_bytes": 5577,
+      "mtime_ms": 1784553963239.209
+    },
+    {
+      "relative_path": "hosts/zcode/packages/skills/talos-slice-review/SKILL.md",
+      "content_hash": "bcadf60c95fac066d069660f16a1aa975a05464d8c79762a870fce7b98aa1149",
+      "size_bytes": 9527,
+      "mtime_ms": 1784553963239.8848
+    },
+    {
+      "relative_path": "hosts/zcode/packages/skills/talos-sprint-interview/agents/openai.yaml",
+      "content_hash": "d20693087c4549517b0964550e3184353d9f62f8d5d9d660626821e1ba5e5579",
+      "size_bytes": 382,
+      "mtime_ms": 1784553963237.628
+    },
+    {
+      "relative_path": "hosts/zcode/packages/skills/talos-sprint-interview/SKILL.md",
+      "content_hash": "1fcc836f662aaf29a57f1e921c2b69f823e9142822c0d94e06c4cff41d6808f7",
+      "size_bytes": 6254,
+      "mtime_ms": 1784553963237.8013
+    },
+    {
+      "relative_path": "hosts/zcode/packages/skills/talos-task-validator/agents/openai.yaml",
+      "content_hash": "9e6ec4b5f0e4337c36c984eabdfced36f053c63327048c7b6d5aedb73dbb19c7",
+      "size_bytes": 338,
+      "mtime_ms": 1784553963244.209
+    },
+    {
+      "relative_path": "hosts/zcode/packages/skills/talos-task-validator/SKILL.md",
+      "content_hash": "b23c52730edff007fb1a6b6d0eb83d7ae02cb8dc0e6c1eed4767d21ca4f4bb8d",
+      "size_bytes": 14207,
+      "mtime_ms": 1784553963244.6013
+    },
+    {
+      "relative_path": "hosts/zcode/packages/templates/BACKLOG_MESTRE_TEMPLATE.md",
+      "content_hash": "af281468b5b234fabc6d2001f0ebb765e48e87ed5b295a33e8202aebb9276423",
+      "size_bytes": 9833,
+      "mtime_ms": 1784553963236.3298
+    },
+    {
+      "relative_path": "hosts/zcode/packages/templates/BOUNDARY_SPRINT_PLAN.md",
+      "content_hash": "54b2e656da52ce63e52c56b8db5465dddbf1f553c8ac6f150695dbfe43a4a6c4",
+      "size_bytes": 4886,
+      "mtime_ms": 1784553963235.9624
+    },
+    {
+      "relative_path": "hosts/zcode/packages/templates/PERGUNTAS_EM_ABERTO_TEMPLATE.md",
+      "content_hash": "0be02f66620c892d2801fcefb72fb5408cb0106156531d05fd61c201e3743049",
+      "size_bytes": 6056,
+      "mtime_ms": 1784553963236.6663
+    },
+    {
+      "relative_path": "hosts/zcode/packages/templates/PLAN_TEMPLATE.md",
+      "content_hash": "98507f6da608e19ad1179816875459f25d9813bd1bbbb4ec5f05ae85f4c687a2",
+      "size_bytes": 5100,
+      "mtime_ms": 1784553963236.1233
+    },
+    {
+      "relative_path": "hosts/zcode/packages/templates/SPRINT_TEMPLATE.md",
+      "content_hash": "959c41226dd829ad7f95c3f6f375ac1e00733bc05a56af52f4982a4f6873da8e",
+      "size_bytes": 8453,
+      "mtime_ms": 1784553963237.0422
+    },
+    {
+      "relative_path": "hosts/zcode/packages/templates/STATE_FILE_SCHEMA.md",
+      "content_hash": "1a425308fc403d77ab0b6c1c1952965fcffd0a27a6ca429b7f80199f50eb9497",
+      "size_bytes": 6098,
+      "mtime_ms": 1784553963236.4995
+    },
+    {
+      "relative_path": "hosts/zcode/skills/_shared/references/stack-profiles.md",
+      "content_hash": "1330d56b5044a3ee8741e5184382151c562f1173c296bd1ba0dcda372cd581b0",
+      "size_bytes": 3570,
+      "mtime_ms": 1784553963262.6528
+    },
+    {
+      "relative_path": "hosts/zcode/skills/_shared/scripts/document_quality.mjs",
+      "content_hash": "ffe42d1daa85681cd3fee0fcb6a2a9e71fc362a83f47bbde264fa39dca8b5705",
+      "size_bytes": 29588,
+      "mtime_ms": 1784553963263.0007
+    },
+    {
+      "relative_path": "hosts/zcode/skills/talos-audit/agents/openai.yaml",
+      "content_hash": "9b1affbac432524ba2dcfef8db7d9e8fe3e489784919d7cd8ea227f2dbb33f96",
+      "size_bytes": 298,
+      "mtime_ms": 1784553963257.0198
+    },
+    {
+      "relative_path": "hosts/zcode/skills/talos-audit/SKILL.md",
+      "content_hash": "9832acc3797d23cf4d6bb2ca791ba91c4a6e366d662e25fd39f8d52110f78358",
+      "size_bytes": 8683,
+      "mtime_ms": 1784553963257.231
+    },
+    {
+      "relative_path": "hosts/zcode/skills/talos-backlog-generator/agents/openai.yaml",
+      "content_hash": "e535081783c15f430eedf13b5dc13ee0afc9a1c0ba38830b66c0f5b787f55103",
+      "size_bytes": 218,
+      "mtime_ms": 1784553963260.177
+    },
+    {
+      "relative_path": "hosts/zcode/skills/talos-backlog-generator/SKILL.md",
+      "content_hash": "4c0e77249dbbac0c60129c72e3ad6db7158d7326095322cf413a667b372d542d",
+      "size_bytes": 10219,
+      "mtime_ms": 1784553963260.3896
+    },
+    {
+      "relative_path": "hosts/zcode/skills/talos-direct-execute/agents/openai.yaml",
+      "content_hash": "8820bfdc53ee28c0f2bdc491c8ed37e0c8b89ee65f5eec551b7b41798052be3c",
+      "size_bytes": 352,
+      "mtime_ms": 1784553963257.683
+    },
+    {
+      "relative_path": "hosts/zcode/skills/talos-direct-execute/SKILL.md",
+      "content_hash": "7a3b4c8c4d052a787453e78c19208c462609c17976d2941bde19b6d4dc10f70e",
+      "size_bytes": 14055,
+      "mtime_ms": 1784553963257.8882
+    },
+    {
+      "relative_path": "hosts/zcode/skills/talos-findings-repair/agents/openai.yaml",
+      "content_hash": "632f27592bc648994474a510e35494b29610e076dbc4348ebeb92e87b042897d",
+      "size_bytes": 328,
+      "mtime_ms": 1784553963255.6104
+    },
+    {
+      "relative_path": "hosts/zcode/skills/talos-findings-repair/SKILL.md",
+      "content_hash": "746536d0fc454ef2aac6e2c01159b2ca6841acb4088220ba57db6649ea29c7cf",
+      "size_bytes": 6207,
+      "mtime_ms": 1784553963255.8142
+    },
+    {
+      "relative_path": "hosts/zcode/skills/talos-plan-execute/agents/openai.yaml",
+      "content_hash": "26fe3a158c3fa667727c38354443ae5ab4e0410b41be4038d97e8e79ad8c57e7",
+      "size_bytes": 349,
+      "mtime_ms": 1784553963261.3792
+    },
+    {
+      "relative_path": "hosts/zcode/skills/talos-plan-execute/references/plan-contract.md",
+      "content_hash": "add662ad3e6f9892933683953621b82b067bca8dd6c43f3a14d1ef079f16425b",
+      "size_bytes": 3713,
+      "mtime_ms": 1784553963261.038
+    },
+    {
+      "relative_path": "hosts/zcode/skills/talos-plan-execute/references/quality-gates.md",
+      "content_hash": "9501861b8869c7f8bc4a9326ab7dfbe1c33de143a4507b63ebb82050b2b89c69",
+      "size_bytes": 2314,
+      "mtime_ms": 1784553963260.8086
+    },
+    {
+      "relative_path": "hosts/zcode/skills/talos-plan-execute/scripts/check_budget_state.py",
+      "content_hash": "3c73412166c0395e45c6df62b417dd61fd770a27aa32df34ce87497f449b1ba0",
+      "size_bytes": 2844,
+      "mtime_ms": 1784553963262.02
+    },
+    {
+      "relative_path": "hosts/zcode/skills/talos-plan-execute/scripts/extract_plan_contract.py",
+      "content_hash": "3745779d5eac7494be26f9e7e4571f222cf673525640e7ed4afbdd8aed4581da",
+      "size_bytes": 7056,
+      "mtime_ms": 1784553963261.8655
+    },
+    {
+      "relative_path": "hosts/zcode/skills/talos-plan-execute/scripts/validate_gate_result.py",
+      "content_hash": "c660e655e53fbd9d5eee3527574c1ecc1ceb3671d55ec9e44134d8cf0de90f35",
+      "size_bytes": 1715,
+      "mtime_ms": 1784553963261.6785
+    },
+    {
+      "relative_path": "hosts/zcode/skills/talos-plan-execute/SKILL.md",
+      "content_hash": "11d50b733f23663c8a0cae4df502830dff629a8e84a9586f07699bd6394d6867",
+      "size_bytes": 13827,
+      "mtime_ms": 1784553963262.2227
+    },
+    {
+      "relative_path": "hosts/zcode/skills/talos-plan-handoff/agents/openai.yaml",
+      "content_hash": "68cbeac8608a2b82ee07345ca4db78364f35392e2d3270ca31816e011d40da4b",
+      "size_bytes": 403,
+      "mtime_ms": 1784553963256.3684
+    },
+    {
+      "relative_path": "hosts/zcode/skills/talos-plan-handoff/SKILL.md",
+      "content_hash": "7f308aefb886a6550647e27ce10f6c752b9c7512af0079507fbd438f87a60563",
+      "size_bytes": 13368,
+      "mtime_ms": 1784553963256.5703
+    },
+    {
+      "relative_path": "hosts/zcode/skills/talos-slice-review/agents/openai.yaml",
+      "content_hash": "ec0245cd05bb55e6524d31cca79d5704d4801404da40c923548b323118b4721d",
+      "size_bytes": 297,
+      "mtime_ms": 1784553963254.2808
+    },
+    {
+      "relative_path": "hosts/zcode/skills/talos-slice-review/references/review-contract.md",
+      "content_hash": "8c6baeddcfd643483debd1381b548477438f53ad4b75b3c2739fb7e9a6dd1e6a",
+      "size_bytes": 1801,
+      "mtime_ms": 1784553963253.8237
+    },
+    {
+      "relative_path": "hosts/zcode/skills/talos-slice-review/references/scenario-lenses.md",
+      "content_hash": "ff46a5399d1f4a722bf807855ea216ef644a15fab9907abdef39502622157b53",
+      "size_bytes": 2709,
+      "mtime_ms": 1784553963254.0066
+    },
+    {
+      "relative_path": "hosts/zcode/skills/talos-slice-review/scripts/classify_findings.mjs",
+      "content_hash": "f5f1b21d56ea7a6992b9dc2a10141115112c16e076d76f8c2d51e13c4d1b3148",
+      "size_bytes": 2337,
+      "mtime_ms": 1784553963254.972
+    },
+    {
+      "relative_path": "hosts/zcode/skills/talos-slice-review/scripts/classify_findings.py",
+      "content_hash": "d5644ae8cabdd29d902e0a9cbdf72b60b6ebdd7be033cc1c243aeac1f8c23dfc",
+      "size_bytes": 668,
+      "mtime_ms": 1784553963254.572
+    },
+    {
+      "relative_path": "hosts/zcode/skills/talos-slice-review/scripts/extract_review_slice.py",
+      "content_hash": "abbc17e48290c3f739acb892c3322da432b84d796d024ae80c81a1da84ded300",
+      "size_bytes": 5577,
+      "mtime_ms": 1784553963254.7517
+    },
+    {
+      "relative_path": "hosts/zcode/skills/talos-slice-review/SKILL.md",
+      "content_hash": "bcadf60c95fac066d069660f16a1aa975a05464d8c79762a870fce7b98aa1149",
+      "size_bytes": 9527,
+      "mtime_ms": 1784553963255.1914
+    },
+    {
+      "relative_path": "hosts/zcode/skills/talos-sprint-interview/agents/openai.yaml",
+      "content_hash": "d20693087c4549517b0964550e3184353d9f62f8d5d9d660626821e1ba5e5579",
+      "size_bytes": 382,
+      "mtime_ms": 1784553963252.1465
+    },
+    {
+      "relative_path": "hosts/zcode/skills/talos-sprint-interview/SKILL.md",
+      "content_hash": "1fcc836f662aaf29a57f1e921c2b69f823e9142822c0d94e06c4cff41d6808f7",
+      "size_bytes": 6254,
+      "mtime_ms": 1784553963252.6248
+    },
+    {
+      "relative_path": "hosts/zcode/skills/talos-task-validator/agents/openai.yaml",
+      "content_hash": "9e6ec4b5f0e4337c36c984eabdfced36f053c63327048c7b6d5aedb73dbb19c7",
+      "size_bytes": 338,
+      "mtime_ms": 1784553963258.8867
+    },
+    {
+      "relative_path": "hosts/zcode/skills/talos-task-validator/SKILL.md",
+      "content_hash": "b23c52730edff007fb1a6b6d0eb83d7ae02cb8dc0e6c1eed4767d21ca4f4bb8d",
+      "size_bytes": 14207,
+      "mtime_ms": 1784553963259.5945
+    },
+    {
+      "relative_path": "hosts/zcode/skills/talos/SKILL.md",
+      "content_hash": "d3082964da5bdd8ccddee7d35afe1e75248f42947e19a89776726a2c9fdf41b1",
+      "size_bytes": 55283,
+      "mtime_ms": 1784553963253.3564
+    },
+    {
+      "relative_path": "LICENSE",
+      "content_hash": "b2496a54ffd715dc069c4c8e988d4e47b3d0e7f9a1d2b11c758882370d4afa13",
+      "size_bytes": 1069,
+      "mtime_ms": 1781129635536.9248
+    },
+    {
+      "relative_path": "NAMING.md",
+      "content_hash": "62b0f580fe42a1e1a2df3a420425872e993b61f1c51470d130835004e124f7be",
+      "size_bytes": 14231,
+      "mtime_ms": 1782928567199.0461
+    },
+    {
+      "relative_path": "package.json",
+      "content_hash": "560f7ec953e7023e4f9d8ec7efdfd3947ca085f857d7a72e9a0faab52f17f17e",
+      "size_bytes": 422,
+      "mtime_ms": 1784553375437.021
+    },
+    {
+      "relative_path": "packages/mcp-server/fixtures/state-direct.json",
+      "content_hash": "2844bf499adca7a35444b880d61d63dc33a1280918c283de28addea0493dbfd1",
+      "size_bytes": 833,
+      "mtime_ms": 1782910952909.0537
+    },
+    {
+      "relative_path": "packages/mcp-server/fixtures/state-legacy-plan.json",
+      "content_hash": "9cea5c5aa0292e8b3cb1950bf736ec83ef299557fae0a47441cc056012711482",
+      "size_bytes": 274,
+      "mtime_ms": 1782910952909.3015
+    },
+    {
+      "relative_path": "packages/mcp-server/fixtures/state-repair.json",
+      "content_hash": "d6b92a110197ece0721a8625cce311f0b39763c413e4885d16049e3be57f3fe9",
+      "size_bytes": 815,
+      "mtime_ms": 1782910952909.5442
+    },
+    {
+      "relative_path": "packages/mcp-server/package.json",
+      "content_hash": "d44c96aa66a5825ecbbcd825afc9f17f95714563a05b13d0dc0207c5b1855483",
+      "size_bytes": 243,
+      "mtime_ms": 1784553375437.1372
+    },
+    {
+      "relative_path": "packages/mcp-server/README.md",
+      "content_hash": "04601d6c8d238ff310dd946ef329dbb8bc7f04caa5a4d4ab3a0cd78e318ad6f0",
+      "size_bytes": 4247,
+      "mtime_ms": 1784553375438.66
+    },
+    {
+      "relative_path": "packages/mcp-server/run.sh",
+      "content_hash": "13593aab984a938af503f0d38093f645411402febdaeb4d70a0b619cf007058e",
+      "size_bytes": 2057,
+      "mtime_ms": 1784506800862.7751
+    },
+    {
+      "relative_path": "packages/mcp-server/run.test.mjs",
+      "content_hash": "1524420c7dbdb82d582ff08a0fc2e1b1544356627a497153ae9b413c2304539f",
+      "size_bytes": 2740,
+      "mtime_ms": 1784472091535.875
+    },
+    {
+      "relative_path": "packages/mcp-server/server.js",
+      "content_hash": "6c630f4dc8a84e427b9a8769af79b7ea4af09b734dfc022ebc61bdcd4f460e07",
+      "size_bytes": 212652,
+      "mtime_ms": 1784472091536.1553
+    },
+    {
+      "relative_path": "packages/mcp-server/server.test.js",
+      "content_hash": "4ba03698112417c3bb8bd5ec2b605d73be801f89113f4ec0004809a1f4191b09",
+      "size_bytes": 222250,
+      "mtime_ms": 1784472091536.4646
+    },
+    {
+      "relative_path": "packages/orchestrator/commands/talos.md",
+      "content_hash": "00762382337480d362a733536926653693ffc0aa7565e3032714388dbc76a7c3",
+      "size_bytes": 3954,
+      "mtime_ms": 1784472091536.7327
+    },
+    {
+      "relative_path": "packages/orchestrator/defaults/paths.md",
+      "content_hash": "f5cca8d37161ac0db6b5ca4c5967b90f75c6efd330dbf03720b32dbd783ff5a5",
+      "size_bytes": 993,
+      "mtime_ms": 1784472091536.823
+    },
+    {
+      "relative_path": "packages/orchestrator/README.md",
+      "content_hash": "3719c615a09c045697a2de4ccb59285fc403c0f526c68c9cf58c24cfdad61ac2",
+      "size_bytes": 23746,
+      "mtime_ms": 1784553405758.9392
+    },
+    {
+      "relative_path": "packages/orchestrator/references/host-adapters.md",
+      "content_hash": "97d985b85c2fe963807c59f9b668b6f5e0807ed4f5f4c332544df69582faf4e7",
+      "size_bytes": 13036,
+      "mtime_ms": 1782910952911.6362
+    },
+    {
+      "relative_path": "packages/orchestrator/references/qa_s13_matrix.md",
+      "content_hash": "2ddb4db84d477ae0eb86f62affe68a521364724c94aafcd24fbe5c498f92cec5",
+      "size_bytes": 11076,
+      "mtime_ms": 1782910952911.962
+    },
+    {
+      "relative_path": "packages/orchestrator/references/subagent_dispatch.md",
+      "content_hash": "113c3761ca5f287779a8329e9a9013328f5ea39f0ab472a9bd5767f6d22ae6cf",
+      "size_bytes": 4984,
+      "mtime_ms": 1784472091536.924
+    },
+    {
+      "relative_path": "packages/orchestrator/skills/talos/SKILL.md",
+      "content_hash": "d3082964da5bdd8ccddee7d35afe1e75248f42947e19a89776726a2c9fdf41b1",
+      "size_bytes": 55283,
+      "mtime_ms": 1784472091537.0881
+    },
+    {
+      "relative_path": "packages/skills/_shared/references/stack-profiles.md",
+      "content_hash": "1330d56b5044a3ee8741e5184382151c562f1173c296bd1ba0dcda372cd581b0",
+      "size_bytes": 3570,
+      "mtime_ms": 1782910935032.9106
+    },
+    {
+      "relative_path": "packages/skills/_shared/scripts/document_quality.mjs",
+      "content_hash": "ffe42d1daa85681cd3fee0fcb6a2a9e71fc362a83f47bbde264fa39dca8b5705",
+      "size_bytes": 29588,
+      "mtime_ms": 1784472091537.228
+    },
+    {
+      "relative_path": "packages/skills/talos-audit/agents/openai.yaml",
+      "content_hash": "9b1affbac432524ba2dcfef8db7d9e8fe3e489784919d7cd8ea227f2dbb33f96",
+      "size_bytes": 298,
+      "mtime_ms": 1782910952912.4875
+    },
+    {
+      "relative_path": "packages/skills/talos-audit/SKILL.md",
+      "content_hash": "9832acc3797d23cf4d6bb2ca791ba91c4a6e366d662e25fd39f8d52110f78358",
+      "size_bytes": 8683,
+      "mtime_ms": 1784472091537.4124
+    },
+    {
+      "relative_path": "packages/skills/talos-backlog-generator/agents/openai.yaml",
+      "content_hash": "e535081783c15f430eedf13b5dc13ee0afc9a1c0ba38830b66c0f5b787f55103",
+      "size_bytes": 218,
+      "mtime_ms": 1782910952912.7805
+    },
+    {
+      "relative_path": "packages/skills/talos-backlog-generator/SKILL.md",
+      "content_hash": "4c0e77249dbbac0c60129c72e3ad6db7158d7326095322cf413a667b372d542d",
+      "size_bytes": 10219,
+      "mtime_ms": 1784472091537.556
+    },
+    {
+      "relative_path": "packages/skills/talos-direct-execute/agents/openai.yaml",
+      "content_hash": "8820bfdc53ee28c0f2bdc491c8ed37e0c8b89ee65f5eec551b7b41798052be3c",
+      "size_bytes": 352,
+      "mtime_ms": 1784472091537.7751
+    },
+    {
+      "relative_path": "packages/skills/talos-direct-execute/SKILL.md",
+      "content_hash": "7a3b4c8c4d052a787453e78c19208c462609c17976d2941bde19b6d4dc10f70e",
+      "size_bytes": 14055,
+      "mtime_ms": 1784472091537.6804
+    },
+    {
+      "relative_path": "packages/skills/talos-findings-repair/agents/openai.yaml",
+      "content_hash": "632f27592bc648994474a510e35494b29610e076dbc4348ebeb92e87b042897d",
+      "size_bytes": 328,
+      "mtime_ms": 1782910952913.2148
+    },
+    {
+      "relative_path": "packages/skills/talos-findings-repair/SKILL.md",
+      "content_hash": "746536d0fc454ef2aac6e2c01159b2ca6841acb4088220ba57db6649ea29c7cf",
+      "size_bytes": 6207,
+      "mtime_ms": 1783121031906.7383
+    },
+    {
+      "relative_path": "packages/skills/talos-plan-execute/agents/openai.yaml",
+      "content_hash": "26fe3a158c3fa667727c38354443ae5ab4e0410b41be4038d97e8e79ad8c57e7",
+      "size_bytes": 349,
+      "mtime_ms": 1782910952913.435
+    },
+    {
+      "relative_path": "packages/skills/talos-plan-execute/references/plan-contract.md",
+      "content_hash": "add662ad3e6f9892933683953621b82b067bca8dd6c43f3a14d1ef079f16425b",
+      "size_bytes": 3713,
+      "mtime_ms": 1784472091537.9785
+    },
+    {
+      "relative_path": "packages/skills/talos-plan-execute/references/quality-gates.md",
+      "content_hash": "9501861b8869c7f8bc4a9326ab7dfbe1c33de143a4507b63ebb82050b2b89c69",
+      "size_bytes": 2314,
+      "mtime_ms": 1782910952913.597
+    },
+    {
+      "relative_path": "packages/skills/talos-plan-execute/scripts/check_budget_state.py",
+      "content_hash": "3c73412166c0395e45c6df62b417dd61fd770a27aa32df34ce87497f449b1ba0",
+      "size_bytes": 2844,
+      "mtime_ms": 1782910952913.6838
+    },
+    {
+      "relative_path": "packages/skills/talos-plan-execute/scripts/extract_plan_contract.py",
+      "content_hash": "3745779d5eac7494be26f9e7e4571f222cf673525640e7ed4afbdd8aed4581da",
+      "size_bytes": 7056,
+      "mtime_ms": 1782910952913.8523
+    },
+    {
+      "relative_path": "packages/skills/talos-plan-execute/scripts/validate_gate_result.py",
+      "content_hash": "c660e655e53fbd9d5eee3527574c1ecc1ceb3671d55ec9e44134d8cf0de90f35",
+      "size_bytes": 1715,
+      "mtime_ms": 1782910952913.9167
+    },
+    {
+      "relative_path": "packages/skills/talos-plan-execute/SKILL.md",
+      "content_hash": "11d50b733f23663c8a0cae4df502830dff629a8e84a9586f07699bd6394d6867",
+      "size_bytes": 13827,
+      "mtime_ms": 1784472091537.873
+    },
+    {
+      "relative_path": "packages/skills/talos-plan-handoff/agents/openai.yaml",
+      "content_hash": "68cbeac8608a2b82ee07345ca4db78364f35392e2d3270ca31816e011d40da4b",
+      "size_bytes": 403,
+      "mtime_ms": 1782910952914.1953
+    },
+    {
+      "relative_path": "packages/skills/talos-plan-handoff/SKILL.md",
+      "content_hash": "7f308aefb886a6550647e27ce10f6c752b9c7512af0079507fbd438f87a60563",
+      "size_bytes": 13368,
+      "mtime_ms": 1784472091538.089
+    },
+    {
+      "relative_path": "packages/skills/talos-slice-review/agents/openai.yaml",
+      "content_hash": "ec0245cd05bb55e6524d31cca79d5704d4801404da40c923548b323118b4721d",
+      "size_bytes": 297,
+      "mtime_ms": 1782910952914.9763
+    },
+    {
+      "relative_path": "packages/skills/talos-slice-review/references/review-contract.md",
+      "content_hash": "8c6baeddcfd643483debd1381b548477438f53ad4b75b3c2739fb7e9a6dd1e6a",
+      "size_bytes": 1801,
+      "mtime_ms": 1782910952915.0916
+    },
+    {
+      "relative_path": "packages/skills/talos-slice-review/references/scenario-lenses.md",
+      "content_hash": "ff46a5399d1f4a722bf807855ea216ef644a15fab9907abdef39502622157b53",
+      "size_bytes": 2709,
+      "mtime_ms": 1782910952915.1526
+    },
+    {
+      "relative_path": "packages/skills/talos-slice-review/scripts/classify_findings.mjs",
+      "content_hash": "f5f1b21d56ea7a6992b9dc2a10141115112c16e076d76f8c2d51e13c4d1b3148",
+      "size_bytes": 2337,
+      "mtime_ms": 1782910952915.2473
+    },
+    {
+      "relative_path": "packages/skills/talos-slice-review/scripts/classify_findings.py",
+      "content_hash": "d5644ae8cabdd29d902e0a9cbdf72b60b6ebdd7be033cc1c243aeac1f8c23dfc",
+      "size_bytes": 668,
+      "mtime_ms": 1782910952915.3293
+    },
+    {
+      "relative_path": "packages/skills/talos-slice-review/scripts/extract_review_slice.py",
+      "content_hash": "abbc17e48290c3f739acb892c3322da432b84d796d024ae80c81a1da84ded300",
+      "size_bytes": 5577,
+      "mtime_ms": 1782910952915.4246
+    },
+    {
+      "relative_path": "packages/skills/talos-slice-review/SKILL.md",
+      "content_hash": "bcadf60c95fac066d069660f16a1aa975a05464d8c79762a870fce7b98aa1149",
+      "size_bytes": 9527,
+      "mtime_ms": 1782910952914.8591
+    },
+    {
+      "relative_path": "packages/skills/talos-sprint-interview/agents/openai.yaml",
+      "content_hash": "d20693087c4549517b0964550e3184353d9f62f8d5d9d660626821e1ba5e5579",
+      "size_bytes": 382,
+      "mtime_ms": 1784472091538.361
+    },
+    {
+      "relative_path": "packages/skills/talos-sprint-interview/SKILL.md",
+      "content_hash": "1fcc836f662aaf29a57f1e921c2b69f823e9142822c0d94e06c4cff41d6808f7",
+      "size_bytes": 6254,
+      "mtime_ms": 1784472091538.2346
+    },
+    {
+      "relative_path": "packages/skills/talos-task-validator/agents/openai.yaml",
+      "content_hash": "9e6ec4b5f0e4337c36c984eabdfced36f053c63327048c7b6d5aedb73dbb19c7",
+      "size_bytes": 338,
+      "mtime_ms": 1782910952915.9111
+    },
+    {
+      "relative_path": "packages/skills/talos-task-validator/SKILL.md",
+      "content_hash": "b23c52730edff007fb1a6b6d0eb83d7ae02cb8dc0e6c1eed4767d21ca4f4bb8d",
+      "size_bytes": 14207,
+      "mtime_ms": 1784472091538.4678
+    },
+    {
+      "relative_path": "packages/templates/BACKLOG_MESTRE_TEMPLATE.md",
+      "content_hash": "af281468b5b234fabc6d2001f0ebb765e48e87ed5b295a33e8202aebb9276423",
+      "size_bytes": 9833,
+      "mtime_ms": 1784472091538.5964
+    },
+    {
+      "relative_path": "packages/templates/BOUNDARY_SPRINT_PLAN.md",
+      "content_hash": "54b2e656da52ce63e52c56b8db5465dddbf1f553c8ac6f150695dbfe43a4a6c4",
+      "size_bytes": 4886,
+      "mtime_ms": 1784472091538.6733
+    },
+    {
+      "relative_path": "packages/templates/PERGUNTAS_EM_ABERTO_TEMPLATE.md",
+      "content_hash": "0be02f66620c892d2801fcefb72fb5408cb0106156531d05fd61c201e3743049",
+      "size_bytes": 6056,
+      "mtime_ms": 1784472091538.7866
+    },
+    {
+      "relative_path": "packages/templates/PLAN_TEMPLATE.md",
+      "content_hash": "98507f6da608e19ad1179816875459f25d9813bd1bbbb4ec5f05ae85f4c687a2",
+      "size_bytes": 5100,
+      "mtime_ms": 1784472091538.8843
+    },
+    {
+      "relative_path": "packages/templates/SPRINT_TEMPLATE.md",
+      "content_hash": "959c41226dd829ad7f95c3f6f375ac1e00733bc05a56af52f4982a4f6873da8e",
+      "size_bytes": 8453,
+      "mtime_ms": 1784472091538.982
+    },
+    {
+      "relative_path": "packages/templates/STATE_FILE_SCHEMA.md",
+      "content_hash": "1a425308fc403d77ab0b6c1c1952965fcffd0a27a6ca429b7f80199f50eb9497",
+      "size_bytes": 6098,
+      "mtime_ms": 1784472091539.0747
+    },
+    {
+      "relative_path": "PATCH_PROCEDURE.md",
+      "content_hash": "2b1b2dd5f76a047422f3d3978074433487be2df440d7460f751225df7c3e95a5",
+      "size_bytes": 11305,
+      "mtime_ms": 1782928567199.399
+    },
+    {
+      "relative_path": "plugin-manifests/claude/plugin.json",
+      "content_hash": "eb3f2f20b780b6a79df31a5babd1d89b0decb84872e9f65ca2c161f5e81b1fe1",
+      "size_bytes": 884,
+      "mtime_ms": 1784506800862.7524
+    },
+    {
+      "relative_path": "plugin-manifests/codex/plugin.json",
+      "content_hash": "917021222daadfa32ebbf0d9236f4b2588fab4940d5a8e9f5d5a03731788623b",
+      "size_bytes": 1517,
+      "mtime_ms": 1784472091539.2622
+    },
+    {
+      "relative_path": "plugin-manifests/opencode/opencode.json",
+      "content_hash": "0b45dd9382790679baafdcc3184c362f3b3c3412659d8cda1529298ee24ce277",
+      "size_bytes": 274,
+      "mtime_ms": 1782910952917.3425
+    },
+    {
+      "relative_path": "plugin-manifests/pi/mcp.json",
+      "content_hash": "6269076da296b2a7b171dd204e54d2492a1e2270ba3042547a99d6509354ad8a",
+      "size_bytes": 177,
+      "mtime_ms": 1782910952917.6033
+    },
+    {
+      "relative_path": "plugin-manifests/README.md",
+      "content_hash": "b19b70eee0966a053d6986c57c3a294b30ce3b40c4d55c1ec89498e82ec2f4a3",
+      "size_bytes": 857,
+      "mtime_ms": 1783128281060.7312
+    },
+    {
+      "relative_path": "plugin-manifests/vscode/mcp.json",
+      "content_hash": "1d59853cd6df2ff93c85ba1671f726d2774b840c25661ba9dd146a64f055098f",
+      "size_bytes": 262,
+      "mtime_ms": 1783128281060.8826
+    },
+    {
+      "relative_path": "plugin-manifests/zcode/plugin.json",
+      "content_hash": "b495d9ae7a4bf7e1848a05f398470e626cb0f5922badc33e43f427319117bff4",
+      "size_bytes": 823,
+      "mtime_ms": 1784472091539.3628
+    },
+    {
+      "relative_path": "plugins/talos/.codex-plugin/plugin.json",
+      "content_hash": "438bd66a9e605a8c7767edc5ae2bdd11a08e3d7d6d7abe1b07361cb676e76193",
+      "size_bytes": 1512,
+      "mtime_ms": 1784553962311.6501
+    },
+    {
+      "relative_path": "plugins/talos/.codex/agents/talos-direct-execute.toml",
+      "content_hash": "23aa7c15b23acdb20de0a6d677ec75ab922ed190a37bcee7273df38d08d50fe4",
+      "size_bytes": 2393,
+      "mtime_ms": 1784553962262.2158
+    },
+    {
+      "relative_path": "plugins/talos/.codex/agents/talos-findings-repair.toml",
+      "content_hash": "f2f7414e4184a9a367458324c8a0e3682eb7054dd402ca46538b71116e6203a5",
+      "size_bytes": 2145,
+      "mtime_ms": 1784553962261.1702
+    },
+    {
+      "relative_path": "plugins/talos/.codex/agents/talos-plan-execute.toml",
+      "content_hash": "fd5ce9063f35c60c247b61c08526c3a50f27c2b466d82076ae2f27fffbfed7d9",
+      "size_bytes": 2605,
+      "mtime_ms": 1784553962261.444
+    },
+    {
+      "relative_path": "plugins/talos/.codex/agents/talos-slice-review.toml",
+      "content_hash": "02fc56349e7c02df8a3dce2496f227bcfd6bdb09ec4627cd7ba81b01dfbc0d9c",
+      "size_bytes": 1788,
+      "mtime_ms": 1784553962260.9187
+    },
+    {
+      "relative_path": "plugins/talos/.codex/agents/talos-task-validator.toml",
+      "content_hash": "eb7bbf0097f9a439d81e279d8db0d79db545ca858d3b424005169089543d1ff9",
+      "size_bytes": 10038,
+      "mtime_ms": 1784553962261.9104
+    },
+    {
+      "relative_path": "plugins/talos/.mcp.json",
+      "content_hash": "4015a2eb2c109210985f747ebdf96858af2b066ff7207bfcce963c929e720a3c",
+      "size_bytes": 182,
+      "mtime_ms": 1784553962257.182
+    },
+    {
+      "relative_path": "plugins/talos/agents/talos-direct-execute.md",
+      "content_hash": "f56061c9ff3521c78af00a23f028c2473a479e462f49348c1dfdf3973c2e3988",
+      "size_bytes": 2423,
+      "mtime_ms": 1784553962260.344
+    },
+    {
+      "relative_path": "plugins/talos/agents/talos-findings-repair.md",
+      "content_hash": "87383223ba46d45127c80ebbaf2871d8d1ebbe077ad676755286ce6251b38f90",
+      "size_bytes": 2162,
+      "mtime_ms": 1784553962258.3164
+    },
+    {
+      "relative_path": "plugins/talos/agents/talos-plan-execute.md",
+      "content_hash": "8ef070cb8933d0b00584b1c4d683b00a00d9731a1a169a90c58c3b9e61630ad5",
+      "size_bytes": 2633,
+      "mtime_ms": 1784553962259.8442
+    },
+    {
+      "relative_path": "plugins/talos/agents/talos-slice-review.md",
+      "content_hash": "f11e3d740ba8a001300abe1d14a886263e7d7a3d00bfd6e7517ca4380c80563e",
+      "size_bytes": 1802,
+      "mtime_ms": 1784553962257.8296
+    },
+    {
+      "relative_path": "plugins/talos/agents/talos-task-validator.md",
+      "content_hash": "1c4834746a18c0e6661c0ab730301c25ed392edc7508a9bd6ace55ccc7c5feef",
+      "size_bytes": 9873,
+      "mtime_ms": 1784553962259.1816
+    },
+    {
+      "relative_path": "plugins/talos/hooks/claude/settings.snippet.json",
+      "content_hash": "ed4b383a2f117dd5c87ef3c0d59923290de3cd67e455ae4fa18f494b1a436b88",
+      "size_bytes": 510,
+      "mtime_ms": 1784553962263.2527
+    },
+    {
+      "relative_path": "plugins/talos/hooks/claude/talos-hook.js",
+      "content_hash": "ce73ea164d9f8c284af49dd08fbf8bf6a7ce910365f629f8fa433700091932a3",
+      "size_bytes": 6707,
+      "mtime_ms": 1784553962263.6145
+    },
+    {
+      "relative_path": "plugins/talos/hooks/README.md",
+      "content_hash": "f67ccb9081f9e2f77c2770ba6635712067641e4fdcd60c9bb67a980fed2164c9",
+      "size_bytes": 1061,
+      "mtime_ms": 1784553962263.9805
+    },
+    {
+      "relative_path": "plugins/talos/orchestrator/commands/talos.md",
+      "content_hash": "00762382337480d362a733536926653693ffc0aa7565e3032714388dbc76a7c3",
+      "size_bytes": 3954,
+      "mtime_ms": 1784553962314.2534
+    },
+    {
+      "relative_path": "plugins/talos/orchestrator/defaults/paths.md",
+      "content_hash": "f5cca8d37161ac0db6b5ca4c5967b90f75c6efd330dbf03720b32dbd783ff5a5",
+      "size_bytes": 993,
+      "mtime_ms": 1784553962313.9006
+    },
+    {
+      "relative_path": "plugins/talos/orchestrator/README.md",
+      "content_hash": "3719c615a09c045697a2de4ccb59285fc403c0f526c68c9cf58c24cfdad61ac2",
+      "size_bytes": 23746,
+      "mtime_ms": 1784553962313.4622
+    },
+    {
+      "relative_path": "plugins/talos/orchestrator/references/host-adapters.md",
+      "content_hash": "97d985b85c2fe963807c59f9b668b6f5e0807ed4f5f4c332544df69582faf4e7",
+      "size_bytes": 13036,
+      "mtime_ms": 1784553962312.478
+    },
+    {
+      "relative_path": "plugins/talos/orchestrator/references/qa_s13_matrix.md",
+      "content_hash": "2ddb4db84d477ae0eb86f62affe68a521364724c94aafcd24fbe5c498f92cec5",
+      "size_bytes": 11076,
+      "mtime_ms": 1784553962313.1045
+    },
+    {
+      "relative_path": "plugins/talos/orchestrator/references/subagent_dispatch.md",
+      "content_hash": "113c3761ca5f287779a8329e9a9013328f5ea39f0ab472a9bd5767f6d22ae6cf",
+      "size_bytes": 4984,
+      "mtime_ms": 1784553962312.812
+    },
+    {
+      "relative_path": "plugins/talos/orchestrator/skills/talos/SKILL.md",
+      "content_hash": "d3082964da5bdd8ccddee7d35afe1e75248f42947e19a89776726a2c9fdf41b1",
+      "size_bytes": 55283,
+      "mtime_ms": 1784553962315.4446
+    },
+    {
+      "relative_path": "plugins/talos/packages/mcp-server/package.json",
+      "content_hash": "d44c96aa66a5825ecbbcd825afc9f17f95714563a05b13d0dc0207c5b1855483",
+      "size_bytes": 243,
+      "mtime_ms": 1784553962266.773
+    },
+    {
+      "relative_path": "plugins/talos/packages/mcp-server/README.md",
+      "content_hash": "04601d6c8d238ff310dd946ef329dbb8bc7f04caa5a4d4ab3a0cd78e318ad6f0",
+      "size_bytes": 4247,
+      "mtime_ms": 1784553962266.36
+    },
+    {
+      "relative_path": "plugins/talos/packages/mcp-server/run.sh",
+      "content_hash": "13593aab984a938af503f0d38093f645411402febdaeb4d70a0b619cf007058e",
+      "size_bytes": 2057,
+      "mtime_ms": 1784553962265.7397
+    },
+    {
+      "relative_path": "plugins/talos/packages/mcp-server/server.js",
+      "content_hash": "6c630f4dc8a84e427b9a8769af79b7ea4af09b734dfc022ebc61bdcd4f460e07",
+      "size_bytes": 212652,
+      "mtime_ms": 1784553962265.181
+    },
+    {
+      "relative_path": "plugins/talos/packages/skills/_shared/references/stack-profiles.md",
+      "content_hash": "1330d56b5044a3ee8741e5184382151c562f1173c296bd1ba0dcda372cd581b0",
+      "size_bytes": 3570,
+      "mtime_ms": 1784553962288.1304
+    },
+    {
+      "relative_path": "plugins/talos/packages/skills/_shared/scripts/document_quality.mjs",
+      "content_hash": "ffe42d1daa85681cd3fee0fcb6a2a9e71fc362a83f47bbde264fa39dca8b5705",
+      "size_bytes": 29588,
+      "mtime_ms": 1784553962288.5398
+    },
+    {
+      "relative_path": "plugins/talos/packages/skills/talos-audit/agents/openai.yaml",
+      "content_hash": "9b1affbac432524ba2dcfef8db7d9e8fe3e489784919d7cd8ea227f2dbb33f96",
+      "size_bytes": 298,
+      "mtime_ms": 1784553962279.5962
+    },
+    {
+      "relative_path": "plugins/talos/packages/skills/talos-audit/SKILL.md",
+      "content_hash": "9832acc3797d23cf4d6bb2ca791ba91c4a6e366d662e25fd39f8d52110f78358",
+      "size_bytes": 8683,
+      "mtime_ms": 1784553962279.9033
+    },
+    {
+      "relative_path": "plugins/talos/packages/skills/talos-backlog-generator/agents/openai.yaml",
+      "content_hash": "e535081783c15f430eedf13b5dc13ee0afc9a1c0ba38830b66c0f5b787f55103",
+      "size_bytes": 218,
+      "mtime_ms": 1784553962283.7031
+    },
+    {
+      "relative_path": "plugins/talos/packages/skills/talos-backlog-generator/SKILL.md",
+      "content_hash": "4c0e77249dbbac0c60129c72e3ad6db7158d7326095322cf413a667b372d542d",
+      "size_bytes": 10219,
+      "mtime_ms": 1784553962284.3975
+    },
+    {
+      "relative_path": "plugins/talos/packages/skills/talos-direct-execute/agents/openai.yaml",
+      "content_hash": "8820bfdc53ee28c0f2bdc491c8ed37e0c8b89ee65f5eec551b7b41798052be3c",
+      "size_bytes": 352,
+      "mtime_ms": 1784553962280.6565
+    },
+    {
+      "relative_path": "plugins/talos/packages/skills/talos-direct-execute/SKILL.md",
+      "content_hash": "7a3b4c8c4d052a787453e78c19208c462609c17976d2941bde19b6d4dc10f70e",
+      "size_bytes": 14055,
+      "mtime_ms": 1784553962281.0466
+    },
+    {
+      "relative_path": "plugins/talos/packages/skills/talos-findings-repair/agents/openai.yaml",
+      "content_hash": "632f27592bc648994474a510e35494b29610e076dbc4348ebeb92e87b042897d",
+      "size_bytes": 328,
+      "mtime_ms": 1784553962275.9993
+    },
+    {
+      "relative_path": "plugins/talos/packages/skills/talos-findings-repair/SKILL.md",
+      "content_hash": "746536d0fc454ef2aac6e2c01159b2ca6841acb4088220ba57db6649ea29c7cf",
+      "size_bytes": 6207,
+      "mtime_ms": 1784553962276.4524
+    },
+    {
+      "relative_path": "plugins/talos/packages/skills/talos-plan-execute/agents/openai.yaml",
+      "content_hash": "26fe3a158c3fa667727c38354443ae5ab4e0410b41be4038d97e8e79ad8c57e7",
+      "size_bytes": 349,
+      "mtime_ms": 1784553962285.9797
+    },
+    {
+      "relative_path": "plugins/talos/packages/skills/talos-plan-execute/references/plan-contract.md",
+      "content_hash": "add662ad3e6f9892933683953621b82b067bca8dd6c43f3a14d1ef079f16425b",
+      "size_bytes": 3713,
+      "mtime_ms": 1784553962285.5942
+    },
+    {
+      "relative_path": "plugins/talos/packages/skills/talos-plan-execute/references/quality-gates.md",
+      "content_hash": "9501861b8869c7f8bc4a9326ab7dfbe1c33de143a4507b63ebb82050b2b89c69",
+      "size_bytes": 2314,
+      "mtime_ms": 1784553962285.3088
+    },
+    {
+      "relative_path": "plugins/talos/packages/skills/talos-plan-execute/scripts/check_budget_state.py",
+      "content_hash": "3c73412166c0395e45c6df62b417dd61fd770a27aa32df34ce87497f449b1ba0",
+      "size_bytes": 2844,
+      "mtime_ms": 1784553962287.2827
+    },
+    {
+      "relative_path": "plugins/talos/packages/skills/talos-plan-execute/scripts/extract_plan_contract.py",
+      "content_hash": "3745779d5eac7494be26f9e7e4571f222cf673525640e7ed4afbdd8aed4581da",
+      "size_bytes": 7056,
+      "mtime_ms": 1784553962286.851
+    },
+    {
+      "relative_path": "plugins/talos/packages/skills/talos-plan-execute/scripts/validate_gate_result.py",
+      "content_hash": "c660e655e53fbd9d5eee3527574c1ecc1ceb3671d55ec9e44134d8cf0de90f35",
+      "size_bytes": 1715,
+      "mtime_ms": 1784553962286.396
+    },
+    {
+      "relative_path": "plugins/talos/packages/skills/talos-plan-execute/SKILL.md",
+      "content_hash": "11d50b733f23663c8a0cae4df502830dff629a8e84a9586f07699bd6394d6867",
+      "size_bytes": 13827,
+      "mtime_ms": 1784553962287.608
+    },
+    {
+      "relative_path": "plugins/talos/packages/skills/talos-plan-handoff/agents/openai.yaml",
+      "content_hash": "68cbeac8608a2b82ee07345ca4db78364f35392e2d3270ca31816e011d40da4b",
+      "size_bytes": 403,
+      "mtime_ms": 1784553962277.5825
+    },
+    {
+      "relative_path": "plugins/talos/packages/skills/talos-plan-handoff/SKILL.md",
+      "content_hash": "7f308aefb886a6550647e27ce10f6c752b9c7512af0079507fbd438f87a60563",
+      "size_bytes": 13368,
+      "mtime_ms": 1784553962278.677
+    },
+    {
+      "relative_path": "plugins/talos/packages/skills/talos-slice-review/agents/openai.yaml",
+      "content_hash": "ec0245cd05bb55e6524d31cca79d5704d4801404da40c923548b323118b4721d",
+      "size_bytes": 297,
+      "mtime_ms": 1784553962273.5037
+    },
+    {
+      "relative_path": "plugins/talos/packages/skills/talos-slice-review/references/review-contract.md",
+      "content_hash": "8c6baeddcfd643483debd1381b548477438f53ad4b75b3c2739fb7e9a6dd1e6a",
+      "size_bytes": 1801,
+      "mtime_ms": 1784553962272.5696
+    },
+    {
+      "relative_path": "plugins/talos/packages/skills/talos-slice-review/references/scenario-lenses.md",
+      "content_hash": "ff46a5399d1f4a722bf807855ea216ef644a15fab9907abdef39502622157b53",
+      "size_bytes": 2709,
+      "mtime_ms": 1784553962272.907
+    },
+    {
+      "relative_path": "plugins/talos/packages/skills/talos-slice-review/scripts/classify_findings.mjs",
+      "content_hash": "f5f1b21d56ea7a6992b9dc2a10141115112c16e076d76f8c2d51e13c4d1b3148",
+      "size_bytes": 2337,
+      "mtime_ms": 1784553962274.9531
+    },
+    {
+      "relative_path": "plugins/talos/packages/skills/talos-slice-review/scripts/classify_findings.py",
+      "content_hash": "d5644ae8cabdd29d902e0a9cbdf72b60b6ebdd7be033cc1c243aeac1f8c23dfc",
+      "size_bytes": 668,
+      "mtime_ms": 1784553962274.218
+    },
+    {
+      "relative_path": "plugins/talos/packages/skills/talos-slice-review/scripts/extract_review_slice.py",
+      "content_hash": "abbc17e48290c3f739acb892c3322da432b84d796d024ae80c81a1da84ded300",
+      "size_bytes": 5577,
+      "mtime_ms": 1784553962274.629
+    },
+    {
+      "relative_path": "plugins/talos/packages/skills/talos-slice-review/SKILL.md",
+      "content_hash": "bcadf60c95fac066d069660f16a1aa975a05464d8c79762a870fce7b98aa1149",
+      "size_bytes": 9527,
+      "mtime_ms": 1784553962275.307
+    },
+    {
+      "relative_path": "plugins/talos/packages/skills/talos-sprint-interview/agents/openai.yaml",
+      "content_hash": "d20693087c4549517b0964550e3184353d9f62f8d5d9d660626821e1ba5e5579",
+      "size_bytes": 382,
+      "mtime_ms": 1784553962270.524
+    },
+    {
+      "relative_path": "plugins/talos/packages/skills/talos-sprint-interview/SKILL.md",
+      "content_hash": "1fcc836f662aaf29a57f1e921c2b69f823e9142822c0d94e06c4cff41d6808f7",
+      "size_bytes": 6254,
+      "mtime_ms": 1784553962271.5115
+    },
+    {
+      "relative_path": "plugins/talos/packages/skills/talos-task-validator/agents/openai.yaml",
+      "content_hash": "9e6ec4b5f0e4337c36c984eabdfced36f053c63327048c7b6d5aedb73dbb19c7",
+      "size_bytes": 338,
+      "mtime_ms": 1784553962281.9128
+    },
+    {
+      "relative_path": "plugins/talos/packages/skills/talos-task-validator/SKILL.md",
+      "content_hash": "b23c52730edff007fb1a6b6d0eb83d7ae02cb8dc0e6c1eed4767d21ca4f4bb8d",
+      "size_bytes": 14207,
+      "mtime_ms": 1784553962282.5386
+    },
+    {
+      "relative_path": "plugins/talos/packages/templates/BACKLOG_MESTRE_TEMPLATE.md",
+      "content_hash": "af281468b5b234fabc6d2001f0ebb765e48e87ed5b295a33e8202aebb9276423",
+      "size_bytes": 9833,
+      "mtime_ms": 1784553962268.1274
+    },
+    {
+      "relative_path": "plugins/talos/packages/templates/BOUNDARY_SPRINT_PLAN.md",
+      "content_hash": "54b2e656da52ce63e52c56b8db5465dddbf1f553c8ac6f150695dbfe43a4a6c4",
+      "size_bytes": 4886,
+      "mtime_ms": 1784553962267.3364
+    },
+    {
+      "relative_path": "plugins/talos/packages/templates/PERGUNTAS_EM_ABERTO_TEMPLATE.md",
+      "content_hash": "0be02f66620c892d2801fcefb72fb5408cb0106156531d05fd61c201e3743049",
+      "size_bytes": 6056,
+      "mtime_ms": 1784553962269.0781
+    },
+    {
+      "relative_path": "plugins/talos/packages/templates/PLAN_TEMPLATE.md",
+      "content_hash": "98507f6da608e19ad1179816875459f25d9813bd1bbbb4ec5f05ae85f4c687a2",
+      "size_bytes": 5100,
+      "mtime_ms": 1784553962267.6748
+    },
+    {
+      "relative_path": "plugins/talos/packages/templates/SPRINT_TEMPLATE.md",
+      "content_hash": "959c41226dd829ad7f95c3f6f375ac1e00733bc05a56af52f4982a4f6873da8e",
+      "size_bytes": 8453,
+      "mtime_ms": 1784553962269.506
+    },
+    {
+      "relative_path": "plugins/talos/packages/templates/STATE_FILE_SCHEMA.md",
+      "content_hash": "1a425308fc403d77ab0b6c1c1952965fcffd0a27a6ca429b7f80199f50eb9497",
+      "size_bytes": 6098,
+      "mtime_ms": 1784553962268.6482
+    },
+    {
+      "relative_path": "plugins/talos/skills/_shared/references/stack-profiles.md",
+      "content_hash": "1330d56b5044a3ee8741e5184382151c562f1173c296bd1ba0dcda372cd581b0",
+      "size_bytes": 3570,
+      "mtime_ms": 1784553962310.7175
+    },
+    {
+      "relative_path": "plugins/talos/skills/_shared/scripts/document_quality.mjs",
+      "content_hash": "ffe42d1daa85681cd3fee0fcb6a2a9e71fc362a83f47bbde264fa39dca8b5705",
+      "size_bytes": 29588,
+      "mtime_ms": 1784553962311.223
+    },
+    {
+      "relative_path": "plugins/talos/skills/talos-audit/agents/openai.yaml",
+      "content_hash": "9b1affbac432524ba2dcfef8db7d9e8fe3e489784919d7cd8ea227f2dbb33f96",
+      "size_bytes": 298,
+      "mtime_ms": 1784553962301.5344
+    },
+    {
+      "relative_path": "plugins/talos/skills/talos-audit/SKILL.md",
+      "content_hash": "9832acc3797d23cf4d6bb2ca791ba91c4a6e366d662e25fd39f8d52110f78358",
+      "size_bytes": 8683,
+      "mtime_ms": 1784553962301.8774
+    },
+    {
+      "relative_path": "plugins/talos/skills/talos-backlog-generator/agents/openai.yaml",
+      "content_hash": "e535081783c15f430eedf13b5dc13ee0afc9a1c0ba38830b66c0f5b787f55103",
+      "size_bytes": 218,
+      "mtime_ms": 1784553962305.8735
+    },
+    {
+      "relative_path": "plugins/talos/skills/talos-backlog-generator/SKILL.md",
+      "content_hash": "4c0e77249dbbac0c60129c72e3ad6db7158d7326095322cf413a667b372d542d",
+      "size_bytes": 10219,
+      "mtime_ms": 1784553962306.2002
+    },
+    {
+      "relative_path": "plugins/talos/skills/talos-direct-execute/agents/openai.yaml",
+      "content_hash": "8820bfdc53ee28c0f2bdc491c8ed37e0c8b89ee65f5eec551b7b41798052be3c",
+      "size_bytes": 352,
+      "mtime_ms": 1784553962303.1438
+    },
+    {
+      "relative_path": "plugins/talos/skills/talos-direct-execute/SKILL.md",
+      "content_hash": "7a3b4c8c4d052a787453e78c19208c462609c17976d2941bde19b6d4dc10f70e",
+      "size_bytes": 14055,
+      "mtime_ms": 1784553962303.8394
+    },
+    {
+      "relative_path": "plugins/talos/skills/talos-findings-repair/agents/openai.yaml",
+      "content_hash": "632f27592bc648994474a510e35494b29610e076dbc4348ebeb92e87b042897d",
+      "size_bytes": 328,
+      "mtime_ms": 1784553962299.6252
+    },
+    {
+      "relative_path": "plugins/talos/skills/talos-findings-repair/SKILL.md",
+      "content_hash": "746536d0fc454ef2aac6e2c01159b2ca6841acb4088220ba57db6649ea29c7cf",
+      "size_bytes": 6207,
+      "mtime_ms": 1784553962299.958
+    },
+    {
+      "relative_path": "plugins/talos/skills/talos-plan-execute/agents/openai.yaml",
+      "content_hash": "26fe3a158c3fa667727c38354443ae5ab4e0410b41be4038d97e8e79ad8c57e7",
+      "size_bytes": 349,
+      "mtime_ms": 1784553962307.4321
+    },
+    {
+      "relative_path": "plugins/talos/skills/talos-plan-execute/references/plan-contract.md",
+      "content_hash": "add662ad3e6f9892933683953621b82b067bca8dd6c43f3a14d1ef079f16425b",
+      "size_bytes": 3713,
+      "mtime_ms": 1784553962307.0105
+    },
+    {
+      "relative_path": "plugins/talos/skills/talos-plan-execute/references/quality-gates.md",
+      "content_hash": "9501861b8869c7f8bc4a9326ab7dfbe1c33de143a4507b63ebb82050b2b89c69",
+      "size_bytes": 2314,
+      "mtime_ms": 1784553962306.778
+    },
+    {
+      "relative_path": "plugins/talos/skills/talos-plan-execute/scripts/check_budget_state.py",
+      "content_hash": "3c73412166c0395e45c6df62b417dd61fd770a27aa32df34ce87497f449b1ba0",
+      "size_bytes": 2844,
+      "mtime_ms": 1784553962309.1692
+    },
+    {
+      "relative_path": "plugins/talos/skills/talos-plan-execute/scripts/extract_plan_contract.py",
+      "content_hash": "3745779d5eac7494be26f9e7e4571f222cf673525640e7ed4afbdd8aed4581da",
+      "size_bytes": 7056,
+      "mtime_ms": 1784553962308.4238
+    },
+    {
+      "relative_path": "plugins/talos/skills/talos-plan-execute/scripts/validate_gate_result.py",
+      "content_hash": "c660e655e53fbd9d5eee3527574c1ecc1ceb3671d55ec9e44134d8cf0de90f35",
+      "size_bytes": 1715,
+      "mtime_ms": 1784553962307.8557
+    },
+    {
+      "relative_path": "plugins/talos/skills/talos-plan-execute/SKILL.md",
+      "content_hash": "11d50b733f23663c8a0cae4df502830dff629a8e84a9586f07699bd6394d6867",
+      "size_bytes": 13827,
+      "mtime_ms": 1784553962310.014
+    },
+    {
+      "relative_path": "plugins/talos/skills/talos-plan-handoff/agents/openai.yaml",
+      "content_hash": "68cbeac8608a2b82ee07345ca4db78364f35392e2d3270ca31816e011d40da4b",
+      "size_bytes": 403,
+      "mtime_ms": 1784553962300.5854
+    },
+    {
+      "relative_path": "plugins/talos/skills/talos-plan-handoff/SKILL.md",
+      "content_hash": "7f308aefb886a6550647e27ce10f6c752b9c7512af0079507fbd438f87a60563",
+      "size_bytes": 13368,
+      "mtime_ms": 1784553962300.9573
+    },
+    {
+      "relative_path": "plugins/talos/skills/talos-slice-review/agents/openai.yaml",
+      "content_hash": "ec0245cd05bb55e6524d31cca79d5704d4801404da40c923548b323118b4721d",
+      "size_bytes": 297,
+      "mtime_ms": 1784553962295.281
+    },
+    {
+      "relative_path": "plugins/talos/skills/talos-slice-review/references/review-contract.md",
+      "content_hash": "8c6baeddcfd643483debd1381b548477438f53ad4b75b3c2739fb7e9a6dd1e6a",
+      "size_bytes": 1801,
+      "mtime_ms": 1784553962294.4727
+    },
+    {
+      "relative_path": "plugins/talos/skills/talos-slice-review/references/scenario-lenses.md",
+      "content_hash": "ff46a5399d1f4a722bf807855ea216ef644a15fab9907abdef39502622157b53",
+      "size_bytes": 2709,
+      "mtime_ms": 1784553962294.7
+    },
+    {
+      "relative_path": "plugins/talos/skills/talos-slice-review/scripts/classify_findings.mjs",
+      "content_hash": "f5f1b21d56ea7a6992b9dc2a10141115112c16e076d76f8c2d51e13c4d1b3148",
+      "size_bytes": 2337,
+      "mtime_ms": 1784553962298.4333
+    },
+    {
+      "relative_path": "plugins/talos/skills/talos-slice-review/scripts/classify_findings.py",
+      "content_hash": "d5644ae8cabdd29d902e0a9cbdf72b60b6ebdd7be033cc1c243aeac1f8c23dfc",
+      "size_bytes": 668,
+      "mtime_ms": 1784553962296.4622
+    },
+    {
+      "relative_path": "plugins/talos/skills/talos-slice-review/scripts/extract_review_slice.py",
+      "content_hash": "abbc17e48290c3f739acb892c3322da432b84d796d024ae80c81a1da84ded300",
+      "size_bytes": 5577,
+      "mtime_ms": 1784553962297.1282
+    },
+    {
+      "relative_path": "plugins/talos/skills/talos-slice-review/SKILL.md",
+      "content_hash": "bcadf60c95fac066d069660f16a1aa975a05464d8c79762a870fce7b98aa1149",
+      "size_bytes": 9527,
+      "mtime_ms": 1784553962298.9165
+    },
+    {
+      "relative_path": "plugins/talos/skills/talos-sprint-interview/agents/openai.yaml",
+      "content_hash": "d20693087c4549517b0964550e3184353d9f62f8d5d9d660626821e1ba5e5579",
+      "size_bytes": 382,
+      "mtime_ms": 1784553962292.7297
+    },
+    {
+      "relative_path": "plugins/talos/skills/talos-sprint-interview/SKILL.md",
+      "content_hash": "1fcc836f662aaf29a57f1e921c2b69f823e9142822c0d94e06c4cff41d6808f7",
+      "size_bytes": 6254,
+      "mtime_ms": 1784553962293.3179
+    },
+    {
+      "relative_path": "plugins/talos/skills/talos-task-validator/agents/openai.yaml",
+      "content_hash": "9e6ec4b5f0e4337c36c984eabdfced36f053c63327048c7b6d5aedb73dbb19c7",
+      "size_bytes": 338,
+      "mtime_ms": 1784553962304.6753
+    },
+    {
+      "relative_path": "plugins/talos/skills/talos-task-validator/SKILL.md",
+      "content_hash": "b23c52730edff007fb1a6b6d0eb83d7ae02cb8dc0e6c1eed4767d21ca4f4bb8d",
+      "size_bytes": 14207,
+      "mtime_ms": 1784553962305.191
+    },
+    {
+      "relative_path": "plugins/talos/skills/talos/SKILL.md",
+      "content_hash": "d3082964da5bdd8ccddee7d35afe1e75248f42947e19a89776726a2c9fdf41b1",
+      "size_bytes": 55283,
+      "mtime_ms": 1784553962293.8484
+    },
+    {
+      "relative_path": "plugins/talos/templates/BACKLOG_MESTRE_TEMPLATE.md",
+      "content_hash": "af281468b5b234fabc6d2001f0ebb765e48e87ed5b295a33e8202aebb9276423",
+      "size_bytes": 9833,
+      "mtime_ms": 1784553962290.639
+    },
+    {
+      "relative_path": "plugins/talos/templates/BOUNDARY_SPRINT_PLAN.md",
+      "content_hash": "54b2e656da52ce63e52c56b8db5465dddbf1f553c8ac6f150695dbfe43a4a6c4",
+      "size_bytes": 4886,
+      "mtime_ms": 1784553962289.0916
+    },
+    {
+      "relative_path": "plugins/talos/templates/PERGUNTAS_EM_ABERTO_TEMPLATE.md",
+      "content_hash": "0be02f66620c892d2801fcefb72fb5408cb0106156531d05fd61c201e3743049",
+      "size_bytes": 6056,
+      "mtime_ms": 1784553962291.5286
+    },
+    {
+      "relative_path": "plugins/talos/templates/PLAN_TEMPLATE.md",
+      "content_hash": "98507f6da608e19ad1179816875459f25d9813bd1bbbb4ec5f05ae85f4c687a2",
+      "size_bytes": 5100,
+      "mtime_ms": 1784553962289.4346
+    },
+    {
+      "relative_path": "plugins/talos/templates/SPRINT_TEMPLATE.md",
+      "content_hash": "959c41226dd829ad7f95c3f6f375ac1e00733bc05a56af52f4982a4f6873da8e",
+      "size_bytes": 8453,
+      "mtime_ms": 1784553962291.853
+    },
+    {
+      "relative_path": "plugins/talos/templates/STATE_FILE_SCHEMA.md",
+      "content_hash": "1a425308fc403d77ab0b6c1c1952965fcffd0a27a6ca429b7f80199f50eb9497",
+      "size_bytes": 6098,
+      "mtime_ms": 1784553962291.161
+    },
+    {
+      "relative_path": "plugins/talos/VERSION",
+      "content_hash": "232cca15f9cab0453d820d20649067576ec18d279ce3b1dc6d2931d1eb638721",
+      "size_bytes": 7,
+      "mtime_ms": 1784553962262.4927
+    },
+    {
+      "relative_path": "raycast/README.md",
+      "content_hash": "e9c6cbbad519906beab4c69938de085d641b3d3222a7c91feb5a2146c7e13985",
+      "size_bytes": 932,
+      "mtime_ms": 1782928567211.1316
+    },
+    {
+      "relative_path": "raycast/talos-snippets.json",
+      "content_hash": "793e370b41b9c7a5a5e3cd061e2413de51c715ea4062616d278e5daee1ac15a0",
+      "size_bytes": 3003,
+      "mtime_ms": 1784472091545.7678
+    },
+    {
+      "relative_path": "README.md",
+      "content_hash": "d4a0c87c775ce7d4764a9fe99aa7804b7768ccefbcd089e6d9599eee0e53615a",
+      "size_bytes": 24732,
+      "mtime_ms": 1784553375437.5994
+    },
+    {
+      "relative_path": "reports/ESTRATEGIA_BACKLOG_ENXUTO_SPRINTS_VIVAS.md",
+      "content_hash": "923d3bd847aa5639a42f1671c2da16927c88c83c3e7bf6e4fd60ac813e5a2c8e",
+      "size_bytes": 7371,
+      "mtime_ms": 1782910952934.8818
+    },
+    {
+      "relative_path": "reports/GUIA_MELHORIAS_INCREMENTAIS_SKILLS_TALOS.md",
+      "content_hash": "a1c33704aac82f01ed0a77dbddc06cfb3ef1ebaa27034a9139f0c0193c89ec86",
+      "size_bytes": 17536,
+      "mtime_ms": 1782910952935.2725
+    },
+    {
+      "relative_path": "reports/RELATORIO_PIPELINE_TALOS_S27_PAYTRAINER_2026-06-08.md",
+      "content_hash": "89d781e09ba98ba1c7edeba75b2e3bf99019064b14e53c64ee6e57f4d7a008da",
+      "size_bytes": 16119,
+      "mtime_ms": 1782910952935.624
+    },
+    {
+      "relative_path": "reports/RELATORIO_PIPELINE_TALOS_S30_S32_2026-06-08.md",
+      "content_hash": "8bf2daaa6b8a21ffee6a81afd110ab3616c9460a10d74191d18a0ff972fa750d",
+      "size_bytes": 12661,
+      "mtime_ms": 1782910952935.8699
+    },
+    {
+      "relative_path": "VERSION",
+      "content_hash": "232cca15f9cab0453d820d20649067576ec18d279ce3b1dc6d2931d1eb638721",
+      "size_bytes": 7,
+      "mtime_ms": 1784553375433.7969
+    }
+  ]
+}
