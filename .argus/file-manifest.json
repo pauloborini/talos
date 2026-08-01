@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0.0",
-  "generated_at": "2026-08-01T13:37:28.540Z",
+  "generated_at": "2026-08-01T14:31:02.227Z",
   "root_path": "/Users/pauloborini/Documents/projetos/talos",
   "file_count": 548,
   "files": [
@@ -2328,15 +2328,15 @@
     },
     {
       "relative_path": "packages/mcp-server/server.js",
-      "content_hash": "6c630f4dc8a84e427b9a8769af79b7ea4af09b734dfc022ebc61bdcd4f460e07",
-      "size_bytes": 212652,
-      "mtime_ms": 1784472091536.1553
+      "content_hash": "9414ed5d00d0444a468552769396c38cdc784dd082123c34c8bce75685c64cf4",
+      "size_bytes": 216691,
+      "mtime_ms": 1785593507074.222
     },
     {
       "relative_path": "packages/mcp-server/server.test.js",
-      "content_hash": "4ba03698112417c3bb8bd5ec2b605d73be801f89113f4ec0004809a1f4191b09",
-      "size_bytes": 222250,
-      "mtime_ms": 1784472091536.4646
+      "content_hash": "174415d86573479073e71945dab4b3bea45316edca0c6d9581893135e39c31a4",
+      "size_bytes": 229351,
+      "mtime_ms": 1785593522226.4207
     },
     {
       "relative_path": "packages/orchestrator/commands/talos.md",
@@ -2376,9 +2376,9 @@
     },
     {
       "relative_path": "packages/orchestrator/skills/talos/SKILL.md",
-      "content_hash": "d3082964da5bdd8ccddee7d35afe1e75248f42947e19a89776726a2c9fdf41b1",
-      "size_bytes": 55283,
-      "mtime_ms": 1784472091537.0881
+      "content_hash": "fede87e3c7c9d1abe87cfea2cee3b78e6515fc834771c238d4666eeb86b6e9a2",
+      "size_bytes": 55681,
+      "mtime_ms": 1785592533261.673
     },
     {
       "relative_path": "packages/skills/_shared/references/stack-profiles.md",

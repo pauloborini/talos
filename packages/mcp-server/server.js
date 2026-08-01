@@ -2337,6 +2337,68 @@ function appendToMarkdownSectionTable(markdown, sectionRe, rowCells) {
   return lines.join('\n');
 }
 
+function deriveHandoffSlugFromSprintPath(sprintFilePath) {
+  const basename = path.basename(sprintFilePath, '.md');
+  const withoutPrefix = basename.startsWith('SPRINT_') ? basename.slice('SPRINT_'.length) : basename;
+  return withoutPrefix.toLowerCase();
+}
+
+function formatHandoffFileDate(timestamp) {
+  return timestamp.slice(0, 10).replace(/-/g, '');
+}
+
+function emitMemoryHandoff({
+  projectRoot,
+  sprintId,
+  sprintFilePath,
+  validatorVerdict,
+  statePath = null,
+  planPath = null,
+  timestamp = nowIso(),
+}) {
+  const templateRel = '.talos/memory/HANDOFF_TEMPLATE.md';
+  const templateAbs = path.resolve(projectRoot, templateRel);
+  if (!fs.existsSync(templateAbs)) {
+    return { ok: false, reason: 'template_missing' };
+  }
+
+  const slug = deriveHandoffSlugFromSprintPath(sprintFilePath);
+  const dateStr = timestamp.slice(0, 10);
+  const handoffFileName = `HANDOFF_${slug}_${formatHandoffFileDate(timestamp)}.md`;
+  const handoffRel = `.talos/memory/${handoffFileName}`;
+  const handoffAbs = path.resolve(projectRoot, handoffRel);
+
+  let content = fs.readFileSync(templateAbs, 'utf8');
+  content = replaceMarkdownTableValue(content, 'sprint_id', sprintId);
+  content = replaceMarkdownTableValue(content, 'data', dateStr);
+  content = replaceMarkdownTableValue(content, 'status_pos_validator', validatorVerdict);
+  content = replaceMarkdownTableValue(content, 'origem', 'talos_update_sprint_status');
+
+  const contextBlock = [
+    '## Contexto da entrega',
+    '',
+    '| Campo | Valor |',
+    '|---|---|',
+    `| state_path | \`${statePath ?? '—'}\` |`,
+    `| plan_path | \`${planPath ?? '—'}\` |`,
+    '',
+  ].join('\n');
+  content = content.replace(
+    /(\n---\n\n)(## Regras do filtro)/,
+    `\n---\n\n${contextBlock}\n---\n\n$2`,
+  );
+
+  const candidatesText = '0 candidatos — nenhum fato durável promovido automaticamente. Sucesso.';
+  content = content.replace(
+    /## Candidatos \(0–3\)[\s\S]*?(?=\n## Exemplos)/,
+    `## Candidatos (0–3)\n\n${candidatesText}\n\n`,
+  );
+
+  fs.mkdirSync(path.dirname(handoffAbs), { recursive: true });
+  fs.writeFileSync(handoffAbs, content);
+  return { ok: true, handoff_path: handoffRel };
+}
+
 function updatedSprintMarkdown(markdown, {
   status,
   planPath = null,
@@ -2445,9 +2507,26 @@ function updateSprintStatus(args = {}) {
       throw new Error('update_sprint_status_postcondition_failed');
     }
 
+    const needsHandoff = status === 'done' && TERMINAL_VALIDATOR_VERDICTS.has(validatorVerdict);
+    // Fail-fast: template ausente bloqueia ANTES de qualquer write (sem drift).
+    if (needsHandoff) {
+      const templateAbs = path.resolve(consumerRoot(args), '.talos/memory/HANDOFF_TEMPLATE.md');
+      if (!fs.existsSync(templateAbs)) {
+        pendencies.push(conformancePending(
+          'handoff_emit',
+          sprintId,
+          null,
+          'HANDOFF_TEMPLATE.md ausente — emit bloqueado.',
+          'restaurar_handoff_template',
+        ));
+        throw new Error('update_sprint_status_handoff_emit_failed');
+      }
+    }
+
     // Escrita com rollback (P2): backlog primeiro; se o sprint file falhar (erro de
     // FS real — EACCES/ENOSPC), restaura o backlog ao estado original para não deixar
     // drift backlog↔sprint. Ou ambos escritos, ou nenhum efeito visível.
+    // Handoff após writes: se emit falhar, restaura backlog+sprint (atomicidade P2).
     fs.writeFileSync(backlogAbs, nextBacklog.markdown);
     try {
       fs.writeFileSync(sprintAbs, nextSprint);
@@ -2455,6 +2534,40 @@ function updateSprintStatus(args = {}) {
       fs.writeFileSync(backlogAbs, backlogBefore);
       throw writeError;
     }
+
+    let handoffPath = null;
+    if (needsHandoff) {
+      let handoff;
+      try {
+        handoff = emitMemoryHandoff({
+          projectRoot: consumerRoot(args),
+          sprintId,
+          sprintFilePath: sprintPath,
+          validatorVerdict,
+          statePath: args.state_path ?? null,
+          planPath: args.plan_path ?? null,
+          timestamp,
+        });
+      } catch (emitError) {
+        fs.writeFileSync(backlogAbs, backlogBefore);
+        fs.writeFileSync(sprintAbs, sprintBefore);
+        throw emitError;
+      }
+      if (!handoff.ok) {
+        fs.writeFileSync(backlogAbs, backlogBefore);
+        fs.writeFileSync(sprintAbs, sprintBefore);
+        pendencies.push(conformancePending(
+          'handoff_emit',
+          sprintId,
+          null,
+          'HANDOFF_TEMPLATE.md ausente — emit bloqueado.',
+          'restaurar_handoff_template',
+        ));
+        throw new Error('update_sprint_status_handoff_emit_failed');
+      }
+      handoffPath = handoff.handoff_path;
+    }
+
     result = {
       gate: 'update_sprint_status',
       status: 'passed',
@@ -2468,7 +2581,10 @@ function updateSprintStatus(args = {}) {
       pending_count: 0,
       pendencies: [],
       banner: renderBanner('preflight_ok', { caps: `sprint_status=${sprintId}:${status}` }),
-      next_action: status === 'done' ? 'selecionar_proxima_sprint' : 'continuar_pipeline',
+      next_action: status === 'done'
+        ? (handoffPath ? 'promover_handoff' : 'selecionar_proxima_sprint')
+        : 'continuar_pipeline',
+      ...(handoffPath ? { handoff_path: handoffPath } : {}),
     };
   } catch (error) {
     result = {
@@ -5320,6 +5436,7 @@ export {
   selectNextSprint,
   nextActionForSelectedSprint,
   updateSprintStatus,
+  emitMemoryHandoff,
   classifyInput,
   preflight,
   lockDispatch,
