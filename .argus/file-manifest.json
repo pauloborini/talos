@@ -1,8 +1,8 @@
 {
   "schema_version": "1.0.0",
-  "generated_at": "2026-07-22T15:21:36.601Z",
+  "generated_at": "2026-08-01T12:59:45.563Z",
   "root_path": "/Users/pauloborini/Documents/projetos/talos",
-  "file_count": 550,
+  "file_count": 548,
   "files": [
     {
       "relative_path": ".agents/plugins/marketplace.json",
@@ -35,18 +35,6 @@
       "mtime_ms": 1781557467303.5576
     },
     {
-      "relative_path": ".github/workflows/ci.yml",
-      "content_hash": "1129720bb1376fe588d8004f1e6a74015e1ab88258de1b221a2f5eeffe0339c5",
-      "size_bytes": 3161,
-      "mtime_ms": 1782910934977.8828
-    },
-    {
-      "relative_path": ".github/workflows/release.yml",
-      "content_hash": "9d19ca09bd5e026ee52daeeee067dd7aa5e20d91c72b69394bffc95ad2d199e8",
-      "size_bytes": 5092,
-      "mtime_ms": 1782928567196.5068
-    },
-    {
       "relative_path": ".gitignore",
       "content_hash": "c8b53044e5267c869d7c61ae63f84b443a3875be3eb0e68186c6d942d4b32542",
       "size_bytes": 330,
@@ -60,9 +48,9 @@
     },
     {
       "relative_path": "AGENTS.md",
-      "content_hash": "8431c29d7c3374d3d36e13f86f215e2ed15e97472cba908ab3540f341574f76a",
-      "size_bytes": 7685,
-      "mtime_ms": 1784553414467.8467
+      "content_hash": "414b80f50d9d5e087858490472591b3a22286dfd6a97d86876b3a84fc61be795",
+      "size_bytes": 9399,
+      "mtime_ms": 1784733697501.929
     },
     {
       "relative_path": "agents/talos-direct-execute.md",
@@ -204,9 +192,9 @@
     },
     {
       "relative_path": "CLAUDE.md",
-      "content_hash": "0922d59e747ee72037c4ed75d9545702599ee0ae54accb6879e2899dab64dcc3",
-      "size_bytes": 7177,
-      "mtime_ms": 1784553411008.59
+      "content_hash": "9fd425e811db0d8093ca648e1cd1648c0bb2c92a8d119297b387a86d7c2b125e",
+      "size_bytes": 8891,
+      "mtime_ms": 1784733697501.8145
     },
     {
       "relative_path": "COMMANDS.md",
@@ -2610,9 +2598,9 @@
     },
     {
       "relative_path": "PATCH_PROCEDURE.md",
-      "content_hash": "2b1b2dd5f76a047422f3d3978074433487be2df440d7460f751225df7c3e95a5",
-      "size_bytes": 11305,
-      "mtime_ms": 1782928567199.399
+      "content_hash": "260e0071d28c8ab30f51d629a50e3a5e11f32dbef5815a795c635a02c9af3ebd",
+      "size_bytes": 10621,
+      "mtime_ms": 1784917774261.5476
     },
     {
       "relative_path": "plugin-manifests/claude/plugin.json",
