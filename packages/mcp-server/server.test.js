@@ -36,6 +36,7 @@ import {
   selectNextSprint,
   nextActionForSelectedSprint,
   updateSprintStatus,
+  emitMemoryHandoff,
   classifyInput,
   preflight,
   lockDispatch,
@@ -1674,6 +1675,16 @@ function writeSprintFixture(root, id, {
   );
 }
 
+function writeHandoffTemplateFixture(root) {
+  const templateSrc = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    '../../.talos/memory/HANDOFF_TEMPLATE.md',
+  );
+  const destDir = path.join(root, '.talos/memory');
+  fs.mkdirSync(destDir, { recursive: true });
+  fs.copyFileSync(templateSrc, path.join(destDir, 'HANDOFF_TEMPLATE.md'));
+}
+
 test('talos_verify_backlog_index: índice válido passa com sprint file e status espelhado', () => {
   const root = tmpRoot();
   writeSprintFixture(root, 'S01', { status: 'ready', dorStatus: 'verde' });
@@ -1813,6 +1824,7 @@ test('talos_select_next_sprint: dependência interna não done bloqueia seleçã
 
 test('talos_update_sprint_status: sincroniza done no backlog e sprint file com evidência', () => {
   const root = tmpRoot();
+  writeHandoffTemplateFixture(root);
   writeSprintFixture(root, 'S01', { status: 'ready', dorStatus: 'verde' });
   fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
     '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | ready | ready | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
@@ -1906,8 +1918,156 @@ test('talos_update_sprint_status: reabrir done bloqueia por padrão', () => {
   assert.ok(r.pendencies.some((p) => p.category === 'status_transition'));
 });
 
+test('handoff emit: done+pass com template cria HANDOFF e retorna handoff_path', () => {
+  const root = tmpRoot();
+  writeHandoffTemplateFixture(root);
+  writeSprintFixture(root, 'S01', { status: 'ready', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | ready | ready | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+  const r = updateSprintStatus({
+    run_id: 'r1',
+    project_root: root,
+    backlog_path: 'BACKLOG.md',
+    sprint_id: 'S01',
+    status: 'done',
+    validator_verdict: 'pass',
+    plan_path: 'PLAN_S01.md',
+    state_path: '.talos/state/S01.json',
+    evidence: 'validator pass',
+  });
+  assert.equal(r.status, 'passed');
+  assert.ok(r.handoff_path);
+  assert.match(r.handoff_path, /^\.talos\/memory\/HANDOFF_s01_runtime_\d{8}\.md$/);
+  assert.equal(r.next_action, 'promover_handoff');
+  const handoffAbs = path.join(root, r.handoff_path);
+  assert.ok(fs.existsSync(handoffAbs));
+  const handoff = fs.readFileSync(handoffAbs, 'utf8');
+  assert.match(handoff, /^\| sprint_id \| S01 \|$/m);
+  assert.match(handoff, /^\| status_pos_validator \| pass \|$/m);
+  assert.match(handoff, /^\| origem \| talos_update_sprint_status \|$/m);
+  assert.match(handoff, /## Contexto da entrega/);
+  assert.match(handoff, /state_path \| `\.talos\/state\/S01\.json`/);
+  assert.match(handoff, /plan_path \| `PLAN_S01\.md`/);
+  assert.match(handoff, /plan_path \| `PLAN_S01\.md` \|\n\n---\n/);
+  assert.match(handoff, /0 candidatos — nenhum fato durável promovido automaticamente\. Sucesso\./);
+});
+
+test('handoff emit: done+pass_with_observations emite handoff', () => {
+  const root = tmpRoot();
+  writeHandoffTemplateFixture(root);
+  writeSprintFixture(root, 'S01', { status: 'ready', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | ready | ready | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+  const r = updateSprintStatus({
+    run_id: 'r1',
+    project_root: root,
+    backlog_path: 'BACKLOG.md',
+    sprint_id: 'S01',
+    status: 'done',
+    validator_verdict: 'pass_with_observations',
+    state_path: '.talos/state/S01.json',
+  });
+  assert.equal(r.status, 'passed');
+  assert.ok(r.handoff_path);
+  const handoff = fs.readFileSync(path.join(root, r.handoff_path), 'utf8');
+  assert.match(handoff, /^\| status_pos_validator \| pass_with_observations \|$/m);
+});
+
+test('handoff emit: done sem validator terminal bloqueia sem criar HANDOFF', () => {
+  const root = tmpRoot();
+  writeHandoffTemplateFixture(root);
+  writeSprintFixture(root, 'S01', { status: 'ready', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | ready | ready | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+  const memoryDir = path.join(root, '.talos/memory');
+  const r = updateSprintStatus({
+    run_id: 'r1',
+    project_root: root,
+    backlog_path: 'BACKLOG.md',
+    sprint_id: 'S01',
+    status: 'done',
+    validator_verdict: 'fail',
+    state_path: '.talos/state/S01.json',
+  });
+  assert.equal(r.status, 'blocked');
+  assert.equal(r.handoff_path, undefined);
+  const handoffs = fs.existsSync(memoryDir)
+    ? fs.readdirSync(memoryDir).filter((name) => /^HANDOFF_.*_\d{8}\.md$/.test(name))
+    : [];
+  assert.equal(handoffs.length, 0);
+});
+
+test('handoff emit: template ausente bloqueia com pendência handoff_emit', () => {
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S01', { status: 'ready', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | ready | ready | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+  const backlogBefore = fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8');
+  const sprintAbs = path.join(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md');
+  const sprintBefore = fs.readFileSync(sprintAbs, 'utf8');
+  const r = updateSprintStatus({
+    run_id: 'r1',
+    project_root: root,
+    backlog_path: 'BACKLOG.md',
+    sprint_id: 'S01',
+    status: 'done',
+    validator_verdict: 'pass',
+    state_path: '.talos/state/S01.json',
+  });
+  assert.equal(r.status, 'blocked');
+  assert.ok(r.pendencies.some((p) => p.category === 'handoff_emit'));
+  assert.equal(r.handoff_path, undefined);
+  // Atomicidade P2: sem write parcial — backlog e sprint permanecem ready.
+  assert.equal(fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8'), backlogBefore);
+  assert.equal(fs.readFileSync(sprintAbs, 'utf8'), sprintBefore);
+  assert.match(backlogBefore, /\|\s*ready\s*\|/);
+  assert.match(fs.readFileSync(sprintAbs, 'utf8'), /^\| Status \| ready \|$/m);
+});
+
+test('handoff emit: falha de FS no write do HANDOFF faz rollback backlog+sprint (P2)', () => {
+  const root = tmpRoot();
+  writeHandoffTemplateFixture(root);
+  writeSprintFixture(root, 'S01', { status: 'ready', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | ready | ready | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+  const backlogBefore = fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8');
+  const sprintAbs = path.resolve(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md');
+  const sprintBefore = fs.readFileSync(sprintAbs, 'utf8');
+  const memoryDir = path.resolve(root, '.talos/memory');
+  const realWrite = fs.writeFileSync;
+  mock.method(fs, 'writeFileSync', (target, data, ...rest) => {
+    const resolved = path.resolve(target);
+    if (resolved.startsWith(memoryDir) && /HANDOFF_.*_\d{8}\.md$/.test(path.basename(resolved))) {
+      throw Object.assign(new Error('ENOSPC: simulated'), { code: 'ENOSPC' });
+    }
+    return realWrite(target, data, ...rest);
+  });
+  try {
+    const r = updateSprintStatus({
+      run_id: 'r1',
+      project_root: root,
+      backlog_path: 'BACKLOG.md',
+      sprint_id: 'S01',
+      status: 'done',
+      validator_verdict: 'pass',
+      state_path: '.talos/state/S01.json',
+    });
+    assert.equal(r.status, 'blocked');
+    assert.equal(fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8'), backlogBefore);
+    assert.equal(fs.readFileSync(sprintAbs, 'utf8'), sprintBefore);
+  } finally {
+    mock.restoreAll();
+  }
+});
+
 test('talos_update_sprint_status: falha de FS no sprint file faz rollback do backlog (P2)', () => {
   const root = tmpRoot();
+  writeHandoffTemplateFixture(root);
   writeSprintFixture(root, 'S01', { status: 'ready', dorStatus: 'verde' });
   fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
     '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | ready | ready | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
