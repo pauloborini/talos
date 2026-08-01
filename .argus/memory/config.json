@@ -1,7 +1,0 @@
-{
-  "vault_path": "/Users/pauloborini/Documents/projetos/talos/.argus/memory/vault",
-  "db_path": "/Users/pauloborini/Documents/projetos/talos/.argus/memory/memory.db",
-  "llm_provider": "none",
-  "code_index_path": "/Users/pauloborini/Documents/projetos/talos/.argus/index.db",
-  "embed_model": "Xenova/bge-small-en-v1.5"
-}

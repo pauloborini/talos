@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+Tipo: **feature** (memória pós-validação — emit + promote + docs).
+
+Resumo: após sprint `done`, o orquestrador pode emitir `HANDOFF_*.md`; a skill `talos-memory-promote` promove candidatos via sink do host (Argus opcional, soft-fail sem sink, nota documental Atlas Memory Graph).
+
+Mudanças:
+- **Emit handoff no `done` (S03)** — `talos_update_sprint_status` + ledger apontam `HANDOFF_*.md` e atalho `$talos-memory-promote`.
+- **Skill `talos-memory-promote` (S04)** — lê HANDOFF, filtra 0–3 candidatos com âncora forte, adapter `argus_remember` | `none` (soft-fail).
+- **Packaging + docs (S05)** — skill no bundle `packages/skills/`; README/CHANGELOG descrevem três caminhos de sink sem exigir Argus.
+
 ## 0.14.2 - 2026-07-20
 
 Tipo: **packaging**. **Sem breaking**. Schema MCP: v5 (inalterado).

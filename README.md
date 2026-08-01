@@ -244,9 +244,26 @@ Além da cadeia automática, estas skills também podem ser chamadas diretamente
 - `talos-audit` — audita arquivo, diretório, pacote, módulo, feature ou boundary localizável sem corrigir código. Lê regras locais reais, **detecta stack deterministicamente** por manifests/configs (Flutter, Node, Python, Go, Rust, Java/Kotlin, Firebase, Supabase, REST/OpenAPI), analisa arquitetura/contratos/erros/segurança/testes/observabilidade, faz Ponytail pass final e só promove achado com evidência `arquivo:linha`. Regras só ativam com sinal real no boundary. Com `--handoff`, grava `.talos/plans/PLAN_AUDIT_*.md` TC-conforme para correção posterior; não chama executor.
 - `talos-plan-handoff` — converte o contrato §7 (sprint file) em plano executável. Use quando a intenção é preparar a execução, não ainda codar. Aceita sprint `sprint-bound` ou `standalone` (`Backlog mestre: Não aplicável (standalone)`); plano `standalone` só é executável via modo `execute` — `full`/`direct` exigem sprint na entrada.
 - `talos-direct-execute` — executa diretamente quando o contrato §7 já está maduro/selado. Use quando você quer pular a fase de plan handoff.
+- `talos-memory-promote` — promove candidatos de um `HANDOFF_*.md` emitido após sprint `done` via adapter de sink do host (`argus_remember` se MCP Argus disponível; senão soft-fail — o MD permanece válido). Use explicitamente com `$talos-memory-promote <handoff_path>`; não roda automaticamente no `done`.
 - `talos-task-validator` — faz a validação fria da slice executada (nota código contra o §7). Use como veredito final de conformidade, nunca como ação manual de rotina.
 - `talos-findings-repair` — corrige findings P0/P1/P2 depois de um `fail` do validator sem reabrir a execução completa. Use só no caminho de retry.
 - `talos-slice-review` — faz a revisão fria opcional depois da execução. Use quando quiser uma segunda passada focada em riscos e regressões.
+
+### Memória pós-validação
+
+Após uma sprint Talos chegar a `done` com veredito terminal do validador frio, o MCP pode emitir um artefato `HANDOFF_*.md` em `.talos/memory/` com candidatos de memória (0–3 fatos com âncora forte). A promoção para memória de longo prazo é **sempre explícita**:
+
+```text
+$talos-memory-promote <handoff_path>
+```
+
+Três caminhos de sink (host-agnóstico):
+
+1. **Com Argus** — se o MCP Argus expõe `remember`, a skill promove via `argus_remember`.
+2. **Sem sink (soft-fail)** — sem MCP de memória disponível, a skill reporta soft-fail e o `HANDOFF_*.md` permanece válido para uso manual.
+3. **Atlas Agents (porta)** — o mesmo MD pode alimentar o Memory Graph / chat no Atlas Agents Core (implementação em outro repo; metodologia documental).
+
+Argus **não** é obrigatório para usar Talos, fechar sprints ou consumir handoffs. O pipeline `done` nunca depende de Argus nem de Memory Graph.
 
 ### Topologia do validador frio (G4)
 
