@@ -55,7 +55,7 @@ Fixtures em `fixtures/`; implementação em `scripts/`.
 4. **Detectar sink** inspecionando tools MCP disponíveis no host:
    - Se existir tool Argus equivalente a `remember` → `argus_remember`.
    - Senão → `none`.
-5. **`argus_remember`:** para cada candidato válido (≤3), chamar `remember` no host com claim + âncora + ref/motivo (shape em `rememberCallShape`). Reportar `promoted_count` 0–3.
+5. **`argus_remember`:** para cada candidato válido (≤3), chamar `remember` no host com shape nativa Argus via `rememberCallShape`: `content`←claim(+motivo), `type`←`"decision"`, `tags`←`["talos-handoff", "anchor:<tipo>:<valor>"]` (omitir tag âncora se ausente), `links`←`[ref]` só se `ref` truthy. Sem keys `claim`/`anchor_*`. Reportar `promoted_count` 0–3.
 6. **`none`:** soft-fail com causa + `handoff_path` + próximos passos (usar MD / Argus opcional / Atlas chat). Não quebrar pipeline já `done`.
 7. Reportar descartados do filtro (âncora inválida, over_cap) sem inventar fatos.
 

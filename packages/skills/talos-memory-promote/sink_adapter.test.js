@@ -52,6 +52,33 @@ test('0 candidatos com none = sucesso sem soft-fail', async () => {
   assert.match(result.message, /0 candidatos/i);
 });
 
+test('rememberCallShape emite shape nativa Argus (content/type/tags/links)', () => {
+  const withRef = rememberCallShape({
+    claim: 'b',
+    ancora: { tipo: 'symbol', valor: 'detectSink' },
+    motivo: 'm2',
+    ref: 'x.mjs',
+  });
+  assert.equal(withRef.tool, 'remember');
+  assert.deepEqual(withRef.args, {
+    content: 'b — m2',
+    type: 'decision',
+    tags: ['talos-handoff', 'anchor:symbol:detectSink'],
+    links: ['x.mjs'],
+  });
+  assert.equal('claim' in withRef.args, false);
+  assert.equal('anchor_type' in withRef.args, false);
+  assert.equal('anchor_value' in withRef.args, false);
+
+  const noAnchorNoRef = rememberCallShape({ claim: 'solo', motivo: '' });
+  assert.deepEqual(noAnchorNoRef.args, {
+    content: 'solo',
+    type: 'decision',
+    tags: ['talos-handoff'],
+  });
+  assert.equal('links' in noAnchorNoRef.args, false);
+});
+
 test('argus_remember com mock conta chamadas ≤3', async () => {
   const calls = [];
   const candidates = [
@@ -70,9 +97,11 @@ test('argus_remember com mock conta chamadas ≤3', async () => {
   assert.equal(result.ok, true);
   assert.equal(result.promoted_count, 2);
   assert.equal(calls.length, 2);
-  assert.equal(calls[0].claim, 'a');
-  assert.equal(calls[0].anchor_type, 'EVAL');
-  assert.deepEqual(rememberCallShape(candidates[1]).args.anchor_value, 'detectSink');
+  assert.equal(calls[0].content, 'a — m1');
+  assert.equal(calls[0].type, 'decision');
+  assert.deepEqual(calls[0].tags, ['talos-handoff', 'anchor:EVAL:EVAL-001']);
+  assert.equal('links' in calls[0], false);
+  assert.deepEqual(calls[1].links, ['x.mjs']);
 });
 
 test('argus_remember sem rememberFn devolve shapes (agente executa)', async () => {
@@ -85,4 +114,6 @@ test('argus_remember sem rememberFn devolve shapes (agente executa)', async () =
   assert.equal(result.pending_agent_calls, true);
   assert.equal(result.calls.length, 1);
   assert.equal(result.calls[0].tool, 'remember');
+  assert.equal(result.calls[0].args.type, 'decision');
+  assert.deepEqual(result.calls[0].args.tags, ['talos-handoff', 'anchor:id:ID-1']);
 });
