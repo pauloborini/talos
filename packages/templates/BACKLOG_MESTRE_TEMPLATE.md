@@ -90,7 +90,7 @@ Observações:
 
 ### 5.1 Estados de sprint
 
-`backlog → ready → doing → review → done`
+`backlog → ready → doing → review → manual_validation_pending → done`
 
 Estado lateral: `blocked`.
 
@@ -100,6 +100,7 @@ Estado lateral: `blocked`.
 | ready | DoR verde e dependências satisfeitas | sim (aprovado+selo) | após §7/PLAN conforme o modo |
 | doing | Em execução | não reabrir §7 sem decisão | sim |
 | review | Implementada, aguardando validação/revisão | não | não mutar fora repair |
+| manual_validation_pending | Provas automáticas verdes, aguardando validação manual (`M`); satisfaz DEP, não emite handoff | sim (aprovado+selo) | não |
 | done | DoD verde e evidência registrada | não | não |
 | blocked | Bloqueada por decisão/dependência | não | não |
 
@@ -107,7 +108,7 @@ Estado lateral: `blocked`.
 
 - [ ] Sprint file existe e está linkado no backlog.
 - [ ] Objetivo único.
-- [ ] Dependências anteriores `done` ou explicitamente não bloqueantes.
+- [ ] Dependências anteriores `done`/`manual_validation_pending` ou explicitamente não bloqueantes.
 - [ ] Bloqueadores críticos resolvidos ou com decisão registrada.
 - [ ] Escopo/fora de escopo claros.
 - [ ] `eval_manifest` mínimo definido no sprint file.

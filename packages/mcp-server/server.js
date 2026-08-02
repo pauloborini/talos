@@ -9,6 +9,7 @@ import {
   parseSprintRows,
   validateSprintFileConformance,
   validateAcceptanceSeal,
+  parseAcceptanceContract,
 } from '../skills/_shared/scripts/document_quality.mjs';
 
 const SERVER_NAME = 'talos';
@@ -150,7 +151,7 @@ const ROUTED_MODE_BY_TYPE = {
   idea: 'direct',
 };
 const BACKLOG_PRIORITY_INPUT_TYPES = new Set(['idea', 'briefing', 'roadmap', 'conversation', 'spec-macro']);
-const BACKLOG_STATES = new Set(['backlog', 'ready', 'doing', 'review', 'done', 'blocked']);
+const BACKLOG_STATES = new Set(['backlog', 'ready', 'doing', 'review', 'manual_validation_pending', 'done', 'blocked']);
 const BACKLOG_MOSCOW = new Set(['Must', 'Should', 'Could', "Won't now"]);
 const BACKLOG_LEVEL = new Set(['alto', 'médio', 'baixo']);
 const BACKLOG_PRIORITY = new Set(['P0', 'P1', 'P2', 'P3']);
@@ -161,7 +162,8 @@ const SPRINT_STATUS_TRANSITIONS = {
   backlog: new Set(['ready', 'blocked']),
   ready: new Set(['doing', 'review', 'done', 'blocked']),
   doing: new Set(['review', 'done', 'blocked']),
-  review: new Set(['done', 'doing', 'blocked']),
+  review: new Set(['manual_validation_pending', 'done', 'doing', 'blocked']),
+  manual_validation_pending: new Set(['done', 'blocked']),
   blocked: new Set(['ready', 'backlog']),
   done: new Set(['done']),
 };
@@ -1670,6 +1672,23 @@ function lineIsExcluded(line) {
 function scanSectionPatterns(sections) {
   const matches = [];
 
+  // §7.3 acceptance: `behavior` de AC com ambiguidade bloqueante (AC-1.2.2).
+  const acceptanceLines = sections.section_7_aceite ?? [];
+  const acceptanceText = acceptanceLines.map((entry) => entry.text).join('\n');
+  if (/```ya?ml\b/i.test(acceptanceText) && /^\s*-?\s*id:\s*["']?AC-\d+/m.test(acceptanceText)) {
+    const ambiguousRe = /^\s*behavior:\s*["']?.*\b(?:TBD|a confirmar|a definir|incompleto)\b/im;
+    if (ambiguousRe.test(acceptanceText)) {
+      const offender = acceptanceLines.find((entry) => ambiguousRe.test(entry.text)) ?? acceptanceLines[0];
+      matches.push({
+        section: SECTION_LABELS.section_7_aceite,
+        pattern: 'behavior ambíguo',
+        line: offender?.line ?? null,
+        excerpt: offender?.text.trim().slice(0, 240) ?? '',
+        reason: 'AC com `behavior` ambíguo (TBD/a confirmar) bloqueia planejamento.',
+      });
+    }
+  }
+
   for (const [sectionKey, patterns] of Object.entries(ACCEPTANCE_PATTERNS)) {
     const lines = sections[sectionKey] ?? [];
     const sectionText = lines.map((line) => line.text).join('\n').trim();
@@ -2236,7 +2255,11 @@ function depsSatisfied(row, byId) {
   const unmet = [];
   for (const dep of sprintDeps(row.dependencies)) {
     const depRow = byId.get(dep);
-    if (!depRow || depRow.state !== 'done') unmet.push({ id: dep, state: depRow?.state ?? 'missing' });
+    // D5/D23: manual_validation_pending satisfaz DEP (só done não bloqueia a
+    // cadeia — LEG3 morto). Flag de revalidação (Plano 5) é ignorada aqui.
+    if (!depRow || (depRow.state !== 'done' && depRow.state !== 'manual_validation_pending')) {
+      unmet.push({ id: dep, state: depRow?.state ?? 'missing' });
+    }
   }
   return unmet;
 }
@@ -2282,6 +2305,7 @@ function nextActionForSelectedSprint(info, mode = 'full') {
 
 function derivedSprintGateStatus(status, validatorVerdict) {
   if (status === 'done') return `validator:${validatorVerdict}`;
+  if (status === 'manual_validation_pending') return `validator:${validatorVerdict};manual_pending`;
   if (status === 'review') return 'validator:pending';
   if (status === 'doing') return 'exec:running';
   if (status === 'blocked') return validatorVerdict === 'fail' ? 'validator:fail' : 'blocked';
@@ -2425,6 +2449,21 @@ function updatedSprintMarkdown(markdown, {
   return next;
 }
 
+// D5/D23: lê acceptance_results do state v3 apontado por state_path. Retorno
+// { results: array|null } — null quando ausente/ilegível. O gate de `done` só
+// aplica "quando presentes" (compat com atualizações sem state de aceite);
+// manual_validation_pending exige presentes (só existe no fluxo 0.15 com AC-*).
+function readStateAcceptanceResults(statePath, args) {
+  if (!statePath) return { results: null };
+  let state;
+  try {
+    state = JSON.parse(fs.readFileSync(resolveConsumerPath(statePath, args), 'utf8'));
+  } catch {
+    return { results: null };
+  }
+  return { results: Array.isArray(state?.acceptance_results) ? state.acceptance_results : null };
+}
+
 function updateSprintStatus(args = {}) {
   const runId = validateRunId(args.run_id);
   const backlogPath = requiredString(args, 'backlog_path');
@@ -2449,6 +2488,14 @@ function updateSprintStatus(args = {}) {
   if (status === 'done' && !args.state_path) {
     pendencies.push(conformancePending('state_path', 'done', null, 'Status done exige state_path como evidência.', 'informar_state_path'));
   }
+  // D5/D23: manual_validation_pending é status terminal de validação (não done).
+  // Exige veredito terminal do validator — o M aberto não dispensa a prova automática.
+  if (status === 'manual_validation_pending' && !TERMINAL_VALIDATOR_VERDICTS.has(validatorVerdict)) {
+    pendencies.push(conformancePending('validator_verdict', 'manual_validation_pending', null, 'Status manual_validation_pending exige validator_verdict pass ou pass_with_observations.', 'rodar_validator_frio'));
+  }
+  if (status === 'manual_validation_pending' && !args.state_path) {
+    pendencies.push(conformancePending('state_path', 'manual_validation_pending', null, 'Status manual_validation_pending exige state_path como evidência.', 'informar_state_path'));
+  }
   try {
     const backlogAbs = resolveConsumerPath(backlogPath, args);
     const backlogBefore = fs.readFileSync(backlogAbs, 'utf8');
@@ -2461,6 +2508,58 @@ function updateSprintStatus(args = {}) {
       if (transitionPending) pendencies.push(transitionPending);
       if (pendingPathToken(row.sprint_file)) {
         pendencies.push(conformancePending('sprint_file', sprintId, null, `Linha ${sprintId} não aponta Sprint file real.`, 'preencher_sprint_file_no_backlog'));
+      }
+    }
+    // D5/D23: gate de aceite por estado. acceptance_results moram no state v3
+    // (eco do oráculo mecânico classifyAcceptanceResults — VC5; o validator
+    // emite no packet e o MCP persiste o eco validado no state no complete).
+    // done exige todos proved quando presentes;
+    // manual_validation_pending exige ≥1 manual_pending e nenhum unproved/violated.
+    if (status === 'done' || status === 'manual_validation_pending') {
+      const acceptance = readStateAcceptanceResults(args.state_path, args);
+      if (status === 'done' && Array.isArray(acceptance.results)) {
+        const blockers = acceptance.results.filter((item) => item?.status !== 'proved');
+        if (blockers.length > 0) {
+          pendencies.push(conformancePending(
+            'acceptance_results',
+            sprintId,
+            null,
+            `Status done exige todos os AC proved; bloqueado por: ${blockers.map((b) => `${b.id}:${b.status}`).join(', ')} (M aberto ou prova pendente).`,
+            'resolver_aceite_ou_avancar_manual_validation_pending',
+          ));
+        }
+      }
+      if (status === 'manual_validation_pending') {
+        if (!Array.isArray(acceptance.results)) {
+          pendencies.push(conformancePending(
+            'acceptance_results',
+            sprintId,
+            null,
+            'Status manual_validation_pending exige acceptance_results no state (≥1 AC manual_pending, sem unproved/violated).',
+            'emitir_acceptance_results_no_state',
+          ));
+        } else {
+          const blocked = acceptance.results.filter((item) => item?.status === 'unproved' || item?.status === 'violated');
+          if (blocked.length > 0) {
+            pendencies.push(conformancePending(
+              'acceptance_results',
+              sprintId,
+              null,
+              `manual_validation_pending exige sem unproved/violated; bloqueado por: ${blocked.map((b) => `${b.id}:${b.status}`).join(', ')}.`,
+              'resolver_provas_automaticas',
+            ));
+          }
+          const manualPending = acceptance.results.filter((item) => item?.status === 'manual_pending');
+          if (manualPending.length === 0) {
+            pendencies.push(conformancePending(
+              'acceptance_results',
+              sprintId,
+              null,
+              'manual_validation_pending exige pelo menos 1 AC manual_pending (M aberto).',
+              'usar_done_quando_sem_validacao_manual',
+            ));
+          }
+        }
       }
     }
     if (pendencies.length > 0) {
@@ -2583,7 +2682,9 @@ function updateSprintStatus(args = {}) {
       banner: renderBanner('preflight_ok', { caps: `sprint_status=${sprintId}:${status}` }),
       next_action: status === 'done'
         ? (handoffPath ? 'promover_handoff' : 'selecionar_proxima_sprint')
-        : 'continuar_pipeline',
+        : status === 'manual_validation_pending'
+          ? 'aguardar_validacao_manual'
+          : 'continuar_pipeline',
       ...(handoffPath ? { handoff_path: handoffPath } : {}),
     };
   } catch (error) {
@@ -2649,13 +2750,13 @@ function selectNextSprint(args = {}) {
         state_path: selected.state_file,
         contrato_status: selected.contrato_status,
         contrato_sealed: selected.contrato_sealed === true,
-        reason: 'ready + deps done + sprint file válido + DoR verde + maior prioridade determinística',
+        reason: 'ready + deps done/manual_validation_pending + sprint file válido + DoR verde + maior prioridade determinística',
       } : null,
       candidates: candidates.map((item) => item.id),
       rejected,
       pending_count: blocked ? (structuralPendencies.length || 1) : 0,
       pendencies: structuralPendencies.length > 0 ? structuralPendencies : (selected ? [] : [
-        conformancePending('seleção', 'next_sprint', null, 'Nenhuma sprint executável: exige state=ready, deps done, sprint file válido e DoR verde.', 'atualizar_sprint_file_ou_dependencias'),
+        conformancePending('seleção', 'next_sprint', null, 'Nenhuma sprint executável: exige state=ready, deps done ou manual_validation_pending, sprint file válido e DoR verde.', 'atualizar_sprint_file_ou_dependencias'),
       ]),
       banner: blocked
         ? renderBanner('preflight_fail', { motivo: selected ? `backlog index: ${structuralPendencies.length} pendências` : 'nenhuma sprint executável' })
@@ -3516,7 +3617,7 @@ const STATE_EXTENSION_ARRAYS = [
   'obligations', 'invariants', 'scenario_probes', 'risk_probes',
   'validation_map', 'task_evidence', 'worktree_baseline', 'worktree_final',
 ];
-const STATE_COMPACT_SCHEMA_VERSION = 2;
+const STATE_COMPACT_SCHEMA_VERSION = 3;
 const SPRINT_ID_PATTERN = /^S\d{2}(?:[a-z]|\.\d+)?$/;
 const EVAL_ID_PATTERN = /^EVAL-\d+$/;
 const EVAL_STATUSES = new Set(['passed', 'failed', 'blocked', 'not_applicable']);
@@ -3544,6 +3645,180 @@ function stateEvidenceFiles(state) {
   return [...new Set(result.filter((item) => typeof item === 'string' && item.trim()))].sort();
 }
 
+// D22: Oráculo mecânico de prova (T-outcome). Padrões de assert determinam se
+// um check indexado em check_table — ou o arquivo de teste que ele referencia —
+// prova um outcome observável. Um comando/arquivo que só exercita o caminho
+// (sem assert) não prova — é `unproved`.
+// A regex casa CHAMADAS reais de assert — não palavras soltas em descrições ou
+// comentários (ex.: `test('should return X', ...)` sem assert não é prova).
+// Casa: assert(...) | assert.equal(...) | expect(x).toEqual(...) | x.should.equal(...)
+//       ok(...) | fail(...) | .toEqual( .toBe( .deepEqual( .strictEqual( .notStrictEqual( .throws( .rejects(
+const ASSERT_PATTERNS = /(?:\b(?:assert|expect)\s*(?:\(|\.\s*\w+\s*\()|(?:\.\s*)?\bshould\s*\.\s*\w+\s*\(|\b(?:ok|fail)\s*\(|(?:\.\s*|\b)(?:toEqual|toBe|deepEqual|strictEqual|notStrictEqual|throws|rejects)\s*\()/i;
+const SOURCE_PATH_IN_COMMAND = /(?:\.\/|[A-Za-z0-9_@./-]+)\.(?:js|mjs|cjs|ts)\b/g;
+const TEST_PATH_HINT = /\.(?:test|spec)\./i;
+const TEST_DIR_HINT = /(?:^|\/)(?:tests?|__tests__)\//i;
+
+const ACCEPTANCE_STATUSES = new Set(['proved', 'unproved', 'violated', 'manual_pending']);
+
+function looksLikeTestPath(relPath) {
+  return TEST_PATH_HINT.test(relPath) || TEST_DIR_HINT.test(relPath);
+}
+
+// Proposta §4.1: assert no comando OU no teste referenciado (conteúdo do arquivo).
+// options.readText(relPath) → string; sem FS, só a string do comando conta.
+function checkProvesOutcome(command, state, fileIndexes, options = {}) {
+  if (ASSERT_PATTERNS.test(command)) return true;
+  const candidates = new Set();
+  for (const match of command.matchAll(SOURCE_PATH_IN_COMMAND)) {
+    candidates.add(match[0]);
+  }
+  const filesChanged = Array.isArray(state?.files_changed) ? state.files_changed : [];
+  for (const idx of fileIndexes) {
+    if (!Number.isInteger(idx) || idx < 0 || idx >= filesChanged.length) continue;
+    const rel = filesChanged[idx];
+    if (typeof rel === 'string' && rel.trim() && looksLikeTestPath(rel)) candidates.add(rel);
+  }
+  const readText = typeof options.readText === 'function' ? options.readText : null;
+  if (!readText) return false;
+  for (const rel of candidates) {
+    try {
+      const text = readText(rel);
+      if (typeof text === 'string' && ASSERT_PATTERNS.test(text)) return true;
+    } catch {
+      // arquivo ausente/ilegível: não prova
+    }
+  }
+  return false;
+}
+
+// Classifica acceptance_results[] a partir de proof_refs no state e do
+// contrato AC-* do sprint file. Helper determinístico, sem LLM.
+// options.readText opcional: lê arquivos referenciados pelo check/proof_refs.
+// Retorna { results: [{id, status, proof_types}], violations: [] }.
+function classifyAcceptanceResults(state, sprintAcceptance, options = {}) {
+  const violations = [];
+  const checkTable = Array.isArray(state?.check_table) ? state.check_table : [];
+  const proofRefs = (state?.proof_refs && typeof state.proof_refs === 'object'
+    && !Array.isArray(state.proof_refs)) ? state.proof_refs : {};
+  const acItems = Array.isArray(sprintAcceptance) ? sprintAcceptance : [];
+
+  const results = [];
+  const seenIds = new Set();
+  for (const ac of acItems) {
+    if (!ac || typeof ac !== 'object') continue;
+    const id = typeof ac.id === 'string' ? ac.id.trim() : null;
+    if (!id) {
+      violations.push('AC sem id em acceptance contract');
+      continue;
+    }
+    if (seenIds.has(id)) {
+      violations.push(`AC id duplicado: ${id}`);
+      continue;
+    }
+    seenIds.add(id);
+
+    const ref = proofRefs[id] ?? {};
+    const checkIndexes = Array.isArray(ref.checks) ? ref.checks : [];
+    const fileIndexes = Array.isArray(ref.files) ? ref.files : [];
+    const required = Array.isArray(ac?.evidence?.required) ? ac.evidence.required : [];
+    const hasManual = ac?.evidence?.manual !== null && ac?.evidence?.manual !== undefined;
+
+    const proofTypes = [];
+    // T-outcome: check referenciado deve ter assert (comando ou arquivo de teste).
+    let tOutcomeProved = false;
+    let tOutcomePresent = false;
+    for (const idx of checkIndexes) {
+      if (!Number.isInteger(idx) || idx < 0 || idx >= checkTable.length) {
+        violations.push(`proof_refs[${id}].checks índice inválido: ${idx}`);
+        continue;
+      }
+      tOutcomePresent = true;
+      const command = String(checkTable[idx] ?? '');
+      if (checkProvesOutcome(command, state, fileIndexes, options)) {
+        tOutcomeProved = true;
+      }
+    }
+    if (required.includes('T-outcome')) {
+      if (tOutcomePresent) proofTypes.push(tOutcomeProved ? 'T-outcome:proved' : 'T-outcome:unproved');
+      else proofTypes.push('T-outcome:absent');
+    }
+    // I (implementation): files referenciados no boundary
+    if (required.includes('I')) {
+      if (fileIndexes.length > 0) proofTypes.push('I:present');
+      else proofTypes.push('I:absent');
+    }
+    // W (wiring): tratado como I aqui (presença de files)
+    if (required.includes('W')) {
+      if (fileIndexes.length > 0) proofTypes.push('W:present');
+      else proofTypes.push('W:absent');
+    }
+    // M (manual): não é provado automaticamente
+    if (hasManual) proofTypes.push('M:pending');
+
+    // Decisão de status (D22/§5.4):
+    // - provas automáticas obrigatórias (I, T-outcome, W) todas proved/present
+    //   e sem M aberto → proved
+    // - provas automáticas provadas + M aberto → manual_pending
+    // - alguma prova automática unproved/absent → unproved
+    // - (violated é setado externamente por findings do validator)
+    const autoRequired = required.filter((r) => r !== 'M');
+    const autoFail = proofTypes.some((p) => p.endsWith(':unproved') || p.endsWith(':absent'));
+    let status;
+    if (autoFail) {
+      status = 'unproved';
+    } else if (hasManual) {
+      status = 'manual_pending';
+    } else {
+      // Sem M: todas as provas automáticas obrigatórias precisam estar proved
+      const allAutoProved = autoRequired.every((r) => {
+        const match = proofTypes.find((p) => p.startsWith(`${r}:`));
+        return match && (match.endsWith(':proved') || match.endsWith(':present'));
+      });
+      status = allAutoProved ? 'proved' : 'unproved';
+    }
+    results.push({ id, status, proof_types: proofTypes });
+  }
+
+  return { results, violations };
+}
+
+// Valida o shape de acceptance_results[] recebido pelo validatorComplete.
+// Shape inválido → fail estrutural (como findings). Não classifica — só valida.
+function validateAcceptanceResultsShape(packet, acIds) {
+  const violations = [];
+  const results = Array.isArray(packet?.acceptance_results) ? packet.acceptance_results : null;
+  if (results === null) return { hasField: false, violations };
+  const seen = new Set();
+  for (const [index, item] of results.entries()) {
+    const label = `acceptance_results[${index}]`;
+    if (!item || typeof item !== 'object') {
+      violations.push(`${label} deve ser objeto`);
+      continue;
+    }
+    if (typeof item.id !== 'string' || !/^AC-\d+$/.test(item.id.trim())) {
+      violations.push(`${label}.id deve ser AC-NNN`);
+      continue;
+    }
+    if (seen.has(item.id.trim())) {
+      violations.push(`${label}.id duplicado`);
+    }
+    seen.add(item.id.trim());
+    if (!ACCEPTANCE_STATUSES.has(item.status)) {
+      violations.push(`${label}.status deve ser proved|unproved|violated|manual_pending`);
+    }
+    if (item.proof_types !== undefined && !Array.isArray(item.proof_types)) {
+      violations.push(`${label}.proof_types deve ser array quando presente`);
+    }
+  }
+  // Se o state declara ACs, todo AC deve aparecer em acceptance_results
+  if (Array.isArray(acIds) && acIds.length > 0) {
+    for (const acId of acIds) {
+      if (!seen.has(acId)) violations.push(`acceptance_results sem AC: ${acId}`);
+    }
+  }
+  return { hasField: true, violations };
+}
+
 function stateSchemaVersion(state) {
   return Number(state?.state_schema_version ?? state?.schema ?? 1);
 }
@@ -3555,7 +3830,7 @@ function isCompactStateSchema(state) {
 function compactStateStrings(values, label, violations) {
   if (values === undefined) return [];
   if (!Array.isArray(values)) {
-    violations.push(`${label} deve ser array no schema v2`);
+    violations.push(`${label} deve ser array no schema compacto`);
     return [];
   }
   return values.filter((value, index) => {
@@ -3566,9 +3841,20 @@ function compactStateStrings(values, label, violations) {
 }
 
 function normalizeCompactStateContractIds(state, violations) {
+  // Em state_schema_version 3, o writer pode usar forma compacta (contract_ids
+  // com arrays de IDs) ou forma expandida (obligations/invariants como arrays
+  // de objetos). contract_ids ausente preserva os arrays canônicos do state.
   const ids = state.contract_ids;
+  if (ids === undefined) {
+    return {
+      obligations: Array.isArray(state.obligations) ? state.obligations : [],
+      invariants: Array.isArray(state.invariants) ? state.invariants : [],
+      scenario_probes: Array.isArray(state.scenario_probes) ? state.scenario_probes : [],
+      risk_probes: Array.isArray(state.risk_probes) ? state.risk_probes : [],
+    };
+  }
   if (!ids || typeof ids !== 'object' || Array.isArray(ids)) {
-    violations.push('contract_ids deve ser objeto no schema v2');
+    violations.push('contract_ids deve ser objeto no schema compacto');
     return {
       obligations: [], invariants: [], scenario_probes: [], risk_probes: [],
     };
@@ -3586,7 +3872,7 @@ function normalizeCompactStateContractIds(state, violations) {
 function normalizeCompactStateRefs(refs, table, label, violations) {
   if (refs === undefined) return [];
   if (!Array.isArray(refs)) {
-    violations.push(`${label} deve ser array no schema v2`);
+    violations.push(`${label} deve ser array no schema compacto`);
     return [];
   }
   const out = [];
@@ -3617,7 +3903,7 @@ function normalizeCompactState(state, violations) {
   const fileTable = Array.isArray(state.files_changed) ? state.files_changed : [];
   const checkTable = Array.isArray(state.check_table) ? state.check_table : [];
   if (state.check_table !== undefined && !Array.isArray(state.check_table)) {
-    violations.push('check_table deve ser array no schema v2');
+    violations.push('check_table deve ser array no schema compacto');
   }
   for (const [index, value] of checkTable.entries()) {
     if (typeof value !== 'string' || !value.trim()) violations.push(`check_table[${index}] deve ser string não vazia`);
@@ -3876,6 +4162,15 @@ function validateStateBoundary(statePathValue, args = {}) {
     return { ok: false, violations: [`state_path inválido: ${error.message}`] };
   }
   const violations = [];
+  const schemaVersion = stateSchemaVersion(state);
+  // D8/LEG2: em 0.15, state v3 é a única versão aceita. v1 (implícito, sem
+  // state_schema_version) e v2 são hard-fail — sem reader de migração (D19).
+  if (schemaVersion !== STATE_COMPACT_SCHEMA_VERSION) {
+    violations.push(
+      `state_schema_version deve ser ${STATE_COMPACT_SCHEMA_VERSION} (recebido ${schemaVersion}); artefatos pré-0.15 não são suportados`,
+    );
+    return { ok: false, legacy: false, state, violations };
+  }
   state = normalizeCompactState(state, violations);
   for (const field of STATE_REQUIRED_FIELDS) {
     if (state[field] === undefined || state[field] === null) violations.push(`campo obrigatório ausente: ${field}`);
@@ -3885,24 +4180,24 @@ function validateStateBoundary(statePathValue, args = {}) {
   }
   const isDirect = state.executor_skill === 'talos-direct-execute';
   const hasExtension = state.contract_kind !== undefined;
-  if (!hasExtension && state.executor_skill !== 'talos-plan-execute') violations.push('schema legado permitido somente para talos-plan-execute');
+  if (!hasExtension) violations.push('contract_kind obrigatório em state_schema_version 3 (legado pré-extensão removido)');
   if (isDirect && state.contract_kind !== 'direct') violations.push('talos-direct-execute exige contract_kind=direct');
   if (hasExtension && state.executor_skill === 'talos-plan-execute' && state.contract_kind !== 'plan') violations.push('talos-plan-execute exige contract_kind=plan');
   if (hasExtension && !['plan', 'direct'].includes(state.contract_kind)) violations.push('contract_kind deve ser plan ou direct');
-  if (hasExtension || isDirect) {
-    for (const field of ['base_sha', 'head_sha']) {
-      if (typeof state[field] !== 'string' || !state[field].trim()) violations.push(`${field} obrigatório na extensão`);
-    }
-    for (const field of STATE_EXTENSION_ARRAYS) {
-      if (!Array.isArray(state[field])) violations.push(`${field} deve ser array na extensão`);
-    }
-    if (isDirect && Array.isArray(state.obligations) && state.obligations.length === 0) violations.push('direct exige obligations não vazio');
-    validateSprintEvidenceState(state, args, violations);
-    validateSnapshot(state.worktree_baseline, 'worktree_baseline', violations);
-    validateSnapshot(state.worktree_final, 'worktree_final', violations);
+  // Extensão (base_sha/head_sha/contract_kind/snapshots) agora obrigatória em todo
+  // state v3: o caminho legacy mínimo de talos-plan-execute foi removido (D8/LEG2).
+  for (const field of ['base_sha', 'head_sha']) {
+    if (typeof state[field] !== 'string' || !state[field].trim()) violations.push(`${field} obrigatório em state_schema_version 3`);
   }
-  if (violations.length > 0 || !hasExtension) {
-    return { ok: violations.length === 0, legacy: !hasExtension, state, violations };
+  for (const field of STATE_EXTENSION_ARRAYS) {
+    if (!Array.isArray(state[field])) violations.push(`${field} deve ser array em state_schema_version 3`);
+  }
+  if (isDirect && Array.isArray(state.obligations) && state.obligations.length === 0) violations.push('direct exige obligations não vazio');
+  validateSprintEvidenceState(state, args, violations);
+  validateSnapshot(state.worktree_baseline, 'worktree_baseline', violations);
+  validateSnapshot(state.worktree_final, 'worktree_final', violations);
+  if (violations.length > 0) {
+    return { ok: violations.length === 0, legacy: false, state, violations };
   }
   const root = consumerRoot(args);
   try {
@@ -4366,6 +4661,109 @@ function validatorComplete(args, context) {
       error: `Finding estruturado inválido: ${packetResult.violations.join('; ')}`,
       next_action: 'corrigir_shape_estruturado_do_finding',
     };
+  }
+
+  // D05/D22: quando o state declara sprint_file_path, o validator deve emitir
+  // acceptance_results[] com shape estrito cobrindo todos os AC-* do §7.3.
+  // Shape inválido ou cobertura incompleta → fail estrutural (como findings).
+  // Classificação proved/unproved/manual_pending é do oráculo mecânico
+  // (classifyAcceptanceResults); o packet do LLM deve ecoar o oráculo.
+  // `violated` pode ser escalado pelo validator via findings (não pelo oráculo).
+  let sprintAcIds = null;
+  let boundaryStateForOracle = null;
+  let sprintAcceptanceForOracle = null;
+  try {
+    boundaryStateForOracle = JSON.parse(fs.readFileSync(resolveConsumerPath(statePathValue, args), 'utf8'));
+    if (typeof boundaryStateForOracle?.sprint_file_path === 'string' && boundaryStateForOracle.sprint_file_path.trim()) {
+      const sprintMarkdown = fs.readFileSync(
+        resolveConsumerPath(boundaryStateForOracle.sprint_file_path, args),
+        'utf8',
+      );
+      sprintAcceptanceForOracle = parseAcceptanceContract(sprintMarkdown);
+      sprintAcIds = sprintAcceptanceForOracle
+        .map((ac) => ac.id)
+        .filter((id) => typeof id === 'string' && id.trim());
+    }
+  } catch {
+    // State/sprint ilegível: o boundary já foi validado no start; aqui apenas
+    // não conseguimos derivar AC ids — a checagem de shape segue sem cobertura.
+    sprintAcIds = null;
+    boundaryStateForOracle = null;
+    sprintAcceptanceForOracle = null;
+  }
+  const acceptanceCheck = validateAcceptanceResultsShape(packet, sprintAcIds);
+  if (acceptanceCheck.hasField && acceptanceCheck.violations.length > 0) {
+    return {
+      gate: 'G4', action: 'complete', status: 'blocked', timestamp,
+      validator_attempt: cycle.active.attempt, validator_run_id: activeValidatorRunId,
+      state_path: statePathValue, validator_status: 'invalid_acceptance_shape',
+      error: `acceptance_results com shape inválido: ${acceptanceCheck.violations.join('; ')}`,
+      next_action: 'corrigir_shape_de_acceptance_results',
+    };
+  }
+  if (sprintAcIds && sprintAcIds.length > 0 && !acceptanceCheck.hasField) {
+    return {
+      gate: 'G4', action: 'complete', status: 'blocked', timestamp,
+      validator_attempt: cycle.active.attempt, validator_run_id: activeValidatorRunId,
+      state_path: statePathValue, validator_status: 'missing_acceptance_results',
+      error: `state declara sprint_file_path; validator deve emitir acceptance_results cobrindo ${sprintAcIds.join(', ')}`,
+      next_action: 'emitir_acceptance_results_no_output_do_validator',
+    };
+  }
+  if (acceptanceCheck.hasField && sprintAcceptanceForOracle && boundaryStateForOracle) {
+    const root = consumerRoot(args);
+    const oracle = classifyAcceptanceResults(
+      boundaryStateForOracle,
+      sprintAcceptanceForOracle,
+      {
+        readText: (rel) => fs.readFileSync(path.join(root, rel), 'utf8'),
+      },
+    );
+    const oracleById = new Map(oracle.results.map((item) => [item.id, item]));
+    const mismatches = [];
+    for (const item of packet.acceptance_results) {
+      if (!item || typeof item !== 'object') continue;
+      const id = typeof item.id === 'string' ? item.id.trim() : '';
+      const expected = oracleById.get(id);
+      if (!expected) continue;
+      // Findings podem escalar para violated; demais status devem ecoar o oráculo.
+      if (item.status === 'violated') continue;
+      if (item.status !== expected.status) {
+        mismatches.push(
+          `${id}: packet=${item.status} oracle=${expected.status}`
+          + ` [${(expected.proof_types ?? []).join(',')}]`,
+        );
+      }
+    }
+    if (mismatches.length > 0) {
+      return {
+        gate: 'G4', action: 'complete', status: 'blocked', timestamp,
+        validator_attempt: cycle.active.attempt, validator_run_id: activeValidatorRunId,
+        state_path: statePathValue, validator_status: 'acceptance_oracle_mismatch',
+        error: `acceptance_results diverge do oráculo mecânico: ${mismatches.join('; ')}`,
+        next_action: 'corrigir_acceptance_results_para_ecoar_oraculo',
+      };
+    }
+  }
+
+  // D05/D22 + CN2/VC1 (Plano 3): o eco validado do oráculo é persistido no state
+  // em disco — é a fonte que o gate de status do `updateSprintStatus` consome
+  // (`readStateAcceptanceResults`). O executor escreve `proof_refs` sem
+  // `acceptance_results` ("emitido pelo validator no complete"), e o packet do
+  // validator não persiste nada por si só; sem esta escrita, o state nunca teria
+  // o campo no fluxo real e o gate de MVP/done ficaria morto: MVP inalcançável
+  // (`emitir_acceptance_results_no_state`) e `done` com M aberto emitindo handoff.
+  // Falha de FS aqui é fail-closed a jusante: o `update_sprint_status` de MVP
+  // bloqueará com pendência nomeada, sem degradação silenciosa de veredito.
+  if (acceptanceCheck.hasField && Array.isArray(packet.acceptance_results) && boundaryStateForOracle) {
+    try {
+      const stateAbs = resolveConsumerPath(statePathValue, args);
+      boundaryStateForOracle.acceptance_results = packet.acceptance_results;
+      fs.writeFileSync(stateAbs, `${JSON.stringify(boundaryStateForOracle, null, 2)}\n`);
+    } catch {
+      // State recém-lido e root de consumo gravável; falha aqui não altera o
+      // veredito do complete — o gate de status downstream bloqueia (fail-closed).
+    }
   }
 
   const normalizedVerdict = verdict === 'pass'
@@ -5443,6 +5841,7 @@ export {
   lockValidator,
   captureWorktreeSnapshot,
   validateStateBoundary,
+  classifyAcceptanceResults,
   assertAfterPlan,
   runState,
   ping,
