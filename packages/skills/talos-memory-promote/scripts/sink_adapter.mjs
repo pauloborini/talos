@@ -62,19 +62,37 @@ export function detectSink(capabilities) {
 }
 
 /**
- * Shape de chamada por candidato (agente executa remember no host).
+ * Shape nativa Argus `remember` por candidato (agente executa no host).
+ * Sprint §7 D3 / PLAN §6.1: content/type/tags/links — sem claim/anchor_*.
  * @param {object} candidate
  */
 export function rememberCallShape(candidate) {
+  const claim = typeof candidate.claim === 'string' ? candidate.claim.trim() : '';
+  const motivo = typeof candidate.motivo === 'string' ? candidate.motivo.trim() : '';
+  const content = motivo ? `${claim} — ${motivo}` : claim;
+
+  const tags = ['talos-handoff'];
+  const anchorTipo = candidate.ancora?.tipo;
+  const anchorValor = candidate.ancora?.valor;
+  if (anchorTipo && anchorValor) {
+    tags.push(`anchor:${anchorTipo}:${anchorValor}`);
+  }
+
+  /** @type {{ content: string, type: string, tags: string[], links?: string[] }} */
+  const args = {
+    content,
+    type: 'decision',
+    tags,
+  };
+
+  const ref = typeof candidate.ref === 'string' ? candidate.ref.trim() : candidate.ref;
+  if (ref) {
+    args.links = [ref];
+  }
+
   return {
     tool: 'remember',
-    args: {
-      claim: candidate.claim,
-      anchor_type: candidate.ancora?.tipo,
-      anchor_value: candidate.ancora?.valor,
-      ref: candidate.ref ?? null,
-      motivo: candidate.motivo,
-    },
+    args,
   };
 }
 

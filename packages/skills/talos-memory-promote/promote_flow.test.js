@@ -62,7 +62,14 @@ test('EVAL-001: com sink mock → promove válidos; descarta sprint_path', async
   assert.equal(calls.length, 2);
   assert.ok(result.parse.discarded.some((d) => d.reason === 'anchor_sprint_path_only'));
   assert.ok(result.parse.discarded.some((d) => d.reason === 'over_cap'));
-  assert.ok(calls.every((c) => c.anchor_value !== '.talos/backlog/sprints/SPRINT_S04_skill_memory_promote.md'));
+  assert.ok(
+    calls.every(
+      (c) =>
+        !JSON.stringify(c.tags ?? []).includes('SPRINT_S04_skill_memory_promote.md')
+        && !String(c.content ?? '').includes('SPRINT_S04_skill_memory_promote.md'),
+    ),
+  );
+  assert.ok(calls.every((c) => c.type === 'decision' && Array.isArray(c.tags) && c.tags.includes('talos-handoff')));
 });
 
 test('resolveHandoffPath: mais recente sob .talos/memory/', async () => {
