@@ -130,7 +130,7 @@ State file = deterministic context layer, not a human report. Keep it compact: I
 
 ```json
 {
-  "state_schema_version": 2,
+  "state_schema_version": 3,
   "run_id": "<run_id>",
   "slice": "<slice id>",
   "base_sha": "<base commit explícito do plano/handoff>",
@@ -145,6 +145,10 @@ State file = deterministic context layer, not a human report. Keep it compact: I
   "sprint_file_path": ".talos/backlog/sprints/SPRINT_S01_slug.md",
   "contract_ids": {"obligations": ["§7.3.O1"], "invariants": ["I1"], "scenarios": ["S1"], "risks": ["R1"]},
   "eval_results": [{"id": "EVAL-001", "status": "passed", "evidence": ["<path/check/state>"], "checks": [0]}],
+  "proof_refs": {
+    "AC-001": {"checks": [0], "files": [0]}
+  },
+  "acceptance_results": [{"id": "AC-001", "status": "proved", "proof_types": ["T-outcome:proved", "I:present"]}],
   "policy_scope": {"forbidden_scope": ["<path>"], "required_gates": ["talos_verify_sprint_file", "talos-task-validator"]},
   "check_table": ["<comando>"],
   "validation_map": [{"obligation_ids": ["§7.3.O1"], "checks": [0], "status": "passed"}],
@@ -159,9 +163,11 @@ State file = deterministic context layer, not a human report. Keep it compact: I
 
 Capture `base_sha` da referência explícita do plano/handoff; nunca infira pelo nome da branch. Antes da primeira mutação, capture `worktree_baseline`; imediatamente antes do handoff, capture `worktree_final`. `files_changed` e `task_evidence` representam exatamente `base_sha...head_sha` + delta entre snapshots. Dirty preexistente byte/status-idêntico fica fora; qualquer alteração posterior entra.
 
-Use schema v2. `contract_ids` referencia IDs autoritativos do plano/Sprint §7/§9; não copie narrativa de invariantes, cenários ou riscos. `check_table` deduplica comandos; `task_evidence.files` referencia índices de `files_changed`; snapshots usam tuplas `[path,status,sha256]`.
+Use schema v3 (`state_schema_version:3`). v1/v2 são hard-fail em 0.15 (D19). `contract_ids` referencia IDs autoritativos do plano/Sprint §7/§9; não copie narrativa de invariantes, cenários ou riscos. `check_table` deduplica comandos; `task_evidence.files` referencia índices de `files_changed`; snapshots usam tuplas `[path,status,sha256]`.
 
-Se o plano tiver Sprint file, o state deve provar todos os `EVAL-*` do `eval_manifest` com `eval_results.status="passed"` e evidência real. Não grave `evidence_to_claim` no v2; `eval_results` é fonte única. `policy_scope` deve refletir somente gates executáveis de `Sprint §10` em forma resumida; arquivo em `forbidden_scope` não pode aparecer em `files_changed`. `allowed_scope`, quando existir em state legado, é informativo e nunca limita `files_changed`.
+Se o plano tiver Sprint file, o state deve provar todos os `EVAL-*` do `eval_manifest` com `eval_results.status="passed"` e evidência real. Não grave `evidence_to_claim` no v3; `eval_results` é fonte única. `policy_scope` deve refletir somente gates executáveis de `Sprint §10` em forma resumida; arquivo em `forbidden_scope` não pode aparecer em `files_changed`. `allowed_scope`, quando existir em state legado, é informativo e nunca limita `files_changed`.
+
+`proof_refs` (v0.15) mapeia cada `AC-NNN` do §7.3 para `{ checks: [índices de check_table], files: [índices de files_changed] }`. O executor registra a evidência citada por AC (o comando de teste com assert de outcome e os arquivos do sink). `acceptance_results` é emitido pelo validator sibling no `complete` — não pelo executor — e **persistido pelo MCP no state em disco** após a confrontação do eco com o oráculo mecânico (D22). É essa persistência que alimenta o gate de status de `talos_update_sprint_status` (CN2/VC1): sem ela, o state nunca teria `acceptance_results` no fluxo real, `manual_validation_pending` ficaria inalcançável e `done` com M aberto passaria. O MCP classifica `proved`/`unproved`/`violated`/`manual_pending` via oráculo mecânico (D22): um check com assert de retorno/efeito é elegível a `proved`; um check que só exercita o caminho (sem assert) é `unproved`.
 
 Validation is always **sibling**, on every host. The validator is registered as a real subagent on every host, but this executor **never** dispatches it and never validates its own work. After tasks and local gates pass and the state file is written, this executor **stops mutation** and returns `validator_handoff_required` with the `state_path`. The orchestrator dispatches `talos-task-validator` as the next isolated sibling phase, locks it via `talos_lock_validator`, and — if the verdict is `fail` — dispatches `talos-findings-repair` (not this executor) before the **2nd and last** validator.
 

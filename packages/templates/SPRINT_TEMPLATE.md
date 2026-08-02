@@ -12,7 +12,7 @@ Regra: este arquivo guarda **escopo, estado, decisões locais, dependências, ga
 |---|---|
 | Sprint ID | S<NN> |
 | Nome | [nome curto] |
-| Status | [backlog / ready / doing / review / done / blocked] |
+| Status | [backlog / ready / doing / review / manual_validation_pending / done / blocked] |
 | Backlog mestre | [path + anchor da linha S<NN> — ou `Não aplicável (standalone)`] |
 | Contrato status | [draft / aprovado] |
 | Selo do contrato | [pendente até aprovação] |
@@ -137,23 +137,33 @@ Casa única de produto desta sprint: decisões D*, cenários UX e aceite binári
 
 ### 7.3 Aceite binário
 
-> Critérios observáveis e binários. Derivados de §7.1/§7.2 e do `eval_manifest` §9.
+> Critérios observáveis e atômicos (`AC-*`). Hierarquia: `AC-*` ⊃ `EVAL-*`. Todo `EVAL-*` do `eval_manifest` §9 deve ser referenciado por ≥1 `AC-*`. Granularidade: ≥1 `AC-*` por cenário §7.2 + ≥1 de regressão quando houver regressão material.
 
-**Produto**
+```yaml
+acceptance:
+  - id: AC-001
+    behavior: "[efeito observável]"
+    decisions: [D1]
+    scenario: "[cenário §7.2]"
+    evals: [EVAL-001]
+    evidence:
+      required: [I, T-outcome, W]
+      manual: null
+  - id: AC-002
+    behavior: "[efeito observável que requer smoke manual]"
+    decisions: [D2]
+    scenario: "[cenário §7.2]"
+    evals: [EVAL-002]
+    evidence:
+      required: [I, T-outcome, M]
+      manual:
+        severity: alta
+        scenario: "[passos mínimos humanos]"
+        expected_evidence: "[resultado observável]"
+        impact_paths: ["packages/foo.js"]
+```
 
-- [ ] [observável]
-
-**UX**
-
-- [ ] [observável — espelhar §7.2, inclusive erros e loading]
-
-**Dados**
-
-- [ ] [integridade observável — referencie D* em vez de re-derivar]
-
-**Regressão de produto**
-
-- [ ] [o que já funcionava e deve continuar]
+Tipos de evidência (D4): `I` implementação, `T-outcome` resultado observável (assert de retorno/efeito), `W` wiring, `M` smoke manual. `manual` deve ser `null` quando `required` não inclui `M`; objeto (severity/scenario/expected_evidence/impact_paths) quando inclui.
 
 ---
 
@@ -164,7 +174,7 @@ Casa única de produto desta sprint: decisões D*, cenários UX e aceite binári
 - [ ] Objetivo único e escopo fechado.
 - [ ] Dependências críticas resolvidas.
 - [ ] Bloqueios críticos resolvidos ou registrados.
-- [ ] Contrato §7 completo (D*, cenários UX, 4 grupos de aceite) e `Contrato status` preenchido.
+- [ ] Contrato §7 completo (D*, cenários UX, `AC-*` em YAML `acceptance`) e `Contrato status` preenchido.
 - [ ] `eval_manifest` mínimo preenchido.
 - [ ] Próxima ação explícita.
 
@@ -174,7 +184,7 @@ Casa única de produto desta sprint: decisões D*, cenários UX e aceite binári
 
 ## 9. Eval manifest
 
-Manifesto mínimo de avaliação da sprint. Serve para PLAN, executor e validator saberem o que precisa ser comprovado (o aceite de produto mora na §7).
+Manifesto mínimo de avaliação da sprint. Serve para PLAN, executor e validator saberem o que precisa ser comprovado. `EVAL-*` é meio de prova subordinado a `AC-*` via `evals:` na §7.3. Smoke manual (M) mora no `evidence.manual` do AC; não há `manual_checks` solto aqui como autoridade de aceite.
 
 ```yaml
 eval_manifest:
@@ -189,8 +199,6 @@ eval_manifest:
     - "[fluxo/regra que não pode quebrar]"
   negative_paths:
     - "[erro/permissão/vazio/retry relevante]"
-  manual_checks:
-    - "[check manual mínimo, se aplicável]"
 ```
 
 ---
@@ -269,7 +277,7 @@ Tabela viva para fechar o loop entre promessa e prova.
 
 ### Definition of Done
 
-- [ ] Critérios de aceite §7.3 verdes.
+- [ ] Critérios de aceite §7.3 (`AC-*`) verdes.
 - [ ] PLAN executado dentro do boundary.
 - [ ] Validações locais registradas.
 - [ ] Validator frio `pass` ou `pass_with_observations`.
