@@ -40,6 +40,7 @@ Use os scripts puros (testáveis, sem MCP embutido):
 | `scripts/parse_handoff.mjs` | parse + filtro de candidatos |
 | `scripts/sink_adapter.mjs` | `detectSink` + `promoteCandidates` (+ shapes de `remember`) |
 | `scripts/promote_flow.mjs` | resolve path → parse → detect → promote (mockável) |
+| `scripts/policy_promote.mjs` | propose/apply candidatas a `policy_manifest` (Q3 candidata+OK; **não** auto) |
 
 ```bash
 node --test packages/skills/talos-memory-promote/*.test.js
@@ -72,6 +73,17 @@ Enum documental para o **Atlas Agents** (outro repo / Core):
 
 Quem usa Atlas cola/anexa o HANDOFF no chat (ou skill nativa futura). Este plugin só documenta a porta.
 
+## Policy manifest (opcional — Q3 / D15 = candidata + OK)
+
+Fluxo **separado** do sink Argus/`none`. `runPromoteFlow` **não** chama policy automaticamente.
+
+1. **Listar** com `proposePolicyCandidates` — devolve candidatas + alvo (`sprint` preferencial via `sprint_id`, senão PLAN com fence `policy_manifest`) **sem gravar**.
+2. **Pedir OK humano** explícito (`confirmed: true`). Recusa (`confirmed: false`) → soft-fail; `policy_manifest` e o MD do handoff permanecem intactos.
+3. **Aplicar** com `applyPolicyCandidate` — anexa item em `promoted:` no fence do sprint/PLAN vivo tocado (nunca `.talos/policy/` nem rules globais).
+4. **0 candidatas** → sucesso sem write.
+
+Soft-fail também em path inválido / fence ausente / alvo fora do project root. Idempotência: mesmo `claim`+`anchor` já em `promoted:` = no-op sucesso.
+
 ## Soft-fail sem sink (exemplo de mensagem)
 
 ```text
@@ -96,3 +108,4 @@ Próximos passos: (1) usar o MD manualmente; (2) ativar Argus opcionalmente e re
 - Sem Argus: soft-fail + `handoff_path`.
 - 0 candidatos: sucesso, 0 chamadas a sink.
 - Docs citam `atlas_memory_graph` como porta (não implementação).
+- Policy: candidata listada sem write; OK grava só no `policy_manifest` do sprint/PLAN; recusa = soft-fail.
