@@ -171,6 +171,17 @@ const MOSCOW_RANK = new Map([['Must', 0], ['Should', 1], ['Could', 2], ["Won't n
 const GAIN_RANK = new Map([['alto', 0], ['médio', 1], ['baixo', 2]]);
 const EFFORT_RANK = new Map([['baixo', 0], ['médio', 1], ['alto', 2]]);
 const PRIORITY_RANK = new Map([['P0', 0], ['P1', 1], ['P2', 2], ['P3', 3]]);
+// Plano 4 — relatório de validação manual (D11-D15/D24). Um relatório por backlog;
+// IDs estáveis MV-<sprint>-<ac>; estados válidos do relatório (proposta §6).
+const MANUAL_VALIDATION_DIR = '.talos/manual-validation';
+const MANUAL_VALIDATION_REPORT_STATUSES = new Set(['pending', 'in_progress', 'validated', 'waived', 'failed']);
+const MANUAL_VALIDATION_MV_ID_RE = /^MV-(S\d{2}(?:[a-z]|\.\d+)?)-(AC-\d+)$/;
+// D14/D24: resultado humano mapeado para o acceptance_results do state (oráculo).
+const MANUAL_VALIDATION_STATE_MAP = {
+  validated: { to: 'proved', proof: 'M:validated' },
+  waived: { to: 'proved', proof: 'M:waived' },
+  failed: { to: 'violated', proof: 'M:failed' },
+};
 
 function documentFlowForRouting(mode, inputType = null, artifactType = null) {
   const normalizedInput = typeof inputType === 'string' ? inputType.trim().toLowerCase() : null;
@@ -2783,6 +2794,476 @@ function selectNextSprint(args = {}) {
     };
   }
   patchGateResult(runId, 'select_next_sprint', result, args);
+  return result;
+}
+
+// ===== Plano 4 — relatório de validação manual e sync (CN3 / D11-D15, D24) =====
+
+// D11: slug do backlog = nome do arquivo sem extensão, normalizado para o path
+// `.talos/manual-validation/<slug>.md`. Backlogs nunca compartilham arquivo.
+function manualValidationSlug(backlogPath) {
+  return path.basename(backlogPath, '.md').toLowerCase().replace(/[^a-z0-9_-]+/g, '-');
+}
+
+function manualValidationReportRel(backlogPath, reportPath = null) {
+  if (reportPath) return reportPath;
+  return path.join(MANUAL_VALIDATION_DIR, `${manualValidationSlug(backlogPath)}.md`);
+}
+
+// Parser determinístico do relatório: a tabela `## Pendências` (8 colunas) é o
+// contrato; o restante do markdown é livre. Sem dependência externa (padrão do
+// parser YAML próprio do Plano 1).
+function parseManualValidationReport(markdown) {
+  const lines = markdown.split(/\r?\n/);
+  const heading = lines.findIndex((line) => /^##\s+Pendências\s*$/i.test(line.trim()));
+  if (heading < 0) return { rows: [], error: 'Seção ## Pendências ausente no relatório.' };
+  const rows = [];
+  for (let i = heading + 1; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (/^##\s+/.test(line)) break;
+    if (!/^\|.*\|\s*$/.test(line)) continue;
+    const cells = line.split('|').slice(1, -1).map((cell) => cell.trim());
+    if (cells.length === 0 || cells.every((cell) => /^-+$/.test(cell))) continue;
+    if (cells[0] === 'ID') continue;
+    rows.push(cells);
+  }
+  return { rows, error: null };
+}
+
+// Regrava o relatório no formato canônico do template, com apenas as linhas
+// restantes (pendências abertas — D12) e `Atualizado em` novo.
+function renderManualValidationReport(slug, backlogPath, timestamp, rows) {
+  const body = rows.map((row) => `| ${row.join(' | ')} |`).join('\n');
+  return [
+    `# Validações manuais abertas — ${slug}`,
+    '',
+    '| Campo | Valor |',
+    '|---|---|',
+    `| Backlog | \`${backlogPath}\` |`,
+    `| Atualizado em | ${timestamp} |`,
+    '',
+    '## Pendências',
+    '',
+    '| ID | Sprint / AC | Severidade | Status | Cenário | Ambiente | Evidência esperada | Resultado / justificativa |',
+    '|---|---|---|---|---|---|---|---|',
+    body,
+    '',
+  ].join('\n');
+}
+
+// Validação estrita de uma linha do relatório. Devolve o MV parseado ou uma
+// pendência bloqueante (AC-4.1.1 waiver sem justificativa; formato/id/status).
+function parseManualValidationRow(row) {
+  if (row.length < 8) {
+    return { mv: null, pendency: conformancePending('relatorio_manual', row[0] ?? '<sem id>', null, `Linha do relatório com ${row.length} colunas (esperado 8).`, 'fix_manual_validation_report') };
+  }
+  const mvId = row[0];
+  const match = MANUAL_VALIDATION_MV_ID_RE.exec(mvId);
+  if (!match) {
+    return { mv: null, pendency: conformancePending('relatorio_manual', mvId, null, `ID MV inválido: ${mvId} (esperado MV-<Sprint>-<AC>).`, 'fix_manual_validation_report') };
+  }
+  const [, sprintId, acId] = match;
+  const status = row[3];
+  if (!MANUAL_VALIDATION_REPORT_STATUSES.has(status)) {
+    return { mv: null, pendency: conformancePending('relatorio_manual', mvId, null, `Status inválido: ${status} (válidos: pending, in_progress, validated, waived, failed).`, 'fix_manual_validation_report') };
+  }
+  if (row[1] !== `${sprintId} / ${acId}`) {
+    return { mv: null, pendency: conformancePending('relatorio_manual', mvId, null, `Coluna Sprint/AC (${row[1]}) não corresponde ao id ${mvId}.`, 'fix_manual_validation_report') };
+  }
+  const result = row[7];
+  const resultEmpty = !result || result === '—' || result === '-';
+  // D14: waiver exige justificativa; validated exige evidência humana (AC-4.2.1).
+  if ((status === 'waived' || status === 'validated') && resultEmpty) {
+    return { mv: null, pendency: conformancePending('relatorio_manual', mvId, null, status === 'waived'
+      ? `Waiver sem justificativa em ${mvId}: preencha Resultado/justificativa.`
+      : `Validated sem evidência em ${mvId}: preencha Resultado/justificativa.`, 'fix_manual_validation_report') };
+  }
+  return {
+    mv: {
+      mv_id: mvId,
+      sprint_id: sprintId,
+      ac_id: acId,
+      status,
+      severity: row[2],
+      scenario: row[4],
+      ambiente: row[5],
+      expected_evidence: row[6],
+      result,
+      raw: row,
+    },
+    pendency: null,
+  };
+}
+
+// Valida a sprint referenciada pelo relatório: linha no backlog, sprint file com
+// `AC-*` declarando `evidence.manual` (item fantasma = AC-4.1.2) e state v3 com
+// `acceptance_results` (alvo da sincronização D24). Devolve o plano da sprint ou
+// null (pendências já registradas).
+function planManualValidationSprint(sprintId, mvList, byId, args, pendencies) {
+  const backlogRow = byId.get(sprintId);
+  if (!backlogRow) {
+    pendencies.push(conformancePending('backlog_index', sprintId, null, `Backlog não contém sprint ${sprintId} referenciada no relatório.`, 'fix_manual_validation_report'));
+    return null;
+  }
+  if (pendingPathToken(backlogRow.sprint_file)) {
+    pendencies.push(conformancePending('sprint_file', sprintId, null, `Linha ${sprintId} não aponta Sprint file real.`, 'preencher_sprint_file_no_backlog'));
+    return null;
+  }
+  let sprintMarkdown;
+  try {
+    sprintMarkdown = fs.readFileSync(resolveConsumerPath(cleanBacklogPathToken(backlogRow.sprint_file), args), 'utf8');
+  } catch {
+    pendencies.push(conformancePending('sprint_file', sprintId, null, `Sprint file ilegível para ${sprintId}.`, 'corrigir_sprint_file_path'));
+    return null;
+  }
+  const contract = parseAcceptanceContract(sprintMarkdown);
+  const manualAcs = new Map();
+  if (Array.isArray(contract)) {
+    for (const item of contract) {
+      if (item?.id && item?.evidence?.manual && typeof item.evidence.manual === 'object') {
+        manualAcs.set(item.id, item);
+      }
+    }
+  }
+  for (const mv of mvList) {
+    if (!manualAcs.has(mv.ac_id)) {
+      pendencies.push(conformancePending('relatorio_manual', mv.mv_id, null, `Item fantasma: ${mv.mv_id} sem AC.manual correspondente no §7.3 de ${sprintId}.`, 'fix_manual_validation_report'));
+    }
+  }
+  const stateRel = backlogRow.state_file ? cleanBacklogPathToken(backlogRow.state_file) : '';
+  if (!stateRel) {
+    pendencies.push(conformancePending('state_file', sprintId, null, `Linha ${sprintId} sem State file para sincronizar M.`, 'vincular_state_no_backlog'));
+    return null;
+  }
+  let state;
+  try {
+    state = JSON.parse(fs.readFileSync(resolveConsumerPath(stateRel, args), 'utf8'));
+  } catch {
+    pendencies.push(conformancePending('state_file', sprintId, null, `State ilegível para ${sprintId}: ${stateRel}.`, 'corrigir_state_path'));
+    return null;
+  }
+  if (!Array.isArray(state.acceptance_results)) {
+    pendencies.push(conformancePending('acceptance_results', sprintId, null, `State de ${sprintId} sem acceptance_results — sync manual não pode registrar M.`, 'revalidar_estado_com_acceptance_results'));
+    return null;
+  }
+  const resultsById = new Map(state.acceptance_results.map((item) => [item?.id, item]));
+  for (const mv of mvList) {
+    if (!resultsById.has(mv.ac_id)) {
+      pendencies.push(conformancePending('acceptance_results', `${sprintId}:${mv.ac_id}`, null, `AC ${mv.ac_id} ausente do acceptance_results do state de ${sprintId}.`, 'revalidar_estado_com_acceptance_results'));
+    }
+  }
+  // Veredito terminal do validator que levou a sprint ao MVP (célula Gate do
+  // backlog) — reutilizado na promoção a `done` (exigência do updateSprintStatus).
+  const gateMatch = /^validator:(pass|pass_with_observations)/.exec(backlogRow.gate ?? '');
+  return {
+    sprintId,
+    mvList,
+    backlogRow,
+    stateRel,
+    state,
+    resultsById,
+    gateVerdict: gateMatch ? gateMatch[1] : null,
+  };
+}
+
+// D24: ledger append-only da sync manual no run state (run.json). Re-run que
+// sobrescreve o state de slice não apaga este histórico — o upsert faz merge
+// top-level e o array só cresce.
+function patchManualValidationLedger(runId, events, args) {
+  let previous = null;
+  try {
+    previous = readState(runId, args);
+  } catch (error) {
+    if (error.code !== -32004) throw error;
+  }
+  return upsertState({
+    run_id: runId,
+    project_root: args.project_root,
+    phase: previous?.phase ?? 'manual_validation_sync',
+    status: previous?.status ?? 'manual_validation_synced',
+    summary: `manual_validation_sync: ${events.length} evento(s)`,
+    data: {
+      ...(previous?.data ?? {}),
+      manual_validation: [...(previous?.data?.manual_validation ?? []), ...events],
+    },
+  });
+}
+
+// D15: sync humano do relatório `.talos/manual-validation/<slug>.md` com lock por
+// backlog. Valida IDs MV-*, status e justificativa (AC-4.1.1/4.1.2); sincroniza
+// state (acceptance_results) / sprint / ledger (D24); promove `done` quando todos
+// os M validated/waived (CN3/AC-4.2.1) e `blocked` quando algum M falhou (o cone
+// de revalidação é do Plano 5). Relatório inválido/dirty bloqueia sem drift.
+function syncManualValidation(args = {}) {
+  const runId = validateRunId(args.run_id);
+  const backlogPath = requiredString(args, 'backlog_path');
+  const timestamp = nowIso();
+  const pendencies = [];
+  let result;
+  try {
+    const slug = manualValidationSlug(backlogPath);
+    const reportRel = manualValidationReportRel(backlogPath, args.report_path);
+    const reportAbs = resolveConsumerPath(reportRel, args);
+    const lockRel = path.join(MANUAL_VALIDATION_DIR, `${slug}.lock`);
+    const lockAbs = resolveConsumerPath(lockRel, args);
+
+    let lockHeld = false;
+    try {
+      fs.mkdirSync(path.dirname(lockAbs), { recursive: true });
+      fs.writeFileSync(lockAbs, JSON.stringify(
+        { run_id: runId, backlog_path: backlogPath, report_path: reportRel, acquired_at: timestamp },
+        null,
+        2,
+      ), { flag: 'wx', mode: 0o600 });
+      lockHeld = true;
+    } catch {
+      pendencies.push(conformancePending('lock', slug, null, `Sync já em andamento ou lock residual: ${lockRel}.`, 'aguardar_sync_anterior_ou_remover_lock_manual'));
+    }
+    if (pendencies.length > 0) throw new Error('manual_validation_sync_lock_held');
+
+    try {
+      // 1) Relatório: parse + validação estrita antes de qualquer write (sem drift).
+      let reportMarkdown;
+      try {
+        reportMarkdown = fs.readFileSync(reportAbs, 'utf8');
+      } catch {
+        pendencies.push(conformancePending('relatorio_manual', reportRel, null, `Relatório ausente ou ilegível: ${reportRel}.`, 'criar_relatorio_manual'));
+        throw new Error('manual_validation_sync_report_missing');
+      }
+      const parsed = parseManualValidationReport(reportMarkdown);
+      if (parsed.error) {
+        pendencies.push(conformancePending('relatorio_manual', reportRel, null, parsed.error, 'fix_manual_validation_report'));
+        throw new Error('manual_validation_sync_invalid_report');
+      }
+      const rawRows = parsed.rows;
+      if (rawRows.length === 0) {
+        pendencies.push(conformancePending('relatorio_manual', reportRel, null, 'Relatório sem linhas MV-* em ## Pendências.', 'fix_manual_validation_report'));
+        throw new Error('manual_validation_sync_invalid_report');
+      }
+      const mvRows = [];
+      const seenMv = new Set();
+      for (const row of rawRows) {
+        const parsedMv = parseManualValidationRow(row);
+        if (parsedMv.pendency) {
+          pendencies.push(parsedMv.pendency);
+        } else if (seenMv.has(parsedMv.mv.mv_id)) {
+          pendencies.push(conformancePending('relatorio_manual', parsedMv.mv.mv_id, null, `MV duplicado: ${parsedMv.mv.mv_id}.`, 'fix_manual_validation_report'));
+        } else {
+          seenMv.add(parsedMv.mv.mv_id);
+          mvRows.push(parsedMv.mv);
+        }
+      }
+      if (pendencies.length > 0) throw new Error('manual_validation_sync_invalid_report');
+
+      // 2) Backlog + contrato + state por sprint (item fantasma = AC-4.1.2).
+      const backlogMarkdown = fs.readFileSync(resolveConsumerPath(backlogPath, args), 'utf8');
+      const backlogRows = parseSprintRows(backlogMarkdown);
+      const byId = new Map(backlogRows.map((row) => [row.id, row]));
+      const bySprint = new Map();
+      for (const mv of mvRows) {
+        if (!bySprint.has(mv.sprint_id)) bySprint.set(mv.sprint_id, []);
+        bySprint.get(mv.sprint_id).push(mv);
+      }
+      const sprintPlans = [];
+      for (const [sprintId, mvList] of bySprint) {
+        const plan = planManualValidationSprint(sprintId, mvList, byId, args, pendencies);
+        if (plan) sprintPlans.push(plan);
+      }
+      if (pendencies.length > 0) throw new Error('manual_validation_sync_invalid_report');
+
+      // 3) Escritas: state (acceptance_results), promoção (done/blocked), relatório,
+      // ledger. Promoção reusa a escrita atômica de status (mesmo caminho do CN1).
+      const ledgerEvents = [];
+      const sprintsOut = [];
+      let handoffPath = null;
+      let anyFailed = false;
+      let anyPending = false;
+      for (const plan of sprintPlans) {
+        const stateUpdates = [];
+        for (const mv of plan.mvList) {
+          const mapped = MANUAL_VALIDATION_STATE_MAP[mv.status];
+          if (!mapped) continue; // pending/in_progress: sem mudança de state
+          stateUpdates.push({
+            mv,
+            from: plan.resultsById.get(mv.ac_id)?.status ?? null,
+            to: mapped.to,
+            proof: mapped.proof,
+          });
+        }
+        if (stateUpdates.length > 0) {
+          const nextState = JSON.parse(JSON.stringify(plan.state));
+          nextState.acceptance_results = nextState.acceptance_results.map((item) => {
+            const upd = stateUpdates.find((u) => u.mv.ac_id === item.id);
+            if (!upd) return item;
+            return {
+              ...item,
+              status: upd.to,
+              proof_types: [...(Array.isArray(item.proof_types) ? item.proof_types : []).filter((t) => !/^M:/.test(t)), upd.proof],
+            };
+          });
+          // D24: referência do relatório que sincronizou este state (append-only).
+          nextState.manual_validation_report = reportRel;
+          fs.writeFileSync(resolveConsumerPath(plan.stateRel, args), `${JSON.stringify(nextState, null, 2)}\n`);
+          for (const upd of stateUpdates) {
+            ledgerEvents.push({
+              timestamp,
+              backlog_path: backlogPath,
+              report_path: reportRel,
+              mv_id: upd.mv.mv_id,
+              sprint_id: plan.sprintId,
+              ac_id: upd.mv.ac_id,
+              status: upd.mv.status,
+              result: upd.mv.result,
+              previous_status: upd.from,
+              next_status: upd.to,
+            });
+          }
+        }
+
+        const closedByReport = plan.mvList
+          .filter((mv) => mv.status === 'validated' || mv.status === 'waived')
+          .map((mv) => mv.ac_id);
+        const closedSet = new Set(closedByReport);
+        // M que permanecem abertos após esta sync (manual_pending sem linha fechada).
+        const openAfter = plan.state.acceptance_results.filter((item) => (
+          item.status === 'manual_pending' && !closedSet.has(item.id)
+        )).length;
+        const sprintFailed = plan.mvList.some((mv) => mv.status === 'failed');
+        const wantsPromotion = sprintFailed || (openAfter === 0 && closedByReport.length > 0);
+        if (plan.backlogRow.state === 'manual_validation_pending' && wantsPromotion && !plan.gateVerdict) {
+          pendencies.push(conformancePending('veredito', plan.sprintId, null, `Gate da linha ${plan.sprintId} sem veredito validator legível para promover (${plan.backlogRow.gate}).`, 'corrigir_gate_no_backlog'));
+          throw new Error('manual_validation_sync_promotion_failed');
+        }
+
+        let promotedTo = null;
+        let up = null;
+        const canPromote = plan.backlogRow.state === 'manual_validation_pending' && plan.gateVerdict;
+        if (canPromote && sprintFailed) {
+          promotedTo = 'blocked';
+          up = updateSprintStatus({
+            run_id: runId,
+            project_root: args.project_root,
+            backlog_path: backlogPath,
+            sprint_id: plan.sprintId,
+            status: 'blocked',
+            validator_verdict: plan.gateVerdict,
+            state_path: plan.stateRel,
+            evidence: `M failed: ${plan.mvList.filter((mv) => mv.status === 'failed').map((mv) => mv.mv_id).join(', ')}`,
+          });
+        } else if (canPromote && openAfter === 0 && closedByReport.length > 0) {
+          promotedTo = 'done';
+          up = updateSprintStatus({
+            run_id: runId,
+            project_root: args.project_root,
+            backlog_path: backlogPath,
+            sprint_id: plan.sprintId,
+            status: 'done',
+            validator_verdict: plan.gateVerdict,
+            state_path: plan.stateRel,
+            evidence: `sync manual: ${closedByReport.map((acId) => `MV-${plan.sprintId}-${acId}`).join(', ')}`,
+          });
+        }
+        if (up) {
+          if (up.status !== 'passed') {
+            pendencies.push(...(up.pendencies ?? []));
+            throw new Error('manual_validation_sync_promotion_failed');
+          }
+          handoffPath = up.handoff_path ?? handoffPath;
+          ledgerEvents.push({
+            timestamp,
+            backlog_path: backlogPath,
+            report_path: reportRel,
+            mv_id: null,
+            sprint_id: plan.sprintId,
+            ac_id: null,
+            status: 'sync',
+            result: null,
+            previous_status: plan.backlogRow.state,
+            next_status: promotedTo,
+          });
+        }
+        if (sprintFailed) anyFailed = true;
+        if (plan.mvList.some((mv) => mv.status === 'pending' || mv.status === 'in_progress')) anyPending = true;
+        // D24: histórico no sprint também — sprint sem promoção ganha linha §16 com
+        // o resultado dos M sincronizados (promovidos já ganham via updateSprintStatus).
+        if (!up && stateUpdates.length > 0) {
+          const sprintAbs = resolveConsumerPath(cleanBacklogPathToken(plan.backlogRow.sprint_file), args);
+          const sprintBefore = fs.readFileSync(sprintAbs, 'utf8');
+          const mvSummary = stateUpdates.map((u) => `${u.mv.mv_id}:${u.mv.status}`).join(', ');
+          fs.writeFileSync(sprintAbs, appendToMarkdownSectionTable(sprintBefore, /^##\s+16\.\s+Histórico\s*$/i, [
+            timestamp.slice(0, 10),
+            'Talos MCP sync manual',
+            `MV sync: ${mvSummary}`,
+          ]));
+        }
+        sprintsOut.push({
+          sprint_id: plan.sprintId,
+          state: promotedTo ?? plan.backlogRow.state,
+          promoted: Boolean(promotedTo),
+          handoff_path: up?.handoff_path ?? null,
+          synced_rows: stateUpdates.length,
+        });
+      }
+      if (pendencies.length > 0) throw new Error('manual_validation_sync_promotion_failed');
+
+      // 4) Relatório reescrito só com pendências abertas; removido quando vazio (D12).
+      const remainingRows = rawRows.filter((row) => {
+        const status = row[3];
+        return status === 'pending' || status === 'in_progress';
+      });
+      if (remainingRows.length === 0) {
+        fs.rmSync(reportAbs, { force: true });
+      } else {
+        fs.writeFileSync(reportAbs, renderManualValidationReport(slug, backlogPath, timestamp, remainingRows));
+      }
+
+      // 5) Ledger append-only no run state (D24).
+      if (ledgerEvents.length > 0) patchManualValidationLedger(runId, ledgerEvents, args);
+
+      result = {
+        gate: 'manual_validation_sync',
+        status: 'passed',
+        backlog_path: backlogPath,
+        report_path: reportRel,
+        slug,
+        timestamp,
+        synced_items: ledgerEvents.length,
+        sprints: sprintsOut,
+        handoff_path: handoffPath,
+        pending_count: 0,
+        pendencies: [],
+        banner: renderBanner('preflight_ok', { caps: `manual_validation_sync=${slug}` }),
+        next_action: handoffPath
+          ? 'promover_handoff'
+          : anyFailed
+            ? 'corrigir_smoke_falho'
+            : anyPending
+              ? 'aguardar_validacao_manual'
+              : 'avançar',
+      };
+    } finally {
+      if (lockHeld) {
+        try { fs.rmSync(lockAbs, { force: true }); } catch {}
+      }
+    }
+  } catch (error) {
+    result = {
+      gate: 'manual_validation_sync',
+      status: 'blocked',
+      backlog_path: backlogPath,
+      report_path: manualValidationReportRel(backlogPath, args.report_path),
+      timestamp,
+      pending_count: pendencies.length || 1,
+      pendencies: pendencies.length > 0 ? pendencies : [
+        conformancePending('leitura', backlogPath, null, `Não foi possível sincronizar o relatório: ${error.message}`, 'corrigir_relatorio_manual'),
+      ],
+      banner: renderBanner('preflight_fail', { motivo: `manual validation sync: ${pendencies.length || 1} pendências` }),
+      error: 'Não foi possível sincronizar o relatório de validação manual.',
+      cause: error.message,
+      next_action: pendencies[0]?.next_action ?? 'corrigir_relatorio_manual',
+    };
+  }
+  patchGateResult(runId, 'manual_validation_sync', result, args);
   return result;
 }
 
@@ -5560,6 +6041,21 @@ function toolsList() {
         },
       },
       {
+        name: 'talos_sync_manual_validation',
+        description: 'Sync do relatório de validação manual (MV-*) com lock por backlog: valida IDs/status/waiver, sincroniza state/sprint/ledger; promove done quando todos M validated/waived (com handoff); failed bloqueia a origem. Relatório inválido → next_action=fix_manual_validation_report.',
+        inputSchema: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['run_id', 'backlog_path'],
+          properties: {
+            run_id: { type: 'string', minLength: 1 },
+            project_root: { type: 'string', minLength: 1 },
+            backlog_path: { type: 'string', minLength: 1 },
+            report_path: { type: 'string', minLength: 1, description: 'Path do relatório; default .talos/manual-validation/<slug>.md.' },
+          },
+        },
+      },
+      {
         name: 'talos_classify_input',
         description: 'Classifica input: backlog|plan|idea|unknown.',
         inputSchema: {
@@ -5703,7 +6199,8 @@ function handleRequest(message) {
                       name === 'talos_verify_backlog_index' ? verifyBacklogIndex(args) :
                         name === 'talos_select_next_sprint' ? selectNextSprint(args) :
                           name === 'talos_update_sprint_status' ? updateSprintStatus(args) :
-                            name === 'talos_classify_input' ? classifyInput(args) :
+                            name === 'talos_sync_manual_validation' ? syncManualValidation(args) :
+                              name === 'talos_classify_input' ? classifyInput(args) :
                               name === 'talos_preflight' ? preflight(args) :
                                 name === 'talos_lock_dispatch' ? lockDispatch(args) :
                                   name === 'talos_lock_validator' ? lockValidator(args) :
@@ -5834,6 +6331,7 @@ export {
   selectNextSprint,
   nextActionForSelectedSprint,
   updateSprintStatus,
+  syncManualValidation,
   emitMemoryHandoff,
   classifyInput,
   preflight,

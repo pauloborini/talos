@@ -36,6 +36,7 @@ import {
   selectNextSprint,
   nextActionForSelectedSprint,
   updateSprintStatus,
+  syncManualValidation,
   emitMemoryHandoff,
   classifyInput,
   preflight,
@@ -2488,6 +2489,322 @@ test('talos_update_sprint_status: manual_validation_pending exige validator term
   });
   assert.equal(rD.status, 'blocked');
   assert.ok(rD.pendencies.some((p) => p.category === 'acceptance_results'));
+});
+
+// ===== Plano 4 — relatório de validação manual e sync (AC-4.* / CN3 / D11-D15) =====
+
+// Sprint file com AC-002 (e opcionalmente AC-003) declarando smoke manual `M`
+// (evidence.manual objeto) — base do relatório MV-*.
+function writeSprintWithManual(root, id, {
+  status = 'review',
+  dorStatus = 'verde',
+  extraManualAc = false,
+} = {}) {
+  fs.mkdirSync(path.join(root, '.talos/backlog/sprints'), { recursive: true });
+  let doc = sprintDoc({ id, backlog: `BACKLOG.md#${id}`, status, dorStatus, contratoStatus: 'draft' });
+  doc = doc.replace(
+    '      required: [I, T-outcome]\n      manual: null',
+    '      required: [I, T-outcome, M]\n      manual:\n        severity: alta\n        scenario: "validação manual"\n        expected_evidence: "resultado observável"\n        impact_paths: ["src/initial.js"]',
+  );
+  if (extraManualAc) {
+    doc = doc.replace(
+      '        impact_paths: ["src/initial.js"]\n```',
+      '        impact_paths: ["src/initial.js"]\n  - id: AC-003\n    behavior: "Outro smoke manual"\n    decisions: [D1]\n    scenario: "Regressão"\n    evals: [EVAL-001]\n    evidence:\n      required: [I, T-outcome, M]\n      manual:\n        severity: normal\n        scenario: "validação manual 2"\n        expected_evidence: "resultado observável 2"\n        impact_paths: ["src/initial.js"]\n```',
+    );
+  }
+  fs.writeFileSync(path.join(root, `.talos/backlog/sprints/SPRINT_${id}_runtime.md`), doc);
+}
+
+// Relatório canônico `.talos/manual-validation/<slug>.md` (template Plano 4).
+function writeManualValidationReport(root, rows, { slug = 'backlog', backlogPath = 'BACKLOG.md' } = {}) {
+  const dir = path.join(root, '.talos/manual-validation');
+  fs.mkdirSync(dir, { recursive: true });
+  const doc = [
+    `# Validações manuais abertas — ${slug}`,
+    '',
+    '| Campo | Valor |',
+    '|---|---|',
+    `| Backlog | \`${backlogPath}\` |`,
+    '| Atualizado em | 2026-08-02T00:00:00Z |',
+    '',
+    '## Pendências',
+    '',
+    '| ID | Sprint / AC | Severidade | Status | Cenário | Ambiente | Evidência esperada | Resultado / justificativa |',
+    '|---|---|---|---|---|---|---|---|',
+    ...rows,
+    '',
+  ].join('\n');
+  fs.writeFileSync(path.join(dir, `${slug}.md`), doc);
+}
+
+function setupMvpSprint(root, { acceptance, extraManualAc = false } = {}) {
+  writeHandoffTemplateFixture(root);
+  writeSprintWithManual(root, 'S01', { status: 'manual_validation_pending', dorStatus: 'verde', extraManualAc });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | manual_validation_pending | validator:pass;manual_pending | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | `.talos/state/S01.json` |',
+  ]));
+  writeStateWithAcceptance(root, 'S01.json', acceptance);
+}
+
+test('MANUAL_VALIDATION_REPORT_TEMPLATE: estrutura canônica do relatório (Plano 4)', () => {
+  const templatePath = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    '../templates/MANUAL_VALIDATION_REPORT_TEMPLATE.md',
+  );
+  const template = fs.readFileSync(templatePath, 'utf8');
+  assert.match(template, /## Pendências/);
+  assert.match(template, /\| ID \| Sprint \/ AC \| Severidade \| Status \| Cenário \| Ambiente \| Evidência esperada \| Resultado \/ justificativa \|/);
+  assert.match(template, /MV-S01-AC-002/);
+  assert.match(template, /fix_manual_validation_report/);
+});
+
+test('talos_sync_manual_validation: waiver sem justificativa bloqueia (AC-4.1.1)', () => {
+  const root = tmpRoot();
+  setupMvpSprint(root, {
+    acceptance: [
+      { id: 'AC-001', status: 'proved', proof_types: ['I:present', 'T-outcome:proved'] },
+      { id: 'AC-002', status: 'manual_pending', proof_types: ['I:present', 'M:pending'] },
+    ],
+  });
+  writeManualValidationReport(root, [
+    '| MV-S01-AC-002 | S01 / AC-002 | alta | waived | passo a passo | dev | resultado observável | — |',
+  ]);
+  const r = syncManualValidation({ run_id: 'r-waiver', project_root: root, backlog_path: 'BACKLOG.md' });
+  assert.equal(r.status, 'blocked');
+  assert.ok(r.pendencies.some((p) => p.category === 'relatorio_manual' && /justificativa/.test(p.message)));
+  assert.equal(r.next_action, 'fix_manual_validation_report');
+  // sem drift: state e relatório intactos.
+  const state = JSON.parse(fs.readFileSync(path.join(root, '.talos/state/S01.json'), 'utf8'));
+  assert.equal(state.acceptance_results.find((item) => item.id === 'AC-002').status, 'manual_pending');
+  assert.equal(fs.existsSync(path.join(root, '.talos/manual-validation/backlog.md')), true);
+});
+
+test('talos_sync_manual_validation: item fantasma sem AC.manual correspondente bloqueia (AC-4.1.2)', () => {
+  const root = tmpRoot();
+  setupMvpSprint(root, {
+    acceptance: [
+      { id: 'AC-001', status: 'proved', proof_types: ['I:present', 'T-outcome:proved'] },
+      { id: 'AC-002', status: 'manual_pending', proof_types: ['I:present', 'M:pending'] },
+    ],
+  });
+  // AC-001 existe no contrato mas com manual: null — sem AC.manual correspondente.
+  writeManualValidationReport(root, [
+    '| MV-S01-AC-001 | S01 / AC-001 | alta | validated | passo a passo | dev | resultado observável | smoke ok |',
+  ]);
+  const r = syncManualValidation({ run_id: 'r-phantom', project_root: root, backlog_path: 'BACKLOG.md' });
+  assert.equal(r.status, 'blocked');
+  assert.ok(r.pendencies.some((p) => p.category === 'relatorio_manual' && /fantasma/.test(p.message)));
+  assert.equal(r.next_action, 'fix_manual_validation_report');
+});
+
+test('sync manual validated promove done (AC-4.2.1 / CN3)', () => {
+  const root = tmpRoot();
+  setupMvpSprint(root, {
+    acceptance: [
+      { id: 'AC-001', status: 'proved', proof_types: ['I:present', 'T-outcome:proved'] },
+      { id: 'AC-002', status: 'manual_pending', proof_types: ['I:present', 'M:pending'] },
+    ],
+  });
+  writeManualValidationReport(root, [
+    '| MV-S01-AC-002 | S01 / AC-002 | alta | validated | passo a passo | dev | resultado observável | smoke ok na dev |',
+  ]);
+  const r = syncManualValidation({ run_id: 'r-cn3', project_root: root, backlog_path: 'BACKLOG.md' });
+  assert.equal(r.status, 'passed', JSON.stringify(r.pendencies, null, 1));
+  assert.equal(r.sprints[0].sprint_id, 'S01');
+  assert.equal(r.sprints[0].state, 'done');
+  assert.equal(r.sprints[0].promoted, true);
+  assert.ok(r.handoff_path, 'sync validado deve emitir handoff');
+  assert.equal(r.next_action, 'promover_handoff');
+  const row = parseSprintRows(fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8'))[0];
+  assert.equal(row.state, 'done');
+  const sprint = fs.readFileSync(path.join(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md'), 'utf8');
+  assert.match(sprint, /^\| Status \| done \|$/m);
+  // state sincronizado (D24): AC-002 proved com M:validated + ref do relatório.
+  const state = JSON.parse(fs.readFileSync(path.join(root, '.talos/state/S01.json'), 'utf8'));
+  const ac002 = state.acceptance_results.find((item) => item.id === 'AC-002');
+  assert.equal(ac002.status, 'proved');
+  assert.ok(ac002.proof_types.includes('M:validated'));
+  assert.equal(state.manual_validation_report, '.talos/manual-validation/backlog.md');
+  // relatório sem pendências é removido (D12).
+  assert.equal(fs.existsSync(path.join(root, '.talos/manual-validation/backlog.md')), false);
+  // handoff real no disco.
+  const handoffs = fs.readdirSync(path.join(root, '.talos/memory')).filter((name) => /^HANDOFF_.*_\d{8}\.md$/.test(name));
+  assert.equal(handoffs.length, 1);
+});
+
+test('talos_sync_manual_validation: M failed bloqueia a origem sem handoff', () => {
+  const root = tmpRoot();
+  setupMvpSprint(root, {
+    acceptance: [
+      { id: 'AC-001', status: 'proved', proof_types: ['I:present', 'T-outcome:proved'] },
+      { id: 'AC-002', status: 'manual_pending', proof_types: ['I:present', 'M:pending'] },
+    ],
+  });
+  writeManualValidationReport(root, [
+    '| MV-S01-AC-002 | S01 / AC-002 | alta | failed | passo a passo | dev | resultado observável | smoke falhou no fluxo X |',
+  ]);
+  const r = syncManualValidation({ run_id: 'r-fail', project_root: root, backlog_path: 'BACKLOG.md' });
+  assert.equal(r.status, 'passed', JSON.stringify(r.pendencies, null, 1));
+  assert.equal(r.sprints[0].state, 'blocked');
+  assert.equal(r.sprints[0].promoted, true);
+  assert.equal(r.handoff_path, null);
+  assert.equal(r.next_action, 'corrigir_smoke_falho');
+  const row = parseSprintRows(fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8'))[0];
+  assert.equal(row.state, 'blocked');
+  const state = JSON.parse(fs.readFileSync(path.join(root, '.talos/state/S01.json'), 'utf8'));
+  const ac002 = state.acceptance_results.find((item) => item.id === 'AC-002');
+  assert.equal(ac002.status, 'violated');
+  assert.ok(ac002.proof_types.includes('M:failed'));
+  const handoffs = fs.readdirSync(path.join(root, '.talos/memory')).filter((name) => /^HANDOFF_.*_\d{8}\.md$/.test(name));
+  assert.equal(handoffs.length, 0);
+});
+
+test('talos_sync_manual_validation: sync parcial mantém MVP e relatório com pendências abertas (D12)', () => {
+  const root = tmpRoot();
+  setupMvpSprint(root, {
+    extraManualAc: true,
+    acceptance: [
+      { id: 'AC-001', status: 'proved', proof_types: ['I:present', 'T-outcome:proved'] },
+      { id: 'AC-002', status: 'manual_pending', proof_types: ['I:present', 'M:pending'] },
+      { id: 'AC-003', status: 'manual_pending', proof_types: ['I:present', 'M:pending'] },
+    ],
+  });
+  writeManualValidationReport(root, [
+    '| MV-S01-AC-002 | S01 / AC-002 | alta | validated | passo a passo | dev | resultado observável | smoke ok na dev |',
+    '| MV-S01-AC-003 | S01 / AC-003 | normal | pending | passo a passo | staging | resultado observável 2 | — |',
+  ]);
+  const r = syncManualValidation({ run_id: 'r-partial', project_root: root, backlog_path: 'BACKLOG.md' });
+  assert.equal(r.status, 'passed', JSON.stringify(r.pendencies, null, 1));
+  assert.equal(r.sprints[0].state, 'manual_validation_pending');
+  assert.equal(r.sprints[0].promoted, false);
+  assert.equal(r.handoff_path, null);
+  assert.equal(r.next_action, 'aguardar_validacao_manual');
+  const state = JSON.parse(fs.readFileSync(path.join(root, '.talos/state/S01.json'), 'utf8'));
+  assert.equal(state.acceptance_results.find((item) => item.id === 'AC-002').status, 'proved');
+  assert.equal(state.acceptance_results.find((item) => item.id === 'AC-003').status, 'manual_pending');
+  // relatório reescrito: só a pendência aberta AC-003 permanece.
+  const report = fs.readFileSync(path.join(root, '.talos/manual-validation/backlog.md'), 'utf8');
+  assert.match(report, /MV-S01-AC-003/);
+  assert.doesNotMatch(report, /MV-S01-AC-002/);
+  // D24: histórico no sprint (§16) registra o M sincronizado.
+  const sprint = fs.readFileSync(path.join(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md'), 'utf8');
+  assert.match(sprint, /Talos MCP sync manual/);
+  assert.match(sprint, /MV-S01-AC-002:validated/);
+});
+
+test('talos_sync_manual_validation: lock por backlog bloqueia sync concorrente (D15)', () => {
+  const root = tmpRoot();
+  fs.mkdirSync(path.join(root, '.talos/manual-validation'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.talos/manual-validation/backlog.lock'), '{"run_id":"r-outro"}');
+  const r = syncManualValidation({ run_id: 'r-lock', project_root: root, backlog_path: 'BACKLOG.md' });
+  assert.equal(r.status, 'blocked');
+  assert.ok(r.pendencies.some((p) => p.category === 'lock'));
+  assert.equal(r.next_action, 'aguardar_sync_anterior_ou_remover_lock_manual');
+});
+
+test('talos_sync_manual_validation: relatório ausente bloqueia com criar_relatorio_manual', () => {
+  const root = tmpRoot();
+  const r = syncManualValidation({ run_id: 'r-missing', project_root: root, backlog_path: 'BACKLOG.md' });
+  assert.equal(r.status, 'blocked');
+  assert.ok(r.pendencies.some((p) => p.category === 'relatorio_manual' && p.next_action === 'criar_relatorio_manual'));
+  assert.equal(r.next_action, 'criar_relatorio_manual');
+});
+
+test('talos_sync_manual_validation: relatório inválido bloqueia sem drift (fix_manual_validation_report)', () => {
+  // (a) status fora do enum.
+  const rootA = tmpRoot();
+  setupMvpSprint(rootA, {
+    acceptance: [
+      { id: 'AC-001', status: 'proved', proof_types: ['I:present', 'T-outcome:proved'] },
+      { id: 'AC-002', status: 'manual_pending', proof_types: ['I:present', 'M:pending'] },
+    ],
+  });
+  writeManualValidationReport(rootA, [
+    '| MV-S01-AC-002 | S01 / AC-002 | alta | ok | passo a passo | dev | resultado observável | smoke ok |',
+  ]);
+  const rA = syncManualValidation({ run_id: 'r-a', project_root: rootA, backlog_path: 'BACKLOG.md' });
+  assert.equal(rA.status, 'blocked');
+  assert.equal(rA.next_action, 'fix_manual_validation_report');
+  // (b) ID MV malformado.
+  const rootB = tmpRoot();
+  setupMvpSprint(rootB, {
+    acceptance: [
+      { id: 'AC-001', status: 'proved', proof_types: ['I:present', 'T-outcome:proved'] },
+      { id: 'AC-002', status: 'manual_pending', proof_types: ['I:present', 'M:pending'] },
+    ],
+  });
+  writeManualValidationReport(rootB, [
+    '| MV-S01-999 | S01 / 999 | alta | validated | x | y | z | ok |',
+  ]);
+  const rB = syncManualValidation({ run_id: 'r-b', project_root: rootB, backlog_path: 'BACKLOG.md' });
+  assert.equal(rB.status, 'blocked');
+  assert.equal(rB.next_action, 'fix_manual_validation_report');
+  // (c) coluna Sprint/AC divergente do id.
+  const rootC = tmpRoot();
+  setupMvpSprint(rootC, {
+    acceptance: [
+      { id: 'AC-001', status: 'proved', proof_types: ['I:present', 'T-outcome:proved'] },
+      { id: 'AC-002', status: 'manual_pending', proof_types: ['I:present', 'M:pending'] },
+    ],
+  });
+  writeManualValidationReport(rootC, [
+    '| MV-S01-AC-002 | S01 / AC-003 | alta | validated | x | y | z | ok |',
+  ]);
+  const rC = syncManualValidation({ run_id: 'r-c', project_root: rootC, backlog_path: 'BACKLOG.md' });
+  assert.equal(rC.status, 'blocked');
+  assert.equal(rC.next_action, 'fix_manual_validation_report');
+  // (d) MV duplicado.
+  const rootD = tmpRoot();
+  setupMvpSprint(rootD, {
+    acceptance: [
+      { id: 'AC-001', status: 'proved', proof_types: ['I:present', 'T-outcome:proved'] },
+      { id: 'AC-002', status: 'manual_pending', proof_types: ['I:present', 'M:pending'] },
+    ],
+  });
+  writeManualValidationReport(rootD, [
+    '| MV-S01-AC-002 | S01 / AC-002 | alta | validated | x | y | z | ok 1 |',
+    '| MV-S01-AC-002 | S01 / AC-002 | alta | validated | x | y | z | ok 2 |',
+  ]);
+  const rD = syncManualValidation({ run_id: 'r-d', project_root: rootD, backlog_path: 'BACKLOG.md' });
+  assert.equal(rD.status, 'blocked');
+  assert.ok(rD.pendencies.some((p) => p.category === 'relatorio_manual' && /duplicado/.test(p.message)));
+});
+
+test('talos_sync_manual_validation: ledger append-only no run state (D24)', () => {
+  const root = tmpRoot();
+  setupMvpSprint(root, {
+    extraManualAc: true,
+    acceptance: [
+      { id: 'AC-001', status: 'proved', proof_types: ['I:present', 'T-outcome:proved'] },
+      { id: 'AC-002', status: 'manual_pending', proof_types: ['I:present', 'M:pending'] },
+      { id: 'AC-003', status: 'manual_pending', proof_types: ['I:present', 'M:pending'] },
+    ],
+  });
+  writeManualValidationReport(root, [
+    '| MV-S01-AC-002 | S01 / AC-002 | alta | validated | x | dev | y | ok 1 |',
+    '| MV-S01-AC-003 | S01 / AC-003 | normal | pending | x | staging | y | — |',
+  ]);
+  const runId = 'r-ledger';
+  const first = syncManualValidation({ run_id: runId, project_root: root, backlog_path: 'BACKLOG.md' });
+  assert.equal(first.status, 'passed');
+  const state1 = runState({ run_id: runId, project_root: root });
+  assert.ok(Array.isArray(state1.data.manual_validation));
+  const n1 = state1.data.manual_validation.length;
+  assert.ok(n1 >= 1);
+  assert.ok(state1.data.manual_validation.some((e) => e.mv_id === 'MV-S01-AC-002' && e.next_status === 'proved'));
+  // Segunda sync (mesmo run_id): AC-003 validado → append, sem apagar o primeiro.
+  writeManualValidationReport(root, [
+    '| MV-S01-AC-003 | S01 / AC-003 | normal | validated | x | staging | y | ok 2 |',
+  ]);
+  const second = syncManualValidation({ run_id: runId, project_root: root, backlog_path: 'BACKLOG.md' });
+  assert.equal(second.status, 'passed');
+  const state2 = runState({ run_id: runId, project_root: root });
+  assert.ok(state2.data.manual_validation.length > n1, 'ledger deve crescer (append-only)');
+  assert.deepEqual(
+    state2.data.manual_validation.slice(0, n1),
+    state1.data.manual_validation,
+    'eventos anteriores preservados',
+  );
 });
 
 test('talos_classify_input: plano → banner roteia com modo=execute (T07)', () => {
