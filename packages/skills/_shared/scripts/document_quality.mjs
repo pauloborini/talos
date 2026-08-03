@@ -306,6 +306,67 @@ export function extractEvalIds(markdown) {
   return new Set([...block.matchAll(/id:\s*["']?(EVAL-\d+)["']?/g)].map((m) => m[1]));
 }
 
+/** Enum fixo de reasons da review crítica (D06/D09 — sem inferência por prosa). */
+export const CRITICAL_REVIEW_REASONS = Object.freeze([
+  'authorization', 'payment', 'data_migration', 'public_contract', 'host_adapter_dispatch',
+]);
+
+/**
+ * Parseia o subbloco `critical_review` do `policy_manifest` (subset determinístico,
+ * mesmo padrão do parser de acceptance — sem js-yaml).
+ * Retorna `null` quando `critical_review` está ausente; senão
+ * `{ required, reasons }` — `required` preserva o valor cru (true/false/outro,
+ * para a conformance julgar boolean) e `reasons` é array (vazio se ausente).
+ */
+export function parseCriticalReview(policyBlock) {
+  if (!policyBlock) return null;
+  const lines = policyBlock.split(/\r?\n/);
+  let found = false;
+  let required = null;
+  let reasons = null;
+  let collectingList = false;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const indent = line.search(/\S/);
+    if (!found) {
+      if (/^critical_review\s*:\s*$/.test(trimmed)) found = true;
+      continue;
+    }
+    // Indent <= 2 com chave = volta ao topo do policy_manifest (fim do subbloco).
+    if (indent <= 2 && /^[a-zA-Z_][a-zA-Z0-9_]*\s*:/.test(trimmed)) break;
+    if (collectingList && indent > 4 && /^-\s+/.test(trimmed)) {
+      reasons.push(unquoteYaml(trimmed.replace(/^-\s+/, '')));
+      continue;
+    }
+    collectingList = false;
+    const field = /^([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*(.*)$/.exec(trimmed);
+    if (!field) continue;
+    if (field[1] === 'required') {
+      const raw = field[2].trim();
+      required = /^true$/i.test(raw) ? true : /^false$/i.test(raw) ? false : raw;
+    } else if (field[1] === 'reasons') {
+      const inline = parseInlineYamlList(field[2]);
+      if (inline !== null) {
+        reasons = inline;
+      } else if (field[2].trim() === '') {
+        reasons = [];
+        collectingList = true;
+      } else {
+        reasons = [unquoteYaml(field[2])];
+      }
+    }
+  }
+  if (!found) return null;
+  return { required, reasons: reasons ?? [] };
+}
+
+/** D06/D09: review crítica só se `policy_manifest.critical_review.required === true`. */
+export function requiresCriticalReview(policyBlock) {
+  const critical = parseCriticalReview(policyBlock);
+  return critical !== null && critical.required === true;
+}
+
 function cleanPathToken(value) {
   if (!value || value === '—') return '';
   const link = /\[[^\]]+\]\(([^)]+)\)/.exec(value);
@@ -636,6 +697,27 @@ export function validateSprintFileConformance(markdown, {
     for (const token of ['forbidden_scope:', 'required_gates:']) {
       if (!policyBlock.includes(token)) {
         pendencies.push(sprintConformancePending('policy_manifest', token, null, `policy_manifest sem ${token}`, 'completar_policy_manifest'));
+      }
+    }
+    // Plano 6 (D06/D09): `critical_review` é opcional no policy_manifest; quando
+    // presente, o shape é estrito — required booleano e reasons ⊆ enum fixo.
+    // Proibido inferir reasons por prosa/diff: required:true sem reasons = pendência.
+    const critical = parseCriticalReview(policyBlock);
+    if (critical !== null) {
+      if (typeof critical.required !== 'boolean') {
+        pendencies.push(sprintConformancePending('policy_manifest', 'critical_review.required', null,
+          'critical_review.required deve ser true ou false.', 'corrigir_policy_manifest'));
+      }
+      const invalidReasons = critical.reasons.filter((reason) => !CRITICAL_REVIEW_REASONS.includes(reason));
+      if (invalidReasons.length > 0) {
+        pendencies.push(sprintConformancePending('policy_manifest', 'critical_review.reasons', null,
+          `critical_review.reasons contém valor fora do enum fixo: ${invalidReasons.join(', ')}.`,
+          'corrigir_policy_manifest'));
+      }
+      if (critical.required === true && critical.reasons.length === 0) {
+        pendencies.push(sprintConformancePending('policy_manifest', 'critical_review.reasons', null,
+          'critical_review.required:true exige reasons não vazio (sem inferência por prosa — D09).',
+          'corrigir_policy_manifest'));
       }
     }
   }

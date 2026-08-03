@@ -345,6 +345,16 @@ if (orchestratorSkill != null) {
       errors.push(`G4 prosa-regressão: SKILL do orquestrador não cita '${token}'`);
     }
   }
+  // Plano 6 (CN5/D06/D09): review crítica obrigatória quando
+  // policy_manifest.critical_review.required:true — o sink da regra é o SKILL do
+  // orquestrador (G8). Se o texto do gate deixar de exigir slice-review ANTES de
+  // talos_update_sprint_status nesse caso, o orquestrador pode fechar status sem review.
+  const g8Row = orchestratorSkill.split('\n').find((line) => /^\|\s*G8\s*\|/.test(line)) ?? '';
+  if (!/critical_review\.required/.test(g8Row)) {
+    errors.push('G8 review-crítica prosa-regressão: linha G8 do orquestrador não cita critical_review.required');
+  } else if (!/slice-review[\s\S]*talos_update_sprint_status/.test(g8Row)) {
+    errors.push('G8 review-crítica prosa-regressão: linha G8 não exige slice-review ANTES de talos_update_sprint_status quando critical_review.required:true');
+  }
 }
 
 const validatorAgent = read('agents/talos-task-validator.md');
@@ -403,7 +413,7 @@ if (orchestratorSkill != null) {
 
 const sprintTemplate = read('packages/templates/SPRINT_TEMPLATE.md');
 if (sprintTemplate != null) {
-  for (const token of ['eval_manifest:', 'policy_manifest:', 'Evidence-to-claim', 'Backlog mestre', 'State / evidência']) {
+  for (const token of ['eval_manifest:', 'policy_manifest:', 'Evidence-to-claim', 'Backlog mestre', 'State / evidência', 'critical_review:']) {
     if (!sprintTemplate.includes(token)) {
       errors.push(`sprint-template-regressão: SPRINT_TEMPLATE.md não contém '${token}'`);
     }
