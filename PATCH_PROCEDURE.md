@@ -1,7 +1,8 @@
 # Procedimento de Patch, Bump e Release
 
 Procedimento obrigatorio para qualquer IA/agente que altere este repo. Objetivo:
-manter `main` instalavel, bundles sincronizados, `npx github` funcional e CI confiavel.
+manter `main` instalavel, bundles sincronizados e `npx github` funcional via
+**validacao local manual** (sem GitHub Actions).
 
 ## 0. Regra principal
 
@@ -13,9 +14,8 @@ Nao declare pronto sem evidencia local. "Pronto" exige:
 - artefatos `.plugin` + `SHA256SUMS` validos;
 - pacote tarball/npx inspecionado;
 - working tree entendido;
-- release e full-auto: bumpar `VERSION` na `main` cria tag + GitHub Release
-  sozinho (secao 9). Logo, so subir bump de `VERSION` na `main` com o patch
-  inteiro pronto e validado — o push e a propria autorizacao de publicar release.
+- release e **manual** (secao 9): apos bump validado na `main`, criar tag
+  `vX.Y.Z` e GitHub Release com `gh` — nao ha workflow automatico.
 
 `archive/` e `raycast/` nao entram no patch salvo pedido explicito.
 
@@ -26,7 +26,7 @@ Antes de editar:
 ```bash
 rtk git status --short --branch
 rtk git log --oneline -8
-rtk rg -n "Plugin version|version|npm|release|CI|bump" VERSION package.json packages/mcp-server/package.json README.md COMMANDS.md CHANGELOG.md PATCH_PROCEDURE.md .github build packages/orchestrator .claude-plugin plugin-manifests
+rtk rg -n "Plugin version|version|npm|release|bump" VERSION package.json packages/mcp-server/package.json README.md COMMANDS.md CHANGELOG.md PATCH_PROCEDURE.md build packages/orchestrator .claude-plugin plugin-manifests
 ```
 
 Se houver mudancas locais que voce nao fez, preserve. Nao reverta. Se afetarem o
@@ -37,14 +37,14 @@ patch, leia e incorpore.
 - `runtime`: muda skill, comando, MCP, gates, roteamento, sub-agents ou comportamento.
 - `packaging`: muda manifest, marketplace, estrutura de bundle, npx/tarball, `.plugin`, release.
 - `docs`: muda docs sem alterar comportamento distribuido.
-- `tooling`: muda scripts auxiliares, CI ou validadores.
+- `tooling`: muda scripts auxiliares ou validadores locais.
 
 Bump obrigatorio quando:
 
 - `runtime` ou `packaging`;
 - docs/tooling entram no artefato distribuido (`README`, `packages/orchestrator/**`,
-  skills, templates, manifests, `build/cli/**`, `.npmignore`, `.github/release`);
-- CI/release/npx muda e o usuario quer liberar nova versao.
+  skills, templates, manifests, `build/cli/**`, `.npmignore`);
+- release/npx muda e o usuario quer liberar nova versao.
 
 Patch somente de doc interna pode nao bumpar, mas precisa changelog se afetar
 procedimento operacional.
@@ -53,7 +53,7 @@ procedimento operacional.
 
 Use SemVer:
 
-- patch (`X.Y.Z+1`): fix, confiabilidade, docs distribuidas, CI/release, npx.
+- patch (`X.Y.Z+1`): fix, confiabilidade, docs distribuidas, release, npx.
 - minor (`X.Y+1.0`): feature aditiva ou breaking pre-1.0 controlado.
 - major: reservado para `1.0+`.
 
@@ -122,8 +122,6 @@ Atualizar quando aplicavel:
 - `packages/orchestrator/commands/talos.md`
 - `packages/orchestrator/references/**`
 - `packages/templates/**`
-- `.github/workflows/ci.yml`
-- `.github/workflows/release.yml`
 - `.npmignore`
 - `build/**`
 
@@ -168,7 +166,7 @@ deve manter `private: true` enquanto isso valer.
 ## 6. Regeneracao obrigatoria
 
 Depois de qualquer bump ou mudanca em `packages/`, `plugin-manifests/`, `build/`,
-`hooks/`, `README`, `COMMANDS`, `PATCH_PROCEDURE`, `.npmignore` ou `.github`:
+`hooks/`, `README`, `COMMANDS`, `PATCH_PROCEDURE` ou `.npmignore`:
 
 ```bash
 rtk build/build-plugins.sh
@@ -189,11 +187,12 @@ Esses diretorios gerados entram no commit quando mudarem.
 
 ## 7. Validacao local obrigatoria
 
-Rodar, nesta ordem:
+Este e o unico gate de qualidade (substitui o antigo CI remoto). Rodar, nesta ordem:
 
 ```bash
 rtk node build/check-consistency.mjs
 rtk node --test packages/mcp-server/server.test.js
+rtk node --test build/tests/classify-findings.test.mjs build/tests/etapa3.test.mjs
 rtk node build/smoke-hosts.mjs
 rtk node build/conformance-matrix.mjs
 rtk shasum -a 256 -c SHA256SUMS   # dentro de dist/
@@ -248,64 +247,59 @@ Nao consultar registry npm como gate. O pacote `talos` permanece privado no
 `package.json` e nao deve ser publicado no npm enquanto a distribuicao oficial
 for apenas `npx github:pauloborini/talos`.
 
-## 9. CI e release externo
+## 9. Release manual (sem GitHub Actions)
 
-CI normal roda em push/PR:
+Nao ha workflows em `.github/`. Qualidade e publicacao sao manuais.
 
-- `build/build-plugins.sh`
-- catologos from-source sem diff/untracked;
-- testes MCP;
-- smoke-hosts;
-- conformance;
-- checksums;
-- runtime MCP em Windows/macOS.
+Antes de publicar:
 
-Release e FULL AUTO. O caminho primario e empurrar o bump de `VERSION` para a
-`main` — isso, por si so, cria tag + GitHub Release. NAO precisa criar tag a
-mao; a action cria a tag `vX.Y.Z`. Logo: subir um `VERSION` novo na `main` E o
-ato de autorizar a publicacao da release. Nao bumpar `VERSION` na `main` sem o
-CHANGELOG da versao pronto (a release falha-fecha se faltar a entrada).
+1. secoes 7 e 8 PASS localmente;
+2. `VERSION` == `package.json.version` == `packages/mcp-server/package.json.version`;
+3. `CHANGELOG.md` tem entrada `## X.Y.Z - ...` (ou `## vX.Y.Z - ...`);
+4. bump ja esta commitado na `main` (ou no commit que sera tagueado).
+
+Fluxo primario:
 
 ```bash
-# fluxo full-auto: bump na main publica GitHub Release sozinho
-rtk node build/bump-version.mjs X.Y.Z
-# (editar CHANGELOG + Novidades, revisar, commitar)
-rtk git push origin main          # => Release dispara: tag + GitHub Release
+# 1) bump + CHANGELOG + Novidades ja commitados e pushados na main
+rtk git push origin main
+
+# 2) tag no commit final ja validado
+rtk git tag -a vX.Y.Z -m "vX.Y.Z"
+rtk git push origin vX.Y.Z
+
+# 3) extrair notas do CHANGELOG
+VERSION=X.Y.Z
+awk -v plain="${VERSION}" -v tagged="v${VERSION}" '
+  $0 ~ "^## (" plain "|" tagged ") - " { capture=1 }
+  capture && /^## / && $0 !~ "^## (" plain "|" tagged ") - " { exit }
+  capture { print }
+' CHANGELOG.md > dist/RELEASE_NOTES.md
+test -s dist/RELEASE_NOTES.md
+
+# 4) GitHub Release com artefatos
+rtk gh release create "v${VERSION}" \
+  --title "v${VERSION}" \
+  --notes-file dist/RELEASE_NOTES.md \
+  dist/talos-claude.plugin \
+  dist/talos-codex.plugin \
+  dist/talos-opencode.plugin \
+  dist/talos-pi.plugin \
+  dist/talos-zcode.plugin \
+  dist/SHA256SUMS
 ```
 
-`build/bump-version.mjs` NAO cria tag local. Se houver tag local `vX.Y.Z` criada
-antes do commit, apagar e recriar depois do commit ou preferir o fluxo full-auto.
-Tag apontando para commit pre-bump quebra a publicacao.
+`build/bump-version.mjs` NAO cria tag local. Tag apontando para commit pre-bump
+quebra a publicacao — taguear so depois do commit final.
 
-Override manual por tag (hotfix fora da main / re-release) continua valendo,
-mas a tag deve apontar para o commit final ja validado:
+Mudancas so em `build/` ou `PATCH_PROCEDURE.md` (fora do artefato distribuido)
+podem ir pra `main` SEM bumpar `VERSION`.
+
+Se `gh` nao estiver autenticado, reportar blocker externo. Verificar:
 
 ```bash
-rtk git tag -a vX.Y.Z -m "vX.Y.Z" && rtk git push origin vX.Y.Z
+rtk gh release view vX.Y.Z
 ```
-
-Mudancas so em `.github/`, `build/` ou `PATCH_PROCEDURE.md` (fora do artefato
-distribuido) podem ir pra `main` SEM bumpar `VERSION`. O workflow roda em push
-na `main`, mas o job `decide` pula publicacao se a tag da versao atual ja existir.
-
-O workflow `.github/workflows/release.yml` deve:
-
-1. job `decide`: derivar a versao (da tag, ou de `VERSION` no push da main) e
-   pular se a tag `vX.Y.Z` ja existe; guard `VERSION` == `package.json.version`;
-2. job `release` (so se `decide` liberar): build + check-consistency;
-3. guards de qualidade (testes MCP + smoke-hosts + conformance) antes de publicar release;
-4. extrair notas do `CHANGELOG.md` aceitando cabecalho `## X.Y.Z` ou `## vX.Y.Z`
-   (falha-fecha se ausente);
-5. validar `.plugin` e checksums;
-6. publicar GitHub Release com 5 `.plugin` + `SHA256SUMS` (cria a tag se ausente).
-
-Depois do push/tag, verificar:
-
-```bash
-rtk gh run list --workflow release.yml --limit 5
-```
-
-Se `gh` nao estiver autenticado, reportar blocker externo.
 
 ## 10. Relatorio final esperado
 
@@ -313,7 +307,7 @@ Responder com:
 
 - versao final;
 - arquivos principais alterados;
-- validacoes executadas e resultado;
+- validacoes locais executadas e resultado;
 - status npx/tarball;
 - se tag/release foi ou nao criada;
 - blockers externos, se houver.

@@ -47,7 +47,7 @@ Se um plano legado for lido, o próximo artefato gerado deve ser salvo em `.talo
 ## Cadeia de execução
 
 ```text
-talos-plan-handoff → talos-plan-execute → talos-task-validator → talos-slice-review (opcional, via `--review`)
+talos-plan-handoff → talos-plan-execute → talos-task-validator → talos-slice-review (opcional via `--review`; obrigatória quando `critical_review.required:true` — G8)
 ```
 
 No workflow `full`, `talos-plan-handoff` é autoria documental do agente principal/orquestrador. O primeiro sub-agent da cadeia só nasce em `talos-plan-execute`.
