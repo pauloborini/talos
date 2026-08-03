@@ -2492,10 +2492,11 @@ function updatedSprintMarkdown(markdown, {
   return next;
 }
 
-// D5/D23: lê acceptance_results do state v3 apontado por state_path. Retorno
-// { results: array|null } — null quando ausente/ilegível. O gate de `done` só
-// aplica "quando presentes" (compat com atualizações sem state de aceite);
-// manual_validation_pending exige presentes (só existe no fluxo 0.15 com AC-*).
+// D5/D23 + A6 (fechamento Plano F): lê acceptance_results do state v3 apontado
+// por state_path. Retorno { results: array|null } — null quando ausente/ilegível
+// ou quando o state não é v3 (LEG2: side-path do status não pode aceitar v1/v2).
+// `done` e `manual_validation_pending` exigem o campo presente (SKILL
+// SPRINT_STATUS_SYNC / objetivo da trilha: sem prova de AC não há done+handoff).
 function readStateAcceptanceResults(statePath, args) {
   if (!statePath) return { results: null };
   let state;
@@ -2504,6 +2505,8 @@ function readStateAcceptanceResults(statePath, args) {
   } catch {
     return { results: null };
   }
+  const version = Number(state?.state_schema_version ?? 1);
+  if (version !== 3) return { results: null };
   return { results: Array.isArray(state?.acceptance_results) ? state.acceptance_results : null };
 }
 
@@ -2553,11 +2556,13 @@ function updateSprintStatus(args = {}) {
         pendencies.push(conformancePending('sprint_file', sprintId, null, `Linha ${sprintId} não aponta Sprint file real.`, 'preencher_sprint_file_no_backlog'));
       }
     }
-    // D5/D23: gate de aceite por estado. acceptance_results moram no state v3
-    // (eco do oráculo mecânico classifyAcceptanceResults — VC5; o validator
-    // emite no packet e o MCP persiste o eco validado no state no complete).
-    // done exige todos proved quando presentes;
-    // manual_validation_pending exige ≥1 manual_pending e nenhum unproved/violated.
+    // D5/D23 + A6 (fechamento Plano F): gate de aceite por estado.
+    // acceptance_results moram no state v3 (eco do oráculo classifyAcceptanceResults —
+    // VC5; o validator emite no packet e o MCP persiste o eco no complete).
+    // `done` e `manual_validation_pending` exigem o campo presente — SKILL
+    // SPRINT_STATUS_SYNC e o objetivo da trilha: sem prova de AC não há done+handoff.
+    // (Plano 3 tinha "quando presentes" para done; o fechamento removeu o escape
+    // porque a superfície declarativa e o runtime divergiam — A6 P1.)
     if (status === 'done' || status === 'manual_validation_pending') {
       const acceptance = readStateAcceptanceResults(args.state_path, args);
       // D2/D10/D20 (Plano 5): `revalidation_required` é flag, não status (INV4 —
@@ -2578,16 +2583,26 @@ function updateSprintStatus(args = {}) {
           ));
         }
       }
-      if (status === 'done' && Array.isArray(acceptance.results)) {
-        const blockers = acceptance.results.filter((item) => item?.status !== 'proved');
-        if (blockers.length > 0) {
+      if (status === 'done') {
+        if (!Array.isArray(acceptance.results)) {
           pendencies.push(conformancePending(
             'acceptance_results',
             sprintId,
             null,
-            `Status done exige todos os AC proved; bloqueado por: ${blockers.map((b) => `${b.id}:${b.status}`).join(', ')} (M aberto ou prova pendente).`,
-            'resolver_aceite_ou_avancar_manual_validation_pending',
+            'Status done exige acceptance_results no state (todos AC proved; sem M/unproved/violated).',
+            'emitir_acceptance_results_no_state',
           ));
+        } else {
+          const blockers = acceptance.results.filter((item) => item?.status !== 'proved');
+          if (blockers.length > 0) {
+            pendencies.push(conformancePending(
+              'acceptance_results',
+              sprintId,
+              null,
+              `Status done exige todos os AC proved; bloqueado por: ${blockers.map((b) => `${b.id}:${b.status}`).join(', ')} (M aberto ou prova pendente).`,
+              'resolver_aceite_ou_avancar_manual_validation_pending',
+            ));
+          }
         }
       }
       if (status === 'manual_validation_pending') {
@@ -5331,23 +5346,25 @@ function validatorComplete(args, context) {
     }
   }
 
-  // D05/D22 + CN2/VC1 (Plano 3): o eco validado do oráculo é persistido no state
-  // em disco — é a fonte que o gate de status do `updateSprintStatus` consome
-  // (`readStateAcceptanceResults`). O executor escreve `proof_refs` sem
-  // `acceptance_results` ("emitido pelo validator no complete"), e o packet do
-  // validator não persiste nada por si só; sem esta escrita, o state nunca teria
-  // o campo no fluxo real e o gate de MVP/done ficaria morto: MVP inalcançável
-  // (`emitir_acceptance_results_no_state`) e `done` com M aberto emitindo handoff.
-  // Falha de FS aqui é fail-closed a jusante: o `update_sprint_status` de MVP
-  // bloqueará com pendência nomeada, sem degradação silenciosa de veredito.
+  // D05/D22 + CN2/VC1 (Plano 3) + A6 (fechamento Plano F): o eco validado do
+  // oráculo é persistido no state em disco — fonte que o gate de status consome
+  // (`readStateAcceptanceResults`). Sem esta escrita, MVP/done ficam inalcançáveis
+  // (ambos exigem o campo). Falha de FS aqui é fail-closed no próprio complete:
+  // não devolver passed com eco só no packet — o gate de done deixaria de mentir
+  // só se o state tivesse sido gravado; se a gravação falhou, o complete bloqueia.
   if (acceptanceCheck.hasField && Array.isArray(packet.acceptance_results) && boundaryStateForOracle) {
     try {
       const stateAbs = resolveConsumerPath(statePathValue, args);
       boundaryStateForOracle.acceptance_results = packet.acceptance_results;
       fs.writeFileSync(stateAbs, `${JSON.stringify(boundaryStateForOracle, null, 2)}\n`);
-    } catch {
-      // State recém-lido e root de consumo gravável; falha aqui não altera o
-      // veredito do complete — o gate de status downstream bloqueia (fail-closed).
+    } catch (err) {
+      return {
+        gate: 'G4', action: 'complete', status: 'blocked', timestamp,
+        validator_attempt: cycle.active.attempt, validator_run_id: activeValidatorRunId,
+        state_path: statePathValue, validator_status: 'acceptance_results_persist_failed',
+        error: `Falha ao persistir acceptance_results no state: ${err?.message ?? err}`,
+        next_action: 'corrigir_gravacao_do_state_e_reemitir_complete',
+      };
     }
   }
 

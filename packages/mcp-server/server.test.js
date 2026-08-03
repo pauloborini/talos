@@ -2118,6 +2118,9 @@ test('talos_update_sprint_status: sincroniza done no backlog e sprint file com e
   fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
     '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | ready | ready | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
   ]));
+  writeStateWithAcceptance(root, 'S01.json', [
+    { id: 'AC-001', status: 'proved', proof_types: ['I:present', 'T-outcome:proved'] },
+  ]);
   const r = updateSprintStatus({
     run_id: 'r1',
     project_root: root,
@@ -2214,6 +2217,9 @@ test('handoff emit: done+pass com template cria HANDOFF e retorna handoff_path',
   fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
     '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | ready | ready | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
   ]));
+  writeStateWithAcceptance(root, 'S01.json', [
+    { id: 'AC-001', status: 'proved', proof_types: ['I:present', 'T-outcome:proved'] },
+  ]);
   const r = updateSprintStatus({
     run_id: 'r1',
     project_root: root,
@@ -2249,6 +2255,9 @@ test('handoff emit: done+pass_with_observations emite handoff', () => {
   fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
     '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | ready | ready | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
   ]));
+  writeStateWithAcceptance(root, 'S01.json', [
+    { id: 'AC-001', status: 'proved', proof_types: ['I:present', 'T-outcome:proved'] },
+  ]);
   const r = updateSprintStatus({
     run_id: 'r1',
     project_root: root,
@@ -2295,6 +2304,9 @@ test('handoff emit: template ausente bloqueia com pendência handoff_emit', () =
   fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
     '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | ready | ready | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
   ]));
+  writeStateWithAcceptance(root, 'S01.json', [
+    { id: 'AC-001', status: 'proved', proof_types: ['I:present', 'T-outcome:proved'] },
+  ]);
   const backlogBefore = fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8');
   const sprintAbs = path.join(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md');
   const sprintBefore = fs.readFileSync(sprintAbs, 'utf8');
@@ -2324,6 +2336,9 @@ test('handoff emit: falha de FS no write do HANDOFF faz rollback backlog+sprint 
   fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
     '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | ready | ready | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
   ]));
+  writeStateWithAcceptance(root, 'S01.json', [
+    { id: 'AC-001', status: 'proved', proof_types: ['I:present', 'T-outcome:proved'] },
+  ]);
   const backlogBefore = fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8');
   const sprintAbs = path.resolve(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md');
   const sprintBefore = fs.readFileSync(sprintAbs, 'utf8');
@@ -2361,6 +2376,9 @@ test('talos_update_sprint_status: falha de FS no sprint file faz rollback do bac
   fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
     '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | ready | ready | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
   ]));
+  writeStateWithAcceptance(root, 'S01.json', [
+    { id: 'AC-001', status: 'proved', proof_types: ['I:present', 'T-outcome:proved'] },
+  ]);
   const before = fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8');
   const sprintAbs = path.resolve(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md');
   // Injeta falha de FS determinística só no write do sprint file: o backlog já foi
@@ -2517,6 +2535,68 @@ test('update_sprint_status: done bloqueado quando acceptance_results tem manual_
     ? fs.readdirSync(path.join(root, '.talos/memory')).filter((name) => /^HANDOFF_.*_\d{8}\.md$/.test(name))
     : [];
   assert.equal(handoffs.length, 0);
+});
+
+// Fechamento Plano F (A6/P1): SKILL SPRINT_STATUS_SYNC exige acceptance_results
+// para done; o escape "quando presentes" do Plano 3 permitia done+handoff sem
+// prova de AC. Sem o campo (ou com state ilegível/v2), done bloqueia.
+test('update_sprint_status: done bloqueado sem acceptance_results no state (A6 / Plano F)', () => {
+  const root = tmpRoot();
+  writeHandoffTemplateFixture(root);
+  writeSprintFixture(root, 'S01', { status: 'ready', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | ready | ready | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+  // state_path apontado mas arquivo ausente → results null → blocked.
+  const before = fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8');
+  const rMissing = updateSprintStatus({
+    run_id: 'r1',
+    project_root: root,
+    backlog_path: 'BACKLOG.md',
+    sprint_id: 'S01',
+    status: 'done',
+    validator_verdict: 'pass',
+    state_path: '.talos/state/S01.json',
+  });
+  assert.equal(rMissing.status, 'blocked');
+  assert.ok(rMissing.pendencies.some((p) => p.category === 'acceptance_results' && /exige acceptance_results/.test(p.message)));
+  assert.equal(rMissing.handoff_path, undefined);
+  assert.equal(fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8'), before);
+
+  // state v3 sem o campo → blocked.
+  writeStateWithAcceptance(root, 'S01.json', undefined);
+  const rNoField = updateSprintStatus({
+    run_id: 'r1',
+    project_root: root,
+    backlog_path: 'BACKLOG.md',
+    sprint_id: 'S01',
+    status: 'done',
+    validator_verdict: 'pass',
+    state_path: '.talos/state/S01.json',
+  });
+  assert.equal(rNoField.status, 'blocked');
+  assert.ok(rNoField.pendencies.some((p) => p.category === 'acceptance_results'));
+  assert.equal(rNoField.handoff_path, undefined);
+
+  // state v2 com acceptance_results forjado → LEG2 side-path: ainda blocked.
+  const forgedV2 = {
+    state_schema_version: 2,
+    acceptance_results: [{ id: 'AC-001', status: 'proved', proof_types: ['I:present'] }],
+  };
+  fs.mkdirSync(path.join(root, '.talos/state'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.talos/state/S01-v2.json'), JSON.stringify(forgedV2));
+  const rV2 = updateSprintStatus({
+    run_id: 'r1',
+    project_root: root,
+    backlog_path: 'BACKLOG.md',
+    sprint_id: 'S01',
+    status: 'done',
+    validator_verdict: 'pass',
+    state_path: '.talos/state/S01-v2.json',
+  });
+  assert.equal(rV2.status, 'blocked');
+  assert.ok(rV2.pendencies.some((p) => p.category === 'acceptance_results'));
+  assert.equal(rV2.handoff_path, undefined);
 });
 
 test('manual_validation_pending satisfaz DEP e não emite handoff (CN2)', () => {
