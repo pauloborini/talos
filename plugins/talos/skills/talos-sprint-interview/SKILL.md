@@ -23,7 +23,7 @@ Ataque principalmente as seguintes subseções do contrato congelado:
 
 * **§7.1 Decisões de produto (D*)**
 * **§7.2 Cenários UX** (loading / vazio / erro / sucesso)
-* **§7.3 Aceite binário** (Produto, UX, Dados, Regressão de produto)
+* **§7.3 Aceite binário** — `AC-*` em YAML `acceptance` (critérios atômicos; hierarquia `AC-*` ⊃ `EVAL-*`)
 
 ---
 
@@ -38,7 +38,7 @@ Ataque principalmente as seguintes subseções do contrato congelado:
 **Mapeamento por Subseções:**
 * **§7.1 Decisões (D*):** `❌` se faltar decisão que altere fluxo principal, mappers, roteamento ou comportamento crítico.
 * **§7.2 Cenários UX:** `❌` se impactar o fluxo principal e faltarem os caminhos de loading, erro, vazio ou permissões.
-* **§7.3 Aceite binário:** `❌` se o critério for subjetivo, não observável ou não testável; os 4 grupos (Produto/UX/Dados/Regressão) devem existir.
+* **§7.3 Aceite (`AC-*`):** `❌` se faltar `AC-*` por cenário §7.2; se `behavior` for subjetivo/não observável; se `evidence.required` omitir prova automática (`I`/`T-outcome`/`W`); se `EVAL-*` órfão ou AC sem EVAL quando prova auto exigida; se `M` presente sem objeto `manual` ou vice-versa. Granularidade mínima: ≥1 `AC-*` por cenário + ≥1 de regressão quando houver regressão material.
 
 **Standalone (`Backlog mestre: Não aplicável (standalone)`):** sem backlog de apoio, a §7 é a única fonte de Eval/Policy que `talos-plan-handoff` vai ter. Eleve o critério de `❌`: gap que em sprint-bound seria `⚠️` é `❌` em standalone se afetar Eval/Policy do plano.
 
@@ -56,7 +56,7 @@ Ataque principalmente as seguintes subseções do contrato congelado:
 ```text
 §7.1 Decisões:   ✅/⚠️/❌
 §7.2 Cenários UX: ✅/⚠️/❌
-§7.3 Aceite:      ✅/⚠️/❌
+§7.3 AC-*:        ✅/⚠️/❌
 Contrato status:  draft|aprovado
 ```
 
