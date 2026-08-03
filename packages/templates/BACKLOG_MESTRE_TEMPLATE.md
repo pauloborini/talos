@@ -147,13 +147,13 @@ Use esta tabela para decisões que impedem uma ou mais sprints de ficarem `ready
 
 Uma linha por sprint. Detalhe vivo no arquivo apontado em **Sprint file**.
 
-As 12 primeiras colunas preservam compatibilidade com helpers Talos atuais. Colunas novas entram no fim.
+As 12 primeiras colunas preservam compatibilidade com helpers Talos atuais. Colunas novas entram no fim — `Revalidação` (índice 15, flag) é a última.
 
-| ID | Sprint | Fase-fonte | Objetivo (1 linha) | MoSCoW | Ganho | Esforço | Prioridade | PRD | Depende de | Estado | Gate | Sprint file | PLAN | State |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| S01 | [nome] | F0 | [objetivo curto] | Must | Alto | Baixo | P0 | pendente | — | backlog | — | `.talos/backlog/sprints/SPRINT_S01_[slug].md` | pendente | pendente |
-| S02 | [nome] | F1 | [objetivo curto] | Must | Alto | Médio | P0 | pendente | S01 | backlog | — | `.talos/backlog/sprints/SPRINT_S02_[slug].md` | pendente | pendente |
-| S03 | [nome] | F1 | [objetivo curto] | Should | Médio | Baixo | P1 | pendente | S01 | backlog | — | `.talos/backlog/sprints/SPRINT_S03_[slug].md` | pendente | pendente |
+| ID | Sprint | Fase-fonte | Objetivo (1 linha) | MoSCoW | Ganho | Esforço | Prioridade | PRD | Depende de | Estado | Gate | Sprint file | PLAN | State | Revalidação |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| S01 | [nome] | F0 | [objetivo curto] | Must | Alto | Baixo | P0 | pendente | — | backlog | — | `.talos/backlog/sprints/SPRINT_S01_[slug].md` | pendente | pendente | — |
+| S02 | [nome] | F1 | [objetivo curto] | Must | Alto | Médio | P0 | pendente | S01 | backlog | — | `.talos/backlog/sprints/SPRINT_S02_[slug].md` | pendente | pendente | — |
+| S03 | [nome] | F1 | [objetivo curto] | Should | Médio | Baixo | P1 | pendente | S01 | backlog | — | `.talos/backlog/sprints/SPRINT_S03_[slug].md` | pendente | pendente | — |
 
 Legenda:
 
@@ -164,6 +164,7 @@ Legenda:
 - **Gate:** último gate relevante ou `—`.
 - **PRD:** coluna legado posicional (compat MCP) — usar `pendente` ou `—`; aceite mora no sprint §7.
 - **Sprint file/PLAN/State:** paths vivos ou `pendente`.
+- **Revalidação (flag, não status):** `true` quando `M` falhou em sprint da qual esta depende (cone transitivo de `Depende de`); vazio/`false` caso contrário. Não entra no enum de Estados, não filtra `select_next_sprint`, não bloqueia `doing`/`review`; bloqueia `done` até os `AC-*` afetados serem revalidados (D2/D10/D20).
 
 ---
 

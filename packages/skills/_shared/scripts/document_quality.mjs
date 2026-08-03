@@ -142,7 +142,12 @@ export function parseSprintRows(markdown) {
   return rows.slice(header + 1).filter((row) => SPRINT_ID_REGEX.test(row[0])).map((row) => ({
     id: row[0], name: row[1], phase: row[2], objective: row[3], moscow: row[4], gain: (row[5] ?? '').toLowerCase(),
     effort: (row[6] ?? '').toLowerCase(), priority: row[7], prd: row[8], dependencies: row[9], state: row[10], gate: row[11],
-    sprint_file: row[12] ?? null, plan: row[13] ?? null, state_file: row[14] ?? null, raw: row,
+    sprint_file: row[12] ?? null, plan: row[13] ?? null, state_file: row[14] ?? null,
+    // D2/D6 (v0.15.0): flag de revalidação na coluna 15 (fim do índice, após
+    // State). Célula ausente em artefato pré-coluna = vazia → false (sem quebrar
+    // linhas legadas com 15 células). Flag ≠ status (INV4): não entra em enums.
+    revalidation_required: /^(true|yes|1)$/i.test(row[15] ?? ''),
+    raw: row,
   }));
 }
 

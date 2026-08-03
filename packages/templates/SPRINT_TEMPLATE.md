@@ -18,6 +18,7 @@ Regra: este arquivo guarda **escopo, estado, decisões locais, dependências, ga
 | Selo do contrato | [pendente até aprovação] |
 | PLAN | [pendente ou path] |
 | State / evidência | [pendente ou path] |
+| Revalidação | [false — flag `true` ligada pelo MCP quando `M` falhou em sprint da qual esta depende (cone de revalidação, D2/D20)] |
 | Fase | [F0/F1/F2/F3/F4/F5] |
 | MoSCoW | [Must / Should / Could / Won't now] |
 | Prioridade | [P0/P1/P2/P3] |

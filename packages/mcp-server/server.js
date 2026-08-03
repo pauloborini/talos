@@ -2186,6 +2186,8 @@ function inspectBacklogIndex(args = {}) {
       prd: cleanBacklogPathToken(row.prd) || null,
       plan: cleanBacklogPathToken(row.plan) || null,
       state_file: cleanBacklogPathToken(row.state_file) || null,
+      // D2/D20 (Plano 5): flag de revalidação (coluna 15) — projeção observável.
+      revalidation_required: row.revalidation_required === true,
       contrato_status: null,
       contrato_sealed: false,
     };
@@ -2273,6 +2275,31 @@ function depsSatisfied(row, byId) {
     }
   }
   return unmet;
+}
+
+// D2/D20 (Plano 5 / CN4): fecho transitivo de `Depende de` a partir das origens
+// com `M` falho. Dependentes diretos e indiretos ganham a flag
+// `revalidation_required` (coluna 15 do backlog); a origem fica `blocked` sem
+// flag (CN4: só dependentes são marcados); sprints independentes não são
+// tocadas (AC-5.2.1). Retorna o Set de ids flagados — a escrita da célula fica
+// com o chamador via `replaceBacklogSprintRow` (escrita absoluta: montar a
+// lista final completa com 16 células, preservando os índices 0–14).
+function propagateRevalidation(rows, originIds) {
+  const flagged = new Set();
+  const queue = [...originIds];
+  const visited = new Set();
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (visited.has(current)) continue;
+    visited.add(current);
+    for (const row of rows) {
+      if (row.id !== current && !flagged.has(row.id) && sprintDeps(row.dependencies).includes(current)) {
+        flagged.add(row.id);
+        queue.push(row.id);
+      }
+    }
+  }
+  return flagged;
 }
 
 function sprintSortKey(info) {
@@ -2441,11 +2468,16 @@ function updatedSprintMarkdown(markdown, {
   evidence = null,
   validatorVerdict = 'not_run',
   timestamp,
+  revalidation = null,
 }) {
   let next = replaceMarkdownTableValue(markdown, 'Status', status);
   // prd_path não grava mais metadado no sprint (template 0.14 removeu campo PRD).
   if (planPath) next = replaceMarkdownTableValue(next, 'PLAN', planPath);
   if (statePath) next = replaceMarkdownTableValue(next, 'State / evidência', statePath);
+  // D2 (Plano 5): metadado `Revalidação` sync no sprint file quando o MCP
+  // escreve a flag (limpa na revalidação concluída). Sprint file legado sem o
+  // campo: replace é no-op (sem drift).
+  if (revalidation !== null) next = replaceMarkdownTableValue(next, 'Revalidação', revalidation ? 'true' : 'false');
   const evidenceText = evidence || statePath || validatorVerdict;
   next = appendToMarkdownSectionTable(next, /^##\s+14\.\s+Execução e validação\s*$/i, [
     'Sprint status update',
@@ -2528,6 +2560,24 @@ function updateSprintStatus(args = {}) {
     // manual_validation_pending exige ≥1 manual_pending e nenhum unproved/violated.
     if (status === 'done' || status === 'manual_validation_pending') {
       const acceptance = readStateAcceptanceResults(args.state_path, args);
+      // D2/D10/D20 (Plano 5): `revalidation_required` é flag, não status (INV4 —
+      // AC-5.1.1). done fica bloqueado enquanto a flag estiver ligada e os AC-*
+      // afetados não forem revalidados (state com acceptance_results todos
+      // proved = revalidação concluída com provas verdes — AC-5.1.2). Sem state
+      // de aceite legível, a flag bloqueia (fail-closed).
+      if (status === 'done' && row?.revalidation_required) {
+        const revalidated = Array.isArray(acceptance.results) && acceptance.results.length > 0
+          && acceptance.results.every((item) => item?.status === 'proved');
+        if (!revalidated) {
+          pendencies.push(conformancePending(
+            'revalidation_required',
+            sprintId,
+            null,
+            'Sprint com Revalidação pendente (dependente de sprint com M falho): done exige revalidação dos AC-* afetados com provas verdes.',
+            'revalidar_aceite_afetado',
+          ));
+        }
+      }
       if (status === 'done' && Array.isArray(acceptance.results)) {
         const blockers = acceptance.results.filter((item) => item?.status !== 'proved');
         if (blockers.length > 0) {
@@ -2580,6 +2630,9 @@ function updateSprintStatus(args = {}) {
     const sprintPath = cleanBacklogPathToken(row.sprint_file);
     const sprintAbs = resolveConsumerPath(sprintPath, args);
     const sprintBefore = fs.readFileSync(sprintAbs, 'utf8');
+    // D10 (Plano 5): done só avança com a flag ligada quando a revalidação foi
+    // observada (todos os AC proved — gate acima); nesse caso a flag é limpa.
+    const clearRevalidation = status === 'done' && row.revalidation_required === true;
     const nextBacklog = replaceBacklogSprintRow(backlogBefore, sprintId, (cells) => {
       const nextCells = [...cells];
       // Coluna PRD (índice 8): legado posicional — só atualiza se o caller passar prd_path.
@@ -2588,6 +2641,11 @@ function updateSprintStatus(args = {}) {
       nextCells[11] = args.gate_status ?? derivedSprintGateStatus(status, validatorVerdict);
       nextCells[13] = args.plan_path ?? nextCells[13];
       nextCells[14] = args.state_path ?? nextCells[14];
+      // D6 (Plano 5): `replaceBacklogSprintRow` é escrita absoluta — montar a
+      // lista final completa com 16 células; Revalidação vive na coluna 15
+      // (fim do índice), preservada ou limpa na revalidação concluída.
+      while (nextCells.length < 16) nextCells.push('');
+      if (clearRevalidation) nextCells[15] = '';
       return nextCells;
     });
     if (!nextBacklog.updated) {
@@ -2601,6 +2659,8 @@ function updateSprintStatus(args = {}) {
       evidence: args.evidence,
       validatorVerdict,
       timestamp,
+      // D2: metadado sync no sprint file (flag limpa na revalidação concluída).
+      revalidation: clearRevalidation ? false : null,
     });
     const sprintValidation = validateSprintFileConformance(nextSprint, {
       sprintPath,
@@ -3070,6 +3130,50 @@ function syncManualValidation(args = {}) {
         if (plan) sprintPlans.push(plan);
       }
       if (pendencies.length > 0) throw new Error('manual_validation_sync_invalid_report');
+
+      // Plano 5 / CN4: `M` falho na origem → origem `blocked` (promoção no loop
+      // abaixo) e cone dependente com `revalidation_required=true` (fecho
+      // transitivo de `Depende de` — AC-5.2.1). A flag não filtra seleção
+      // (AC-5.2.2) e bloqueia `done` até revalidação (AC-5.1.2). Escrita antes
+      // das promoções para o `updateSprintStatus` (que relê o backlog do disco)
+      // enxergar a flag; dependente revalidado no mesmo sync (todos proved)
+      // limpa a flag na própria promoção.
+      const failedOrigins = sprintPlans
+        .filter((plan) => plan.mvList.some((mv) => mv.status === 'failed'))
+        .map((plan) => plan.sprintId);
+      if (failedOrigins.length > 0) {
+        const flagged = propagateRevalidation(backlogRows, failedOrigins);
+        if (flagged.size > 0) {
+          const backlogAbs = resolveConsumerPath(backlogPath, args);
+          let nextBacklog = backlogMarkdown;
+          for (const flaggedId of flagged) {
+            const res = replaceBacklogSprintRow(nextBacklog, flaggedId, (cells) => {
+              // Escrita absoluta: lista final completa com 16 células (índices
+              // 0–14 preservados; Revalidação = coluna 15, fim do índice).
+              const nextCells = [...cells];
+              while (nextCells.length < 16) nextCells.push('');
+              nextCells[15] = 'true';
+              return nextCells;
+            });
+            nextBacklog = res.markdown;
+          }
+          fs.writeFileSync(backlogAbs, nextBacklog);
+          // D2: metadado sync no sprint file dos dependentes flagados. Sprint
+          // file ausente/ilegível: a flag permanece no backlog — o drift é
+          // tratado a jusante (done exige revalidação via estado, fail-closed).
+          for (const flaggedId of flagged) {
+            const flaggedRow = byId.get(flaggedId);
+            if (!flaggedRow || pendingPathToken(flaggedRow.sprint_file)) continue;
+            try {
+              const flaggedSprintAbs = resolveConsumerPath(cleanBacklogPathToken(flaggedRow.sprint_file), args);
+              fs.writeFileSync(
+                flaggedSprintAbs,
+                replaceMarkdownTableValue(fs.readFileSync(flaggedSprintAbs, 'utf8'), 'Revalidação', 'true'),
+              );
+            } catch {}
+          }
+        }
+      }
 
       // 3) Escritas: state (acceptance_results), promoção (done/blocked), relatório,
       // ledger. Promoção reusa a escrita atômica de status (mesmo caminho do CN1).
@@ -6333,6 +6437,7 @@ export {
   updateSprintStatus,
   syncManualValidation,
   emitMemoryHandoff,
+  propagateRevalidation,
   classifyInput,
   preflight,
   lockDispatch,

@@ -38,6 +38,7 @@ import {
   updateSprintStatus,
   syncManualValidation,
   emitMemoryHandoff,
+  propagateRevalidation,
   classifyInput,
   preflight,
   lockDispatch,
@@ -1236,6 +1237,7 @@ function sprintDoc({
     '| PRD | pendente |',
     '| PLAN | pendente |',
     '| State / evidência | pendente |',
+    '| Revalidação | false |',
     '| Fase | F0 |',
     '| MoSCoW | Must |',
     '| Prioridade | P0 |',
@@ -2805,6 +2807,252 @@ test('talos_sync_manual_validation: ledger append-only no run state (D24)', () =
     state1.data.manual_validation,
     'eventos anteriores preservados',
   );
+});
+
+// ===== Plano 5 — flag revalidation_required e cone (AC-5.* / CN4 / D2/D6/D10/D20) =====
+
+test('revalidation_required não pertence a BACKLOG_STATES (AC-5.1.1 / INV4)', () => {
+  // (a) textual: enum canônico do MCP sem a flag (fonte é o código real).
+  const source = fs.readFileSync(new URL('./server.js', import.meta.url), 'utf8');
+  const enumLine = source.split('\n').find((line) => line.includes('const BACKLOG_STATES = new Set'));
+  assert.ok(enumLine, 'BACKLOG_STATES deve existir');
+  assert.doesNotMatch(enumLine, /revalidation_required/i, 'flag não pode entrar no enum de status');
+  // (b) comportamental: status `revalidation_required` é rejeitado como status inválido.
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S01', { status: 'ready', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | ready | ready | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+  const r = updateSprintStatus({
+    run_id: 'r51',
+    project_root: root,
+    backlog_path: 'BACKLOG.md',
+    sprint_id: 'S01',
+    status: 'revalidation_required',
+    validator_verdict: 'pass',
+  });
+  assert.equal(r.status, 'blocked');
+  assert.ok(r.pendencies.some((p) => p.category === 'status' && /inválido/.test(p.message)));
+});
+
+test('update_sprint_status: done bloqueado com revalidation_required ligada (AC-5.1.2)', () => {
+  const root = tmpRoot();
+  writeHandoffTemplateFixture(root);
+  writeSprintFixture(root, 'S01', { status: 'manual_validation_pending', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | manual_validation_pending | validator:pass;manual_pending | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | `.talos/state/S01.json` | true |',
+  ]));
+  // Sem acceptance_results no state: revalidação não observada → fail-closed.
+  writeStateWithAcceptance(root, 'S01.json', undefined);
+  const before = fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8');
+  const r = updateSprintStatus({
+    run_id: 'r52',
+    project_root: root,
+    backlog_path: 'BACKLOG.md',
+    sprint_id: 'S01',
+    status: 'done',
+    validator_verdict: 'pass',
+    state_path: '.talos/state/S01.json',
+  });
+  assert.equal(r.status, 'blocked');
+  assert.ok(r.pendencies.some((p) => p.category === 'revalidation_required'));
+  assert.equal(r.next_action, 'revalidar_aceite_afetado');
+  // zero mutação e zero handoff.
+  assert.equal(fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8'), before);
+  const handoffs = fs.existsSync(path.join(root, '.talos/memory'))
+    ? fs.readdirSync(path.join(root, '.talos/memory')).filter((name) => /^HANDOFF_.*_\d{8}\.md$/.test(name))
+    : [];
+  assert.equal(handoffs.length, 0);
+});
+
+test('update_sprint_status: done com flag ligada exige revalidação (todos proved) e limpa a flag', () => {
+  const root = tmpRoot();
+  writeHandoffTemplateFixture(root);
+  writeSprintFixture(root, 'S01', { status: 'manual_validation_pending', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | manual_validation_pending | validator:pass;manual_pending | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | `.talos/state/S01.json` | true |',
+  ]));
+  // Revalidação observada: state com acceptance_results todos proved (D10).
+  writeStateWithAcceptance(root, 'S01.json', [
+    { id: 'AC-001', status: 'proved', proof_types: ['I:present', 'T-outcome:proved'] },
+    { id: 'AC-002', status: 'proved', proof_types: ['I:present', 'T-outcome:proved', 'M:validated'] },
+  ]);
+  const r = updateSprintStatus({
+    run_id: 'r53',
+    project_root: root,
+    backlog_path: 'BACKLOG.md',
+    sprint_id: 'S01',
+    status: 'done',
+    validator_verdict: 'pass',
+    state_path: '.talos/state/S01.json',
+  });
+  assert.equal(r.status, 'passed', JSON.stringify(r.pendencies, null, 1));
+  assert.equal(r.next_status, 'done');
+  assert.ok(r.handoff_path);
+  const row = parseSprintRows(fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8'))[0];
+  assert.equal(row.state, 'done');
+  assert.equal(row.revalidation_required, false, 'revalidação concluída deve limpar a flag');
+  const sprint = fs.readFileSync(path.join(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md'), 'utf8');
+  assert.match(sprint, /^\| Revalidação \| false \|$/m, 'metadado sync no sprint file (D2)');
+});
+
+test('parseSprintRows: índices estáveis — state row[10], state_file row[14], revalidation row[15] (AC-5.1.3)', () => {
+  const rows = parseSprintRows(backlogWithRows([
+    '| S01 | A | F0 | o | Must | Alto | Baixo | P0 | pendente | — | review | g | a.md | b.md | c.json | true |',
+    '| S02 | B | F0 | o | Must | Alto | Baixo | P0 | pendente | S01 | doing | g | a.md | b.md | c.json | yes |',
+    '| S03 | C | F0 | o | Must | Alto | Baixo | P0 | pendente | — | done | g | a.md | b.md | c.json | 1 |',
+    '| S04 | D | F0 | o | Must | Alto | Baixo | P0 | pendente | — | done | g | a.md | b.md | c.json | FALSE |',
+    '| S05 | E | F0 | o | Must | Alto | Baixo | P0 | pendente | — | done | g | a.md | b.md | c.json | — |',
+    '| S06 | F | F0 | o | Must | Alto | Baixo | P0 | pendente | — | done | g | a.md | b.md | c.json |',
+  ]));
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  // Estado permanece no índice 10; State file no 14; Revalidação derivada do 15.
+  assert.equal(byId.get('S01').state, 'review');
+  assert.equal(byId.get('S01').state_file, 'c.json');
+  assert.equal(byId.get('S01').revalidation_required, true);
+  assert.equal(byId.get('S02').revalidation_required, true, 'yes liga a flag');
+  assert.equal(byId.get('S03').revalidation_required, true, '1 liga a flag');
+  assert.equal(byId.get('S04').revalidation_required, false, 'FALSE não liga');
+  assert.equal(byId.get('S05').revalidation_required, false, '— não liga');
+  // Coluna ausente (artefato 0.15 com 15 células) = vazia/false, sem quebrar.
+  assert.equal(byId.get('S06').state, 'done');
+  assert.equal(byId.get('S06').state_file, 'c.json');
+  assert.equal(byId.get('S06').revalidation_required, false);
+});
+
+test('propagateRevalidation: fecho transitivo de Depende de (AC-5.2.1 unit)', () => {
+  const rows = parseSprintRows(backlogWithRows([
+    '| S01 | Origem | F0 | o | Must | Alto | Baixo | P0 | pendente | — | blocked | g | a.md | b.md | c.json |',
+    '| S02 | Dep1 | F0 | o | Must | Alto | Baixo | P0 | pendente | S01 | review | g | a.md | b.md | c.json |',
+    '| S03 | Dep2 | F0 | o | Must | Alto | Baixo | P0 | pendente | S02 | review | g | a.md | b.md | c.json |',
+    '| S04 | Indep | F0 | o | Must | Alto | Baixo | P0 | pendente | — | review | g | a.md | b.md | c.json |',
+  ]));
+  const flagged = propagateRevalidation(rows, ['S01']);
+  assert.deepEqual([...flagged].sort(), ['S02', 'S03']);
+});
+
+test('M failed liga revalidation_required no cone (CN4 / AC-5.2.1)', () => {
+  const root = tmpRoot();
+  setupMvpSprint(root, {
+    acceptance: [
+      { id: 'AC-001', status: 'proved', proof_types: ['I:present', 'T-outcome:proved'] },
+      { id: 'AC-002', status: 'manual_pending', proof_types: ['I:present', 'M:pending'] },
+    ],
+  });
+  // Grafo S01 ← S02 ← S03; S04 independente.
+  writeSprintFixture(root, 'S02', { status: 'review', dorStatus: 'verde' });
+  writeSprintFixture(root, 'S03', { status: 'review', dorStatus: 'verde' });
+  writeSprintFixture(root, 'S04', { status: 'review', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Origem | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | manual_validation_pending | validator:pass;manual_pending | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | `.talos/state/S01.json` |',
+    '| S02 | Dep1 | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | S01 | review | g | `.talos/backlog/sprints/SPRINT_S02_runtime.md` | pendente | pendente |',
+    '| S03 | Dep2 | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | S02 | review | g | `.talos/backlog/sprints/SPRINT_S03_runtime.md` | pendente | pendente |',
+    '| S04 | Indep | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | review | g | `.talos/backlog/sprints/SPRINT_S04_runtime.md` | pendente | pendente |',
+  ]));
+  writeManualValidationReport(root, [
+    '| MV-S01-AC-002 | S01 / AC-002 | alta | failed | passo a passo | dev | resultado observável | smoke falhou no fluxo X |',
+  ]);
+  const r = syncManualValidation({ run_id: 'r-cone', project_root: root, backlog_path: 'BACKLOG.md' });
+  assert.equal(r.status, 'passed', JSON.stringify(r.pendencies, null, 1));
+  assert.equal(r.sprints[0].sprint_id, 'S01');
+  assert.equal(r.sprints[0].state, 'blocked', 'origem com M falho fica blocked');
+  assert.equal(r.handoff_path, null);
+  const rows = parseSprintRows(fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8'));
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  assert.equal(byId.get('S01').revalidation_required, false, 'origem não recebe a flag');
+  assert.equal(byId.get('S02').revalidation_required, true, 'dependente direto recebe a flag');
+  assert.equal(byId.get('S03').revalidation_required, true, 'fecho transitivo recebe a flag');
+  assert.equal(byId.get('S04').revalidation_required, false, 'independente não recebe a flag');
+  // D2: metadado sync no sprint file dos dependentes flagados; independente intacto.
+  const s02 = fs.readFileSync(path.join(root, '.talos/backlog/sprints/SPRINT_S02_runtime.md'), 'utf8');
+  assert.match(s02, /^\| Revalidação \| true \|$/m);
+  const s03 = fs.readFileSync(path.join(root, '.talos/backlog/sprints/SPRINT_S03_runtime.md'), 'utf8');
+  assert.match(s03, /^\| Revalidação \| true \|$/m);
+  const s04 = fs.readFileSync(path.join(root, '.talos/backlog/sprints/SPRINT_S04_runtime.md'), 'utf8');
+  assert.match(s04, /^\| Revalidação \| false \|$/m);
+});
+
+test('sync com M failed na origem e M validated no dependente: dependente done limpa a flag no mesmo sync (CN3 x CN4)', () => {
+  // Revalidação observada no MESMO sync que ligou o cone: o dependente direto
+  // (S02) é revalidado (M validated → state todos proved) e promovido a done
+  // com a flag limpa — CN3 preservado para dependentes flagados; S03 (fecho
+  // transitivo, sem linha no relatório) permanece com a flag.
+  const root = tmpRoot();
+  setupMvpSprint(root, {
+    acceptance: [
+      { id: 'AC-001', status: 'proved', proof_types: ['I:present', 'T-outcome:proved'] },
+      { id: 'AC-002', status: 'manual_pending', proof_types: ['I:present', 'M:pending'] },
+    ],
+  });
+  writeSprintWithManual(root, 'S02', { status: 'manual_validation_pending', dorStatus: 'verde' });
+  writeSprintFixture(root, 'S03', { status: 'review', dorStatus: 'verde' });
+  writeSprintFixture(root, 'S04', { status: 'review', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Origem | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | manual_validation_pending | validator:pass;manual_pending | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | `.talos/state/S01.json` |',
+    '| S02 | Dep1 | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | S01 | manual_validation_pending | validator:pass;manual_pending | `.talos/backlog/sprints/SPRINT_S02_runtime.md` | pendente | `.talos/state/S02.json` |',
+    '| S03 | Dep2 | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | S02 | review | g | `.talos/backlog/sprints/SPRINT_S03_runtime.md` | pendente | pendente |',
+    '| S04 | Indep | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | review | g | `.talos/backlog/sprints/SPRINT_S04_runtime.md` | pendente | pendente |',
+  ]));
+  writeStateWithAcceptance(root, 'S02.json', [
+    { id: 'AC-001', status: 'proved', proof_types: ['I:present', 'T-outcome:proved'] },
+    { id: 'AC-002', status: 'manual_pending', proof_types: ['I:present', 'M:pending'] },
+  ]);
+  writeManualValidationReport(root, [
+    '| MV-S01-AC-002 | S01 / AC-002 | alta | failed | passo a passo | dev | resultado observável | smoke falhou no fluxo X |',
+    '| MV-S02-AC-002 | S02 / AC-002 | alta | validated | passo a passo | dev | resultado observável | revalidado com sucesso |',
+  ]);
+  const r = syncManualValidation({ run_id: 'r-cone-clear', project_root: root, backlog_path: 'BACKLOG.md' });
+  assert.equal(r.status, 'passed', JSON.stringify(r.pendencies, null, 1));
+  const rows = parseSprintRows(fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8'));
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  assert.equal(byId.get('S01').state, 'blocked', 'origem com M falho fica blocked');
+  assert.equal(byId.get('S01').revalidation_required, false, 'origem não recebe a flag');
+  assert.equal(byId.get('S02').state, 'done', 'dependente revalidado no mesmo sync promove done');
+  assert.equal(byId.get('S02').revalidation_required, false, 'revalidação concluída limpa a flag na promoção');
+  assert.equal(byId.get('S03').revalidation_required, true, 'fecho transitivo preservado (sem linha no relatório)');
+  assert.equal(byId.get('S04').revalidation_required, false, 'independente intacto');
+  assert.ok(r.handoff_path, 'done do dependente emite handoff (CN3 preservado)');
+  const s02 = fs.readFileSync(path.join(root, '.talos/backlog/sprints/SPRINT_S02_runtime.md'), 'utf8');
+  assert.match(s02, /^\| Revalidação \| false \|$/m, 'metadado sprint limpo (D2)');
+});
+
+test('talos_select_next_sprint: flag revalidation_required não exclui candidata (AC-5.2.2)', () => {
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S01', { status: 'done', dorStatus: 'verde' });
+  writeSprintFixture(root, 'S02', { status: 'ready', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Base | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | done | validator:pass | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+    '| S02 | Depende | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | S01 | ready | ready | `.talos/backlog/sprints/SPRINT_S02_runtime.md` | pendente | pendente | true |',
+  ]));
+  const r = selectNextSprint({ run_id: 'r522', project_root: root, backlog_path: 'BACKLOG.md' });
+  assert.equal(r.status, 'passed');
+  assert.equal(r.selected.sprint_id, 'S02', 'flag não filtra candidata pronta com deps ok');
+  assert.ok(!r.rejected.some((item) => item.id === 'S02'));
+});
+
+test('BACKLOG_MESTRE_TEMPLATE: coluna Revalidação após State no fim do índice (Plano 5)', () => {
+  const templatePath = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    '../templates/BACKLOG_MESTRE_TEMPLATE.md',
+  );
+  const template = fs.readFileSync(templatePath, 'utf8');
+  const headerLine = template.split('\n').find((line) => /^\| ID \| Sprint \|/.test(line));
+  assert.ok(headerLine, 'header do registro de sprints');
+  assert.match(headerLine, /\| State \| Revalidação \|\s*$/, 'Revalidação é a última coluna (índice 15)');
+  assert.match(template, /Revalidação \(flag, não status\)/);
+  // flag não vira status na cadeia §5.1.
+  assert.doesNotMatch(template, /→ revalidation_required →/);
+  assert.doesNotMatch(template, /manual_validation_pending → revalidation_required/);
+});
+
+test('SPRINT_TEMPLATE: metadado Revalidação no §1 (D2)', () => {
+  const templatePath = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    '../templates/SPRINT_TEMPLATE.md',
+  );
+  const template = fs.readFileSync(templatePath, 'utf8');
+  assert.match(template, /^\| Revalidação \|/m);
+  assert.match(template, /cone de revalidação, D2\/D20/);
 });
 
 test('talos_classify_input: plano → banner roteia com modo=execute (T07)', () => {
