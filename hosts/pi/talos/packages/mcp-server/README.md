@@ -1,6 +1,6 @@
 # Talos MCP Server
 
-Servidor MCP do plugin Talos v0.14.2.
+Servidor MCP do plugin Talos v0.15.0.
 
 ## Tools
 
@@ -14,6 +14,7 @@ Servidor MCP do plugin Talos v0.14.2.
 - `talos_verify_backlog_index`: Gate de backlog enxuto; valida `BACKLOG_MESTRE_*.md` como índice macro, sprint files linkados, deps internas, ciclo e status espelhado backlog↔sprint.
 - `talos_select_next_sprint`: Gate de seleção; escolhe a próxima sprint executável com `state=ready`, deps internas `done`, sprint file válido e DoR verde. Arg opcional `mode` (`full`/`direct`/`execute`/`interview-only`). Em `passed`, `next_action` é mode-aware: §7 draft → `sprint_interview`; `direct` + §7 selado → `plan_execute`; `full` + §7 selado sem PLAN → `plan_handoff`; PLAN real → `plan_execute`. Campo `selected.prd_path` é legado posicional do backlog (null/`—` esperado).
 - `talos_update_sprint_status`: Gate pós-validação; sincroniza status no `BACKLOG_MESTRE` e no `SPRINT_SNN`, exigindo `state_path` + veredito frio terminal para `done`. Arg `prd_path` é legado (só coluna do backlog); não gera artefato PRD.
+- `talos_sync_manual_validation`: Sync do relatório humano `.talos/manual-validation/<backlog-slug>.md` com lock por backlog (D15). Valida IDs `MV-<sprint>-<ac>`, status e justificativa de waiver (relatório inválido/dirty → `blocked` com `next_action=fix_manual_validation_report`); item fantasma (MV sem `AC.manual` no §7.3) bloqueia; sincroniza `acceptance_results` no state (D24), histórico no sprint e ledger append-only no run state; todos os M `validated`/`waived` → promove `done` com `HANDOFF_*` (CN3); algum `failed` → origem `blocked` (cone de revalidação no Plano 5). Relatório sem pendências é removido (D12).
 - `talos_scan_acceptance`: Gate G5; escaneia o contrato §7 do sprint file por padrões determinísticos de ambiguidade bloqueante.
 - `talos_preflight`: Gate G10; valida modo, versão, lock ativo e mapa oficial de skills talos-*; `guarantee_level` só aparece em modos com execução.
 - `talos_lock_dispatch`: Gates G7/G8/G12; controla fase ativa, checkpoints de liveness do executor, ordem de dispatch e validator antes de review (`state_path_created` exige `state_path` legível).
@@ -30,5 +31,6 @@ Servidor MCP do plugin Talos v0.14.2.
 - Roteamento: lock persistido em `data.routing`.
 - Dispatch: fase ativa, próxima ação e histórico persistidos em `data.dispatch`.
 - Liveness: `plan_execute` persiste `data.dispatch.active.liveness`; antes do handoff, bootstrap vencido sem checkpoint ou checkpoint antigo sem progresso vira `executor_liveness.status = stalled` e `next_action: retry_plan_execute`; `state_path_created` põe `executor_liveness.status = handoff_ready` e não expira enquanto aguarda `talos_lock_validator(start)`, que só abre quando o checkpoint corresponde ao mesmo `state_path`.
-- State de sprint: quando `.talos/state/<run_id>/<slice>.json` declara `sprint_file_path`, o boundary exige `eval_results` e `policy_scope`; em schema v2, `eval_results` é a fonte única e `evidence_to_claim` não é persistido. Todo `EVAL-*` do sprint file precisa estar `passed` com evidência, e `policy_scope.forbidden_scope` bloqueia arquivo tocado.
+- State de sprint: quando `.talos/state/<run_id>/<slice>.json` declara `sprint_file_path`, o boundary exige `eval_results`, `policy_scope` e `proof_refs`; em schema v3, `eval_results` é a fonte única e `evidence_to_claim` não é persistido. Todo `EVAL-*` do sprint file precisa estar `passed` com evidência, e `policy_scope.forbidden_scope` bloqueia arquivo tocado. O validator emit `acceptance_results[]` no complete quando `sprint_file_path` presente (shape estrito; v1/v2 hard-fail).
+- Validação manual: `talos_sync_manual_validation` grava o resultado humano de `M` no state (`acceptance_results` com `M:validated`/`M:waived`/`M:failed` + `manual_validation_report`), no sprint (histórico) e no ledger `data.manual_validation` do run state (append-only; re-run não apaga). Relatório: `.talos/manual-validation/<slug>.md` (template `MANUAL_VALIDATION_REPORT_TEMPLATE.md`).
 - Erro bloqueante: entradas inválidas, run inexistente ou falha de estado retornam erro JSON-RPC; gate bloqueado retorna `status: "blocked"` e `next_action`.
