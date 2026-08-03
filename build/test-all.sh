@@ -9,7 +9,7 @@ bash "$ROOT/build/build-plugins.sh" >/dev/null
 echo "== unit (node --test) =="
 node --test "$ROOT/packages/mcp-server/server.test.js" >/dev/null
 echo "== unit (slice review findings gate) =="
-node --test "$ROOT/build/tests/classify-findings.test.mjs" "$ROOT/build/tests/etapa3.test.mjs"
+node --test "$ROOT/build/tests/classify-findings.test.mjs" "$ROOT/build/tests/etapa3.test.mjs" "$ROOT/build/tests/fixtures-s9.test.mjs"
 echo "== smoke por host =="
 node "$ROOT/build/smoke-hosts.mjs" | tail -1
 echo "== conformance multi-host =="

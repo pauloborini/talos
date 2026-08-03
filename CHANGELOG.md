@@ -1,15 +1,40 @@
 # Changelog
 
-## Unreleased
+## 0.15.0 - 2026-08-02
 
-Tipo: **feature** (memória pós-validação — emit + promote + docs).
+Tipo: **BREAKING release** (contrato de aceite atômico e validação manual não bloqueante).
 
-Resumo: após sprint `done`, o orquestrador pode emitir `HANDOFF_*.md`; a skill `talos-memory-promote` promove candidatos via sink do host (Argus opcional, soft-fail sem sink, nota documental Atlas Memory Graph).
+Resumo: aceite de produto vira atômico (`AC-*`), prova automática tipada (oráculo mecânico T-outcome) e smoke manual não bloqueante: sprint sem `M` fecha em `done` com `HANDOFF_*` só quando todos os `AC-*` estão `proved`; sprint com `M` aberto fica `manual_validation_pending` (libera DEP, não emite handoff); `M` falho bloqueia a origem e liga a flag `revalidation_required` no cone de dependentes sem impedir execução. **Artefatos pré-v0.15 não são suportados (D19): iniciar backlog/sprint novo.**
 
 Mudanças:
-- **Emit handoff no `done` (S03)** — `talos_update_sprint_status` + ledger apontam `HANDOFF_*.md` e atalho `$talos-memory-promote`.
-- **Skill `talos-memory-promote` (S04)** — lê HANDOFF, filtra 0–3 candidatos com âncora forte, adapter `argus_remember` | `none` (soft-fail).
-- **Packaging + docs (S05)** — skill no bundle `packages/skills/`; README/CHANGELOG descrevem três caminhos de sink sem exigir Argus.
+- **Contrato §7 (Plano 1)** — §7.3 com YAML `acceptance`/`AC-*` + hierarquia AC⊃EVAL; selo §7 cobre o bloco; scan bloqueia `behavior` TBD; checkbox dos 4 grupos (LEG1) e `manual_checks` como SSoT de smoke (LEG4) removidos.
+- **State v3 + oráculo (Plano 2)** — `state_schema_version:3` obrigatório (v1/v2 hard-fail — LEG2); `acceptance_results`/`proof_refs` por AC; `classifyAcceptanceResults` (oráculo determinístico T-outcome) exigido no `talos_lock_validator` quando sprint presente.
+- **Status/DEP/handoff (Plano 3)** — `manual_validation_pending` no enum e transições; `depsSatisfied` aceita `done` | `manual_validation_pending` (LEG3); `done` exige todos os `AC-*` `proved`; handoff só em `done`.
+- **Relatório M (Plano 4)** — `MANUAL_VALIDATION_REPORT_TEMPLATE.md` + `talos_sync_manual_validation` (lock por backlog; `validated`/`waived` com justificativa; `failed` bloqueia a origem; todos `validated` → `done` com handoff).
+- **Flag revalidação (Plano 5)** — coluna `Revalidação` (índice 15) no backlog; `propagateRevalidation` no fecho de `Depende de`; `done` bloqueado com flag até revalidação; select não filtra.
+- **Review crítica (Plano 6)** — `policy_manifest.critical_review` (§10, reasons enum fixo); slice-review obrigatória antes de `talos_update_sprint_status` quando `required:true` (G8).
+- **Memória pós-validação** — emit de `HANDOFF_*.md` no `done` + skill `talos-memory-promote` (sink Argus opcional, soft-fail sem sink).
+- **Fixtures §9 + release (Plano 7)** — gate `build/tests/fixtures-s9.test.mjs` (itens 1–8 red/green na suíte); bump `0.15.0`; `plugins/talos/**`, `hosts/{opencode,pi,zcode,vscode}/**` e `dist/**` regenerados.
+
+Migração (0.14.x → 0.15.0):
+- **Não há migração de artefatos antigos (D19).** Sprint files com §7.3 checkbox e state v1/v2 são rejeitados (hard-fail). Iniciar backlog/sprint novo no padrão 0.15.
+
+Impacto:
+- `done` só com todos os `AC-*` provados (sem `M`) ou `M` resolvido por sync; `manual_validation_pending` nunca emite `HANDOFF_*`.
+- State v3-only: qualquer state antigo falha no boundary.
+- Schema MCP v5 e topologia sibling/G4/G12 intactos.
+
+Arquivos/artefatos:
+- `VERSION` → `0.15.0`; `.claude-plugin/plugin.json`; `package.json`; `packages/mcp-server/package.json`; `plugins/talos/**`; `hosts/{opencode,pi,zcode,vscode}/**`; `dist/**`.
+- Templates: `SPRINT_TEMPLATE.md`, `STATE_FILE_SCHEMA.md`, `MANUAL_VALIDATION_REPORT_TEMPLATE.md`, `BACKLOG_MESTRE_TEMPLATE.md`.
+- `packages/mcp-server/server.js` + `server.test.js`, `packages/skills/_shared/scripts/document_quality.mjs`, skills orquestrador/validator/executores/interview, `build/tests/fixtures-s9.test.mjs`.
+
+Validação:
+- `node build/bump-version.mjs 0.15.0` + `bash build/build-plugins.sh` — ok.
+- `node build/check-consistency.mjs` — ok.
+- `bash build/test-all.sh` — OK (inclui fixtures §9 itens 1–8).
+- `node --test packages/mcp-server/server.test.js` — 280/280.
+- `git diff --check` — exit 0.
 
 ## 0.14.2 - 2026-07-20
 

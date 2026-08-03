@@ -239,9 +239,19 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `talos-*` para o
 
 ---
 
-**Plugin version:** 0.14.2
+**Plugin version:** 0.15.0
 **Author:** Paulo Borini
-**Last updated:** 2026-07-20
+**Last updated:** 2026-08-02
+
+### Novidades v0.15.0 — aceite atômico (`AC-*`) e validação manual não bloqueante (BREAKING)
+
+- **Contrato §7** — §7.3 com YAML `acceptance`/`AC-*` (hierarquia AC⊃EVAL, selo §7 write-once); checkbox dos 4 grupos removido (LEG1); smoke mora em `evidence.manual` do AC (LEG4).
+- **State v3 + oráculo** — `state_schema_version:3` obrigatório (v1/v2 hard-fail — LEG2); `acceptance_results`/`proof_refs` por AC; `talos_lock_validator` exige `acceptance_results` ecoando o oráculo mecânico T-outcome quando sprint presente.
+- **Status/DEP/handoff** — `manual_validation_pending` (satisfaz DEP — LEG3; nunca emite handoff); `done` só com todos os `AC-*` `proved`; handoff só em `done`.
+- **Validação manual** — relatório `.talos/manual-validation/<backlog>.md` + `talos_sync_manual_validation` (lock por backlog; `validated`/`waived` com justificativa; `failed` bloqueia a origem; todos `validated` → `done` com handoff).
+- **Flag revalidação** — coluna `Revalidação` (índice 15) no backlog; cone transitivo `Depende de` no `M` failed; `done` bloqueado até revalidação; select não filtra.
+- **Review crítica** — `policy_manifest.critical_review` (§10, reasons enum fixo); slice-review obrigatória antes de `talos_update_sprint_status` quando `required:true` (G8).
+- **Breaking (D19)** — artefatos pré-v0.15 não suportados; iniciar backlog/sprint novo. Schema MCP v5 e topologia sibling/G4/G12 intactos.
 
 ### Novidades v0.14.2 — MCP spawn com path com espaço
 

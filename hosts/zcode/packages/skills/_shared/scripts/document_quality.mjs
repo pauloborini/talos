@@ -8,7 +8,7 @@ const VALID = Object.freeze({
   gain: new Set(['alto', 'médio', 'baixo']),
   effort: new Set(['alto', 'médio', 'baixo']),
   priority: new Set(['P0', 'P1', 'P2', 'P3']),
-  state: new Set(['backlog', 'ready', 'doing', 'review', 'done', 'blocked']),
+  state: new Set(['backlog', 'ready', 'doing', 'review', 'manual_validation_pending', 'done', 'blocked']),
 });
 const SPRINT_ID_SOURCE = 'S\\d{2}(?:[a-z]|\\.\\d+)?';
 const SPRINT_ID_REGEX = new RegExp(`^${SPRINT_ID_SOURCE}$`);
@@ -142,7 +142,12 @@ export function parseSprintRows(markdown) {
   return rows.slice(header + 1).filter((row) => SPRINT_ID_REGEX.test(row[0])).map((row) => ({
     id: row[0], name: row[1], phase: row[2], objective: row[3], moscow: row[4], gain: (row[5] ?? '').toLowerCase(),
     effort: (row[6] ?? '').toLowerCase(), priority: row[7], prd: row[8], dependencies: row[9], state: row[10], gate: row[11],
-    sprint_file: row[12] ?? null, plan: row[13] ?? null, state_file: row[14] ?? null, raw: row,
+    sprint_file: row[12] ?? null, plan: row[13] ?? null, state_file: row[14] ?? null,
+    // D2/D6 (v0.15.0): flag de revalidação na coluna 15 (fim do índice, após
+    // State). Célula ausente em artefato pré-coluna = vazia → false (sem quebrar
+    // linhas legadas com 15 células). Flag ≠ status (INV4): não entra em enums.
+    revalidation_required: /^(true|yes|1)$/i.test(row[15] ?? ''),
+    raw: row,
   }));
 }
 
@@ -162,6 +167,204 @@ function fencedYamlBlock(markdown, key) {
   const re = new RegExp('```ya?ml\\s*([\\s\\S]*?\\b' + key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*:[\\s\\S]*?)```', 'i');
   const match = re.exec(markdown);
   return match ? match[1] : null;
+}
+
+function unquoteYaml(value) {
+  const v = (value ?? '').trim();
+  if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) return v.slice(1, -1);
+  return v;
+}
+
+function parseInlineYamlList(value) {
+  const v = (value ?? '').trim();
+  const match = /^\[(.*)\]$/.exec(v);
+  if (!match) return null;
+  if (!match[1].trim()) return [];
+  return match[1].split(',').map((token) => unquoteYaml(token.trim())).filter(Boolean);
+}
+
+function applyItemField(item, text) {
+  const match = /^([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*(.*)$/.exec(text);
+  if (!match) return;
+  const [, key, raw] = match;
+  const val = raw.trim();
+  if (key === 'id') item.id = unquoteYaml(val);
+  else if (key === 'behavior') item.behavior = unquoteYaml(val);
+  else if (key === 'scenario') item.scenario = unquoteYaml(val);
+  else if (key === 'decisions') item.decisions = parseInlineYamlList(val) ?? [];
+  else if (key === 'evals') item.evals = parseInlineYamlList(val) ?? [];
+}
+
+function applyManualField(manual, text) {
+  const match = /^([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*(.*)$/.exec(text);
+  if (!match) return;
+  const [, key, raw] = match;
+  const val = raw.trim();
+  if (val.startsWith('[')) manual[key] = parseInlineYamlList(val) ?? [];
+  else manual[key] = unquoteYaml(val);
+}
+
+/**
+ * Parser minimalista do subset `acceptance` do contrato §7.3.
+ * Determinístico para o formato definido em PROPOSTA_V0_15_0 §4: lista de maps
+ * com campos escalares, listas inline `[...]` e submapa `evidence` (required + manual).
+ * Não é parser YAML geral. Retorna `null` se não houver bloco `acceptance`; `[]` se vazio.
+ */
+function parseAcceptanceItems(blockText) {
+  const lines = blockText.split(/\r?\n/);
+  let start = -1;
+  for (let i = 0; i < lines.length; i += 1) {
+    if (/^\s*acceptance\s*:\s*$/.test(lines[i])) { start = i + 1; break; }
+    if (/^\s*acceptance\s*:\s*\[\]\s*$/.test(lines[i])) return [];
+  }
+  if (start < 0) return null;
+
+  const items = [];
+  let item = null;
+  let baseIndent = -1;
+  let evidenceIndent = -1;
+  let manualIndent = -1;
+
+  const flush = () => {
+    if (item) {
+      if (!item.evidence) item.evidence = { required: [], manual: null };
+      items.push(item);
+    }
+    item = null; evidenceIndent = -1; manualIndent = -1;
+  };
+
+  for (let i = start; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (!line.trim()) continue;
+    const indent = line.search(/\S/);
+    const trimmed = line.trim();
+    if (indent === 0 && /^[a-zA-Z_][a-zA-Z0-9_]*\s*:/.test(trimmed)) { flush(); break; }
+
+    if (/^- /.test(trimmed)) {
+      flush();
+      item = {};
+      baseIndent = indent;
+      applyItemField(item, trimmed.replace(/^-\s+/, ''));
+      continue;
+    }
+    if (!item) continue;
+
+    if (manualIndent >= 0 && indent > manualIndent) {
+      if (item.evidence && item.evidence.manual) applyManualField(item.evidence.manual, trimmed);
+      continue;
+    }
+    if (manualIndent >= 0 && indent <= manualIndent) manualIndent = -1;
+
+    if (evidenceIndent >= 0 && indent > evidenceIndent) {
+      if (trimmed.startsWith('manual:')) {
+        const val = trimmed.replace(/^manual:\s*/, '').trim();
+        if (val === 'null' || val === '') {
+          item.evidence.manual = val === '' ? {} : null;
+          if (val === '') manualIndent = indent;
+        } else {
+          item.evidence.manual = null;
+        }
+      } else if (trimmed.startsWith('required:')) {
+        const val = trimmed.replace(/^required:\s*/, '');
+        item.evidence.required = parseInlineYamlList(val);
+        if (!item.evidence.required) {
+          item.evidence.required = (val.trim() && val.trim() !== 'null') ? [unquoteYaml(val)] : [];
+        }
+      }
+      continue;
+    }
+    if (evidenceIndent >= 0 && indent <= evidenceIndent) evidenceIndent = -1;
+
+    if (trimmed.startsWith('evidence:')) {
+      item.evidence = { required: [], manual: null };
+      evidenceIndent = indent;
+    } else {
+      applyItemField(item, trimmed);
+    }
+  }
+  flush();
+  return items;
+}
+
+/** Extrai e parseia o bloco `acceptance` (AC-*) do §7.3. `null` se ausente; `[]` se vazio. */
+export function parseAcceptanceContract(markdown) {
+  const section7 = extractSectionMarkdown(markdown, 7) ?? '';
+  const fenceRe = /```ya?ml\s*\n([\s\S]*?)```/gi;
+  let blockText = null;
+  let match;
+  while ((match = fenceRe.exec(section7)) !== null) {
+    if (/^\s*acceptance\s*:/m.test(match[1])) { blockText = match[1]; break; }
+  }
+  if (blockText == null) return null;
+  return parseAcceptanceItems(blockText);
+}
+
+/** Conjunto de ids `EVAL-*` declarados no `eval_manifest` do §9. */
+export function extractEvalIds(markdown) {
+  const block = fencedYamlBlock(markdown, 'eval_manifest');
+  if (!block) return new Set();
+  return new Set([...block.matchAll(/id:\s*["']?(EVAL-\d+)["']?/g)].map((m) => m[1]));
+}
+
+/** Enum fixo de reasons da review crítica (D06/D09 — sem inferência por prosa). */
+export const CRITICAL_REVIEW_REASONS = Object.freeze([
+  'authorization', 'payment', 'data_migration', 'public_contract', 'host_adapter_dispatch',
+]);
+
+/**
+ * Parseia o subbloco `critical_review` do `policy_manifest` (subset determinístico,
+ * mesmo padrão do parser de acceptance — sem js-yaml).
+ * Retorna `null` quando `critical_review` está ausente; senão
+ * `{ required, reasons }` — `required` preserva o valor cru (true/false/outro,
+ * para a conformance julgar boolean) e `reasons` é array (vazio se ausente).
+ */
+export function parseCriticalReview(policyBlock) {
+  if (!policyBlock) return null;
+  const lines = policyBlock.split(/\r?\n/);
+  let found = false;
+  let required = null;
+  let reasons = null;
+  let collectingList = false;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const indent = line.search(/\S/);
+    if (!found) {
+      if (/^critical_review\s*:\s*$/.test(trimmed)) found = true;
+      continue;
+    }
+    // Indent <= 2 com chave = volta ao topo do policy_manifest (fim do subbloco).
+    if (indent <= 2 && /^[a-zA-Z_][a-zA-Z0-9_]*\s*:/.test(trimmed)) break;
+    if (collectingList && indent > 4 && /^-\s+/.test(trimmed)) {
+      reasons.push(unquoteYaml(trimmed.replace(/^-\s+/, '')));
+      continue;
+    }
+    collectingList = false;
+    const field = /^([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*(.*)$/.exec(trimmed);
+    if (!field) continue;
+    if (field[1] === 'required') {
+      const raw = field[2].trim();
+      required = /^true$/i.test(raw) ? true : /^false$/i.test(raw) ? false : raw;
+    } else if (field[1] === 'reasons') {
+      const inline = parseInlineYamlList(field[2]);
+      if (inline !== null) {
+        reasons = inline;
+      } else if (field[2].trim() === '') {
+        reasons = [];
+        collectingList = true;
+      } else {
+        reasons = [unquoteYaml(field[2])];
+      }
+    }
+  }
+  if (!found) return null;
+  return { required, reasons: reasons ?? [] };
+}
+
+/** D06/D09: review crítica só se `policy_manifest.critical_review.required === true`. */
+export function requiresCriticalReview(policyBlock) {
+  const critical = parseCriticalReview(policyBlock);
+  return critical !== null && critical.required === true;
 }
 
 function cleanPathToken(value) {
@@ -326,25 +529,127 @@ export function validateSprintFileConformance(markdown, {
       'preencher_decisoes_produto',
     ));
   }
-  for (const group of ['Produto', 'UX', 'Dados', 'Regressão de produto']) {
-    if (!new RegExp(`\\*\\*${group}\\*\\*`, 'i').test(section7)) {
-      pendencies.push(sprintConformancePending(
-        'contrato_produto',
-        'aceite',
-        lineOf(markdown, /^##\s+7\./i),
-        `Contrato §7 sem grupo de aceite **${group}**.`,
-        'preencher_aceite_binario',
-      ));
-    }
-  }
-  if (!/^- \[[ xX]\]/m.test(section7)) {
+  // LEG1: validação de aceite substitui os 4 grupos checkbox por AC-* (YAML acceptance).
+  const acceptanceItems = parseAcceptanceContract(markdown);
+  if (acceptanceItems == null) {
     pendencies.push(sprintConformancePending(
       'contrato_produto',
       'aceite',
       lineOf(markdown, /^##\s+7\./i),
-      'Contrato §7 sem checkbox de aceite observável.',
+      'Contrato §7 sem bloco `acceptance` (YAML com AC-*).',
       'preencher_aceite_binario',
     ));
+  } else {
+    const VALID_EVIDENCE = new Set(['I', 'T-outcome', 'W', 'M']);
+    const seenIds = new Set();
+    const evalIds = extractEvalIds(markdown);
+    for (const item of acceptanceItems) {
+      if (!item.id || !/^AC-\d+$/.test(item.id)) {
+        pendencies.push(sprintConformancePending(
+          'contrato_produto',
+          'aceite',
+          lineOf(markdown, /^##\s+7\./i),
+          `AC com id inválido/ausente: ${item.id ?? '<ausente>'} (esperado AC-\\d+).`,
+          'corrigir_aceite_id',
+        ));
+        continue;
+      }
+      if (seenIds.has(item.id)) {
+        pendencies.push(sprintConformancePending(
+          'contrato_produto',
+          'aceite',
+          lineOf(markdown, /^##\s+7\./i),
+          `AC duplicado: ${item.id}.`,
+          'corrigir_aceite_duplicado',
+        ));
+      }
+      seenIds.add(item.id);
+      if (!item.behavior || !item.behavior.trim()) {
+        pendencies.push(sprintConformancePending(
+          'contrato_produto',
+          'aceite',
+          lineOf(markdown, /^##\s+7\./i),
+          `AC ${item.id} sem behavior observável.`,
+          'preencher_aceite_behavior',
+        ));
+      }
+      const evidence = item.evidence ?? { required: [], manual: null };
+      const required = Array.isArray(evidence.required) ? evidence.required : [];
+      if (required.length === 0) {
+        pendencies.push(sprintConformancePending(
+          'contrato_produto',
+          'aceite',
+          lineOf(markdown, /^##\s+7\./i),
+          `AC ${item.id} sem evidence.required.`,
+          'preencher_aceite_evidence',
+        ));
+      } else {
+        const invalid = required.filter((t) => !VALID_EVIDENCE.has(t));
+        if (invalid.length > 0) {
+          pendencies.push(sprintConformancePending(
+            'contrato_produto',
+            'aceite',
+            lineOf(markdown, /^##\s+7\./i),
+            `AC ${item.id} com evidence.required inválido: ${invalid.join(', ')} (válidos: I, T-outcome, W, M).`,
+            'corrigir_aceite_evidence',
+          ));
+        }
+      }
+      // AC sem M exige provas automáticas; com M, `manual` deve ser objeto (não vazio) ou null.
+      const hasManual = !!required.includes('M');
+      const manualObj = evidence.manual && typeof evidence.manual === 'object' ? evidence.manual : null;
+      if (hasManual && !manualObj) {
+        pendencies.push(sprintConformancePending(
+          'contrato_produto',
+          'aceite',
+          lineOf(markdown, /^##\s+7\./i),
+          `AC ${item.id} declara evidence M mas sem objeto manual.`,
+          'preencher_aceite_manual',
+        ));
+      }
+      if (!hasManual && manualObj) {
+        pendencies.push(sprintConformancePending(
+          'contrato_produto',
+          'aceite',
+          lineOf(markdown, /^##\s+7\./i),
+          `AC ${item.id} tem objeto manual sem evidence M em required.`,
+          'corrigir_aceite_manual_sem_M',
+        ));
+      }
+      // D3/D21: hierarquia AC ⊃ EVAL. Todo EVAL referenciado deve existir no §9.
+      for (const evalId of (item.evals ?? [])) {
+        if (!/^EVAL-\d+$/.test(evalId)) {
+          pendencies.push(sprintConformancePending(
+            'contrato_produto',
+            'aceite',
+            lineOf(markdown, /^##\s+7\./i),
+            `AC ${item.id} referencia EVAL inválido: ${evalId}.`,
+            'corrigir_aceite_evals',
+          ));
+        } else if (evalIds.size > 0 && !evalIds.has(evalId)) {
+          pendencies.push(sprintConformancePending(
+            'contrato_produto',
+            'aceite',
+            lineOf(markdown, /^##\s+7\./i),
+            `AC ${item.id} referencia EVAL órfão: ${evalId} não declarado no eval_manifest (§9).`,
+            'corrigir_aceite_evals',
+          ));
+        }
+      }
+    }
+    // D21: todo EVAL do must_prove deve aparecer em ≥1 AC.
+    for (const evalId of evalIds) {
+      const referenced = acceptanceItems.some((item) => (item.evals ?? []).includes(evalId));
+      if (!referenced) {
+        pendencies.push(sprintConformancePending(
+          'contrato_produto',
+          'aceite',
+          lineOf(markdown, /^##\s+7\./i),
+          `EVAL órfão: ${evalId} declarado no §9 mas não referenciado por nenhum AC.`,
+          'vincular_eval_a_ac',
+        ));
+      }
+    }
   }
 
   const sealResult = validateAcceptanceSeal(markdown);
@@ -392,6 +697,27 @@ export function validateSprintFileConformance(markdown, {
     for (const token of ['forbidden_scope:', 'required_gates:']) {
       if (!policyBlock.includes(token)) {
         pendencies.push(sprintConformancePending('policy_manifest', token, null, `policy_manifest sem ${token}`, 'completar_policy_manifest'));
+      }
+    }
+    // Plano 6 (D06/D09): `critical_review` é opcional no policy_manifest; quando
+    // presente, o shape é estrito — required booleano e reasons ⊆ enum fixo.
+    // Proibido inferir reasons por prosa/diff: required:true sem reasons = pendência.
+    const critical = parseCriticalReview(policyBlock);
+    if (critical !== null) {
+      if (typeof critical.required !== 'boolean') {
+        pendencies.push(sprintConformancePending('policy_manifest', 'critical_review.required', null,
+          'critical_review.required deve ser true ou false.', 'corrigir_policy_manifest'));
+      }
+      const invalidReasons = critical.reasons.filter((reason) => !CRITICAL_REVIEW_REASONS.includes(reason));
+      if (invalidReasons.length > 0) {
+        pendencies.push(sprintConformancePending('policy_manifest', 'critical_review.reasons', null,
+          `critical_review.reasons contém valor fora do enum fixo: ${invalidReasons.join(', ')}.`,
+          'corrigir_policy_manifest'));
+      }
+      if (critical.required === true && critical.reasons.length === 0) {
+        pendencies.push(sprintConformancePending('policy_manifest', 'critical_review.reasons', null,
+          'critical_review.required:true exige reasons não vazio (sem inferência por prosa — D09).',
+          'corrigir_policy_manifest'));
       }
     }
   }

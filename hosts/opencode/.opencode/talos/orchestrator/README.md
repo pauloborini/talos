@@ -41,7 +41,7 @@ Pipeline completo executado automaticamente:
 ### Flags
 
 - `--interview` — Força entrevista do contrato §7 do sprint mesmo sem ambiguidades
-- `--review` — Executa slice-review ao final
+- `--review` — Executa slice-review ao final (senão opcional; sprints com `policy_manifest.critical_review.required: true` no §10 tornam a review obrigatória — G8)
 - `--help` — Mostra sintaxe completa
 
 ## Exemplos
@@ -114,7 +114,7 @@ Status:
    ↓
 11. Update sprint status (`talos_update_sprint_status`)
    ↓
-12. Review (se --review)
+12. Review (se --review ou critical_review.required:true no §10 — G8)
    └─ `talos-slice-review`
    ↓
 13. Output (resumo + próximos passos)
@@ -133,7 +133,7 @@ Status:
    ↓
 5. Update sprint status (`talos_update_sprint_status`, quando houver backlog/sprint)
    ↓
-6. Review (se --review)
+6. Review (se --review ou critical_review.required:true no §10 — G8)
    ↓
 7. Output
 ```
@@ -154,8 +154,8 @@ Talos é família única. Cliente (Claude Code, Cursor, Codex App) é apenas o h
 
 | Mode | Sequência |
 |------|-----------|
-| `full` | `talos-sprint-interview` quando necessário → `talos-plan-handoff` → `talos-plan-execute` → `talos-task-validator` → `talos-findings-repair` (no `fail`) → `talos-slice-review` somente com `--review` |
-| `direct` | sprint/contrato §7 → `talos-direct-execute` → `talos-task-validator` → `talos-findings-repair` (no `fail`) → `talos-slice-review` somente com `--review` |
+| `full` | `talos-sprint-interview` quando necessário → `talos-plan-handoff` → `talos-plan-execute` → `talos-task-validator` → `talos-findings-repair` (no `fail`) → `talos-slice-review` (com `--review`; obrigatória quando `critical_review.required:true` — G8) |
+| `direct` | sprint/contrato §7 → `talos-direct-execute` → `talos-task-validator` → `talos-findings-repair` (no `fail`) → `talos-slice-review` (com `--review`; obrigatória quando `critical_review.required:true` — G8) |
 | `interview-only` | draft sprint standalone §7 (se brainstorm) → `talos-sprint-interview` |
 
 ## Validação automática
@@ -239,9 +239,19 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `talos-*` para o
 
 ---
 
-**Plugin version:** 0.14.2
+**Plugin version:** 0.15.0
 **Author:** Paulo Borini
-**Last updated:** 2026-07-20
+**Last updated:** 2026-08-02
+
+### Novidades v0.15.0 — aceite atômico (`AC-*`) e validação manual não bloqueante (BREAKING)
+
+- **Contrato §7** — §7.3 com YAML `acceptance`/`AC-*` (hierarquia AC⊃EVAL, selo §7 write-once); checkbox dos 4 grupos removido (LEG1); smoke mora em `evidence.manual` do AC (LEG4).
+- **State v3 + oráculo** — `state_schema_version:3` obrigatório (v1/v2 hard-fail — LEG2); `acceptance_results`/`proof_refs` por AC; `talos_lock_validator` exige `acceptance_results` ecoando o oráculo mecânico T-outcome quando sprint presente.
+- **Status/DEP/handoff** — `manual_validation_pending` (satisfaz DEP — LEG3; nunca emite handoff); `done` só com todos os `AC-*` `proved`; handoff só em `done`.
+- **Validação manual** — relatório `.talos/manual-validation/<backlog>.md` + `talos_sync_manual_validation` (lock por backlog; `validated`/`waived` com justificativa; `failed` bloqueia a origem; todos `validated` → `done` com handoff).
+- **Flag revalidação** — coluna `Revalidação` (índice 15) no backlog; cone transitivo `Depende de` no `M` failed; `done` bloqueado até revalidação; select não filtra.
+- **Review crítica** — `policy_manifest.critical_review` (§10, reasons enum fixo); slice-review obrigatória antes de `talos_update_sprint_status` quando `required:true` (G8).
+- **Breaking (D19)** — artefatos pré-v0.15 não suportados; iniciar backlog/sprint novo. Schema MCP v5 e topologia sibling/G4/G12 intactos.
 
 ### Novidades v0.14.2 — MCP spawn com path com espaço
 
@@ -311,8 +321,8 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `talos-*` para o
 - **Backlog em 2 camadas**: mestre enxuto (índice estratégico — fases, tabela de sprints, MoSCoW, dependências, links) + sprint files vivos (`sprints/SNN_<slug>.md`, 16 seções: DoR/DoD, `eval_manifest`, `policy_manifest`, §14 Execução e validação, §16 Histórico). Skills priorizam sprint file como fonte primária de contexto; backlog mestre só para deps/ordem macro.
 - **`talos_verify_sprint_file`** — valida conformidade do arquivo vivo contra `SPRINT_TEMPLATE.md`: seções obrigatórias, link bidirecional ao backlog, DoR, eval_manifest. Fail-closed (ausente ou vazio = blocked).
 - **`talos_verify_backlog_index`** — valida backlog mestre: §7 Registro de sprints, enums válidos (MoSCoW/prioridade/status), links para sprint files reais, sem duplicata de sprint ID, detecção de ciclo de dependência, status drift backlog↔sprint file = blocked.
-- **`talos_select_next_sprint`** — seleção determinística: filtra `state=ready` + deps done + sprint file válido + DoR verde; ordena por MoSCoW→prioridade→ganho→esforço→ID. Resultado único, sem ambiguidade.
-- **`talos_update_sprint_status`** — atualiza status atomicamente em backlog e sprint file: pré-condição (FSM de transições, `done` exige validator terminal + `state_path`), escrita com rollback P2 (se write do sprint file falhar após o backlog ser escrito, backlog é restaurado), pós-validação antes de `passed`.
+- **`talos_select_next_sprint`** — seleção determinística: filtra `state=ready` + deps `done`/`manual_validation_pending` + sprint file válido + DoR verde; ordena por MoSCoW→prioridade→ganho→esforço→ID. Resultado único, sem ambiguidade.
+- **`talos_update_sprint_status`** — atualiza status atomicamente em backlog e sprint file: pré-condição (FSM de transições, `done`/`manual_validation_pending` exigem validator terminal + `state_path`; `done` bloqueado com M aberto), escrita com rollback P2 (se write do sprint file falhar após o backlog ser escrito, backlog é restaurado), pós-validação antes de `passed`. Handoff só em `done`.
 - **`SPRINT_TEMPLATE.md`** canônico — template de 16 seções para sprint files vivos.
 - **`BACKLOG_MESTRE_TEMPLATE.md` refatorado** — índice enxuto sem duplicar conteúdo de sprint.
 
