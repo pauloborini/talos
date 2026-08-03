@@ -1,6 +1,6 @@
 {
   "name": "talos",
-  "version": "0.15.0",
+  "version": "0.15.1",
   "private": true,
   "description": "Instalador multi-host do Talos (Claude Code, Cursor, Codex, opencode, pi). Roda via npx-from-GitHub.",
   "type": "module",

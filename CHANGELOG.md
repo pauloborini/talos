@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.15.1 - 2026-08-02
+
+Tipo: **packaging**. **Sem breaking**. Schema MCP: v5 (inalterado).
+
+Resumo: instalador detecta cache de marketplace owned por root (EACCES no `claude plugin marketplace add`) e falha cedo com remédio explícito; publica na `main` o linha 0.15.x (origin ainda estava em 0.14.2).
+
+Mudanças:
+- **`talos-init`** — `assertMarketplaceCacheWritable` antes de `marketplace add` (Claude/Cursor e Codex); mensagem de falha aponta `sudo rm -rf ~/.claude/plugins/marketplaces/talos` (sem rodar o init com sudo).
+- **`COMMANDS.md`** — seção Troubleshooting para o sintoma `Failed to finalize marketplace cache` / EACCES.
+
+Impacto:
+- `npx github:pauloborini/talos init …` deixa de falhar com erro opaco da CLI quando o cache está root-owned; usuário recebe o comando de correção.
+- Inclui o conteúdo BREAKING de 0.15.0 para quem ainda estava em 0.14.2 via `origin/main`.
+
+Arquivos/artefatos:
+- `build/cli/talos-init.mjs`, `COMMANDS.md`, `VERSION` → `0.15.1`, manifests/bundles regenerados.
+
+Validação:
+- `node build/bump-version.mjs 0.15.1` + `bash build/build-plugins.sh` — ok.
+- `node build/check-consistency.mjs` — ok.
+- `node --test packages/mcp-server/server.test.js` — 281/281.
+- `node --test build/tests/classify-findings.test.mjs build/tests/etapa3.test.mjs` — 11/11.
+- `node build/smoke-hosts.mjs` — ok.
+- `node build/conformance-matrix.mjs` — ok (7 hosts × 10).
+- `shasum -a 256 -c dist/SHA256SUMS` + `unzip -t` nos 6 `.plugin` — ok.
+- `npm pack` + `npm exec` tarball (`talos --help` → v0.15.1; `init opencode/codex --dry-run`) — ok.
+- `claude plugin validate ./ --strict` — ok.
+- `codex plugin validate` — CLI sem subcomando `validate` (registrado).
+
 ## 0.15.0 - 2026-08-02
 
 Tipo: **BREAKING release** (contrato de aceite atômico e validação manual não bloqueante).
