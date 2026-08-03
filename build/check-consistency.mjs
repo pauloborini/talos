@@ -257,11 +257,15 @@ if (versionFile != null) {
       errors.push(`Drift de versão: ${rel} (${got}) != VERSION (${want})`);
     }
   }
-  // Catálogos opencode/pi/zcode carregam VERSION crua (não plugin.json).
+  // Catálogos from-source e mirror de packaging carregam VERSION crua.
+  // Inclui vscode (INV5 / Plano F) e plugins/talos — omitir qualquer um deixa
+  // drift silencioso no mirror que o instalador from-source lê.
   for (const rel of [
     'hosts/opencode/.opencode/talos/VERSION',
     'hosts/pi/talos/VERSION',
     'hosts/zcode/packages/mcp-server/VERSION',
+    'hosts/vscode/.vscode/talos/VERSION',
+    'plugins/talos/VERSION',
   ]) {
     const raw = read(rel);
     if (raw != null && raw.trim() !== want) {
