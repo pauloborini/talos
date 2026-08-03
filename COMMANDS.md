@@ -30,7 +30,7 @@ npx github:pauloborini/talos init vscode --global
 
 ```
 
-Smoke pós-update: `talos_ping` → `version: 0.15.0`; `talos_capabilities` → `schema_version: 5` (sibling-only).
+Smoke pós-update: `talos_ping` → `version: 0.15.1`; `talos_capabilities` → `schema_version: 5` (sibling-only).
 
 ---
 
@@ -156,6 +156,21 @@ npx github:pauloborini/talos init codex
 ```
 
 Alternativa equivalente para qualquer host com npx: `npx github:pauloborini/talos init <host>`.
+
+---
+
+## Troubleshooting
+
+### `Failed to finalize marketplace cache` / `EACCES` em `~/.claude/plugins/marketplaces/talos`
+
+Cache owned por `root` (instalação anterior com `sudo`). O CLI não consegue apagar o dir. **Não** rode o Talos com sudo. Corrija e reinstale:
+
+```bash
+sudo rm -rf ~/.claude/plugins/marketplaces/talos
+npx github:pauloborini/talos init claudecode   # sem sudo
+```
+
+Mesmo sintoma no Codex: `sudo rm -rf ~/.codex/plugins/marketplaces/talos` (ou `$CODEX_HOME/plugins/marketplaces/talos`).
 
 ---
 

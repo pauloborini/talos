@@ -239,9 +239,15 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `talos-*` para o
 
 ---
 
-**Plugin version:** 0.15.0
+**Plugin version:** 0.15.1
 **Author:** Paulo Borini
 **Last updated:** 2026-08-02
+
+### Novidades v0.15.1 — preflight de cache marketplace (EACCES)
+
+- **Packaging** — `init` Claude/Cursor/Codex detecta cache `~/.…/plugins/marketplaces/talos` não gravável (ex.: owned por root após `sudo`) e falha cedo com `sudo rm -rf …` explícito.
+- **Docs** — Troubleshooting em `COMMANDS.md` para `Failed to finalize marketplace cache`.
+- Schema MCP v5 e topologia sibling intactos.
 
 ### Novidades v0.15.0 — aceite atômico (`AC-*`) e validação manual não bloqueante (BREAKING)
 
