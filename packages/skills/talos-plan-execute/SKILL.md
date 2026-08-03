@@ -67,7 +67,7 @@ The plan is the SSoT. Map `ready` to `pending`, `implementing`/`gating` to `in_p
 
 ## Review gate
 
-`talos-slice-review` is dispatched only when `--review` is present in the user command or executor arguments. Without `--review`, the orchestrator closes the slice upon receiving `pass` or `pass_with_observations` from the validator — this executor is not involved in that decision and never observes the validator verdict directly.
+`talos-slice-review` is dispatched when `--review` is present in the user command or executor arguments, or when the sprint file's `policy_manifest.critical_review.required: true` makes the review mandatory (CN5/D06 — G8, dispatched by the orchestrator without `--review`). Without either condition, the orchestrator closes the slice upon receiving `pass` or `pass_with_observations` from the validator — this executor is not involved in that decision and never observes the validator verdict directly.
 
 ## Entrada via modo `execute` (standalone / pipeline curta)
 

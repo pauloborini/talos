@@ -219,6 +219,9 @@ policy_manifest:
     - "talos_verify_sprint_file"
     - "talos_verify_template_conformance:plan"
     - "talos-task-validator"
+  critical_review:               # opcional — true torna slice-review obrigatória (D06/D09)
+    required: false
+    reasons: []                  # enum fixo: authorization | payment | data_migration | public_contract | host_adapter_dispatch
 ```
 
 ---

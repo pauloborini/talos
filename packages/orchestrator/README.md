@@ -41,7 +41,7 @@ Pipeline completo executado automaticamente:
 ### Flags
 
 - `--interview` — Força entrevista do contrato §7 do sprint mesmo sem ambiguidades
-- `--review` — Executa slice-review ao final
+- `--review` — Executa slice-review ao final (senão opcional; sprints com `policy_manifest.critical_review.required: true` no §10 tornam a review obrigatória — G8)
 - `--help` — Mostra sintaxe completa
 
 ## Exemplos
@@ -114,7 +114,7 @@ Status:
    ↓
 11. Update sprint status (`talos_update_sprint_status`)
    ↓
-12. Review (se --review)
+12. Review (se --review ou critical_review.required:true no §10 — G8)
    └─ `talos-slice-review`
    ↓
 13. Output (resumo + próximos passos)
@@ -133,7 +133,7 @@ Status:
    ↓
 5. Update sprint status (`talos_update_sprint_status`, quando houver backlog/sprint)
    ↓
-6. Review (se --review)
+6. Review (se --review ou critical_review.required:true no §10 — G8)
    ↓
 7. Output
 ```
@@ -154,8 +154,8 @@ Talos é família única. Cliente (Claude Code, Cursor, Codex App) é apenas o h
 
 | Mode | Sequência |
 |------|-----------|
-| `full` | `talos-sprint-interview` quando necessário → `talos-plan-handoff` → `talos-plan-execute` → `talos-task-validator` → `talos-findings-repair` (no `fail`) → `talos-slice-review` somente com `--review` |
-| `direct` | sprint/contrato §7 → `talos-direct-execute` → `talos-task-validator` → `talos-findings-repair` (no `fail`) → `talos-slice-review` somente com `--review` |
+| `full` | `talos-sprint-interview` quando necessário → `talos-plan-handoff` → `talos-plan-execute` → `talos-task-validator` → `talos-findings-repair` (no `fail`) → `talos-slice-review` (com `--review`; obrigatória quando `critical_review.required:true` — G8) |
+| `direct` | sprint/contrato §7 → `talos-direct-execute` → `talos-task-validator` → `talos-findings-repair` (no `fail`) → `talos-slice-review` (com `--review`; obrigatória quando `critical_review.required:true` — G8) |
 | `interview-only` | draft sprint standalone §7 (se brainstorm) → `talos-sprint-interview` |
 
 ## Validação automática

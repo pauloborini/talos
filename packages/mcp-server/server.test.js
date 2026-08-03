@@ -60,6 +60,9 @@ import {
   applyInterviewRound,
   approveAcceptanceContract,
   closedDecisionIds,
+  parseCriticalReview,
+  requiresCriticalReview,
+  CRITICAL_REVIEW_REASONS,
 } from '../skills/_shared/scripts/document_quality.mjs';
 import { fileURLToPath } from 'node:url';
 
@@ -70,6 +73,10 @@ const SPRINT_TEMPLATE_PATH = path.resolve(
 const SPRINT_INTERVIEW_SKILL_PATH = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   '../skills/talos-sprint-interview/SKILL.md',
+);
+const ORCHESTRATOR_SKILL_PATH = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '../orchestrator/skills/talos/SKILL.md',
 );
 
 function ensureValidatorStateFixture(root, runId, statePath) {
@@ -1651,6 +1658,115 @@ test('validateSprintFileConformance: manifests e evidence-to-claim preservados (
     ),
   );
   assert.ok(withoutEvidence.pendencies.some((p) => p.category === 'evidence_to_claim'));
+});
+
+// ===== Plano 6 — Review crítica via policy_manifest (AC-6.1.* / CN5) =====
+
+// Injeta `critical_review` no fence policy_manifest do sprintDoc().
+function policyWithCriticalReview({ required = 'true', reasons = '[authorization]' } = {}) {
+  return sprintDoc().replace(
+    /```yaml\npolicy_manifest:\n  forbidden_scope:\n    - "hosts"\n  required_gates:\n    - "talos_verify_sprint_file"\n```/,
+    '```yaml\npolicy_manifest:\n  forbidden_scope:\n    - "hosts"\n  required_gates:\n    - "talos_verify_sprint_file"\n'
+      + '  critical_review:\n    required: ' + required + '\n    reasons: ' + reasons + '\n```',
+  );
+}
+
+// Conteúdo do fence policy_manifest (sem os backticks) para parse direto.
+function policyBlockOf(markdown) {
+  const m = /```ya?ml\s*\n(policy_manifest:[\s\S]*?)```/.exec(markdown);
+  return m ? m[1] : null;
+}
+
+test('validateSprintFileConformance: critical_review.reasons fora do enum fixo → pendência (AC-6.1.1)', () => {
+  const r = validateSprintFileConformance(policyWithCriticalReview({ reasons: '[authorization, livre]' }));
+  assert.equal(r.valid, false);
+  assert.ok(
+    r.pendencies.some((p) => p.category === 'policy_manifest' && p.item === 'critical_review.reasons' && /livre/.test(p.message)),
+    `esperava pendência critical_review.reasons nomeando 'livre'; obtido: ${JSON.stringify(r.pendencies)}`,
+  );
+  // Contraprova: reasons dentro do enum → sem pendência de critical_review.
+  const ok = validateSprintFileConformance(
+    policyWithCriticalReview({ required: 'true', reasons: '[authorization, public_contract]' }),
+  );
+  assert.equal(ok.valid, true, `pendências: ${JSON.stringify(ok.pendencies)}`);
+});
+
+test('validateSprintFileConformance: critical_review.required não booleano → pendência (AC-6.1.1)', () => {
+  const r = validateSprintFileConformance(policyWithCriticalReview({ required: 'sim' }));
+  assert.equal(r.valid, false);
+  assert.ok(
+    r.pendencies.some((p) => p.category === 'policy_manifest' && p.item === 'critical_review.required'),
+    `esperava pendência critical_review.required; obtido: ${JSON.stringify(r.pendencies)}`,
+  );
+});
+
+test('validateSprintFileConformance: critical_review.required:true sem reasons → pendência (AC-6.1.1, D09 sem inferência)', () => {
+  const r = validateSprintFileConformance(policyWithCriticalReview({ required: 'true', reasons: '[]' }));
+  assert.equal(r.valid, false);
+  assert.ok(
+    r.pendencies.some((p) => p.category === 'policy_manifest' && p.item === 'critical_review.reasons'),
+    `esperava pendência critical_review.reasons; obtido: ${JSON.stringify(r.pendencies)}`,
+  );
+});
+
+test('requiresCriticalReview/parseCriticalReview: parse determinístico do policy_manifest (AC-6.1.2 helper)', () => {
+  assert.equal(requiresCriticalReview(policyBlockOf(policyWithCriticalReview({ required: 'true' }))), true);
+  assert.equal(requiresCriticalReview(policyBlockOf(policyWithCriticalReview({ required: 'false' }))), false);
+  // policy_manifest sem critical_review → false (review crítica não é default).
+  assert.equal(requiresCriticalReview(policyBlockOf(sprintDoc())), false);
+  const parsed = parseCriticalReview(policyBlockOf(policyWithCriticalReview({ required: 'true', reasons: '[authorization]' })));
+  assert.deepEqual(parsed, { required: true, reasons: ['authorization'] });
+});
+
+test('talos_verify_sprint_file: critical_review.reasons inválido → blocked com pendência (AC-6.1.1 seam S-REV)', () => {
+  const root = tmpRoot();
+  fs.mkdirSync(path.join(root, '.talos/backlog/sprints'), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md'),
+    policyWithCriticalReview({ reasons: '[prosa_livre]' }),
+  );
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), BACKLOG_WITH_SPRINT_FILE);
+  const r = verifySprintFile({
+    run_id: 'r1',
+    project_root: root,
+    sprint_path: '.talos/backlog/sprints/SPRINT_S01_runtime.md',
+    sprint_id: 'S01',
+    backlog_path: 'BACKLOG.md',
+  });
+  assert.equal(r.status, 'blocked');
+  assert.ok(
+    r.pendencies.some((p) => p.category === 'policy_manifest' && p.item === 'critical_review.reasons'),
+    `esperava pendência critical_review.reasons no gate; obtido: ${JSON.stringify(r.pendencies)}`,
+  );
+});
+
+test('orquestrador SKILL G8: critical_review.required:true exige slice-review ANTES de talos_update_sprint_status (AC-6.1.2 / CN5 sink)', () => {
+  // O sink de CN5 é packages/orchestrator/skills/talos/SKILL.md:G8 — o teste lê o
+  // arquivo do disco (não string fabricada) e exige a ordem do contrato.
+  const skill = fs.readFileSync(ORCHESTRATOR_SKILL_PATH, 'utf8');
+  const g8Row = skill.split('\n').find((line) => /^\|\s*G8\s*\|/.test(line));
+  assert.ok(g8Row, 'linha G8 ausente no SKILL do orquestrador');
+  assert.match(g8Row, /critical_review\.required/);
+  const sliceAt = g8Row.indexOf('slice-review');
+  const statusAt = g8Row.indexOf('talos_update_sprint_status');
+  assert.ok(
+    sliceAt >= 0 && statusAt > sliceAt,
+    'G8 não exige slice-review ANTES de talos_update_sprint_status quando critical_review.required:true',
+  );
+  // A review crítica é obrigatória por policy — não pode continuar tratando
+  // review só como opcional via `--review` nesse caso.
+  assert.match(g8Row, /obrigat[óo]ria/);
+  assert.match(g8Row, /não depende de `--review`|sem `--review`/);
+});
+
+test('SPRINT_TEMPLATE §10: policy_manifest inclui critical_review com enum fixo de reasons (Plano 6 template)', () => {
+  const template = fs.readFileSync(SPRINT_TEMPLATE_PATH, 'utf8');
+  const section = template.slice(template.indexOf('## 10. Policy manifest'));
+  assert.match(section, /critical_review:/);
+  for (const reason of CRITICAL_REVIEW_REASONS) {
+    assert.ok(section.includes(reason), `template §10 sem reason '${reason}'`);
+  }
+  assert.match(section, /required:\s*(true|false)/);
 });
 
 test('talos_verify_sprint_file: contrato completo passa no gate público (AC-1.2.1 seam)', () => {
