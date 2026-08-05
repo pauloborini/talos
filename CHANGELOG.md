@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.15.2 - 2026-08-04
+
+Tipo: **docs** (artefato distribuído). **Sem breaking**. Schema MCP: v5 (inalterado).
+
+Resumo: alinha a documentação de usuário e do orquestrador ao contrato operacional 0.15 (AC-*, validação manual, critical review, 16 tools MCP); remove copy obsoleto (menu A/B/C, “15 tools”, DEP só-done, G8/G9 invertidos).
+
+Mudanças:
+- **`README.md`** — seção “Aceite 0.15 e validação manual”; tabela MCP com `talos_sync_manual_validation`; DEP aceita `manual_validation_pending`; gates G8/G9 alinhados à SKILL; flags audit/`critical_review`; estrutura com `hosts/vscode` e `talos-findings-repair`.
+- **`packages/orchestrator/README.md`** — remove lógica A/B/C; fluxos full/direct com review antes do status e fechamento M; skill `talos-memory-promote`.
+- **`COMMANDS.md`**, **`commands/talos.md`**, **MCP README** — smoke/sync M; deps `done`|MVP no select/update.
+- **Catálogos** — `plugins/talos/**` e `hosts/{opencode,pi,zcode,vscode}/**` regenerados em `0.15.2`.
+
+Impacto:
+- Usuário/orquestrador deixam de seguir caminhos pré-0.15 (PRD/checkbox/A-B-C) descritos na doc pública.
+- Sem mudança de runtime MCP, gates ou topologia sibling.
+
+Arquivos/artefatos:
+- `VERSION` → `0.15.2`; manifests/bundles regenerados; `CHANGELOG.md`; docs listadas acima.
+
+Validação:
+- `node build/bump-version.mjs 0.15.2` + `bash build/build-plugins.sh` — ok.
+- `node build/check-consistency.mjs` — ok.
+- `node --test packages/mcp-server/server.test.js` — 281/281.
+- `node --test build/tests/classify-findings.test.mjs build/tests/etapa3.test.mjs` — 11/11.
+- `node build/smoke-hosts.mjs` — ok.
+- `node build/conformance-matrix.mjs` — ok (hosts × 10).
+- `shasum -a 256 -c dist/SHA256SUMS` + `unzip -t` nos 6 `.plugin` — ok.
+- `npm pack` + `npm exec` tarball (`talos --help` → v0.15.2; `init opencode/codex --dry-run`) — ok.
+- `claude plugin validate ./ --strict` — ok.
+- `codex plugin validate` — CLI sem subcomando `validate` (registrado).
+
 ## 0.15.1 - 2026-08-02
 
 Tipo: **packaging**. **Sem breaking**. Schema MCP: v5 (inalterado).

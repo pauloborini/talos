@@ -249,9 +249,15 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `talos-*` para o
 
 ---
 
-**Plugin version:** 0.15.1
+**Plugin version:** 0.15.2
 **Author:** Paulo Borini
 **Last updated:** 2026-08-04
+
+### Novidades v0.15.2 — docs alinhadas ao contrato 0.15
+
+- **Docs distribuídas** — README/orquestrador/COMMANDS/MCP descrevem `AC-*`, `manual_validation_pending`, `talos_sync_manual_validation`, `critical_review` e 16 tools MCP.
+- **Removido** — menu A/B/C (anti-padrão); “15 tools”; DEP só-`done`; mapa G8/G9 invertido.
+- Schema MCP v5 e topologia sibling intactos.
 
 ### Novidades v0.15.1 — preflight de cache marketplace (EACCES)
 
