@@ -32,7 +32,7 @@ Não acione para `sprint`/`backlog-item`, plano já existente, `execute`, `inter
 - Spec macro, roadmap, lista de requisitos, issue/backlog item ou texto colado pelo usuário.
 - Opcional: nome do projeto/feature, path de saída, fontes canônicas, restrições técnicas, prioridade de negócio e escopo fora do ciclo.
 
-Se faltar informação não bloqueante, gere o backlog com premissas marcadas e registre perguntas/riscos. Pergunte antes de salvar somente quando faltar uma das decisões bloqueantes: resultado final esperado, fronteira de escopo ou plataforma/produto alvo.
+Se faltar informação não bloqueante, gere o backlog com premissas marcadas e registre perguntas/riscos. O gatilho de pergunta é o scan de ambiguidade do rascunho (passo 4), não uma lista fixa de assuntos: com padrão bloqueante, conduza rodadas estruturadas; sem padrão bloqueante, não pergunte.
 
 ---
 
@@ -41,7 +41,7 @@ Se faltar informação não bloqueante, gere o backlog com premissas marcadas e 
 1. **Resolver templates canônicos:** descubra a raiz do plugin/bundle e leia `packages/templates/BACKLOG_MESTRE_TEMPLATE.md` e `packages/templates/SPRINT_TEMPLATE.md`. Se algum estiver ausente, aborte com: `Template canônico ausente: <nome>`.
 2. **Entender pedido:** extraia objetivo, usuários, resultado final esperado, fora de escopo, restrições, dependências, riscos, stakeholders e sinais de valor.
 3. **Inspecionar contexto real:** quando houver repo/projeto ativo, busque documentos existentes (`BACKLOG_MESTRE*.md`, `ROADMAP*.md`, specs, OpenAPI, docs de arquitetura) e código que influencie dependências. Não invente contrato técnico.
-4. **Fechar ambiguidade crítica:** se uma decisão bloquear a decomposição segura, faça até 3 perguntas objetivas. Se o usuário não responder e houver caminho razoável, registre a premissa como risco/decisão pendente.
+4. **Fechar ambiguidade por entrevista estruturada:** antes de gravar qualquer artefato, escaneie o rascunho em memória — chame `talos_scan_acceptance` com `sprint_markdown` (o markdown de cada sprint do rascunho, ainda sem arquivo em disco) e leia os padrões bloqueantes. Enquanto houver padrão bloqueante (`blocking_count > 0`): (a) chame `talos_capabilities` e leia `question_prompt` — o número máximo de perguntas e de opções por rodada vem do descritor do host (`max_questions`, `options_per_question`), nunca de constante da skill; (b) conduza a rodada com `decision_id` `D<n>` estável e recomendação explícita, excluindo decisões já fechadas com `pendingInterviewQuestions` de `../_shared/scripts/document_quality.mjs` — decisão fechada não reaparece em rodada posterior; (c) aplique cada resposta com `Origem: usuario` ao fim da rodada em que foi dada, antes de abrir a rodada seguinte: enquanto a sprint só existe como rascunho, edite o markdown em memória e grave os artefatos quando as rodadas fecharem (`persistInterviewRound` lê o arquivo antes de aplicar e, sobre path inexistente, lança `INTERVIEW_PERSISTENCE_FAILED`); quando a rodada roda sobre sprint file já existente em disco, use `persistInterviewRound(sprint_path, answers)` de `../_shared/scripts/document_quality.mjs` rodada a rodada — nunca acumule respostas de várias rodadas para materializar tudo no fim; (d) reindexe o rascunho e recalcule os padrões pendentes. Decisão que o usuário não fechar vira premissa **registrada** (`Origem: premissa`), não pergunta repetida: premissa declarada não trava o fluxo — a consequência de seguir com premissa é o bloqueio de `premissa` em sprint `Must`/`P0` instalado pelo gate de procedência. Se `question_prompt` estiver ausente do descritor do host, bloqueie a rodada: não degrade para pergunta livre.
 5. **Preencher o backlog mestre:** mantenha todas as seções de `BACKLOG_MESTRE_TEMPLATE.md`. A seção `## 7. Registro de sprints` é índice macro: uma linha por sprint, com links/estado para Sprint file, PLAN e State. Não copie critérios completos, tasks ou evidência granular no backlog.
 6. **Criar/atualizar sprint files:** para cada sprint nova ou alterada, preencha `SPRINT_TEMPLATE.md` em `.talos/backlog/sprints/SPRINT_S<NN>_<slug>.md` (ou path pedido). O sprint file deve conter objetivo único, escopo/fora de escopo, DoR/DoD, dependências, decisões locais, **§7 contrato de produto em `draft`**, `eval_manifest`, `policy_manifest` e evidence-to-claim.
 7. **Decompor em sprints:** transforme o objetivo em fatias verticais pequenas. Cada sprint deve ter objetivo único, dependências, sprint file e PLAN/State marcados como `pendente` até existirem.
@@ -99,6 +99,7 @@ Se MoSCoW e esforço x ganho conflitarem, MoSCoW vence; uma sprint `Must` de esf
 O backlog final deve:
 
 - Declarar precedência documental e fontes canônicas.
+- Ter `Origem` preenchida em cada decisão do backlog e `origin` em cada `AC-*` da §7.3 dos sprint files, com o valor derivado da fonte real: resposta de entrevista → `usuario`; leitura de código/contrato → `derivado:<path>` com o path verificado contra o disco; o resto → `premissa`, declarado como tal em vez de disfarçado.
 - Explicitar resultado esperado e fora do escopo.
 - Ter dependências internas/externas e decisões bloqueantes com dono/status.
 - Ter registro de sprints com MoSCoW, ganho, esforço, prioridade, Sprint file, PLAN, State, dependências, estado e gate.
@@ -116,6 +117,7 @@ O backlog final deve:
 - Não entregar uma lista genérica de tarefas sem usar o template.
 - Não remover gates, DoR/DoD, riscos, decisões ou trilhas transversais.
 - Não inventar endpoints, tabelas, schemas, fornecedores, métricas ou responsabilidades como fatos. Quando forem hipóteses, marcar como premissa.
+- Não falsificar procedência: marcar como `usuario` ou `derivado:<path>` o que o modelo inferiu desarma o gate de procedência deste release — o que não veio de resposta do usuário nem de leitura verificada de código/contrato é `premissa`, declarado como tal.
 - Não transformar o backlog em plano técnico de implementação. Código, classes e comandos entram no PLAN quando apropriado, não no backlog mestre.
 - Não deixar `[...]` ou placeholders óbvios no arquivo final, salvo quando o campo estiver deliberadamente pendente e explicado.
 - Não renumerar IDs, reabrir/editar sprint `done`, alterar decisão fechada ou remover item não relacionado por conveniência editorial.
