@@ -229,6 +229,8 @@ function sprintFixture({
   acceptanceOrigin = 'usuario',
   decisionRows = null,
   acceptanceItems = null,
+  /** v0.16.0 (CN6): célula `Fonte` da linha `Discussão` da §4; `null` omite a linha */
+  discussao = '.app-work/brainstorming/fixture/BRAINSTORM.md',
 } = {}) {
   const decisionTable = decisionRows ?? [
     '| ID | Decisão | Origem |',
@@ -273,6 +275,7 @@ function sprintFixture({
     '| Tipo | Fonte | Uso nesta sprint |',
     '|---|---|---|',
     '| Backlog | fonte | escopo |',
+    ...(discussao === null ? [] : [`| Discussão | ${discussao} | decisão/contexto |`]),
     '## 5. Dependências e bloqueios',
     '| ID | Tipo | Descrição | Status | Evidência |',
     '|---|---|---|---|---|',
@@ -497,4 +500,36 @@ test('selo: contrato com origin aprova; editar a §7 quebra o selo (AC-01.4.1 / 
   const seal = validateAcceptanceSeal(tampered);
   assert.equal(seal.sealed, true);
   assert.equal(seal.tampered, true);
+});
+
+// ── Plano 02 — fonte de discussão obrigatória (CN6/D2) ───────────────────────
+
+test('discussão: placeholder na linha Discussão da §4 bloqueia; path real passa (AC-02.1.1)', () => {
+  for (const placeholder of ['[link/resumo]', '[...]', '—', 'N/A', '']) {
+    const r = validateSprintFileConformance(sprintFixture({ discussao: placeholder }));
+    const pendency = r.pendencies.find((p) => p.category === 'fonte_discussao_ausente');
+    assert.ok(pendency, JSON.stringify(r.pendencies));
+    assert.equal(pendency.item, 'Discussão');
+    assert.equal(pendency.next_action, 'preencher_fonte_discussao');
+    assert.equal(typeof pendency.line, 'number');
+    // Pendência única por sprint file.
+    assert.equal(r.pendencies.filter((p) => p.category === 'fonte_discussao_ausente').length, 1);
+  }
+  // Mesmo arquivo com um path real na célula passa.
+  const ok = validateSprintFileConformance(sprintFixture({
+    discussao: '.app-work/brainstorming/revisao-fria-backlog/BRAINSTORM.md',
+  }));
+  assert.equal(ok.valid, true, JSON.stringify(ok.pendencies));
+  assert.ok(!ok.pendencies.some((p) => p.category === 'fonte_discussao_ausente'));
+});
+
+test('discussão: sprint standalone sem linha Discussão é recusada (AC-02.1.2)', () => {
+  const standalone = sprintFixture({ backlog: 'Não aplicável (standalone)', discussao: null });
+  const r = validateSprintFileConformance(standalone);
+  assert.equal(r.valid, false);
+  const pendency = r.pendencies.find((p) => p.category === 'fonte_discussao_ausente');
+  assert.ok(pendency, JSON.stringify(r.pendencies));
+  assert.equal(pendency.item, 'Discussão');
+  assert.equal(pendency.next_action, 'preencher_fonte_discussao');
+  assert.equal(pendency.line, null); // linha ausente → sem número de linha
 });

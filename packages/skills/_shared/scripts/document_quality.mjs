@@ -559,6 +559,38 @@ export function validateSprintFileConformance(markdown, {
     }
   }
 
+  // CN6/D2 (v0.16.0): toda sprint declara a discussão de onde nasceu — é a fonte
+  // de intenção que o revisor frio usa como oráculo (D1). "Sempre obrigatória",
+  // inclusive standalone (decisão de autoria: sem detectar a origem da sprint).
+  // A §4 é tabela de TRÊS colunas (`Tipo | Fonte | Uso nesta sprint`): o
+  // casamento é pelo rótulo da primeira célula (`Discussão`), não por posição e
+  // não via `tableValue` (que só casa linha de duas colunas). §4 ausente por
+  // completo já é coberta pela pendência `seção_obrigatória` acima — aqui a
+  // pendência é única por sprint file, com a linha da §4 no campo `line`.
+  const section4 = extractSectionMarkdown(markdown, 4);
+  if (section4 != null) {
+    const discussaoRow = /^\|\s*Discussão\s*\|\s*([^|\n]*)/im.exec(section4);
+    const fonte = discussaoRow ? discussaoRow[1].trim() : '';
+    const semFonte = discussaoRow == null
+      || fonte === ''
+      || /^\[.*\]$/.test(fonte)          // placeholders: [link/resumo], [...]
+      || fonte === '—'
+      || /^N\/A$/i.test(fonte);
+    if (semFonte) {
+      // Pendência nomeada no pack (CN6/AC-02.1.1/02.1.2): `fonte_discussao_ausente`.
+      // O plano prescrevia "categoria `contexto_fontes`", mas o modelo de pendências
+      // tem campo único `category` (que é o id da pendência, padrão do repo:
+      // `procedencia_ausente`, `origem_path_inexistente`, ...) — o nome do pack prevalece.
+      pendencies.push(sprintConformancePending(
+        'fonte_discussao_ausente',
+        'Discussão',
+        lineOf(markdown, /^\|\s*Discussão\s*\|/i),
+        '§4 sem fonte de discussão preenchida — a sprint não declara a discussão de onde nasceu (obrigatória no schema 0.16.0, inclusive standalone).',
+        'preencher_fonte_discussao',
+      ));
+    }
+  }
+
   const titleSprint = new RegExp(`^#\\s+Sprint viva\\s+—\\s+(${SPRINT_ID_SOURCE})\\b`, 'im').exec(markdown)?.[1] ?? null;
   const metadataSprint = tableValue(markdown, 'Sprint ID');
   const expectedSprintId = sprintId ?? metadataSprint ?? titleSprint;

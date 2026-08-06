@@ -1188,6 +1188,8 @@ function sprintDoc({
   /** v0.16.0: procedência da linha D1 da §7.1 e dos ACs da §7.3 */
   decisionOrigin = 'usuario',
   acceptanceOrigin = 'usuario',
+  /** v0.16.0 (CN6): célula `Fonte` da linha `Discussão` da §4; `null` omite a linha */
+  discussao = '.app-work/brainstorming/runtime-harness/BRAINSTORM.md',
 } = {}) {
   const acceptanceBlock = omitAceiteBlock ? [] : [
     '### 7.3 Aceite binário',
@@ -1268,6 +1270,7 @@ function sprintDoc({
     '| Tipo | Fonte | Uso nesta sprint |',
     '|---|---|---|',
     '| Backlog | BACKLOG.md#S01 | escopo |',
+    ...(discussao === null ? [] : [`| Discussão | ${discussao} | decisão/contexto |`]),
     '## 5. Dependências e bloqueios',
     '| ID | Tipo | Descrição | Status | Evidência |',
     '|---|---|---|---|---|',
@@ -1412,6 +1415,74 @@ test('talos_scan_acceptance: AC válido sem TBD passa (AC-1.2.2 contraprova)', (
   const r = scanAcceptance({ run_id: 'r1', project_root: root, sprint_path: 'SPRINT.md' });
   assert.equal(r.status, 'passed');
   assert.ok(!r.blocking_matches.some((m) => /behavior ambíguo/.test(m.pattern)));
+});
+
+test('talos_scan_acceptance: sprint_markdown escaneia rascunho em memória (AC-02.2.1)', () => {
+  const root = tmpRoot();
+  const ambiguous = sprintDoc().replace(
+    'behavior: "Gate observável passa quando AC válido"',
+    'behavior: "Gate observável TBD a confirmar"',
+  );
+  const r = scanAcceptance({ run_id: 'r1', project_root: root, sprint_markdown: ambiguous });
+  assert.equal(r.status, 'blocked');
+  assert.equal(r.source, 'draft');
+  assert.equal(r.sprint_path, null);
+  assert.ok(r.blocking_count >= 1);
+  assert.ok(r.blocking_matches.some((m) => /behavior ambíguo/.test(m.pattern)));
+  // O rascunho não foi persistido em disco: nenhum sprint file nasce da chamada.
+  assert.ok(!fs.existsSync(path.join(root, 'SPRINT.md')), 'scan de rascunho não deve gravar arquivo');
+  // Contraprova: rascunho sem padrão bloqueante passa, ainda em memória.
+  const clean = scanAcceptance({ run_id: 'r1', project_root: root, sprint_markdown: sprintDoc({ contratoStatus: 'draft' }) });
+  assert.equal(clean.status, 'passed');
+  assert.equal(clean.source, 'draft');
+  assert.equal(clean.sprint_path, null);
+  // Rascunho vazio: mesma pendência de arquivo vazio do caminho por path
+  // (`blocking_count: 1`), com `source: 'draft'` — comportamento declarado na
+  // task 02.2 ("Rascunho vazio") e coberto por este AC.
+  const vazio = scanAcceptance({ run_id: 'r1', project_root: root, sprint_markdown: '' });
+  assert.equal(vazio.status, 'blocked');
+  assert.equal(vazio.blocking_count, 1);
+  assert.equal(vazio.source, 'draft');
+  assert.equal(vazio.blocking_matches[0].pattern, '(empty file)');
+});
+
+test('talos_scan_acceptance: sprint_path continua lendo o arquivo com source file (AC-02.2.2)', () => {
+  const root = tmpRoot();
+  fs.writeFileSync(path.join(root, 'SPRINT.md'), sprintDoc({ contratoStatus: 'draft' }));
+  const r = scanAcceptance({ run_id: 'r1', project_root: root, sprint_path: 'SPRINT.md' });
+  assert.equal(r.status, 'passed');
+  assert.equal(r.source, 'file');
+  assert.equal(r.sprint_path, 'SPRINT.md');
+  // Path com ambiguidade segue bloqueando pelo mesmo payload de hoje + source.
+  const ambiguous = sprintDoc().replace(
+    '| D1 | Runtime harness entrega gate observável | usuario |',
+    '| D1 | Runtime harness TBD a confirmar | usuario |',
+  );
+  fs.writeFileSync(path.join(root, 'SPRINT_AMB.md'), ambiguous);
+  const blocked = scanAcceptance({ run_id: 'r1', project_root: root, sprint_path: 'SPRINT_AMB.md' });
+  assert.equal(blocked.status, 'blocked');
+  assert.equal(blocked.source, 'file');
+  assert.ok(blocked.blocking_count >= 1);
+});
+
+test('talos_scan_acceptance: sprint_path e sprint_markdown juntos → erro de uso (AC-02.2.3)', () => {
+  const root = tmpRoot();
+  const r = scanAcceptance({
+    run_id: 'r1',
+    project_root: root,
+    sprint_path: 'SPRINT.md',
+    sprint_markdown: '# rascunho',
+  });
+  assert.equal(r.status, 'blocked');
+  assert.equal(r.next_action, 'usar_um_dos_dois');
+  assert.match(r.error, /exatamente um/);
+  // Nenhum dos dois conteúdos foi escaneado: o chamador sabe que a chamada é inválida.
+  assert.equal(r.blocking_matches[0].pattern, '(sprint_path e sprint_markdown juntos)');
+  // Nem um nem outro: o erro de argumento obrigatório existente permanece.
+  assert.throws(
+    () => scanAcceptance({ run_id: 'r1', project_root: root }),
+    /sprint_path obrigatório/,
+  );
 });
 
 test('talos_verify_template_conformance: plano conforme → banner plano (T07)', () => {

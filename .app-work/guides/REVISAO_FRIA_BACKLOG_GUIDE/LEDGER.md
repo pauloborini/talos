@@ -10,7 +10,7 @@ Painel de estado. Não repete 2.1/2.6/2.7/2.8. Só IDs e estado.
 | CN3 | cenário | Plano 01 | PROVADO | audit-guide-plan Plano 01 (2026-08-06) | `etapa3::derivado_path_inexistente_bloqueia` (tmpdir real) + `server.test.js::verify_backlog_index_resolve_derivado`; F3 vermelho |
 | CN4 | cenário | Plano 04 | pendente | — | — |
 | CN5 | cenário | Plano 01 | PROVADO | audit-guide-plan Plano 01 (2026-08-06) | `etapa3::schema_pre_016_rejeitado` (`procedencia_ausente` §7.1, `migrar_para_0_16`); F4 vermelho |
-| CN6 | cenário | Plano 02 | pendente | — | — |
+| CN6 | cenário | Plano 02 | PROVADO | audit-guide-plan Plano 02 (2026-08-06) | `etapa3::discussão: placeholder... (AC-02.1.1)` + `::discussão: sprint standalone... (AC-02.1.2)` — pendência `fonte_discussao_ausente` no sink `validateSprintFileConformance` até `verifySprintFile` blocked; F1/F2 vermelhos |
 | VC1 | valor crítico | Plano 01 | PROVADO | audit-guide-plan Plano 01 (2026-08-06) | sink `validateSprintFileConformance` consome `origin` §7.3/§7.1; leitor legado `applyDecisionRow` morto (AC-01.3.1/01.3.2, F6/F7 vermelhos) |
 | VC2 | valor crítico | Plano 04 | pendente | — | — |
 | VC3 | valor crítico | Plano 04 | pendente | — | — |
