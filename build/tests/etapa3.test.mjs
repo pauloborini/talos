@@ -572,3 +572,84 @@ test('skill backlog: rodada usa o descritor question_prompt do host, sem número
   assert.ok(!/AskUserQuestion|request_user_input|interactive_prompt|native_structured_question/.test(skill),
     'nome de ferramenta de host hardcodado na skill');
 });
+
+// ── Plano 04 — revisão fria como último passo da skill (CN4/VC2/VC3/INV3/INV4) ──
+
+const COLD_REVIEW_PROMPT = () => fs.readFileSync(
+  path.join(ROOT, 'packages/skills/talos-backlog-generator/references/COLD_BACKLOG_REVIEW_PROMPT.md'),
+  'utf8',
+);
+
+/**
+ * Passo final (14) do workflow da skill de backlog, onde a revisão fria despacha.
+ * Delimitado entre o marcador `14. **` e o fim da seção Workflow obrigatório.
+ */
+function finalStep(skill) {
+  const workflow = skill.slice(skill.indexOf('## Workflow obrigatório'));
+  return workflow.slice(workflow.indexOf('14. **'), workflow.indexOf('\n---\n'));
+}
+
+test('mandato revisão: arquivo canônico com as cláusulas obrigatórias (AC-04.1.1 a 04.1.4 / VC2)', () => {
+  const mandato = COLD_REVIEW_PROMPT();
+  // AC-04.1.1 — boundary de escrita: artefatos editáveis, código read-only.
+  assert.match(mandato, /pode editar/, 'mandato não declara o boundary de escrita dos artefatos');
+  assert.match(mandato, /read-only/, 'mandato não declara código read-only');
+  // AC-04.1.1 — ordem obrigatória de leitura: discussão → código → artefatos.
+  assert.match(mandato, /fontes de discussão/, 'mandato não nomeia as fontes de discussão');
+  assert.match(mandato, /código real/, 'mandato não manda ler o código real');
+  assert.match(mandato, /só então julgar/i, 'mandato não impõe a ordem discussão → código → artefatos');
+  // AC-04.1.1 — enum de veredito com os quatro valores.
+  for (const verdict of ['pass', 'pass_with_observations', 'fail', 'interview_required']) {
+    assert.ok(mandato.includes(verdict), `veredito ${verdict} ausente do enum`);
+  }
+  // AC-04.1.2 — §7 com Contrato status aprovado é read-only e vira ENTREVISTA NECESSÁRIA.
+  assert.match(mandato, /Contrato status: aprovado/, 'mandato não trata §7 aprovada');
+  assert.match(mandato, /ENTREVISTA NECESSÁRIA/, 'mandato não classifica ENTREVISTA NECESSÁRIA');
+  // AC-04.1.3 — aplicar reparáveis nos artefatos; proibir devolução ao chamador.
+  assert.match(mandato, /REPARÁVEL/, 'mandato não classifica REPARÁVEL');
+  assert.match(mandato, /reparável para quem chamou corrigir/, 'mandato não proíbe devolver finding reparável');
+  // AC-04.1.4 — cláusula delimitando o escopo do julgamento.
+  assert.match(mandato, /DISPATCH\/DEC-008/, 'mandato não nomeia o gate de execução que não se aplica');
+  assert.match(mandato, /dispatch_capability/, 'mandato não nomeia dispatch_capability fora de escopo');
+  assert.match(mandato, /inválido por construção/, 'mandato não declara over-reach como finding inválido');
+});
+
+test('skill backlog: passo final monta boundary com todos os paths escritos (AC-04.2.1)', () => {
+  const step = finalStep(BACKLOG_SKILL());
+  assert.match(step, /sprint file criado ou alterado/, 'boundary não enumera todos os sprint files');
+  assert.match(step, /não apenas a sprint selecionada/, 'boundary não exclui explicitamente o recorte por sprint selecionada');
+  assert.match(step, /backlog mestre/, 'boundary não inclui o backlog mestre');
+});
+
+test('skill backlog: passo final lê o mandato do arquivo e proíbe reescrita de memória (AC-04.2.2)', () => {
+  const step = finalStep(BACKLOG_SKILL());
+  assert.match(step, /COLD_BACKLOG_REVIEW_PROMPT\.md/, 'passo final não instrui a ler o arquivo do mandato');
+  assert.match(step, /substitua apenas/, 'passo final não limita a substituição a parâmetros');
+  assert.match(step, /reescreva o mandato de memória|reescrevê-lo de memória/, 'passo final não proíbe reescrever o mandato de memória');
+});
+
+test('skill backlog: relatório ao chamador, sem arquivo (AC-04.2.4)', () => {
+  const step = finalStep(BACKLOG_SKILL());
+  assert.match(step, /findings por severidade/, 'passo final não repassa findings por severidade');
+  assert.match(step, /com path/, 'passo final não exige path no que foi alterado');
+  assert.match(step, /veredito/, 'passo final não repassa o veredito');
+  assert.match(step, /nunca é materializado em arquivo/, 'passo final não proíbe arquivo de relatório');
+  assert.match(step, /\.talos\//, 'passo final não cita a superfície documental proibida');
+});
+
+test('skill backlog: regate dos gates sobre artefatos alterados pelo revisor (AC-04.2.5)', () => {
+  const step = finalStep(BACKLOG_SKILL());
+  assert.match(step, /talos_verify_sprint_file/, 'passo final não reexecuta o gate de sprint file');
+  assert.match(step, /talos_verify_backlog_index/, 'passo final não reexecuta o gate de backlog');
+  assert.match(step, /antes de entregar/, 'passo final não condiciona o regate à entrega');
+});
+
+test('skill backlog: nenhum nome de ferramenta de host como instrução (AC-04.3.2 / INV4)', () => {
+  const corpus = `${BACKLOG_SKILL()}\n${COLD_REVIEW_PROMPT()}`;
+  for (const token of ['AskUserQuestion', 'Agent', 'Task', 'runSubagent', 'request_user_input', 'interactive_prompt']) {
+    assert.ok(!corpus.includes(token), `nome de ferramenta de host hardcodado: ${token}`);
+  }
+  // Os descritores do host são a única fonte do verbo (multi-host por adapter).
+  assert.match(BACKLOG_SKILL(), /question_prompt/, 'skill não aponta question_prompt');
+  assert.match(BACKLOG_SKILL(), /subagent_dispatch/, 'skill não aponta subagent_dispatch');
+});

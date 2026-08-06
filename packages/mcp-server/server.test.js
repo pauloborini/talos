@@ -211,6 +211,32 @@ test('ping: capabilities cobre exatamente a superfície de tools (sem drift)', (
   assert.ok(capList.includes('talos_classify_input'), 'talos_classify_input deve estar nas capabilities');
 });
 
+test('tools: conjunto registrado é exatamente a lista canônica, sem adição (AC-04.3.1 / INV3)', () => {
+  // Lista nomeada explicitamente no teste: qualquer tool nova exige atualização
+  // consciente desta lista (e revisão de INV3) — adicionar aqui é a decisão, não
+  // o acidente. A revisão fria do backlog não entra no MCP (Q-CBR-06): sem lock,
+  // sem selo, sem gate novo.
+  const expected = [
+    'talos_assert_after_plan',
+    'talos_capabilities',
+    'talos_classify_input',
+    'talos_lock_dispatch',
+    'talos_lock_validator',
+    'talos_ping',
+    'talos_preflight',
+    'talos_run_state',
+    'talos_scan_acceptance',
+    'talos_select_next_sprint',
+    'talos_sync_manual_validation',
+    'talos_update_sprint_status',
+    'talos_verify_artifact',
+    'talos_verify_backlog_index',
+    'talos_verify_sprint_file',
+    'talos_verify_template_conformance',
+  ].sort();
+  assert.deepEqual(toolsList().tools.map((tool) => tool.name).sort(), expected);
+});
+
 test('detectHost: arg host explícito tem prioridade máxima', () => {
   const r = detectHost({ host: 'codex' }, { CLAUDE_PLUGIN_ROOT: '/x' });
   assert.equal(r.host, 'codex');
