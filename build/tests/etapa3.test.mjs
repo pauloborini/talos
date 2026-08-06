@@ -5,12 +5,16 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import {
+  approveAcceptanceContract,
   closedDecisionIds,
   detectStackProfiles,
+  parseAcceptanceContract,
   pendingInterviewQuestions,
   persistInterviewRound,
   resolveSprintAuthority,
+  validateAcceptanceSeal,
   validateBacklogUpdate,
+  validateSprintFileConformance,
 } from '../../packages/skills/_shared/scripts/document_quality.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '../..');
@@ -100,8 +104,8 @@ test('perfis: monorepo restringe stack por boundary e GetX exige evidência', ()
   fs.rmSync(root, { recursive: true, force: true });
 });
 
-function backlog(rows, decisions = '| D1 | Contrato fechado | S02 | Produto | decidido |', changelog = '- 2026-06-22 — baseline.') {
-  return `# Backlog\n\n### Decisões bloqueantes\n\n| ID | Decisão | Bloqueia | Dono | Status |\n|---|---|---|---|---|\n${decisions}\n\n## 7. Registro de sprints\n\n| ID | Sprint | Fase-fonte | Objetivo (1 linha) | MoSCoW | Ganho | Esforço | Prioridade | PRD | Depende de | Estado | Gate |\n|---|---|---|---|---|---|---|---|---|---|---|---|\n${rows.join('\n')}\n${changelog ? `\n## Registro de alterações\n\n${changelog}` : ''}\n`;
+function backlog(rows, decisions = '| D1 | Contrato fechado | S02 | Produto | usuario | decidido |', changelog = '- 2026-06-22 — baseline.') {
+  return `# Backlog\n\n### Decisões bloqueantes\n\n| ID | Decisão | Bloqueia | Dono | Origem | Status |\n|---|---|---|---|---|---|\n${decisions}\n\n## 7. Registro de sprints\n\n| ID | Sprint | Fase-fonte | Objetivo (1 linha) | MoSCoW | Ganho | Esforço | Prioridade | PRD | Depende de | Estado | Gate |\n|---|---|---|---|---|---|---|---|---|---|---|---|\n${rows.join('\n')}\n${changelog ? `\n## Registro de alterações\n\n${changelog}` : ''}\n`;
 }
 
 const done = '| S01 | Base | F0 | Fechar base | Must | Alto | Baixo | P0 | `PRD_S01_base.md` | — | done | ✅ |';
@@ -173,9 +177,9 @@ test('interview: persiste resposta e não repete decisão fechada', () => {
     '',
     '## 7. Contrato de produto (congelado)',
     '### 7.1 Decisões de produto (D*)',
-    '| ID | Decisão |',
-    '|---|---|',
-    '| D1 | Escolha anterior |',
+    '| ID | Decisão | Origem |',
+    '|---|---|---|',
+    '| D1 | Escolha anterior | usuario |',
     '',
   ].join('\n');
   const questions = [{ decision_id: 'D1' }, { decision_id: 'D2' }];
@@ -207,4 +211,290 @@ test('interview: persiste resposta e não repete decisão fechada', () => {
     /INTERVIEW_PERSISTENCE_FAILED/,
   );
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// ── Plano 01 — procedência por linha (v0.16.0) ────────────────────────────────
+
+/**
+ * Sprint file completo no schema 0.16.0 (todas as 16 seções, manifests e
+ * evidence-to-claim) — passa em `validateSprintFileConformance` exceto pelas
+ * pendências de procedência que cada teste quiser provocar via opções.
+ */
+function sprintFixture({
+  moscow = 'Must',
+  prioridade = 'P0',
+  backlog = 'Não aplicável (standalone)',
+  contratoStatus = 'draft',
+  decisionOrigin = 'usuario',
+  acceptanceOrigin = 'usuario',
+  decisionRows = null,
+  acceptanceItems = null,
+} = {}) {
+  const decisionTable = decisionRows ?? [
+    '| ID | Decisão | Origem |',
+    '|---|---|---|',
+    `| D1 | Escolha fechada | ${decisionOrigin} |`,
+  ];
+  const acceptance = acceptanceItems ?? [
+    '  - id: AC-001',
+    `    origin: "${acceptanceOrigin}"`,
+    '    behavior: "Comportamento observável"',
+    '    decisions: [D1]',
+    '    scenario: "Cenário 1"',
+    '    evals: [EVAL-001]',
+    '    evidence:',
+    '      required: [I, T-outcome]',
+    '      manual: null',
+  ];
+  return [
+    '# Sprint viva — S01 — Fixture',
+    '',
+    '## 1. Metadados',
+    '| Campo | Valor |',
+    '|---|---|',
+    '| Sprint ID | S01 |',
+    '| Nome | Fixture |',
+    '| Status | ready |',
+    `| Backlog mestre | ${backlog} |`,
+    `| Contrato status | ${contratoStatus} |`,
+    '| Selo do contrato | pendente até aprovação |',
+    '| PRD | pendente |',
+    '| PLAN | pendente |',
+    '| State / evidência | pendente |',
+    '| Fase | F0 |',
+    `| MoSCoW | ${moscow} |`,
+    `| Prioridade | ${prioridade} |`,
+    '',
+    '## 2. Objetivo e valor',
+    'Objetivo único.',
+    '## 3. Escopo da sprint',
+    '- [ ] Entrega',
+    '## 4. Contexto e fontes',
+    '| Tipo | Fonte | Uso nesta sprint |',
+    '|---|---|---|',
+    '| Backlog | fonte | escopo |',
+    '## 5. Dependências e bloqueios',
+    '| ID | Tipo | Descrição | Status | Evidência |',
+    '|---|---|---|---|---|',
+    '| DEP-001 | interna | nada | done | link |',
+    '## 6. Decisões da sprint',
+    '| ID | Decisão | Fonte | Impacto | Status |',
+    '|---|---|---|---|---|',
+    '| SD-001 | seguir | backlog | baixo | aprovada |',
+    '## 7. Contrato de produto (congelado)',
+    '### 7.1 Decisões de produto (D*)',
+    ...decisionTable,
+    '### 7.2 Cenários UX',
+    '### 7.2.1 Cenário 1',
+    '- **Entrada:** entrada',
+    '- **Comportamento:** comportamento',
+    '- **Sucesso:** sucesso',
+    '### 7.3 Aceite binário',
+    '```yaml',
+    'acceptance:',
+    ...acceptance,
+    '```',
+    '## 8. Definition of Ready',
+    '- [ ] Próxima ação explícita.',
+    '## 9. Eval manifest',
+    '```yaml',
+    'eval_manifest:',
+    '  sprint_id: "S01"',
+    '  objective: "fixture"',
+    '  must_prove:',
+    '    - id: "EVAL-001"',
+    '      claim: "gate passa"',
+    '      source: "SPRINT"',
+    '      evidence_required: "node --test"',
+    '  regression_guards:',
+    '    - "parser antigo preservado"',
+    '  negative_paths:',
+    '    - "manifest ausente falha"',
+    '```',
+    '## 10. Policy manifest',
+    '```yaml',
+    'policy_manifest:',
+    '  forbidden_scope:',
+    '    - "hosts"',
+    '  required_gates:',
+    '    - "talos_verify_sprint_file"',
+    '```',
+    '## 11. Guia e sensores',
+    '- [ ] Guia',
+    '## 12. Evidence-to-claim',
+    '| Claim | Onde foi prometido | Evidência esperada | Evidência real | Status |',
+    '|---|---|---|---|---|',
+    '| gate passa | sprint | node --test | pendente | pending |',
+    '## 13. PLAN',
+    '| Campo | Valor |',
+    '|---|---|',
+    '| Status | pendente |',
+    '## 14. Execução e validação',
+    '| Gate | Status | Evidência |',
+    '|---|---|---|',
+    '| Sprint file válido | pending | pendente |',
+    '## 15. Aprendizados e handoff para próximas sprints',
+    '| Tipo | Aprendizado | Afeta | Ação |',
+    '|---|---|---|---|',
+    '| técnico | nada | S02 | registrar |',
+    '## 16. Histórico',
+    '| Data | Autor | Mudança |',
+    '|---|---|---|',
+    '| 2026-06-29 | Talos | Criação |',
+  ].join('\n');
+}
+
+test('procedência: AC com origin derivado é parseado com evidence intacto (AC-01.2.1)', () => {
+  const markdown = sprintFixture({
+    acceptanceItems: [
+      '  - id: AC-001',
+      '    origin: "derivado:packages/mcp-server/server.js"',
+      '    behavior: "Gate observável"',
+      '    decisions: [D1]',
+      '    scenario: "Carregar harness"',
+      '    evidence:',
+      '      required: [I, T-outcome, W]',
+      '      manual: null',
+    ],
+  });
+  const items = parseAcceptanceContract(markdown);
+  assert.equal(items[0].origin, 'derivado:packages/mcp-server/server.js');
+  assert.deepEqual(items[0].evidence.required, ['I', 'T-outcome', 'W']);
+  assert.equal(items[0].evidence.manual, null);
+  // Conformance com o root real do repo: o path citado existe → sem pendência de origem.
+  const r = validateSprintFileConformance(markdown, { root: ROOT });
+  assert.ok(!r.pendencies.some((p) => p.category === 'procedencia_ausente' || p.category === 'origem_path_inexistente'),
+    JSON.stringify(r.pendencies));
+});
+
+test('procedência: premissa bloqueia AC em sprint standalone Must/P0 (AC-01.2.2)', () => {
+  const markdown = sprintFixture({
+    moscow: 'Must',
+    prioridade: 'P0',
+    backlog: 'Não aplicável (standalone)',
+    acceptanceOrigin: 'premissa',
+  });
+  const r = validateSprintFileConformance(markdown);
+  assert.equal(r.valid, false);
+  const pendency = r.pendencies.find((p) => p.category === 'procedencia_premissa_em_prioridade');
+  assert.ok(pendency, JSON.stringify(r.pendencies));
+  assert.equal(pendency.item, 'AC-001');
+  assert.equal(pendency.next_action, 'fechar_premissa_em_entrevista');
+  // Contraprova: sprint não-prioritária com a mesma premissa não bloqueia.
+  const ok = validateSprintFileConformance(sprintFixture({
+    moscow: 'Should',
+    prioridade: 'P1',
+    backlog: 'Não aplicável (standalone)',
+    acceptanceOrigin: 'premissa',
+  }));
+  assert.equal(ok.valid, true, JSON.stringify(ok.pendencies));
+  assert.ok(!ok.pendencies.some((p) => p.category === 'procedencia_premissa_em_prioridade'));
+});
+
+test('procedência: derivado:<path> inexistente bloqueia; (novo) e arquivo real passam (AC-01.2.3)', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'talos-origem-'));
+  fs.mkdirSync(path.join(root, 'packages'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'packages/existe.js'), 'export const real = true;\n');
+  const missing = validateSprintFileConformance(sprintFixture({
+    moscow: 'Should',
+    prioridade: 'P1',
+    decisionOrigin: 'derivado:packages/nao/existe.js',
+  }), { root });
+  const pendency = missing.pendencies.find((p) => p.category === 'origem_path_inexistente');
+  assert.ok(pendency, JSON.stringify(missing.pendencies));
+  assert.equal(pendency.item, 'D1');
+  assert.equal(pendency.next_action, 'corrigir_origem_path');
+  // Sufixo ` (novo)`: arquivo ainda será criado → aceito mesmo inexistente.
+  const novo = validateSprintFileConformance(sprintFixture({
+    moscow: 'Should',
+    prioridade: 'P1',
+    decisionOrigin: 'derivado:packages/novo_modulo.js (novo)',
+  }), { root });
+  assert.ok(!novo.pendencies.some((p) => p.category === 'origem_path_inexistente'),
+    JSON.stringify(novo.pendencies));
+  // Arquivo real no root: aceito.
+  const real = validateSprintFileConformance(sprintFixture({
+    moscow: 'Should',
+    prioridade: 'P1',
+    decisionOrigin: 'derivado:packages/existe.js',
+  }), { root });
+  assert.ok(!real.pendencies.some((p) => p.category === 'origem_path_inexistente'),
+    JSON.stringify(real.pendencies));
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('procedência: §7.1 sem coluna Origem é schema pré-0.16.0 e bloqueia (AC-01.2.4)', () => {
+  const legacy = sprintFixture({
+    decisionRows: [
+      '| ID | Decisão |',
+      '|---|---|',
+      '| D1 | Decisão antiga |',
+    ],
+  });
+  const r = validateSprintFileConformance(legacy);
+  assert.equal(r.valid, false);
+  const pendency = r.pendencies.find((p) => p.category === 'procedencia_ausente' && p.item === '§7.1');
+  assert.ok(pendency, JSON.stringify(r.pendencies));
+  assert.equal(pendency.next_action, 'migrar_para_0_16');
+});
+
+test('procedência: decisão de backlog fora do enum reprova o update (AC-01.2.5)', () => {
+  const before = backlog([done, todo]);
+  const withInvalid = backlog([done, todo], '| D1 | Contrato fechado | S02 | Produto | inventado | decidido |');
+  const r = validateBacklogUpdate(before, withInvalid);
+  assert.ok(r.errors.includes('INVALID_ORIGIN:D1:inventado'), JSON.stringify(r.errors));
+  // Contraprova: decisão com origem válida no enum passa.
+  const same = backlog([done, todo]);
+  assert.deepEqual(validateBacklogUpdate(same, same), { valid: true, errors: [] });
+});
+
+test('entrevista: persistir rodada preserva Origem em §7.1 de 3 colunas (AC-01.3.1 / INV1)', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'talos-persist-origem-'));
+  const sprintPath = path.join(dir, 'SPRINT.md');
+  fs.writeFileSync(sprintPath, sprintFixture({ decisionOrigin: 'usuario' }));
+  const updated = persistInterviewRound(sprintPath, [{ decision_id: 'D1', value: 'Escolha reescrita' }], '2026-06-22');
+  const line = updated.split('\n').find((l) => /^\|\s*D1\s*\|/.test(l));
+  assert.match(line, /^\|\s*D1\s*\|\s*Escolha reescrita\s*\|\s*usuario\s*\|$/);
+  assert.equal(fs.readFileSync(sprintPath, 'utf8'), updated);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('entrevista: decisão nova é inserida com as três colunas (AC-01.3.2 / LEG2)', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'talos-persist-insert-'));
+  const sprintPath = path.join(dir, 'SPRINT.md');
+  fs.writeFileSync(sprintPath, sprintFixture({ decisionOrigin: 'usuario' }));
+  const updated = persistInterviewRound(sprintPath, [{ decision_id: 'D2', value: 'Nova decisão' }], '2026-06-22');
+  const line = updated.split('\n').find((l) => /^\|\s*D2\s*\|/.test(l));
+  assert.match(line, /^\|\s*D2\s*\|\s*Nova decisão\s*\|\s*usuario\s*\|$/);
+  const d1 = updated.split('\n').find((l) => /^\|\s*D1\s*\|/.test(l));
+  assert.match(d1, /^\|\s*D1\s*\|\s*Escolha fechada\s*\|\s*usuario\s*\|$/);
+  assert.equal(fs.readFileSync(sprintPath, 'utf8'), updated);
+  // Corte seco (D17): tabela com cabeçalho de 2 colunas é schema pré-0.16.0 e
+  // continua caindo em DECISION_TABLE_MISSING na inserção.
+  const legacyPath = path.join(dir, 'LEGACY.md');
+  fs.writeFileSync(legacyPath, sprintFixture({
+    decisionRows: [
+      '| ID | Decisão |',
+      '|---|---|',
+      '| D1 | Decisão antiga |',
+    ],
+  }));
+  assert.throws(
+    () => persistInterviewRound(legacyPath, [{ decision_id: 'D3', value: 'x' }]),
+    /INTERVIEW_PERSISTENCE_FAILED:DECISION_TABLE_MISSING:D3/,
+  );
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('selo: contrato com origin aprova; editar a §7 quebra o selo (AC-01.4.1 / INV2)', () => {
+  const approved = approveAcceptanceContract(sprintFixture({ contratoStatus: 'draft' }));
+  assert.equal(validateAcceptanceSeal(approved).tampered, false);
+  assert.equal(validateAcceptanceSeal(approved).sealed, true);
+  const tampered = approved.replace(
+    '| D1 | Escolha fechada | usuario |',
+    '| D1 | Escolha alterada | usuario |',
+  );
+  const seal = validateAcceptanceSeal(tampered);
+  assert.equal(seal.sealed, true);
+  assert.equal(seal.tampered, true);
 });
