@@ -129,11 +129,15 @@ Estado lateral: `blocked`.
 
 ### Decisões bloqueantes
 
-Use esta tabela para decisões que impedem uma ou mais sprints de ficarem `ready`.
+Use esta tabela para decisões que impedem uma ou mais sprints de ficarem `ready`. Toda decisão declara procedência na coluna `Origem` (v0.16.0).
 
-| ID | Decisão | Bloqueia | Dono | Status |
-|---|---|---|---|---|
-| D1 | [decisão] | [SNN/DEP] | [pessoa/time] | [pendente/decidido] |
+| ID | Decisão | Bloqueia | Dono | Origem | Status |
+|---|---|---|---|---|---|
+| D1 | [decisão dada pelo usuário] | [SNN/DEP] | [pessoa/time] | usuario | [pendente/decidido] |
+| D2 | [decisão lida do código/contrato real] | [SNN/DEP] | [pessoa/time] | derivado:packages/exemplo.js | [pendente/decidido] |
+| D3 | [decisão inferida pelo modelo] | [SNN/DEP] | [pessoa/time] | premissa | [pendente/decidido] |
+
+Legenda `Origem` (enum): `usuario` — resposta de entrevista ou citação direta do brainstorm; `derivado:<path>` — lida do código/contrato real, path relativo à raiz do repo, sufixo ` (novo)` quando o arquivo ainda será criado; `premissa` — inferida pelo modelo.
 
 ### Dependências externas
 

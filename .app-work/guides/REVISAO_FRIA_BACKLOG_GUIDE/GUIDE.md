@@ -282,7 +282,7 @@ plans/01-procedencia.md -> plans/02-fonte-e-scan.md -> plans/03-entrevista.md ->
 | 02 | `plans/02-fonte-e-scan.md` | OBRIGATÓRIO | sempre | §4 `Discussão` obrigatória e scan de aceite sobre rascunho em memória | 01 | CN6 | VC1 | CONCLUÍDO (2026-08-06) |
 | 03 | `plans/03-entrevista.md` | OBRIGATÓRIO | sempre | Entrevista estruturada no generator, persistindo `Origem: usuario` | 01, 02 | CN1, LEG1 | VC1 | CONCLUÍDO (2026-08-06) |
 | 04 | `plans/04-revisao-fria.md` | OBRIGATÓRIO | sempre | Mandato canônico + dispatch do revisor como último passo da skill | 03 | CN4, VC2, VC3, INV3, INV4 | CN1 | CONCLUÍDO (2026-08-06) |
-| 05 | `plans/05-release.md` | OBRIGATÓRIO | sempre | Corte seco `0.16.0`: versão, cópias por host, CHANGELOG, migração e docs | 04 | INV5 | CN4, VC1 | PENDENTE |
+| 05 | `plans/05-release.md` | OBRIGATÓRIO | sempre | Corte seco `0.16.0`: versão, cópias por host, CHANGELOG, migração e docs | 04 | INV5 | CN4, VC1 | CONCLUÍDO (2026-08-06) |
 | F | `plans/F-fechamento.md` | FECHAMENTO | sempre | trilha verificada e fechada | todos os anteriores | — | todas `PROVADO` em `LEDGER.md` | PENDENTE |
 
 O estado vivo das obrigações transversais vive em `LEDGER.md`. O contrato + Impl + auditoria de cada incremento vive em `plans/*.md`.

@@ -249,9 +249,18 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `talos-*` para o
 
 ---
 
-**Plugin version:** 0.15.2
+**Plugin version:** 0.16.0
 **Author:** Paulo Borini
-**Last updated:** 2026-08-04
+**Last updated:** 2026-08-06
+
+### Novidades v0.16.0 — procedência por linha e revisão fria do backlog (BREAKING)
+
+- **Procedência obrigatória** — coluna `Origem` na §7.1 e nas decisões do backlog; campo `origin` em cada `AC-*` (`usuario` \| `derivado:<path>` \| `premissa`); schema pré-0.16 recusado com `migrar_para_0_16`.
+- **Gates de procedência** — `premissa` não sustenta sprint `Must`/`P0`; `derivado:<path>` resolvido contra o disco; §4 `Discussão` obrigatória.
+- **Entrevista estruturada no generator** — rascunho escaneado em memória (`sprint_markdown`), perguntas via `question_prompt`, resposta vira decisão `Origem: usuario`.
+- **Revisão fria** — passo final da skill lê o mandato de `references/COLD_BACKLOG_REVIEW_PROMPT.md`, despacha subagente genérico por `subagent_dispatch` e regateia os gates sobre artefatos corrigidos.
+- **Não entrou** — nenhuma tool MCP nova, nenhum gate novo de orquestrador, nenhum selo de revisão.
+- **Breaking (corte seco)** — artefatos pré-0.16 não são suportados; iniciar backlog/sprint novo. Schema MCP v5 e topologia sibling/G4/dispatch intactos.
 
 ### Novidades v0.15.2 — docs alinhadas ao contrato 0.15
 
