@@ -72,6 +72,12 @@ Regra: este arquivo guarda **escopo, estado, decisões locais, dependências, ga
 | Código real | [path/símbolo opcional] | [padrão/estado atual] |
 | Discussão | [link/resumo] | [decisão/contexto] |
 
+> A linha `Discussão` é **obrigatória** (v0.16.0, CN6): todo sprint file declara a discussão de onde nasceu — é a fonte de intenção que o revisor frio usa como oráculo. Célula vazia ou placeholder (`[link/resumo]`, `[...]`, `—`, `N/A`) faz `talos_verify_sprint_file` recusar o artefato, inclusive em sprint standalone. Exemplo preenchido:
+
+| Tipo | Fonte | Uso nesta sprint |
+|---|---|---|
+| Discussão | `.app-work/brainstorming/revisao-fria-backlog/BRAINSTORM.md` | decisão/contexto da origem |
+
 Notas:
 
 - Não copiar implementação aqui.

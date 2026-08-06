@@ -1750,53 +1750,65 @@ function scanSectionPatterns(sections) {
 
 function scanAcceptance(args = {}) {
   const runId = validateRunId(args.run_id);
-  const sprintPath = requiredString(args, 'sprint_path');
-  const absolutePath = resolveConsumerPath(sprintPath, args);
+  const sprintPath = optionalString(args, 'sprint_path');
+  const sprintMarkdown = optionalString(args, 'sprint_markdown');
   const timestamp = nowIso();
-  let result;
 
-  try {
-    const content = fs.readFileSync(absolutePath, 'utf8');
-    if (content.trim() === '') {
-      result = {
-        gate: 'G5',
-        status: 'blocked',
-        sprint_path: sprintPath,
-        timestamp,
-        blocking_count: 1,
-        banner: renderBanner('aceite_lacunas', { n: 1 }),
-        blocking_matches: [{
-          section: 'documento',
-          pattern: '(empty file)',
-          line: null,
-          excerpt: '',
-          reason: 'Sprint file vazio não pode avançar como contrato pronto.',
-        }],
-        next_action: 'entrevista',
-      };
-    } else {
-      const blockingMatches = scanSectionPatterns(splitAcceptanceSections(content));
-      result = {
-        gate: 'G5',
-        status: blockingMatches.length === 0 ? 'passed' : 'blocked',
-        sprint_path: sprintPath,
-        timestamp,
-        blocking_count: blockingMatches.length,
-        banner: blockingMatches.length === 0
-          ? renderBanner('aceite_ok', {})
-          : renderBanner('aceite_lacunas', { n: blockingMatches.length }),
-        blocking_matches: blockingMatches,
-        next_action: blockingMatches.length === 0 ? 'avançar' : 'entrevista',
-        message: blockingMatches.length === 0
-          ? 'Ambiguity scan: 0 padrões bloqueantes — entrevista pulada'
-          : 'Ambiguity scan: padrões bloqueantes encontrados — entrevista obrigatória',
-      };
+  // CN1/D8 (v0.16.0): o scan também aceita o rascunho em memória
+  // (`sprint_markdown`), antes de o artefato existir em disco. Os dois
+  // parâmetros são mutuamente exclusivos: aceitar ambos criaria ambiguidade
+  // sobre qual conteúdo foi escaneado (regressão provável declarada na task 02.2).
+  if (sprintPath !== undefined && sprintMarkdown !== undefined) {
+    const result = {
+      gate: 'G5',
+      status: 'blocked',
+      sprint_path: null,
+      timestamp,
+      blocking_count: 1,
+      banner: renderBanner('aceite_lacunas', { n: 1 }),
+      blocking_matches: [{
+        section: 'argumentos',
+        pattern: '(sprint_path e sprint_markdown juntos)',
+        line: null,
+        excerpt: '',
+        reason: 'sprint_path e sprint_markdown são mutuamente exclusivos — informe exatamente um.',
+      }],
+      next_action: 'usar_um_dos_dois',
+      error: 'Use exatamente um dos parâmetros: sprint_path ou sprint_markdown.',
+    };
+    patchGateResult(runId, 'G5', result, args);
+    return result;
+  }
+  // Erro de argumento obrigatório existente (nada mudou para chamadas antigas):
+  // sem path e sem markdown, ou path em branco, segue lançando `sprint_path
+  // obrigatório`. `sprint_markdown` explicitamente vazio NÃO é "argumento ausente":
+  // é rascunho vazio, e cai no ramo de arquivo vazio (`blocking_count: 1`,
+  // `source: 'draft'`) — comportamento declarado na task 02.2.
+  if (sprintMarkdown === undefined && (!sprintPath || sprintPath.trim() === '')) {
+    requiredString(args, 'sprint_path');
+  }
+
+  const source = sprintMarkdown !== undefined ? 'draft' : 'file';
+  const reportedPath = sprintPath ?? null;
+  let content = null;
+  let readError = null;
+  if (sprintMarkdown !== undefined) {
+    content = sprintMarkdown; // rascunho em memória: nada é gravado nem lido do disco
+  } else {
+    try {
+      content = fs.readFileSync(resolveConsumerPath(sprintPath, args), 'utf8');
+    } catch (error) {
+      readError = error;
     }
-  } catch (error) {
+  }
+
+  let result;
+  if (readError) {
     result = {
       gate: 'G5',
       status: 'blocked',
-      sprint_path: sprintPath,
+      sprint_path: reportedPath,
+      source,
       timestamp,
       blocking_count: 1,
       banner: renderBanner('aceite_lacunas', { n: 1 }),
@@ -1808,8 +1820,44 @@ function scanAcceptance(args = {}) {
         reason: `Sprint file ilegível: ${sprintPath}`,
       }],
       error: `Sprint file ausente ou ilegível: ${sprintPath}`,
-      cause: error.message,
+      cause: readError.message,
       next_action: 'entrevista',
+    };
+  } else if (content.trim() === '') {
+    result = {
+      gate: 'G5',
+      status: 'blocked',
+      sprint_path: reportedPath,
+      source,
+      timestamp,
+      blocking_count: 1,
+      banner: renderBanner('aceite_lacunas', { n: 1 }),
+      blocking_matches: [{
+        section: 'documento',
+        pattern: '(empty file)',
+        line: null,
+        excerpt: '',
+        reason: 'Sprint file vazio não pode avançar como contrato pronto.',
+      }],
+      next_action: 'entrevista',
+    };
+  } else {
+    const blockingMatches = scanSectionPatterns(splitAcceptanceSections(content));
+    result = {
+      gate: 'G5',
+      status: blockingMatches.length === 0 ? 'passed' : 'blocked',
+      sprint_path: reportedPath,
+      source,
+      timestamp,
+      blocking_count: blockingMatches.length,
+      banner: blockingMatches.length === 0
+        ? renderBanner('aceite_ok', {})
+        : renderBanner('aceite_lacunas', { n: blockingMatches.length }),
+      blocking_matches: blockingMatches,
+      next_action: blockingMatches.length === 0 ? 'avançar' : 'entrevista',
+      message: blockingMatches.length === 0
+        ? 'Ambiguity scan: 0 padrões bloqueantes — entrevista pulada'
+        : 'Ambiguity scan: padrões bloqueantes encontrados — entrevista obrigatória',
     };
   }
 
@@ -6077,15 +6125,16 @@ function toolsList() {
       },
       {
         name: 'talos_scan_acceptance',
-        description: 'G5: ambiguidades bloqueantes no contrato §7 do sprint file.',
+        description: 'G5: ambiguidades bloqueantes no contrato §7 do sprint file — por sprint_path (arquivo salvo) ou sprint_markdown (rascunho em memória, antes de existir em disco). Exatamente um dos dois.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
-          required: ['run_id', 'sprint_path'],
+          required: ['run_id'],
           properties: {
             run_id: { type: 'string', minLength: 1 },
             project_root: { type: 'string', minLength: 1 },
             sprint_path: { type: 'string', minLength: 1 },
+            sprint_markdown: { type: 'string', minLength: 1 },
           },
         },
       },
