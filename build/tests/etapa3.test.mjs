@@ -533,3 +533,42 @@ test('discussão: sprint standalone sem linha Discussão é recusada (AC-02.1.2)
   assert.equal(pendency.next_action, 'preencher_fonte_discussao');
   assert.equal(pendency.line, null); // linha ausente → sem número de linha
 });
+
+// ── Plano 03 — entrevista estruturada no talos-backlog-generator (CN1/LEG1) ──
+
+const BACKLOG_SKILL = () => fs.readFileSync(
+  path.join(ROOT, 'packages/skills/talos-backlog-generator/SKILL.md'),
+  'utf8',
+);
+
+test('skill backlog: texto livre morto nos dois sítios; scan do rascunho antecede a gravação (AC-03.1.1 / LEG1)', () => {
+  const skill = BACKLOG_SKILL();
+  // LEG1, sítio 1 (passo 4 do workflow): entrevista em texto livre morreu.
+  assert.ok(!/até 3 perguntas objetivas/.test(skill),
+    'passo 4 ainda instrui entrevista em texto livre ("até 3 perguntas objetivas")');
+  // LEG1, sítio 2 (Entradas aceitas): a regra antiga que restringe a pergunta às
+  // três decisões bloqueantes sobreviveu — executor com duas instruções contraditórias.
+  assert.ok(!/Pergunte antes de salvar somente quando faltar/.test(skill),
+    '"Entradas aceitas" ainda restringe a pergunta a faltar informação, não a ambiguidade detectada');
+  // O passo 4 instrui a escanear o rascunho em memória (sprint_markdown) antes de gravar.
+  const workflow = skill.slice(skill.indexOf('## Workflow obrigatório'));
+  const step4 = workflow.slice(0, workflow.indexOf('5. **'));
+  assert.match(step4, /talos_scan_acceptance/, 'passo 4 não nomeia o gate de scan');
+  assert.match(step4, /sprint_markdown/, 'passo 4 não instrui o scan sobre o rascunho em memória');
+});
+
+test('skill backlog: rodada usa o descritor question_prompt do host, sem número fixo nem tool name (AC-03.1.2)', () => {
+  const skill = BACKLOG_SKILL();
+  const workflow = skill.slice(skill.indexOf('## Workflow obrigatório'));
+  const step4 = workflow.slice(0, workflow.indexOf('5. **'));
+  // O mecanismo vem do descritor do host, não de constante da skill.
+  assert.match(step4, /talos_capabilities/, 'passo 4 não chama talos_capabilities');
+  assert.match(step4, /question_prompt/, 'passo 4 não lê question_prompt do descritor');
+  assert.match(step4, /max_questions/, 'passo 4 não instrui a ler max_questions do descritor');
+  assert.match(step4, /options_per_question/, 'passo 4 não instrui a ler options_per_question do descritor');
+  // Proibido citar número fixo ou nome de ferramenta de host (multi-host por adapter).
+  assert.ok(!/faça 4 perguntas|faça até 3 perguntas|no máximo 4 perguntas/.test(step4),
+    'número fixo de perguntas hardcodado na skill');
+  assert.ok(!/AskUserQuestion|request_user_input|interactive_prompt|native_structured_question/.test(skill),
+    'nome de ferramenta de host hardcodado na skill');
+});
