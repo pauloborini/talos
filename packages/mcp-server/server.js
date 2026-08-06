@@ -7,6 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
   parseSprintRows,
+  parseDecisionRows,
   validateSprintFileConformance,
   validateAcceptanceSeal,
   parseAcceptanceContract,
@@ -2016,6 +2017,7 @@ function verifySprintFile(args = {}) {
       ? {
         valid: false,
         pending_count: 1,
+        premissa_count: 0,
         pendencies: [conformancePending('documento', 'arquivo_vazio', null, 'Sprint file vazio não pode passar.', 'preencher_sprint_file')],
       }
       : validateSprintFileConformance(content, {
@@ -2023,6 +2025,8 @@ function verifySprintFile(args = {}) {
         sprintId,
         backlogPath,
         backlogMarkdown,
+        // D5 (v0.16.0): root do consumidor para resolver `derivado:<path>`.
+        root: consumerRoot(args),
       });
     const pendencies = [...validation.pendencies, ...extraPendencies];
     result = {
@@ -2033,6 +2037,8 @@ function verifySprintFile(args = {}) {
       backlog_path: backlogPath ?? null,
       timestamp,
       pending_count: pendencies.length,
+      // D6 (v0.16.0): contagem de `premissa` sempre presente, inclusive zero.
+      premissa_count: validation.premissa_count ?? 0,
       banner: pendencies.length === 0
         ? renderBanner('plano', {})
         : renderBanner('preflight_fail', { motivo: `sprint file: ${pendencies.length} pendências` }),
@@ -2199,10 +2205,15 @@ function inspectBacklogIndex(args = {}) {
           sprintId: row.id,
           backlogPath,
           backlogMarkdown,
+          // D5 (v0.16.0): root do consumidor — sem root, a resolução de
+          // `derivado:<path>` ficaria inerte aqui e o gate de backlog daria
+          // veredicto diferente do gate de sprint para o mesmo artefato.
+          root: consumerRoot(args),
         });
         const sprintStatus = sprintMetadataValue(sprintMarkdown, 'Status');
         info.sprint_file_status = validation.valid ? 'valid' : 'invalid';
         info.pending_count = validation.pending_count;
+        info.premissa_count = validation.premissa_count ?? 0;
         info.dor_status = sprintDorStatus(sprintMarkdown);
         info.contrato_status = sprintMetadataValue(sprintMarkdown, 'Contrato status');
         const seal = validateAcceptanceSeal(sprintMarkdown);
@@ -2220,7 +2231,8 @@ function inspectBacklogIndex(args = {}) {
     }
     sprints.push(info);
   }
-  return { backlog_path: backlogPath, rows, sprints, pendencies };
+  const premissaCount = sprints.reduce((sum, info) => sum + (info.premissa_count ?? 0), 0);
+  return { backlog_path: backlogPath, rows, sprints, pendencies, premissa_count: premissaCount };
 }
 
 function verifyBacklogIndex(args = {}) {
@@ -2230,6 +2242,11 @@ function verifyBacklogIndex(args = {}) {
   let result;
   try {
     const index = inspectBacklogIndex(args);
+    // D6 (v0.16.0): `premissa_count` agrega as decisões do backlog (tabela
+    // `### Decisões bloqueantes`) e as contagens por sprint do índice.
+    const backlogMarkdown = fs.readFileSync(resolveConsumerPath(backlogPath, args), 'utf8');
+    const backlogDecisionPremissas = parseDecisionRows(backlogMarkdown)
+      .filter((row) => row.origin === 'premissa').length;
     result = {
       gate: 'backlog_index_conformance',
       status: index.pendencies.length === 0 ? 'passed' : 'blocked',
@@ -2237,6 +2254,7 @@ function verifyBacklogIndex(args = {}) {
       timestamp,
       sprint_count: index.sprints.length,
       pending_count: index.pendencies.length,
+      premissa_count: backlogDecisionPremissas + (index.premissa_count ?? 0),
       sprints: index.sprints,
       pendencies: index.pendencies,
       banner: index.pendencies.length === 0

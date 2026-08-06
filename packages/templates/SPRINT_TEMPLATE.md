@@ -113,12 +113,19 @@ Casa única de produto desta sprint: decisões D*, cenários UX e aceite binári
 
 ### 7.1 Decisões de produto (D*)
 
-> SSoT das decisões de produto. Demais seções referenciam por `D-id`.
+> SSoT das decisões de produto. Demais seções referenciam por `D-id`. Toda decisão declara procedência na coluna `Origem` (v0.16.0).
 
-| ID | Decisão |
-|---|---|
-| D1 | [decisão fechada — produto, não implementação] |
-| D2 | […] |
+| ID | Decisão | Origem |
+|---|---|---|
+| D1 | [decisão fechada — produto, não implementação — dada pelo usuário] | usuario |
+| D2 | [decisão lida do código ou contrato real] | derivado:packages/exemplo.js |
+| D3 | [decisão inferida pelo modelo — fechar por entrevista antes de sustentar aceite Must/P0] | premissa |
+
+Legenda `Origem` (enum):
+
+- `usuario` — resposta de entrevista ou citação direta do brainstorm.
+- `derivado:<path>` — lida do código/contrato real; `<path>` relativo à raiz do repo; sufixo ` (novo)` quando o arquivo ainda será criado (ex.: `derivado:packages/novo_modulo.js (novo)`).
+- `premissa` — inferida pelo modelo; não sustenta aceite de sprint `Must`/`P0` enquanto não for confirmada.
 
 ### 7.2 Cenários UX
 
@@ -143,6 +150,7 @@ Casa única de produto desta sprint: decisões D*, cenários UX e aceite binári
 ```yaml
 acceptance:
   - id: AC-001
+    origin: "usuario"
     behavior: "[efeito observável]"
     decisions: [D1]
     scenario: "[cenário §7.2]"
@@ -151,6 +159,7 @@ acceptance:
       required: [I, T-outcome, W]
       manual: null
   - id: AC-002
+    origin: "derivado:packages/exemplo.js"
     behavior: "[efeito observável que requer smoke manual]"
     decisions: [D2]
     scenario: "[cenário §7.2]"
@@ -163,6 +172,8 @@ acceptance:
         expected_evidence: "[resultado observável]"
         impact_paths: ["packages/foo.js"]
 ```
+
+Todo `AC-*` declara `origin` (mesmo enum da §7.1: `usuario` | `derivado:<path>` | `premissa`). `premissa` não sustenta aceite em sprint `Must`/`P0`: o gate `talos_verify_sprint_file` bloqueia nomeando o `AC-*` até a premissa ser fechada em entrevista.
 
 Tipos de evidência (D4): `I` implementação, `T-outcome` resultado observável (assert de retorno/efeito), `W` wiring, `M` smoke manual. `manual` deve ser `null` quando `required` não inclui `M`; objeto (severity/scenario/expected_evidence/impact_paths) quando inclui.
 

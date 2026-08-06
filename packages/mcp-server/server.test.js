@@ -1182,12 +1182,19 @@ function sprintDoc({
   omitAcceptance = null,
   /** undefined = auto-selo quando aprovado; null = omitir campo; string = valor literal */
   selo = undefined,
+  /** v0.16.0: prioridade da §1 usada pelo bloqueio de `premissa` (D4) */
+  moscow = 'Must',
+  prioridade = 'P0',
+  /** v0.16.0: procedência da linha D1 da §7.1 e dos ACs da §7.3 */
+  decisionOrigin = 'usuario',
+  acceptanceOrigin = 'usuario',
 } = {}) {
   const acceptanceBlock = omitAceiteBlock ? [] : [
     '### 7.3 Aceite binário',
     '```yaml',
     'acceptance:',
     '  - id: AC-001',
+    `    origin: "${acceptanceOrigin}"`,
     '    behavior: "Gate observável passa quando AC válido"',
     '    decisions: [D1]',
     '    scenario: "Carregar harness"',
@@ -1196,6 +1203,7 @@ function sprintDoc({
     '      required: [I, T-outcome, W]',
     '      manual: null',
     '  - id: AC-002',
+    `    origin: "${acceptanceOrigin}"`,
     '    behavior: "Parser antigo preservado após mudança"',
     '    decisions: [D1]',
     '    scenario: "Regressão de produto"',
@@ -1208,9 +1216,9 @@ function sprintDoc({
   const contratoBlock = includeContrato ? [
     '## 7. Contrato de produto (congelado)',
     '### 7.1 Decisões de produto (D*)',
-    '| ID | Decisão |',
-    '|---|---|',
-    ...(omitDecisions ? [] : ['| D1 | Runtime harness entrega gate observável |']),
+    '| ID | Decisão | Origem |',
+    '|---|---|---|',
+    ...(omitDecisions ? [] : [`| D1 | Runtime harness entrega gate observável | ${decisionOrigin} |`]),
     '### 7.2 Cenários UX',
     '### 7.2.1 Carregar harness',
     '- **Entrada:** operador abre o harness',
@@ -1245,9 +1253,9 @@ function sprintDoc({
     '| PLAN | pendente |',
     '| State / evidência | pendente |',
     '| Revalidação | false |',
-    '| Fase | F0 |',
-    '| MoSCoW | Must |',
-    '| Prioridade | P0 |',
+    `| Fase | F0 |`,
+    `| MoSCoW | ${moscow} |`,
+    `| Prioridade | ${prioridade} |`,
     '| Responsável | Talos |',
     '| Criado em | 2026-06-29 |',
     '| Última atualização | 2026-06-29 |',
@@ -1375,8 +1383,8 @@ test('talos_scan_acceptance: sprint vazio → banner aceite · {n} lacunas (AC-3
 test('talos_scan_acceptance: ambiguidade TBD na §7 bloqueia (AC-3.3.1)', () => {
   const root = tmpRoot();
   const ambiguous = sprintDoc().replace(
-    '| D1 | Runtime harness entrega gate observável |',
-    '| D1 | Runtime harness TBD a confirmar |',
+    '| D1 | Runtime harness entrega gate observável | usuario |',
+    '| D1 | Runtime harness TBD a confirmar | usuario |',
   );
   fs.writeFileSync(path.join(root, 'SPRINT.md'), ambiguous);
   const r = scanAcceptance({ run_id: 'r1', project_root: root, sprint_path: 'SPRINT.md' });
@@ -1799,8 +1807,8 @@ test('validateAcceptanceSeal: aprovado + bloco alterado 1 char → tampered:true
   const intact = sprintDoc({ contratoStatus: 'aprovado' });
   assert.equal(validateAcceptanceSeal(intact).tampered, false);
   const adulterated = intact.replace(
-    '| D1 | Runtime harness entrega gate observável |',
-    '| D1 | Runtime harness entrega gate observávelX |',
+    '| D1 | Runtime harness entrega gate observável | usuario |',
+    '| D1 | Runtime harness entrega gate observávelX | usuario |',
   );
   const seal = validateAcceptanceSeal(adulterated);
   assert.equal(seal.sealed, true);
@@ -1829,8 +1837,8 @@ test('talos_verify_sprint_file: aprovado adulterado → blocked FROZEN_ACCEPTANC
   fs.mkdirSync(path.join(root, '.talos/backlog/sprints'), { recursive: true });
   const intact = sprintDoc({ contratoStatus: 'aprovado' });
   const adulterated = intact.replace(
-    '| D1 | Runtime harness entrega gate observável |',
-    '| D1 | Runtime harness entrega gate observávelX |',
+    '| D1 | Runtime harness entrega gate observável | usuario |',
+    '| D1 | Runtime harness entrega gate observávelX | usuario |',
   );
   fs.writeFileSync(path.join(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md'), adulterated);
   fs.writeFileSync(path.join(root, 'BACKLOG.md'), BACKLOG_WITH_SPRINT_FILE);
@@ -1870,15 +1878,99 @@ test('SPRINT_TEMPLATE: §1 contém Selo do contrato (AC-2.2.3)', () => {
   assert.match(template, /^\|\s*Selo do contrato\s*\|\s*\[pendente até aprovação\]\s*\|/m);
 });
 
+test('talos_verify_sprint_file: premissa_count numérico em passed e blocked (AC-01.4.2)', () => {
+  const root = tmpRoot();
+  fs.mkdirSync(path.join(root, '.talos/backlog/sprints'), { recursive: true });
+  // passed com zero premissas: campo presente e numérico (falsificador: emitir
+  // só quando > 0 deixaria `premissa_count` ausente aqui e o consumidor não
+  // distinguiria "zero premissas" de "gate antigo").
+  fs.writeFileSync(
+    path.join(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md'),
+    sprintDoc({ moscow: 'Should', prioridade: 'P1' }),
+  );
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), BACKLOG_WITH_SPRINT_FILE);
+  const passed = verifySprintFile({
+    run_id: 'r1',
+    project_root: root,
+    sprint_path: '.talos/backlog/sprints/SPRINT_S01_runtime.md',
+    sprint_id: 'S01',
+    backlog_path: 'BACKLOG.md',
+  });
+  assert.equal(passed.status, 'passed');
+  assert.equal(passed.premissa_count, 0);
+
+  // passed com premissas em sprint não-prioritária: conta linhas §7.1 + itens §7.3.
+  const withPremissas = sprintDoc({ moscow: 'Should', prioridade: 'P1', decisionOrigin: 'premissa', acceptanceOrigin: 'premissa' });
+  fs.writeFileSync(path.join(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md'), withPremissas);
+  const passedPremissas = verifySprintFile({
+    run_id: 'r1',
+    project_root: root,
+    sprint_path: '.talos/backlog/sprints/SPRINT_S01_runtime.md',
+    sprint_id: 'S01',
+    backlog_path: 'BACKLOG.md',
+  });
+  assert.equal(passedPremissas.status, 'passed');
+  assert.equal(passedPremissas.premissa_count, 3, 'D1 da §7.1 + AC-001 + AC-002 da §7.3');
+
+  // blocked com premissa em sprint Must/P0: campo presente e batendo com o fixture.
+  fs.writeFileSync(
+    path.join(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md'),
+    sprintDoc({ decisionOrigin: 'premissa' }),
+  );
+  const blocked = verifySprintFile({
+    run_id: 'r1',
+    project_root: root,
+    sprint_path: '.talos/backlog/sprints/SPRINT_S01_runtime.md',
+    sprint_id: 'S01',
+    backlog_path: 'BACKLOG.md',
+  });
+  assert.equal(blocked.status, 'blocked');
+  assert.equal(blocked.premissa_count, 1);
+  assert.ok(blocked.pendencies.some((p) => p.category === 'procedencia_premissa_em_prioridade'));
+});
+
+test('talos_verify_backlog_index: derivado:<path> inexistente reprova também no gate de backlog (AC-01.4.3)', () => {
+  const root = tmpRoot();
+  fs.mkdirSync(path.join(root, '.talos/backlog/sprints'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | ready | — | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+  // Path inexistente: o mesmo artefato que reprova em verifySprintFile precisa
+  // reprovar aqui — sem `root` em inspectBacklogIndex a resolução fica inerte.
+  fs.writeFileSync(
+    path.join(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md'),
+    sprintDoc({ moscow: 'Should', prioridade: 'P1', decisionOrigin: 'derivado:packages/nao/existe.js' }),
+  );
+  const r = verifyBacklogIndex({ run_id: 'r1', project_root: root, backlog_path: 'BACKLOG.md' });
+  assert.equal(r.status, 'blocked');
+  assert.ok(
+    r.pendencies.some((p) => p.category === 'sprint_file' && /origem_path_inexistente/.test(p.item)),
+    `esperava pendência sprint_file:*:origem_path_inexistente; obtido: ${JSON.stringify(r.pendencies)}`,
+  );
+  assert.equal(r.premissa_count, 0, 'premissa_count sempre presente, inclusive zero');
+
+  // Contraprova com arquivo real: `derivado:packages/existe.js` resolve contra o
+  // root do consumidor e o índice passa.
+  fs.mkdirSync(path.join(root, 'packages'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'packages/existe.js'), 'export const real = true;\n');
+  fs.writeFileSync(
+    path.join(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md'),
+    sprintDoc({ moscow: 'Should', prioridade: 'P1', decisionOrigin: 'derivado:packages/existe.js' }),
+  );
+  const ok = verifyBacklogIndex({ run_id: 'r1', project_root: root, backlog_path: 'BACKLOG.md' });
+  assert.equal(ok.status, 'passed', JSON.stringify(ok.pendencies, null, 1));
+  assert.equal(ok.premissa_count, 0);
+});
+
 test('applyInterviewRound: grava decisão D* na §7 (AC-4.2.1)', () => {
   const base = sprintDoc({ contratoStatus: 'draft' });
   const updated = applyInterviewRound(base, [
     { decision_id: 'D1', value: 'Harness usa gate binário observável' },
   ], '2026-07-19');
-  assert.match(updated, /^\| D1 \| Harness usa gate binário observável \|$/m);
+  assert.match(updated, /^\| D1 \| Harness usa gate binário observável \| usuario \|$/m);
   assert.ok(closedDecisionIds(updated).has('D1'));
   const section7 = updated.slice(updated.indexOf('## 7.'));
-  assert.match(section7, /^\| D1 \| Harness usa gate binário observável \|$/m);
+  assert.match(section7, /^\| D1 \| Harness usa gate binário observável \| usuario \|$/m);
 });
 
 test('applyInterviewRound: approve sela contrato com validateAcceptanceSeal (AC-4.2.2)', () => {
@@ -2707,7 +2799,7 @@ function writeSprintWithManual(root, id, {
   if (extraManualAc) {
     doc = doc.replace(
       '        impact_paths: ["src/initial.js"]\n```',
-      '        impact_paths: ["src/initial.js"]\n  - id: AC-003\n    behavior: "Outro smoke manual"\n    decisions: [D1]\n    scenario: "Regressão"\n    evals: [EVAL-001]\n    evidence:\n      required: [I, T-outcome, M]\n      manual:\n        severity: normal\n        scenario: "validação manual 2"\n        expected_evidence: "resultado observável 2"\n        impact_paths: ["src/initial.js"]\n```',
+      '        impact_paths: ["src/initial.js"]\n  - id: AC-003\n    origin: "usuario"\n    behavior: "Outro smoke manual"\n    decisions: [D1]\n    scenario: "Regressão"\n    evals: [EVAL-001]\n    evidence:\n      required: [I, T-outcome, M]\n      manual:\n        severity: normal\n        scenario: "validação manual 2"\n        expected_evidence: "resultado observável 2"\n        impact_paths: ["src/initial.js"]\n```',
     );
   }
   fs.writeFileSync(path.join(root, `.talos/backlog/sprints/SPRINT_${id}_runtime.md`), doc);
