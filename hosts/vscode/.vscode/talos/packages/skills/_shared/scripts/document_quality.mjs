@@ -191,6 +191,7 @@ function applyItemField(item, text) {
   if (key === 'id') item.id = unquoteYaml(val);
   else if (key === 'behavior') item.behavior = unquoteYaml(val);
   else if (key === 'scenario') item.scenario = unquoteYaml(val);
+  else if (key === 'origin') item.origin = unquoteYaml(val);
   else if (key === 'decisions') item.decisions = parseInlineYamlList(val) ?? [];
   else if (key === 'evals') item.evals = parseInlineYamlList(val) ?? [];
 }
@@ -390,6 +391,75 @@ function isStandaloneBacklog(value) {
   return typeof value === 'string' && /^Não aplicável \(standalone\)$/i.test(value.trim());
 }
 
+/**
+ * Procedência por linha (v0.16.0, D3/D5). Enum: `usuario` | `premissa` |
+ * `derivado:<path>`. Para `derivado:` sem sufixo ` (novo)`, resolve o path
+ * contra `root` com `fs.existsSync` quando `root` é fornecido; sem `root`,
+ * pula a resolução e devolve `kind: 'derivado'` sem julgar existência
+ * (parse puro sem acesso a disco). Erro de leitura no path conta como
+ * inexistente, com o motivo em `reason`.
+ */
+export function validateOriginToken(raw, { root = null } = {}) {
+  if (typeof raw !== 'string' || raw.trim() === '') {
+    return { valid: false, kind: null, path: null, reason: 'origem ausente' };
+  }
+  const token = raw.trim();
+  if (token === 'usuario') return { valid: true, kind: 'usuario', path: null, reason: null };
+  if (token === 'premissa') return { valid: true, kind: 'premissa', path: null, reason: null };
+  if (token.startsWith('derivado:')) {
+    let target = token.slice('derivado:'.length).trim();
+    const isNew = target.endsWith('(novo)');
+    if (isNew) target = target.slice(0, -(('(novo)').length)).trim();
+    if (!target) return { valid: false, kind: 'derivado', path: null, reason: 'derivado sem path' };
+    if (isNew || !root) return { valid: true, kind: 'derivado', path: target, reason: null };
+    const normalized = target.replaceAll('\\', '/').replace(/^\.\//, '');
+    const absolute = path.resolve(root, normalized);
+    let exists = false;
+    let failure = null;
+    try {
+      exists = fs.existsSync(absolute);
+    } catch (error) {
+      failure = error.message;
+    }
+    if (!exists) {
+      return {
+        valid: false,
+        kind: 'derivado',
+        path: target,
+        reason: failure ? `erro de leitura no path: ${failure}` : 'path não existe no root do consumidor',
+      };
+    }
+    return { valid: true, kind: 'derivado', path: target, reason: null };
+  }
+  return { valid: false, kind: null, path: null, reason: `fora do enum (usuario | derivado:<path> | premissa): ${token}` };
+}
+
+/** Linhas `D<n>` da §7.1 com célula `Origem` resolvida pela posição do cabeçalho. */
+function contractDecisionRows(markdown) {
+  const section7 = extractSectionMarkdown(markdown, 7);
+  if (!section7) return { hasOriginColumn: false, rows: [] };
+  const headingMatch = /^###\s+7\.1\b[^\n]*$/im.exec(section7);
+  if (!headingMatch) return { hasOriginColumn: false, rows: [] };
+  const tail = section7.slice(headingMatch.index + headingMatch[0].length);
+  const end = tail.search(/\n#{2,3}\s/);
+  const body = end < 0 ? tail : tail.slice(0, end);
+  const tableRows = body.split('\n')
+    .filter((line) => /^\|.*\|\s*$/.test(line))
+    .map((line) => line.split('|').slice(1, -1).map((cell) => cell.trim()))
+    .filter((cells) => cells.length > 0 && !cells.every((cell) => /^:?-+:?$/.test(cell)));
+  const headerIndex = tableRows.findIndex((cells) => cells[0] === 'ID');
+  if (headerIndex < 0) return { hasOriginColumn: false, rows: [] };
+  const header = tableRows[headerIndex];
+  const originIndex = header.findIndex((cell) => /^Origem$/i.test(cell));
+  const rows = tableRows.slice(headerIndex + 1)
+    .filter((cells) => /^D\d+$/.test(cells[0]))
+    .map((cells) => ({
+      id: cells[0],
+      origin: originIndex >= 0 && originIndex < cells.length ? cells[originIndex] : null,
+    }));
+  return { hasOriginColumn: originIndex >= 0, rows };
+}
+
 function extractSectionMarkdown(markdown, sectionNumber) {
   const start = new RegExp(`^##\\s+${sectionNumber}\\.\\s`, 'im').exec(markdown);
   if (!start) return null;
@@ -458,8 +528,13 @@ export function validateSprintFileConformance(markdown, {
   sprintId = null,
   backlogPath = null,
   backlogMarkdown = null,
+  root = null,
 } = {}) {
   const pendencies = [];
+  let premissaCount = 0;
+  const moscowValue = tableValue(markdown, 'MoSCoW');
+  const prioridadeValue = tableValue(markdown, 'Prioridade');
+  const prioridadeSprint = moscowValue === 'Must' || prioridadeValue === 'P0';
   const requiredSections = [
     '1. Metadados',
     '2. Objetivo e valor',
@@ -481,6 +556,38 @@ export function validateSprintFileConformance(markdown, {
   for (const section of requiredSections) {
     if (!new RegExp(`^##\\s+${section.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`, 'im').test(markdown)) {
       pendencies.push(sprintConformancePending('seção_obrigatória', section, null, `Seção obrigatória ausente: ${section}`));
+    }
+  }
+
+  // CN6/D2 (v0.16.0): toda sprint declara a discussão de onde nasceu — é a fonte
+  // de intenção que o revisor frio usa como oráculo (D1). "Sempre obrigatória",
+  // inclusive standalone (decisão de autoria: sem detectar a origem da sprint).
+  // A §4 é tabela de TRÊS colunas (`Tipo | Fonte | Uso nesta sprint`): o
+  // casamento é pelo rótulo da primeira célula (`Discussão`), não por posição e
+  // não via `tableValue` (que só casa linha de duas colunas). §4 ausente por
+  // completo já é coberta pela pendência `seção_obrigatória` acima — aqui a
+  // pendência é única por sprint file, com a linha da §4 no campo `line`.
+  const section4 = extractSectionMarkdown(markdown, 4);
+  if (section4 != null) {
+    const discussaoRow = /^\|\s*Discussão\s*\|\s*([^|\n]*)/im.exec(section4);
+    const fonte = discussaoRow ? discussaoRow[1].trim() : '';
+    const semFonte = discussaoRow == null
+      || fonte === ''
+      || /^\[.*\]$/.test(fonte)          // placeholders: [link/resumo], [...]
+      || fonte === '—'
+      || /^N\/A$/i.test(fonte);
+    if (semFonte) {
+      // Pendência nomeada no pack (CN6/AC-02.1.1/02.1.2): `fonte_discussao_ausente`.
+      // O plano prescrevia "categoria `contexto_fontes`", mas o modelo de pendências
+      // tem campo único `category` (que é o id da pendência, padrão do repo:
+      // `procedencia_ausente`, `origem_path_inexistente`, ...) — o nome do pack prevalece.
+      pendencies.push(sprintConformancePending(
+        'fonte_discussao_ausente',
+        'Discussão',
+        lineOf(markdown, /^\|\s*Discussão\s*\|/i),
+        '§4 sem fonte de discussão preenchida — a sprint não declara a discussão de onde nasceu (obrigatória no schema 0.16.0, inclusive standalone).',
+        'preencher_fonte_discussao',
+      ));
     }
   }
 
@@ -564,6 +671,48 @@ export function validateSprintFileConformance(markdown, {
         ));
       }
       seenIds.add(item.id);
+      // Procedência por linha (v0.16.0, D3/D5/D17): todo AC declara `origin`.
+      if (item.origin === undefined || item.origin === null || String(item.origin).trim() === '') {
+        pendencies.push(sprintConformancePending(
+          'procedencia_ausente',
+          item.id,
+          lineOf(markdown, /^##\s+7\./i),
+          `AC ${item.id} sem \`origin\` (procedência obrigatória no schema 0.16.0).`,
+          'migrar_para_0_16',
+        ));
+      } else {
+        const originCheck = validateOriginToken(item.origin, { root });
+        if (!originCheck.valid) {
+          if (originCheck.kind === 'derivado' && originCheck.path) {
+            pendencies.push(sprintConformancePending(
+              'origem_path_inexistente',
+              item.id,
+              lineOf(markdown, /^##\s+7\./i),
+              `AC ${item.id} com origem inexistente: ${item.origin} (${originCheck.reason}).`,
+              'corrigir_origem_path',
+            ));
+          } else {
+            pendencies.push(sprintConformancePending(
+              'procedencia_invalida',
+              item.id,
+              lineOf(markdown, /^##\s+7\./i),
+              `AC ${item.id} com origem inválida: ${item.origin} (${originCheck.reason}).`,
+              'corrigir_origem',
+            ));
+          }
+        } else if (originCheck.kind === 'premissa') {
+          premissaCount += 1;
+          if (prioridadeSprint) {
+            pendencies.push(sprintConformancePending(
+              'procedencia_premissa_em_prioridade',
+              item.id,
+              lineOf(markdown, /^##\s+7\./i),
+              `AC ${item.id} apoiado em \`origin: premissa\` em sprint ${moscowValue === 'Must' ? 'MoSCoW Must' : 'Prioridade P0'} — fechar em entrevista antes de sustentar aceite.`,
+              'fechar_premissa_em_entrevista',
+            ));
+          }
+        }
+      }
       if (!item.behavior || !item.behavior.trim()) {
         pendencies.push(sprintConformancePending(
           'contrato_produto',
@@ -648,6 +797,63 @@ export function validateSprintFileConformance(markdown, {
           `EVAL órfão: ${evalId} declarado no §9 mas não referenciado por nenhum AC.`,
           'vincular_eval_a_ac',
         ));
+      }
+    }
+  }
+
+  // Procedência por linha nas decisões D* da §7.1 (v0.16.0, D3/D5/D17).
+  const contractDecisions = contractDecisionRows(markdown);
+  if (/\|\s*D\d+\s*\|/.test(extractSectionMarkdown(markdown, 7) ?? '')) {
+    if (!contractDecisions.hasOriginColumn) {
+      pendencies.push(sprintConformancePending(
+        'procedencia_ausente',
+        '§7.1',
+        lineOf(markdown, /^###\s+7\.1/i),
+        '§7.1 sem coluna `Origem` — schema anterior a 0.16.0; migrar (reinicio do artefato).',
+        'migrar_para_0_16',
+      ));
+    }
+    for (const decision of contractDecisions.rows) {
+      if (decision.origin === null || decision.origin === undefined || decision.origin.trim() === '') {
+        pendencies.push(sprintConformancePending(
+          'procedencia_ausente',
+          decision.id,
+          lineOf(markdown, new RegExp(`^\\|\\s*${decision.id}\\s*\\|`, 'm')),
+          `Decisão ${decision.id} da §7.1 sem \`Origem\`.`,
+          'migrar_para_0_16',
+        ));
+        continue;
+      }
+      const originCheck = validateOriginToken(decision.origin, { root });
+      if (!originCheck.valid) {
+        if (originCheck.kind === 'derivado' && originCheck.path) {
+          pendencies.push(sprintConformancePending(
+            'origem_path_inexistente',
+            decision.id,
+            lineOf(markdown, new RegExp(`^\\|\\s*${decision.id}\\s*\\|`, 'm')),
+            `Decisão ${decision.id} da §7.1 com origem inexistente: ${decision.origin} (${originCheck.reason}).`,
+            'corrigir_origem_path',
+          ));
+        } else {
+          pendencies.push(sprintConformancePending(
+            'procedencia_invalida',
+            decision.id,
+            lineOf(markdown, new RegExp(`^\\|\\s*${decision.id}\\s*\\|`, 'm')),
+            `Decisão ${decision.id} da §7.1 com origem inválida: ${decision.origin} (${originCheck.reason}).`,
+            'corrigir_origem',
+          ));
+        }
+      } else if (originCheck.kind === 'premissa') {
+        premissaCount += 1;
+        if (prioridadeSprint) {
+          pendencies.push(sprintConformancePending(
+            'procedencia_premissa_em_prioridade',
+            decision.id,
+            lineOf(markdown, new RegExp(`^\\|\\s*${decision.id}\\s*\\|`, 'm')),
+            `Decisão ${decision.id} da §7.1 apoiada em \`Origem: premissa\` em sprint ${moscowValue === 'Must' ? 'MoSCoW Must' : 'Prioridade P0'} — fechar em entrevista.`,
+            'fechar_premissa_em_entrevista',
+          ));
+        }
       }
     }
   }
@@ -747,14 +953,27 @@ export function validateSprintFileConformance(markdown, {
     valid: pendencies.length === 0,
     pending_count: pendencies.length,
     pendencies,
+    premissa_count: premissaCount,
   };
 }
 
 export function parseDecisionRows(markdown) {
   const rows = parseTable(markdown, '### Decisões bloqueantes');
   const header = rows.findIndex((row) => row[0] === 'ID');
+  if (header < 0) return [];
+  // v0.16.0: coluna `Origem` resolvida pela posição do cabeçalho, não por
+  // índice fixo; ausência da coluna deixa `origin: null` (pendência na validação).
+  const headerCells = rows[header];
+  const originIndex = headerCells.findIndex((cell) => /^Origem$/i.test(cell));
+  const statusIndex = headerCells.findIndex((cell) => /^Status$/i.test(cell));
   return rows.slice(header + 1).filter((row) => /^D\d+$/.test(row[0])).map((row) => ({
-    id: row[0], decision: row[1], blocks: row[2], owner: row[3], status: row[4], raw: row,
+    id: row[0],
+    decision: row[1],
+    blocks: row[2],
+    owner: row[3],
+    origin: originIndex >= 0 && originIndex < row.length ? row[originIndex] : null,
+    status: statusIndex >= 0 && statusIndex < row.length ? row[statusIndex] : (row[4] ?? ''),
+    raw: row,
   }));
 }
 
@@ -810,6 +1029,11 @@ export function validateBacklogUpdate(before, after, { authorizedIds = [] } = {}
     if (!next) errors.push(`DECISION_REMOVED:${id}`);
     else if (/^(decidido|fechado|aprovado)$/i.test(row.status)
       && JSON.stringify(row.raw) !== JSON.stringify(next.raw) && !authorized.has(id)) errors.push(`CLOSED_DECISION_CHANGED:${id}`);
+  }
+  // v0.16.0 (D3/D17): toda decisão do backlog declara `Origem` dentro do enum.
+  for (const [id, row] of newDecisions) {
+    const originCheck = validateOriginToken(row.origin);
+    if (!originCheck.valid) errors.push(`INVALID_ORIGIN:${id}:${row.origin ?? '<ausente>'}`);
   }
   for (const row of newRows) {
     for (const [field, values] of Object.entries(VALID)) if (!values.has(row[field])) errors.push(`INVALID_ENUM:${row.id}:${field}:${row[field]}`);
@@ -879,16 +1103,31 @@ export function approveAcceptanceContract(markdown) {
   return updated;
 }
 
-function applyDecisionRow(markdown, decisionId, value) {
-  const replacement = `| ${decisionId} | ${value} |`;
+/**
+ * Upsert da linha `D<n>` na §7.1 (v0.16.0: três colunas `| ID | Decisão | Origem |`).
+ * A lista final montada é sempre completa — nunca subconjunto de colunas:
+ * - linha existente: preserva a célula `Origem` atual quando a linha já tem a
+ *   terceira coluna; se o chamador informar `origin` explícito, ela vence;
+ *   linha legada de duas colunas ganha `origin` (entrevista = usuário).
+ * - linha nova: insert com as três células, sob o cabeçalho de três colunas.
+ *   Cabeçalho de duas colunas é schema pré-0.16.0 (corte seco D17): continua
+ *   lançando `DECISION_TABLE_MISSING:<id>`.
+ */
+function applyDecisionRow(markdown, decisionId, value, origin = null) {
   const section7 = extractSectionMarkdown(markdown, 7);
   const scope = section7 ?? markdown;
-  const row = new RegExp(`^\\|\\s*${decisionId}\\s*\\|.*$`, 'm');
+  const rowRe = new RegExp(`^\\|\\s*${decisionId}\\s*\\|.*$`, 'm');
   let nextScope;
-  if (row.test(scope)) {
-    nextScope = scope.replace(row, replacement);
-  } else if (/(\| ID \| Decisão \|\n\|[-| ]+\|)/.test(scope)) {
-    nextScope = scope.replace(/(\| ID \| Decisão \|\n\|[-| ]+\|)/, `$1\n${replacement}`);
+  if (rowRe.test(scope)) {
+    const existing = rowRe.exec(scope)[0];
+    const cells = existing.split('|').slice(1, -1).map((cell) => cell.trim());
+    const resolvedOrigin = origin ?? (cells.length >= 3 && cells[2] !== '' ? cells[2] : 'usuario');
+    const replacement = `| ${decisionId} | ${value} | ${resolvedOrigin} |`;
+    nextScope = scope.replace(rowRe, replacement);
+  } else if (/(\| ID \| Decisão \| Origem \|\n\|[-| ]+\|)/.test(scope)) {
+    const resolvedOrigin = origin ?? 'usuario';
+    const replacement = `| ${decisionId} | ${value} | ${resolvedOrigin} |`;
+    nextScope = scope.replace(/(\| ID \| Decisão \| Origem \|\n\|[-| ]+\|)/, `$1\n${replacement}`);
   } else {
     throw new Error(`DECISION_TABLE_MISSING:${decisionId}`);
   }
@@ -917,7 +1156,8 @@ export function applyInterviewRound(markdown, answers, date = new Date().toISOSt
     updated = setTableValue(updated, 'Selo do contrato', 'pendente até aprovação');
   }
   for (const answer of answers) {
-    updated = applyDecisionRow(updated, answer.decision_id, answer.value);
+    // Toda resposta de entrevista é resposta do usuário: procedência `usuario`.
+    updated = applyDecisionRow(updated, answer.decision_id, answer.value, 'usuario');
   }
   const log = `${date} — entrevista: ${answers.map((answer) => answer.decision_id).join(', ')} persistida(s)`;
   updated = /\*\*Histórico:\*\*/.test(updated)

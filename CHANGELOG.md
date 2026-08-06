@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.16.0 - 2026-08-06
+
+Tipo: **BREAKING release** (procedência por linha e revisão fria do backlog). Schema MCP: v5 (inalterado). Contrato de execução (G4/DISPATCH/PREREQ/JOIN): preservado.
+
+Resumo: toda decisão e todo critério de aceite passam a declarar **de onde vieram** (`Origem`), a ambiguidade é fechada por entrevista estruturada **antes** de o backlog existir em disco, e a skill de geração de backlog encerra despachando um revisor frio que audita e corrige o que ela própria escreveu. **Artefatos anteriores a 0.16.0 não são suportados (corte seco): iniciar backlog/sprint novo.**
+
+Mudanças (contrato documental):
+- **Coluna `Origem` obrigatória na §7.1** do sprint file (`| ID | Decisão | Origem |`) e nas decisões do backlog (`| ID | Decisão | Bloqueia | Dono | Origem | Status |`); schema anterior é recusado com `next_action: 'migrar_para_0_16'`.
+- **Campo `origin` obrigatório em cada `AC-*`** do §7.3 (enum `usuario` \| `derivado:<path>` \| `premissa`); ausência é pendência de schema.
+- **`premissa` proibida em sprint `Must`/`P0`** — o gate `talos_verify_sprint_file` bloqueia nomeando o `AC-*` e a linha.
+- **`derivado:<path>` resolvido contra o disco** — path inexistente recusa a sprint/backlog antes da execução.
+- **§4 `Discussão` obrigatória** (sempre, sem detectar origem) — a fonte que o revisor frio usa como oráculo de intenção deixa de ser opcional.
+- **Entrevista estruturada no `talos-backlog-generator`** — substitui o texto livre ("até 3 perguntas objetivas"); o rascunho é escaneado em memória (`talos_scan_acceptance` com `sprint_markdown`) e cada resposta vira decisão com `Origem: usuario`.
+- **Revisão fria interna à skill** — o passo final lê o mandato de `references/COLD_BACKLOG_REVIEW_PROMPT.md`, despacha um subagente genérico do host por `capabilities.subagent_dispatch` (incondicional, em foreground) e entrega o relatório ao chamador; artefatos corrigidos pelo revisor são regateados pelos gates antes da entrega.
+
+Não entrou (para não gerar expectativa):
+- Nenhuma tool MCP nova (16 tools, conjunto inalterado).
+- Nenhum gate novo de orquestrador (nenhuma fase nova).
+- Nenhum selo de revisão no artefato.
+
+Migração (0.15.x → 0.16.0):
+- **Corte seco, sem retrocompatibilidade.** Sprint files sem a coluna `Origem` na §7.1, AC sem `origin` ou §4 sem `Discussão` são rejeitados pelos gates com instrução explícita de reinício (`migrar_para_0_16`). Iniciar backlog e sprint files novos no padrão 0.16.
+
+Impacto:
+- Backlog/sprint pré-0.16 são recusados em vez de passarem despercebidos; o gate nomeia a linha que falta.
+- O artefato que alimenta o pipeline deixa de ser o único que ninguém revisa: o output da execução é auditado e corrigido por contexto novo.
+
+Arquivos/artefatos:
+- `VERSION` → `0.16.0`; `.claude-plugin/plugin.json`; `package.json`; `packages/mcp-server/package.json`; `CHANGELOG.md`; `AGENTS.md`; `CLAUDE.md`; `README.md`; `COMMANDS.md`; `packages/mcp-server/README.md`; `packages/orchestrator/README.md`.
+- Templates: `packages/templates/SPRINT_TEMPLATE.md`, `packages/templates/BACKLOG_MESTRE_TEMPLATE.md`.
+- `packages/skills/_shared/scripts/document_quality.mjs`, `packages/skills/talos-backlog-generator/` (SKILL.md + `references/COLD_BACKLOG_REVIEW_PROMPT.md`), `packages/mcp-server/server.js`.
+- Catálogos: `plugins/talos/**` e `hosts/{opencode,pi,zcode,vscode}/**` regenerados em `0.16.0`; `dist/**` + `SHA256SUMS` regenerados.
+
+Validação:
+- `node build/bump-version.mjs 0.16.0` + `bash build/build-plugins.sh` — ok.
+- `node build/check-consistency.mjs` — ok.
+- `bash build/test-all.sh` — OK (287/287 MCP, etapa3 + fixtures §9, smoke-hosts, conformance multi-host, smoke-install, checksums 6/6).
+- `claude plugin validate ./ --strict` — ok.
+
 ## 0.15.2 - 2026-08-04
 
 Tipo: **docs** (artefato distribuído). **Sem breaking**. Schema MCP: v5 (inalterado).
