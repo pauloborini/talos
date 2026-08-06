@@ -51,6 +51,7 @@ Se faltar informação não bloqueante, gere o backlog com premissas marcadas e 
 11. **Registrar alterações:** toda atualização acrescenta `## Registro de alterações` (data, IDs afetados, motivo e fonte) ou atualiza seção equivalente existente. Não reescreva histórico anterior.
 12. **Salvar artefatos:** grave o backlog no path pedido ou, se não houver path, crie `.talos/backlog/BACKLOG_MESTRE_<slug>.md`; grave sprint files no diretório recomendado pelo template.
 13. **Validar antes de finalizar:** bloqueie se `validateBacklogUpdate` apontar sprint/decisão removida, sprint `done` alterada, enum inválido, ciclo de dependência, placeholder acidental ou falta de registro. Confirme também que dependências referenciam IDs existentes, todo sprint do backlog aponta para sprint file e todo sprint file aponta de volta para o backlog. Chame `talos_verify_sprint_file` para sprint files criados/alterados, `talos_verify_backlog_index` para o backlog final e `talos_select_next_sprint` para a próxima sprint. Se qualquer gate bloquear ou estiver indisponível, não declare a sprint pronta para entrevista/plano.
+14. **Revisar a frio e entregar:** depois dos gates do passo 13, a skill encerra despachando um revisor-corretor em contexto novo, sem acesso à conversa que originou os artefatos — quem escreveu não revisa o que escreveu. (1) Monte a lista de paths efetivamente escritos nesta execução: o backlog mestre e **cada** sprint file criado ou alterado — não apenas a sprint selecionada; (2) colete as fontes de discussão da linha `Discussão` da §4 desses sprint files; (3) leia do disco `packages/skills/talos-backlog-generator/references/COLD_BACKLOG_REVIEW_PROMPT.md` (raiz do bundle, como no passo 1) e substitua apenas os parâmetros `<BACKLOG_PATH>`, `<SPRINT_PATHS>`, `<FONTES_DE_DISCUSSAO>` e `<RAIZ_DO_REPO>` — nunca reescreva o mandato de memória nem o resuma: mandato improvisado varia de rigor a cada execução e não deixa rastro do que foi confrontado; (4) resolva `talos_capabilities.subagent_dispatch` e despache pelo verbo declarado ali um único subagente genérico/default do host (não um agente registrado `talos-*`), em foreground, aguardando o retorno — dispatch incondicional, sem branch por host e sem leitura de `dispatch_capability`; (5) receba o relatório, repasse ao chamador os findings por severidade, o que foi alterado com path e o veredito, e só então entregue o backlog — o relatório nunca é materializado em arquivo (nenhum diretório novo sob `.talos/`). Falha de dispatch **bloqueia a entrega** com causa e próxima ação: não existe caminho de degradação nem revisão inline pelo próprio autor. Veredito `fail` ou `interview_required`: repasse ao chamador sem declarar o backlog pronto. Havendo artefato alterado pelo revisor, reexecute `talos_verify_sprint_file` sobre os sprint files tocados e `talos_verify_backlog_index` sobre o backlog antes de entregar — artefato corrigido e não regateado é artefato não verificado. Se o revisor não alterou nada (`findings_applied: 0`), entregue sem regatear: o artefato é byte-idêntico ao que os gates do passo 13 já aprovaram.
 
 Quando chamada pelo orquestrador em `backlog_first`, finalize retornando dados estruturados mínimos:
 
@@ -60,9 +61,16 @@ Quando chamada pelo orquestrador em `backlog_first`, finalize retornando dados e
   "sprint_id": "S<NN>",
   "sprint_file_path": ".talos/backlog/sprints/SPRINT_S<NN>_<slug>.md",
   "plan_path": "pendente",
-  "state_path": "pendente"
+  "state_path": "pendente",
+  "cold_review": {
+    "dispatched": true,
+    "verdict": "pass | pass_with_observations | fail | interview_required",
+    "findings_applied": 0
+  }
 }
 ```
+
+O orquestrador ecoa `cold_review` no ledger como informação da execução — não é gate novo, não bloqueia nada por si só: o bloqueio de `premissa`/path/schema já é feito pelos gates de procedência da etapa anterior.
 
 O orquestrador deve passar `sprint_id` + `sprint_file_path` à próxima fase (`talos-sprint-interview` se ambiguidade / `talos-plan-handoff`). Macro fica no backlog mestre; entrevista/plano/executor recebem apenas a sprint selecionada.
 
