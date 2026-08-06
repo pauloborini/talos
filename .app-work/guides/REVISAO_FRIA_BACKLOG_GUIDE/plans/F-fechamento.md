@@ -45,7 +45,27 @@ Obrigação em qualquer estado diferente de `PROVADO` é dívida aberta e bloque
 
 ### Pré-F
 
-*(vazio até o Pré-F)*
+**Data:** 2026-08-06
+**Veredito:** PASS
+**Skill:** pref-guide
+
+| Campo | Conteúdo |
+|-------|----------|
+| Linhas de LEDGER re-verificadas | 16 (todas: CN1-CN6, VC1-VC3, LEG1-LEG2, INV1-INV5) |
+| Linhas que divergiram do ledger | nenhuma |
+| Promoções sem lastro | nenhuma (cada `Promovido por` bate com a `Auditoria pós-implementação` do plano nomeado em `Fecha em`; todos os testes citados existem e passam no runner real) |
+| Gaps cross-plano encontrados | nenhum bloqueante. Verificados: (1) procedência sobrevive ao ciclo entrevista → escrita (`persistInterviewRound`/`applyDecisionRow` 3 colunas) → gate (`validateSprintFileConformance`) → revisão fria (mandato + passo 14 com regate pós-revisão); (2) boundary da revisão cobre backlog + todas as sprints da execução (passo 14, AC-04.2.1); (3) artefato corrigido pelo revisor volta aos gates (AC-04.2.5); (4) `derivado:<path>` reprova nos dois gates (`root: consumerRoot(args)` em `verifySprintFile` e `inspectBacklogIndex`; AC-01.4.3); (5) INV3: 16 tools, orquestrador sem diff de código; (6) INV5: 12 cópias de template byte-idênticas |
+| Findings corrigidos (P0/P1/P2) | nenhum |
+| Findings restantes (P0/P1/P2) | nenhum |
+| Arquivos tocados | `.app-work/guides/REVISAO_FRIA_BACKLOG_GUIDE/plans/F-fechamento.md` (apenas a seção `### Pré-F`; 5.1/5.2/5.3 não preenchidos) |
+| Gates / smoke | `bash build/test-all.sh` → "OK — suíte completa verde" (exit 0: 287/287 + 37/37 + smoke-hosts + conformance 6×10 + smoke-install + checksums 6/6); `node --test build/tests/etapa3.test.mjs` 27/27; `node --test packages/mcp-server/server.test.js` 287/287 (com fixture ambiental presente); `node build/check-consistency.mjs` ok; `git diff --check` limpo; `claude plugin validate ./ --strict` → "✔ Validation passed"; smoke manual em host real: NÃO executado (N/A documentado nos planos 03/04/05) |
+
+**Notas para o Plano F (mapa de risco, não atestado):**
+- **União dos `Fecha neste plano` cobre o LEDGER inteiro (16/16), sem órfãos**; fronteiras de entrada de 02 (VC1), 03 (VC1), 04 (CN1) e 05 (CN4+VC1) fechadas por planos anteriores; guia §4 espelha os status (01-05 CONCLUÍDO, F PENDENTE).
+- **Risco 1 — estado verde depende de arquivo não versionado:** a suíte `packages/mcp-server/server.test.js` depende de `<repo>/.talos/memory/HANDOFF_TEMPLATE.md` (gitignored via `.talos/`, nunca versionado — `git log --all -- .talos` vazio). Sem ele, 22 testes falham por ENOENT (`writeHandoffTemplateFixture`). O fixture existe hoje no workspace (restaurado no Plano 05) e `test-all.sh` roda verde, mas um clone fresco/CI falha. Não afeta instaladores (é só teste), mas é dívida estrutural sem dono: decidir no F (versionar o template ou derivá-lo de fixture do repo).
+- **Risco 2 — smoke manual nunca executado:** (a) veredito do subagente da revisão fria (CN4/VC2/VC3) é smoke por declaração do pack (2.1/2.9) — nunca rodou em host real com `subagent_dispatch`; o lado do contrato (mandato lido do disco, boundary, regate, relatório, sem tool name) está automatizado e verde; (b) release em host limpo (marketplace-from-source, `talos_ping` → 0.16.0) também N/A. Se o F tiver host MCP disponível, executar os smokes; senão, aceitar o N/A documentado.
+- **P3 herdados (registrados, não corrigidos):** (1) Plano 02 F4 — falsificador registrado no Impl para AC-02.2.2 diverge do declarado no AC; o declarado (remover branch de `sprint_path`) foi o aplicado na auditoria com red reproduzido; mesma capacidade discriminante; (2) nomes de teste de 2.1 diferem dos reais (Plano 03: `persist_preserva_origem` → real `entrevista: persistir rodada preserva Origem em §7.1 de 3 colunas (AC-01.3.1 / INV1)`; Plano 04: mapeamento completo no Impl); sem impacto funcional; (3) linha `origem` de `applyItemField` fica na cadeia escalar fora do submapa `evidence` (comportamento requerido por AC-01.2.1).
+- **Código confirma o LEDGER em todas as linhas re-verificadas** — nenhum ajuste de ledger foi necessário; nenhuma correção P0/P1/P2 foi feita nesta passada.
 
 ### 5.1 Cenários de aceite traçados
 
