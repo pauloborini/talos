@@ -29,6 +29,28 @@ Duas metas inegociáveis, sempre juntas:
 - Determinismo: gate PREREQ no `talos_preflight` é hard-fail (DEC-004). Hosts `must_report` (pi/generic) falham-fechado se o orquestrador não reportar `host_capabilities`; nativos (claude/codex/opencode/zcode/vscode) são `self_evident` para PREREQ/JOIN. Gate DISPATCH (DEC-008) bloqueia `full/direct/execute` em hosts com mutação desconhecida até `host_capabilities.dispatch_mutable:true`. `pass`/`pass_with_observations` do validador são terminais (só `fail` reabre loop).
 - Backlog pós-v0.10.0: mestre enxuto (índice estratégico) em `.talos/backlog/BACKLOG_MESTRE_<produto>.md`; sprint files vivos em `.talos/backlog/sprints/SNN_<slug>.md` (fonte primária de contexto por sprint + contrato de produto §7 congelado); template canônico de sprint: `packages/templates/SPRINT_TEMPLATE.md`; boundary: `packages/templates/BOUNDARY_SPRINT_PLAN.md`; plano: `packages/templates/PLAN_TEMPLATE.md` (linka Sprint file).
 
+## Produto — decisões vigentes
+
+Vault: `_app-vault/`. Mapa: `_app-vault/INDEX.md`.
+Fonte de verdade: `_app-vault/docs/decisions/<dominio>.md` — cada regra sob `### DEC-NNN`.
+
+Domínios deste projeto:
+
+- `pipeline` — missão, invariantes, topologia, aceite e contrato de produto
+- `distribuicao` — install, hosts, packaging e versão
+- `determinismo` — gates PREREQ/DISPATCH, adapters e join
+- `artefatos` — backlog, sprint file e procedência 0.16
+
+Regra de produto citada em qualquer outro lugar e ausente de `docs/decisions/` **não é regra** —
+é lacuna a promover.
+
+## Código — normas de implementação
+
+Normas ao codar: invariantes e regras operacionais neste `AGENTS.md`, `PATCH_PROCEDURE.md` e validadores em `build/`.
+
+Caso híbrido (a regra afeta o usuário **e** é validação de código): o **efeito observável pelo
+usuário final** mora em `_app-vault/docs/decisions/`; a **norma de como implementar** mora aqui e em `build/`. Referenciar `DEC-NNN` — nunca copiar o valor.
+
 ## Regras operacionais
 
 - Antes de mergear refactor estrutural em `main`: rodar `build/check-consistency.mjs` + `claude plugin validate ./ --strict`.

@@ -2,8 +2,8 @@
 .DS_Store
 **/.DS_Store
 
-# Vault local
-.app-vault/
+# Vault legado (renomeado para _app-vault/)
+# _app-vault/ é versionado — não ignorar
 
 # Config local do Claude Code
 .claude/settings.local.json
