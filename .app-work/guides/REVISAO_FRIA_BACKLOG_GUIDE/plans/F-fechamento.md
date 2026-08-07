@@ -16,7 +16,7 @@
 **Natureza:** FECHAMENTO
 **Ativação:** sempre, em pack com dois ou mais planos de execução.
 **Risco:** baixo
-**Status:** PENDENTE
+**Status:** CONCLUÍDO (2026-08-06)
 
 ### Contrato do plano de fechamento
 
@@ -36,12 +36,12 @@ Obrigação em qualquer estado diferente de `PROVADO` é dívida aberta e bloque
 
 ### Definition of done
 
-- [ ] Toda obrigação do `LEDGER.md` está `PROVADO` com promoção rastreável ao plano que a fechou.
-- [ ] Toda linha do `LEDGER.md` foi re-verificada no código nesta auditoria, sem amostragem.
-- [ ] Invariantes transversais e integrações entre planos verificadas.
-- [ ] Gates agregados passam ou o baseline está documentado.
-- [ ] 5.1, 5.2 e 5.3 preenchidos.
-- [ ] Nenhum `P0`/`P1`/`P2` aberto.
+- [x] Toda obrigação do `LEDGER.md` está `PROVADO` com promoção rastreável ao plano que a fechou.
+- [x] Toda linha do `LEDGER.md` foi re-verificada no código nesta auditoria, sem amostragem.
+- [x] Invariantes transversais e integrações entre planos verificadas.
+- [x] Gates agregados passam ou o baseline está documentado.
+- [x] 5.1, 5.2 e 5.3 preenchidos.
+- [x] Nenhum `P0`/`P1`/`P2` aberto.
 
 ### Pré-F
 
@@ -71,32 +71,59 @@ Obrigação em qualquer estado diferente de `PROVADO` é dívida aberta e bloque
 
 | Cenário | Caminho real percorrido (`path:symbol` -> ... -> sink) | Prova executável | Evidência | Veredito |
 |---------|--------------------------------------------------------|------------------|-----------|----------|
-| CN1 | PENDENTE: ainda não auditado | PENDENTE | PENDENTE | PENDENTE |
-| CN2 | PENDENTE: ainda não auditado | PENDENTE | PENDENTE | PENDENTE |
-| CN3 | PENDENTE: ainda não auditado | PENDENTE | PENDENTE | PENDENTE |
-| CN4 | PENDENTE: ainda não auditado | PENDENTE | PENDENTE | PENDENTE |
-| CN5 | PENDENTE: ainda não auditado | PENDENTE | PENDENTE | PENDENTE |
-| CN6 | PENDENTE: ainda não auditado | PENDENTE | PENDENTE | PENDENTE |
+| CN1 | `talos-backlog-generator/SKILL.md` passo 4 → `server.js:scanAcceptance` (`sprint_markdown`) → `capabilities.question_prompt` → `applyInterviewRound`/`applyDecisionRow` com `Origem: usuario` (rascunho em memória ou `persistInterviewRound` se arquivo existir) | `server.test.js::talos_scan_acceptance: sprint_markdown... (AC-02.2.1)` + `etapa3::skill backlog: texto livre morto... (AC-03.1.1 / LEG1)` + `etapa3::entrevista: persistir rodada preserva Origem... (AC-01.3.1 / INV1)` | Passo 4 lido; 3 pernas verdes no runner; LEG1 morto nos dois sítios | CONFORME |
+| CN2 | §1 `MoSCoW`/`Prioridade` + `origin: premissa` no AC → `document_quality.mjs:validateSprintFileConformance` → `server.js:verifySprintFile` `status:blocked` + `premissa_count` | `etapa3::procedência: premissa bloqueia... (AC-01.2.2)` + `server.test.js::talos_verify_sprint_file: premissa_count... (AC-01.4.2)` | Fixture standalone Must/P0; pendência `procedencia_premissa_em_prioridade`; gate blocked | CONFORME |
+| CN3 | `derivado:<path>` → `validateOriginToken({ root })` → pendência `origem_path_inexistente` nos **dois** gates (`verifySprintFile` L2077 + `inspectBacklogIndex` L2259, ambos com `root: consumerRoot(args)`) | `etapa3::procedência: derivado:<path> inexistente... (AC-01.2.3)` + `server.test.js` resolve no backlog | tmpdir real; `(novo)` e path existente passam | CONFORME |
+| CN4 | `SKILL.md` passo 14 → lê `references/COLD_BACKLOG_REVIEW_PROMPT.md` do disco → boundary = backlog + **cada** sprint escrito → `subagent_dispatch` → regate se alterou → relatório ao chamador (sem arquivo) | `etapa3::mandato revisão...` + `::skill_backlog_le_mandato` + `::skill_backlog_boundary_completo` + `::skill_backlog_regate_pos_revisao` + `::skill_backlog_relatorio_ao_chamador` | Contrato do mandato/boundary/regate verde; veredito do agente = smoke N/A (pack 2.1/2.9); host MCP instalado ainda em 0.15.1 (cache) | CONFORME |
+| CN5 | §7.1 sem coluna `Origem` → `validateSprintFileConformance` → `procedencia_ausente` + `next_action: migrar_para_0_16` | `etapa3::procedência: §7.1 sem coluna Origem... (AC-01.2.4)` | Schema pré-0.16 rejeitado; D17 corte seco | CONFORME |
+| CN6 | §4 linha `Discussão` vazia/placeholder → pendência `fonte_discussao_ausente` → `verifySprintFile` blocked | `etapa3::discussão: placeholder... (AC-02.1.1)` + `::discussão: sprint standalone... (AC-02.1.2)` | Placeholders e standalone sem linha recusados; path real passa | CONFORME |
 
 ### 5.2 Entregas
 
 | Entrega final | Planos/ACs | Evidência | Status |
 |---------------|------------|-----------|--------|
-| Procedência por linha rotulada e gateada | 01 / AC-01.1.1 a AC-01.4.3 | PENDENTE | PENDENTE |
-| Fonte de discussão obrigatória e scan sobre rascunho | 02 / AC-02.1.1 a AC-02.2.3 | PENDENTE | PENDENTE |
-| Entrevista estruturada antes da escrita | 03 / AC-03.1.1 a AC-03.2.1 | PENDENTE | PENDENTE |
-| Revisão fria interna à skill de backlog | 04 / AC-04.1.1 a AC-04.3.2 | PENDENTE | PENDENTE |
-| Release `0.16.0` com corte seco documentado | 05 / AC-05.1.1 a AC-05.3.1 | PENDENTE | PENDENTE |
+| Procedência por linha rotulada e gateada | 01 / AC-01.1.1 a AC-01.4.3 | Templates 3 colunas; `applyDecisionRow` 3 células; `validateOriginToken`; gates com `premissa_count` e `root`; etapa3+server.test verdes | ENTREGUE |
+| Fonte de discussão obrigatória e scan sobre rascunho | 02 / AC-02.1.1 a AC-02.2.3 | `fonte_discussao_ausente`; `scanAcceptance` aceita `sprint_markdown` XOR `sprint_path` | ENTREGUE |
+| Entrevista estruturada antes da escrita | 03 / AC-03.1.1 a AC-03.2.1 | Passo 4 via `question_prompt`; LEG1 morto; persistência `usuario` | ENTREGUE |
+| Revisão fria interna à skill de backlog | 04 / AC-04.1.1 a AC-04.3.2 | Mandato canônico; passo 14; INV3=16 tools; INV4 sem tool hardcode | ENTREGUE |
+| Release `0.16.0` com corte seco documentado | 05 / AC-05.1.1 a AC-05.3.1 | `VERSION`/`plugin.json` 0.16.0; 12 cópias byte-idênticas; CHANGELOG/docs; `test-all` verde | ENTREGUE |
 
 ### 5.3 Auditoria integrada da trilha
 
 | Obrigação global | Planos/ACs confrontados | Evidência independente | Veredito |
 |------------------|-------------------------|------------------------|----------|
-| Procedência sobrevive ao ciclo completo (entrevista → escrita → gate → revisão) | 01, 03, 04 | PENDENTE | PENDENTE |
-| Boundary da revisão cobre backlog + todas as sprints da execução | 04 | PENDENTE | PENDENTE |
-| Artefato corrigido pelo revisor volta a passar pelos gates antes da entrega | 04 / AC-04.2.5 | PENDENTE | PENDENTE |
-| `derivado:<path>` reprova nos **dois** gates (sprint e backlog índice) | 01 / AC-01.2.3, AC-01.4.3 | PENDENTE | PENDENTE |
-| Nenhuma tool MCP nova e nenhuma fase nova de orquestrador | 04 / INV3 | PENDENTE | PENDENTE |
-| Cópias por host sincronizadas com a fonte | 05 / INV5 | PENDENTE | PENDENTE |
+| Procedência sobrevive ao ciclo completo (entrevista → escrita → gate → revisão) | 01, 03, 04 | `applyDecisionRow` L1116-1136 monta 3 colunas; `applyInterviewRound` força `'usuario'`; sink `validateSprintFileConformance` consome `origin`; mandato §7 aprovada read-only; regate pós-revisão no passo 14; provas AC-01.3.1 + AC-04.2.5 verdes | CONFORME |
+| Boundary da revisão cobre backlog + todas as sprints da execução | 04 | Passo 14: "backlog mestre e **cada** sprint file criado ou alterado — não apenas a sprint selecionada"; `etapa3::skill_backlog_boundary_completo` | CONFORME |
+| Artefato corrigido pelo revisor volta a passar pelos gates antes da entrega | 04 / AC-04.2.5 | Passo 14 exige reexecução de `talos_verify_sprint_file`/`talos_verify_backlog_index` quando houve alteração; teste ancora a instrução | CONFORME |
+| `derivado:<path>` reprova nos **dois** gates (sprint e backlog índice) | 01 / AC-01.2.3, AC-01.4.3 | `root: consumerRoot(args)` em `verifySprintFile` L2077 e `inspectBacklogIndex` L2259; testes nos dois caminhos | CONFORME |
+| Nenhuma tool MCP nova e nenhuma fase nova de orquestrador | 04 / INV3 | 16 `name: 'talos_'` em `server.js`; `server.test.js::tools: conjunto registrado...`; orquestrador só ecoa `talos_scan_acceptance` já existente | CONFORME |
+| Cópias por host sincronizadas com a fonte | 05 / INV5 | 6×SPRINT + 6×BACKLOG `diff -q` idênticos à fonte com coluna `Origem` | CONFORME |
 
-O pack só recebe `CONCLUÍDO` quando todos os planos obrigatórios estão concluídos e esta matriz, junto com 5.1, comprova a Definition of Done da trilha.
+### Auditoria integrada (Plano F) — 2026-08-06
+
+**Modo:** Plano F (fechamento). Sessão nova. Pré-F: **presente** (mapa de risco; cobertura R1–R5 integral mantida).
+
+**R0:** Pré-F PASS usado só como prioridade. Risco 1 (HANDOFF gitignored) confirmado e **corrigido nesta auditoria** (P2). Risco 2 (smoke host) aceito N/A conforme pack. P3 herdados registrados, sem elevação.
+
+**R1:** 16/16 linhas do LEDGER batem com `Promoção de ledger` dos planos 01–05; evidência concreta em cada promoção; nenhuma promoção sem lastro.
+
+**R2:** 16/16 linhas re-verificadas no código (sem amostragem). Divergências vs estado do ledger: **0**. LEDGER permanece íntegro (nenhuma linha rebaixada).
+
+**R3:** Integrações da matriz 5.3 todas CONFORME. DoD marcada.
+
+**R4:** `bash build/test-all.sh` → OK suíte completa verde (287/287 + 37/37 + smoke-hosts + conformance 6×10 + smoke-install + checksums 6/6); `claude plugin validate ./ --strict` → ✔; `node build/check-consistency.mjs` ok; `git diff --check` limpo. Prova do fix HANDOFF: 287/287 **com** `.talos/memory/HANDOFF_TEMPLATE.md` removido temporariamente.
+
+**R5 / Fase C:** Finding P2 corrigido; conformidade OK (fixture versionada; runtime do consumidor inalterado). Worktree alheio: só o fix desta auditoria (`server.test.js` + `fixtures/HANDOFF_TEMPLATE.md`) + artefatos do pack.
+
+**Além do Pré-F:** (1) corrigiu Risco 1 — `writeHandoffTemplateFixture` agora copia de `packages/mcp-server/fixtures/HANDOFF_TEMPLATE.md` (versionado); (2) confirmou MCP instalado no host Cursor ainda em `0.15.1` (cache) enquanto o repo está `0.16.0` — smoke de reinstall N/A, lado do contrato automatizado verde; (3) nenhuma outra divergência de ledger ou gap cross-plano além do mapa Pré-F.
+
+**Findings desta auditoria:**
+
+| Sev | Finding | Correção | Validação |
+|-----|---------|----------|-----------|
+| P2 | Suíte `server.test.js` lia HANDOFF de path gitignored (Risco 1 Pré-F) | Fixture versionado em `packages/mcp-server/fixtures/HANDOFF_TEMPLATE.md` + helper atualizado | 287/287 com `.talos/memory/HANDOFF_TEMPLATE.md` ausente; `test-all` verde |
+
+**P0/P1/P2 abertos:** nenhum.
+**P3 residual:** herdados do Pré-F (falsificador F4 nome divergente; nomes de teste em 2.1 vs reais) — observação, não bloqueiam DoD.
+
+**Status:** `plans/F-fechamento.md` → CONCLUÍDO (2026-08-06); GUIDE.md global → CONCLUÍDO (2026-08-06); §4 espelhado.

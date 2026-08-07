@@ -18,7 +18,7 @@ Entrega a versão `0.16.0` do plugin Talos: toda decisão e todo critério de ac
 
 **Precedência de regras:** INTENT (intenção deste pack) + decisão explícita do usuário > regras locais (`AGENTS.md`/`CLAUDE.md`) > boas práticas da stack (fallback para edge case sem regra) > padrões do código. Direção não viola regra local dura. GUIDE §1 é índice fino do INTENT — não duplica prosa.
 
-**Status:** PRONTO PARA EXECUÇÃO
+**Status:** CONCLUÍDO (2026-08-06)
 
 **Modos suportados:** PLANO SELECIONADO | GUIDE INTEIRO | AMBOS (padrão)
 
@@ -283,7 +283,7 @@ plans/01-procedencia.md -> plans/02-fonte-e-scan.md -> plans/03-entrevista.md ->
 | 03 | `plans/03-entrevista.md` | OBRIGATÓRIO | sempre | Entrevista estruturada no generator, persistindo `Origem: usuario` | 01, 02 | CN1, LEG1 | VC1 | CONCLUÍDO (2026-08-06) |
 | 04 | `plans/04-revisao-fria.md` | OBRIGATÓRIO | sempre | Mandato canônico + dispatch do revisor como último passo da skill | 03 | CN4, VC2, VC3, INV3, INV4 | CN1 | CONCLUÍDO (2026-08-06) |
 | 05 | `plans/05-release.md` | OBRIGATÓRIO | sempre | Corte seco `0.16.0`: versão, cópias por host, CHANGELOG, migração e docs | 04 | INV5 | CN4, VC1 | CONCLUÍDO (2026-08-06) |
-| F | `plans/F-fechamento.md` | FECHAMENTO | sempre | trilha verificada e fechada | todos os anteriores | — | todas `PROVADO` em `LEDGER.md` | PENDENTE |
+| F | `plans/F-fechamento.md` | FECHAMENTO | sempre | trilha verificada e fechada | todos os anteriores | — | todas `PROVADO` em `LEDGER.md` | CONCLUÍDO (2026-08-06) |
 
 O estado vivo das obrigações transversais vive em `LEDGER.md`. O contrato + Impl + auditoria de cada incremento vive em `plans/*.md`.
 
@@ -341,6 +341,7 @@ O estado vivo das obrigações transversais vive em `LEDGER.md`. O contrato + Im
 
 | 2026-08-06 | Plano 04 | **Adição pós-revisão (autor).** O mandato ganha cláusula que delimita o escopo do julgamento: o revisor de backlog julga contrato de produto contra código real e **não** aplica ao artefato documental as políticas de mutação de código (gate DISPATCH/DEC-008, `dispatch_capability`, locks, topologia sibling); exigir campo novo em `talos_capabilities` ou gate MCP para o próprio dispatch é finding inválido por construção. Motivo: a revisão fria deste pack cometeu exatamente esse erro e produziu dois bloqueios sobre uma não-questão — sem a cláusula, o revisor que este release instala no `talos-backlog-generator` reproduz o defeito em produção. Coberta por `AC-04.1.4`. Validadores reexecutados após a edição | `plans/04-revisao-fria.md` task 04.1; sessão de revisão 2026-08-06 |
 | 2026-08-06 | Pack | **Avisos aceitos com motivo registrado.** 7 avisos `INT06W` (D1, D6, D15, D16, D18, D20, D21): a coluna `Cobertura no GUIDE` do INTENT cita o plano e o AC concreto que fecham a decisão, em vez de `CN`/`fora`/`P#`. Mantidos: essas decisões não têm cenário de usuário próprio — são contrato interno (D1, D16), payload de gate (D6), boundary do mandato (D15), versionamento (D18), formato do relatório (D20) e regra de não-disparo (D21). Cobertura por AC nomeado é mais forte que marca de cenário, e trocar por `fora` seria falso: elas estão dentro do escopo. Nenhum aviso indica lacuna real de cobertura | `validate_guide.py --require-intent`; `INTENT.md` §1 |
+| 2026-08-06 | Plano F | **Fechamento da trilha.** Sessão nova. Pré-F presente (mapa). R1: 16/16 promoções com lastro. R2: 16/16 linhas re-verificadas no código, 0 divergências. R3: ciclo entrevista→gate→revisão, boundary multi-sprint, regate, `root` nos dois gates, INV3/INV5 CONFORME. R4: `test-all` verde + `claude plugin validate --strict` + check-consistency + `git diff --check`. **P2 corrigido:** `writeHandoffTemplateFixture` deixou de depender de `.talos/memory/HANDOFF_TEMPLATE.md` gitignored — fonte versionada em `packages/mcp-server/fixtures/HANDOFF_TEMPLATE.md` (prova: 287/287 com o path gitignored ausente). Smoke host real N/A (pack + MCP cache ainda 0.15.1). LEDGER intacto. Status global CONCLUÍDO | `plans/F-fechamento.md` 5.1/5.2/5.3; `bash build/test-all.sh`; `packages/mcp-server/fixtures/HANDOFF_TEMPLATE.md` |
 
 ---
 

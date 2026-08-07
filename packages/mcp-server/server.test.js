@@ -2118,9 +2118,11 @@ function writeSprintFixture(root, id, {
 }
 
 function writeHandoffTemplateFixture(root) {
+  // Fonte versionada no repo (não `.talos/`, gitignored). Runtime do consumidor
+  // continua lendo `.talos/memory/HANDOFF_TEMPLATE.md` no project_root.
   const templateSrc = path.resolve(
     path.dirname(fileURLToPath(import.meta.url)),
-    '../../.talos/memory/HANDOFF_TEMPLATE.md',
+    'fixtures/HANDOFF_TEMPLATE.md',
   );
   const destDir = path.join(root, '.talos/memory');
   fs.mkdirSync(destDir, { recursive: true });
