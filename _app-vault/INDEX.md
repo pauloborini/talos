@@ -30,3 +30,8 @@ scope: Plugin Talos — pipeline determinística multi-host
 - install → distribuicao
 - hosts → distribuicao, determinismo
 - mcp → determinismo
+
+## Histórico
+
+- 2026-08-06 — Migração AppVault (`vault-migrate` passos 1–6). `DEC-006` nunca atribuído (lacuna
+  intencional na numeração legada); próximo ID livre: `DEC-028`.
