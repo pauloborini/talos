@@ -76,7 +76,7 @@ Regra: este arquivo guarda **escopo, estado, decisões locais, dependências, ga
 
 | Tipo | Fonte | Uso nesta sprint |
 |---|---|---|
-| Discussão | `.app-work/brainstorming/revisao-fria-backlog/BRAINSTORM.md` | decisão/contexto da origem |
+| Discussão | `_app-vault/docs/decisions/artefatos.md` (DEC-027) | decisão/contexto da origem |
 
 Notas:
 
