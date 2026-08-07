@@ -17,7 +17,7 @@ node_modules/
 archive/
 raycast/
 reports/
-.app-vault/
+_app-vault/
 .claude-plugin/
 .agents/
 plugin-manifests/

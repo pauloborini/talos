@@ -176,7 +176,7 @@ Boundary violation:
 
 | Arquivo | Problema |
 |---------|----------|
-| `.app-vault/docs/prd/PRD_S27_qa_automacao.md` | Arquivo aparecia untracked no worktree e não constava em `files_changed` do state. |
+| `_app-vault/docs/prd/PRD_S27_qa_automacao.md` | Arquivo aparecia untracked no worktree e não constava em `files_changed` do state. |
 
 Reparo aplicado:
 
@@ -292,7 +292,7 @@ State atualizado:
   "files_changed": [
     "apps/paytrainer_pro/test/features/gamification/services/gamification_service_test.dart",
     "apps/paytrainer_pro/test/features/gamification/presentation/components/gamification_widgets_test.dart",
-    ".app-vault/docs/prd/PRD_S27_qa_automacao.md"
+    "_app-vault/docs/prd/PRD_S27_qa_automacao.md"
   ],
   "diff_stat": "3 files, +673 -34",
   "plan_path": ".talos/plans/PLAN_S27_qa_automacao.md",
@@ -329,7 +329,7 @@ Exemplos observados:
  M apps/paytrainer_pro/lib/l10n/app_en.arb
  M apps/paytrainer_pro/lib/l10n/app_pt.arb
  M apps/paytrainer_pro/test/features/gamification/services/gamification_service_test.dart
-?? .app-vault/docs/prd/gamificacao/PRD_S22_edge_recuperacao.md
+?? _app-vault/docs/prd/gamificacao/PRD_S22_edge_recuperacao.md
 ?? apps/paytrainer_pro/lib/features/gamification/services/gamification_shell_redirect_feedback_service.dart
 ```
 

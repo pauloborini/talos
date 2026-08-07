@@ -4,9 +4,9 @@
 
 # Talos
 
-Plugin **Talos** v0.15.2 — pipeline determinístico (contrato §7 → plano → execução → validação) com skills `talos-*`, templates e MCP. Um pacote, oito hosts: **Claude Code**, **Cursor**, **Codex App**, **Antigravity (Gemini)**, **ZCode**, **OpenCode**, **Pi CLI** e **VS Code**.
+Plugin **Talos** v0.16.0 — pipeline determinístico (contrato §7 → plano → execução → validação) com skills `talos-*`, templates e MCP. Um pacote, oito hosts: **Claude Code**, **Cursor**, **Codex App**, **Antigravity (Gemini)**, **ZCode**, **OpenCode**, **Pi CLI** e **VS Code**.
 
-**Versão:** [`VERSION`](VERSION) (`0.15.2`) · **Repo:** https://github.com/pauloborini/talos
+**Versão:** [`VERSION`](VERSION) (`0.16.0`) · **Repo:** https://github.com/pauloborini/talos
 
 ## Hosts
 
@@ -215,7 +215,7 @@ talos-plan-handoff (uso direto, fora do /talos)
 3. Em `full`, não espere código antes do `PLAN_*.md` validado — é gate explícito.
 4. Ambiguidades no contrato §7 disparam entrevista automaticamente; use `--interview` se quiser forçar.
 5. Toda execução passa pelo validador frio (`talos-task-validator`) antes de declarar a slice pronta.
-6. **v0.15+:** backlog/sprint com checkbox §7.3 ou state v1/v2 são rejeitados — inicie artefatos no padrão atual (ver [Aceite 0.15](#aceite-015-e-validação-manual)).
+6. **v0.16+:** backlog/sprint sem a coluna `Origem` na §7.1, AC sem `origin` ou §4 sem `Discussão` são rejeitados — inicie artefatos no padrão atual (ver [Procedência 0.16](#procedência-016-e-revisão-fria-do-backlog)).
 
 ### Princípio Fire-and-Continue
 
@@ -246,6 +246,30 @@ validator pass → status manual_validation_pending
 ```
 
 State de execução exige **`state_schema_version: 3`** (v1/v2 hard-fail). Detalhe de contrato: [`CHANGELOG.md`](CHANGELOG.md) 0.15.0 e [`packages/templates/`](packages/templates/).
+
+### Procedência 0.16 e revisão fria do backlog
+
+A partir de **v0.16.0** (BREAKING — corte seco: artefatos pré-0.16 não são suportados; inicie backlog/sprint novo):
+
+| Conceito | O que é |
+|----------|---------|
+| **`Origem`** | Coluna obrigatória na §7.1 do sprint file (`\| ID \| Decisão \| Origem \|`) e nas decisões do backlog; enum `usuario` \| `derivado:<path>` \| `premissa`. |
+| **`origin`** | Campo obrigatório em cada `AC-*` do §7.3 com o mesmo enum; ausência é recusa de schema. |
+| **`premissa`** | Não sustenta aceite de sprint `Must`/`P0` — o gate `talos_verify_sprint_file` bloqueia nomeando o `AC-*` e a linha. |
+| **`derivado:<path>`** | Resolvido contra o disco no root do consumidor; path inexistente recusa sprint/backlog. |
+| **§4 `Discussão`** | Obrigatória (sempre) — a fonte de intenção que o revisor frio usa como oráculo. |
+| **Entrevista estruturada** | O `talos-backlog-generator` escaneia o rascunho em memória (`talos_scan_acceptance` com `sprint_markdown`) e roda rodadas de múltipla escolha via `question_prompt`; cada resposta vira decisão `Origem: usuario`. |
+| **Revisão fria** | Passo final da skill: lê o mandato de `references/COLD_BACKLOG_REVIEW_PROMPT.md`, despacha um subagente genérico por `subagent_dispatch` (foreground, incondicional), que audita contra a §4, o código e as regras locais, corrige os artefatos e devolve o relatório; gates reexecutados sobre o que mudou. |
+
+Fluxo de uma geração de backlog em `0.16`:
+
+```text
+brainstorm → scan do rascunho em memória → rodadas de entrevista (Origem: usuario)
+→ escrita + gates (verify_backlog_index / verify_sprint_file / select_next_sprint)
+→ revisão fria em contexto novo → regate dos artefatos corrigidos → relatório ao chamador
+```
+
+Nenhuma tool MCP nova, nenhum gate novo de orquestrador e nenhum selo de revisão entraram neste release. Schema MCP v5 e topologia sibling/G4/dispatch intactos.
 
 ### Backlog em 2 camadas
 
