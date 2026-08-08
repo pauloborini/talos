@@ -7,7 +7,7 @@
   {
     "name": "Talos — Claude install (local)",
     "keyword": "!aw-claude-l",
-    "text": "claude plugin marketplace add \"/Volumes/Dados/projetos/talos\" && claude plugin install talos-orchestrator@talos"
+    "text": "claude plugin marketplace add \"<repo-local-path>\" && claude plugin install talos-orchestrator@talos"
   },
   {
     "name": "Talos — Claude update marketplace",
@@ -27,7 +27,7 @@
   {
     "name": "Talos — Codex marketplace (local)",
     "keyword": "!aw-codex-l",
-    "text": "codex plugin marketplace add \"/Volumes/Dados/projetos/talos\""
+    "text": "codex plugin marketplace add \"<repo-local-path>\""
   },
   {
     "name": "Talos — Codex upgrade marketplace",
@@ -42,17 +42,17 @@
   {
     "name": "Talos — cd repo",
     "keyword": "!aw-cd",
-    "text": "cd \"/Volumes/Dados/projetos/talos\""
+    "text": "cd \"<repo-local-path>\""
   },
   {
     "name": "Talos — git status + push",
     "keyword": "!aw-push",
-    "text": "cd \"/Volumes/Dados/projetos/talos\" && git status -sb && git push origin main"
+    "text": "cd \"<repo-local-path>\" && git status -sb && git push origin main"
   },
   {
     "name": "Talos — git pull",
     "keyword": "!aw-pull",
-    "text": "cd \"/Volumes/Dados/projetos/talos\" && git pull origin main"
+    "text": "cd \"<repo-local-path>\" && git pull origin main"
   },
   {
     "name": "Talos — talos Claude full (sprint)",
@@ -82,7 +82,7 @@
   {
     "name": "Talos — repo path (clipboard)",
     "keyword": "!aw-path",
-    "text": "/Volumes/Dados/projetos/talos"
+    "text": "<repo-local-path>"
   },
   {
     "name": "Talos — GitHub repo URL",

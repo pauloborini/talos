@@ -36,7 +36,7 @@ mascará-la atrás de nomes parecidos.
 | **Talos** | pipeline determinística PRD→plano→execução→validação | autômato de bronze, executa regra fixa sem desvio — fit com determinismo/gates duros, sem improviso | `talos` (este repo) | linha 0.12.x, com usuário (mesmo que só o Paulo) |
 | **Athena** | documentação/conhecimento contínuo do projeto | deusa da sabedoria/estratégia — fit com conhecimento acumulado | `atlas-brain` (a renomear) | repo existe, fase de pesquisa (`_analysis/gbrain` — referência arquitetural de memória/graph/synthesis, não é fonte a copiar) |
 
-**Nota sobre o app Flutter `atlas`** (`/Volumes/Dados/projetos/atlas`, monorepo
+**Nota sobre o app Flutter `atlas`** (`<repo-local-path>/atlas`, monorepo
 "Atlas Monorepo" com `apps/atlas`): produto de consumo final completamente
 não-relacionado a este ecossistema de dev tooling — mesmo nome, domínio
 diferente. Fora do escopo desta decisão; mencionado aqui só para não confundir

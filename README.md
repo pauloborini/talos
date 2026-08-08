@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/atlas-logo.png" alt="Talos" width="96" height="96">
+  <img src="docs/assets/talos-logo.png" alt="Talos" width="96" height="96">
 </p>
 
 # Talos
