@@ -249,9 +249,16 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `talos-*` para o
 
 ---
 
-**Plugin version:** 0.16.0
+**Plugin version:** 0.16.1
 **Author:** Paulo Borini
-**Last updated:** 2026-08-06
+**Last updated:** 2026-08-08
+
+### Novidades v0.16.1 — docs de adapters (VS Code + `question_prompt`)
+
+- **`host-adapters.md` com o 8º host** — coluna `vscode` na matriz de adapters (`runSubagent`, `manage_todo_list`, perfil `self_evident`, `dispatch_capability: 'mutable'`, config MCP via `.vscode/mcp.json`/`settings.json` com `TALOS_HOST=vscode`), linha de detecção `TALOS_HOST=vscode`, nota de instalação e "Status multi-host" com o VS Code.
+- **Contrato de entrevista documentado** — campo `question_prompt` (`{mechanism, mode, max_questions, options_per_question, persistence, resume_after_interview?}`) na tabela do contrato (schema v5) e linha de concern na matriz com o mechanism por host (AskUserQuestion/request_user_input/question/interactive_prompt/ask_question/vscode_askQuestions/native_structured_question).
+- **Cosmético** — "Estado atual (2026-08)" em `AGENTS.md`/`CLAUDE.md`; contagem de colunas das linhas finais da matriz corrigida (6 → 8 células).
+- Sem mudança de runtime MCP, gates ou topologia sibling. Schema MCP v5 intacto.
 
 ### Novidades v0.16.0 — procedência por linha e revisão fria do backlog (BREAKING)
 
