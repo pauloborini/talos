@@ -22,6 +22,8 @@ node_modules/
 .talos-smoke/
 .talos
 
+.zcode
+
 
 references/
 # Exceção: mandato canônico da revisão fria do backlog (VC2 — precisa ser versionado e empacotado)
