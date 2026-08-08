@@ -20,9 +20,9 @@ Impacto:
 Validação:
 - `node build/check-consistency.mjs` — ok.
 - `claude plugin validate ./ --strict` — passed.
-- `git grep -E 'zavii|owerride|/Volumes/Dados|/Users/pauloborini/'` no HEAD — zero hits. (Ver nota 1 abaixo.)
+- `git grep` por padrões de PII conhecida (lista de strings fora do escopo deste changelog) no HEAD — zero hits fora deste arquivo. Ver nota 1.
 
-**Nota 1 — redação também no CHANGELOG:** esta release documenta internamente as redações aplicadas; o `git grep` acima encontra apenas esta linha. Auditoria final contra o HEAD público deve excluir `CHANGELOG.md` da busca.
+**Nota 1 — redação também no CHANGELOG:** esta release documenta as redações aplicadas; os padrões auditados podem coincidir com este texto. Auditoria final contra o HEAD público deve excluir `CHANGELOG.md` da busca.
 - `git ls-tree -r HEAD archive/` e `.atlas/`, `atlas-workflow-orchestrator/` — zero entries.
 - Clone em `/tmp/talos-test-clone` (teste de aceitação): 9.3 MB, HEAD limpo, 28 tags.
 
