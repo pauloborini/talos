@@ -4,9 +4,9 @@
 
 # Talos
 
-Plugin **Talos** v0.16.1 — pipeline determinístico (contrato §7 → plano → execução → validação) com skills `talos-*`, templates e MCP. Um pacote, oito hosts: **Claude Code**, **Cursor**, **Codex App**, **Antigravity (Gemini)**, **ZCode**, **OpenCode**, **Pi CLI** e **VS Code**.
+Plugin **Talos** v0.17.0 — pipeline determinístico (contrato §7 → plano → execução → validação) com skills `talos-*`, templates e MCP. Um pacote, oito hosts: **Claude Code**, **Cursor**, **Codex App**, **Antigravity (Gemini)**, **ZCode**, **OpenCode**, **Pi CLI** e **VS Code**.
 
-**Versão:** [`VERSION`](VERSION) (`0.16.1`) · **Repo:** https://github.com/pauloborini/talos
+**Versão:** [`VERSION`](VERSION) (`0.17.0`) · **Repo:** https://github.com/pauloborini/talos
 
 ## Hosts
 
@@ -249,7 +249,7 @@ State de execução exige **`state_schema_version: 3`** (v1/v2 hard-fail). Detal
 
 ### Procedência 0.16 e revisão fria do backlog
 
-A partir de **v0.16.1** (BREAKING — corte seco: artefatos pré-0.16 não são suportados; inicie backlog/sprint novo):
+A partir de **v0.17.0** (BREAKING — corte seco: artefatos pré-0.16 não são suportados; inicie backlog/sprint novo):
 
 | Conceito | O que é |
 |----------|---------|

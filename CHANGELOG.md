@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.17.0 - 2026-08-08
+
+Tipo: **release** (marco). **Sem breaking** no contrato do plugin (schema MCP v5, topologia sibling, gates PREREQ/DISPATCH/JOIN inalterados). **Breaking no histórico do Git**: reescrita via `git filter-repo` mudou todos os hashes de commits e tags. Clones existentes precisam refazer `git clone`.
+
+Resumo: marca a primeira release **pública** do Talos no GitHub. Pré-publicação removeu PII, conteúdo interno, e rastros de versão antiga (archive/v0.1.10, .atlas, .app-work, .argus, atlas-workflow-orchestrator) de todos os commits; o HEAD do main agora é um snapshot limpo de `talos` apenas, sem referências a projetos paralelos ou domínios de email privados.
+
+Mudanças:
+- **Higiene pré-publicação (4 commits)**: `git rm --cached` em 75 `references/` órfãos que casavam com `.gitignore`; `git rm` em 2 relatórios internos de smoke (`reports/RELATORIO_PIPELINE_TALOS_S27_PAYTRAINER_2026-06-08.md`, `…S30_S32_…`) com paths absolutos do disco; `git rm -r archive/v0.1.10/` (168 KB, redundante); rename da logo `docs/assets/atlas-logo.png` → `talos-logo.png` (asset binário preservado, nome coerente com a marca).
+- **Redaction de PII**: `packages/orchestrator/references/qa_s13_matrix.md` (linha 29: `dev2@zavii.com.br` → `cursor-agent@local`; paths absolutos do disco → `<install>/…`); `NAMING.md:39` (`/Volumes/Dados/projetos/atlas` → `<repo-local-path>/atlas`); `raycast/talos-snippets.json` (6 snippets: `/Volumes/Dados/projetos/talos` → `<repo-local-path>`).
+- **Reescrita de histórico (`git filter-repo`)**: remove de TODOS os commits `references/`, `archive/`, `.app-work/`, `.atlas/`, `.argus/`, `atlas-workflow-orchestrator/`, e cópias legadas de skills (`atlas-*`, `talos-prd-interview`, `talos-sprint-prd-generator`). Tags reescritas (28 tags), pushes via `--force --tags`. `main` atualizado via PR com merge `--admin`. Clone público validado: zero PII no HEAD, zero paths internos.
+- **Restauração**: `packages/skills/talos-backlog-generator/references/COLD_BACKLOG_REVIEW_PROMPT.md` (mandato canônico da revisão fria do backlog, VC2) recuperado e commitado — a exceção do `.gitignore` o cobre.
+
+Impacto:
+- Repo agora está pronto para virar público (`gh repo edit --visibility public`).
+- Hashes de commits e tags mudaram — quem clonou antes precisa refazer `git clone` (a branch `main` antiga fica acessível via tags anteriores, mas seu conteúdo inclui o que foi removido).
+- Distribuição dos bundles: `bump-version 0.16.1 → 0.17.0` regenera `dist/talos-{claude,codex,opencode,pi,zcode,vscode}.plugin` e `dist/SHA256SUMS`; `check-consistency` ok; catálogos `hosts/{opencode,pi,zcode,vscode}/` sincronizados.
+
+Validação:
+- `node build/check-consistency.mjs` — ok.
+- `claude plugin validate ./ --strict` — passed.
+- `git grep -E 'zavii|owerride|/Volumes/Dados|/Users/pauloborini/'` no HEAD — zero hits.
+- `git ls-tree -r HEAD archive/` e `.atlas/`, `atlas-workflow-orchestrator/` — zero entries.
+- Clone em `/tmp/talos-test-clone` (teste de aceitação): 9.3 MB, HEAD limpo, 28 tags.
+
 ## 0.16.1 - 2026-08-08
 
 Tipo: **docs** (artefato distribuído). **Sem breaking**. Schema MCP: v5 (inalterado).

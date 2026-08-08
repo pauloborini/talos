@@ -5,6 +5,11 @@
 # Vault legado (renomeado para _app-vault/)
 # _app-vault/ é versionado — não ignorar
 
+# Área de processo (.app-work é privado do Paulo: brainstorming,
+# guides, auditorias, PRDs, referências de outros projetos, etc.)
+# Não versionar — fica local.
+.app-work/
+
 # Config local do Claude Code
 .claude/settings.local.json
 

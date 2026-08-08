@@ -30,7 +30,7 @@ npx github:pauloborini/talos init vscode --global
 
 ```
 
-Smoke pós-update: `talos_ping` → `version: 0.16.1`; `talos_capabilities` → `schema_version: 5` (sibling-only).
+Smoke pós-update: `talos_ping` → `version: 0.17.0`; `talos_capabilities` → `schema_version: 5` (sibling-only).
 Após sprint com smoke humano: relatório em `.talos/manual-validation/` → `talos_sync_manual_validation` (promove `done` ou bloqueia origem).
 
 ---
@@ -126,7 +126,7 @@ Remove **só** os artefatos do Talos. Preserva config, skills e outros MCP serve
 
 Abra a CLI no host e chame as tools:
 
-- `talos_ping` → deve retornar `host=<claude|codex|antigravity|zcode|opencode|pi|vscode>` e `version: 0.16.1`
+- `talos_ping` → deve retornar `host=<claude|codex|antigravity|zcode|opencode|pi|vscode>` e `version: 0.17.0`
 - `talos_capabilities` → descritores + `prereq_policy` (`schema_version: 5`)
 
 > **Não** dispare o `talos-task-validator` à mão: ele roda automaticamente dentro do
