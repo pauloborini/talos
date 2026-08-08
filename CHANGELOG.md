@@ -8,7 +8,7 @@ Resumo: marca a primeira release **pública** do Talos no GitHub. Pré-publicaç
 
 Mudanças:
 - **Higiene pré-publicação (4 commits)**: `git rm --cached` em 75 `references/` órfãos que casavam com `.gitignore`; `git rm` em 2 relatórios internos de smoke (`reports/RELATORIO_PIPELINE_TALOS_S27_PAYTRAINER_2026-06-08.md`, `…S30_S32_…`) com paths absolutos do disco; `git rm -r archive/v0.1.10/` (168 KB, redundante); rename da logo `docs/assets/atlas-logo.png` → `talos-logo.png` (asset binário preservado, nome coerente com a marca).
-- **Redaction de PII**: `packages/orchestrator/references/qa_s13_matrix.md` (linha 29: `dev2@zavii.com.br` → `cursor-agent@local`; paths absolutos do disco → `<install>/…`); `NAMING.md:39` (`/Volumes/Dados/projetos/atlas` → `<repo-local-path>/atlas`); `raycast/talos-snippets.json` (6 snippets: `/Volumes/Dados/projetos/talos` → `<repo-local-path>`).
+- **Redaction de PII**: `packages/orchestrator/references/qa_s13_matrix.md` (linha 29: email de conta anterior → `cursor-agent@local`; paths absolutos do disco → `<install>/…`); `NAMING.md:39` (path de disco do autor → `<repo-local-path>/atlas`); `raycast/talos-snippets.json` (6 snippets: path de disco do autor → `<repo-local-path>`).
 - **Reescrita de histórico (`git filter-repo`)**: remove de TODOS os commits `references/`, `archive/`, `.app-work/`, `.atlas/`, `.argus/`, `atlas-workflow-orchestrator/`, e cópias legadas de skills (`atlas-*`, `talos-prd-interview`, `talos-sprint-prd-generator`). Tags reescritas (28 tags), pushes via `--force --tags`. `main` atualizado via PR com merge `--admin`. Clone público validado: zero PII no HEAD, zero paths internos.
 - **Restauração**: `packages/skills/talos-backlog-generator/references/COLD_BACKLOG_REVIEW_PROMPT.md` (mandato canônico da revisão fria do backlog, VC2) recuperado e commitado — a exceção do `.gitignore` o cobre.
 
@@ -20,7 +20,9 @@ Impacto:
 Validação:
 - `node build/check-consistency.mjs` — ok.
 - `claude plugin validate ./ --strict` — passed.
-- `git grep -E 'zavii|owerride|/Volumes/Dados|/Users/pauloborini/'` no HEAD — zero hits.
+- `git grep -E 'zavii|owerride|/Volumes/Dados|/Users/pauloborini/'` no HEAD — zero hits. (Ver nota 1 abaixo.)
+
+**Nota 1 — redação também no CHANGELOG:** esta release documenta internamente as redações aplicadas; o `git grep` acima encontra apenas esta linha. Auditoria final contra o HEAD público deve excluir `CHANGELOG.md` da busca.
 - `git ls-tree -r HEAD archive/` e `.atlas/`, `atlas-workflow-orchestrator/` — zero entries.
 - Clone em `/tmp/talos-test-clone` (teste de aceitação): 9.3 MB, HEAD limpo, 28 tags.
 
