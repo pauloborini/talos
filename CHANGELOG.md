@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.16.1 - 2026-08-08
+
+Tipo: **docs** (artefato distribuído). **Sem breaking**. Schema MCP: v5 (inalterado).
+
+Resumo: fecha a lacuna de documentação do contrato de adapters — a matriz de `host-adapters.md` passa a listar o 8º host (VS Code), o campo `question_prompt` (entrevista estruturada da v0.16) entra no contrato `talos_capabilities` documentado, e o estado atual de `AGENTS.md`/`CLAUDE.md` ganha a data do release vigente.
+
+Mudanças:
+- **`packages/orchestrator/references/host-adapters.md`** — coluna `vscode` na matriz de adapters (`runSubagent`, `manage_todo_list`, perfil `self_evident`, `dispatch_capability: 'mutable'`, config MCP via `.vscode/mcp.json`/`settings.json` com `TALOS_HOST=vscode`); linha de detecção `TALOS_HOST=vscode`; linha de concern "Entrevista estruturada (`question_prompt`)" com o mechanism por host; campo `question_prompt` documentado na tabela do contrato (schema v5 — `{mechanism, mode, max_questions, options_per_question, persistence, resume_after_interview?}`); nota de instalação do vscode; "Status multi-host" com o 8º host. Corrige também a contagem de colunas das linhas finais da matriz (6 → 8 células).
+- **`AGENTS.md` / `CLAUDE.md`** — "Estado atual (2026-07)" → "(2026-08)" (release vigente é 0.16.0, de 2026-08-06).
+- **Catálogos** — `plugins/talos/**` e `hosts/{opencode,pi,zcode,vscode}/**` regenerados em `0.16.1`; `dist/**` + `SHA256SUMS` regenerados.
+
+Impacto:
+- A doc pública de adapters deixa de omitir o host VS Code e o contrato de entrevista estruturada — sem mudança de runtime MCP, gates ou topologia sibling.
+
+Arquivos/artefatos:
+- `VERSION` → `0.16.1`; `package.json`; `.claude-plugin/plugin.json`; `packages/mcp-server/package.json`; manifests/READMEs concretos regenerados; `CHANGELOG.md`; `packages/orchestrator/references/host-adapters.md`; `AGENTS.md`; `CLAUDE.md`; `packages/orchestrator/README.md`.
+
+Validação:
+- `node build/bump-version.mjs 0.16.1` + `bash build/build-plugins.sh` — ok.
+- `node build/check-consistency.mjs` — ok.
+- `node --test packages/mcp-server/server.test.js` — ok (0 fail).
+- `node --test build/tests/classify-findings.test.mjs build/tests/etapa3.test.mjs` — ok (0 fail).
+- `node build/smoke-hosts.mjs` — ok (7 hosts + override).
+- `node build/conformance-matrix.mjs` — ok (hosts × 10 cenários).
+- `shasum -a 256 -c dist/SHA256SUMS` — 6/6 OK; `unzip -t` nos `.plugin` — ok.
+- `claude plugin validate ./ --strict` — ok.
+
 ## 0.16.0 - 2026-08-06
 
 Tipo: **BREAKING release** (procedência por linha e revisão fria do backlog). Schema MCP: v5 (inalterado). Contrato de execução (G4/DISPATCH/PREREQ/JOIN): preservado.
