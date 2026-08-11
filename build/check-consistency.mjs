@@ -281,10 +281,24 @@ if (versionFile != null) {
     }
   }
 
+  const readmePtBr = read('README.pt-BR.md');
+  if (readmePtBr != null) {
+    if (!readmePtBr.includes(`v${want}`) || !readmePtBr.includes(`(\`${want}\`)`)) {
+      errors.push(`Drift de versão em README.pt-BR.md: deve conter "v${want}" e "(\`${want}\`)"`);
+    }
+  }
+
   const commands = read('COMMANDS.md');
   if (commands != null) {
     if (!commands.includes(`version: ${want}`)) {
       errors.push(`Drift de versão em COMMANDS.md: deve conter "version: ${want}"`);
+    }
+  }
+
+  const commandsPtBr = read('COMMANDS.pt-BR.md');
+  if (commandsPtBr != null) {
+    if (!commandsPtBr.includes(`version: ${want}`)) {
+      errors.push(`Drift de versão em COMMANDS.pt-BR.md: deve conter "version: ${want}"`);
     }
   }
 
@@ -468,9 +482,19 @@ if (smokeInstall != null) {
   }
 }
 
+for (const [english, portuguese] of [['README.md', 'README.pt-BR.md'], ['COMMANDS.md', 'COMMANDS.pt-BR.md']]) {
+  for (const [file, peer, marker] of [[english, portuguese, 'Language:'], [portuguese, english, 'Idioma:']]) {
+    const contents = read(file);
+    const header = contents == null ? '' : contents.split('\n').slice(0, 5).join('\n');
+    if (!header.includes(marker) || !header.includes(`](${peer})`)) {
+      errors.push(`documentação bilíngue: ${file} deve referenciar ${peer} no cabeçalho`);
+    }
+  }
+}
+
 if (errors.length) {
   console.error('check-consistency: FALHOU');
   for (const e of errors) console.error(`  - ${e}`);
   process.exit(3);
 }
-console.log('check-consistency: ok (validator sincronizado cross-host; catálogos opencode/pi presentes+versão; skills sem hardcode; sem regressão A1/A2)');
+console.log('check-consistency: ok (validator sincronizado cross-host; catálogos opencode/pi presentes+versão; skills sem hardcode; documentação bilíngue; sem regressão A1/A2)');

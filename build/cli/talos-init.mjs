@@ -1064,8 +1064,8 @@ hosts:
                         --global: ~/.vscode-talos/ + user settings MCP + agents/skills no prompt folder
 
 flags:
-  --dir <d>    diretório alvo (opencode/pi por-projeto); default: diretório atual
-  --global,-g  instalação global (opencode/pi); claude/codex/antigravity já são globais
+  --dir <d>    diretório alvo (opencode/pi/vscode por-projeto); default: diretório atual
+  --global,-g  instalação global (opencode/pi/vscode); claude/codex/antigravity já são globais
   --yes,-y     auto-instala deps faltantes (pi, no init); sempre ativo com host=all
   --dry-run    mostra o que faria, sem alterar nada
   -h,--help    esta ajuda
