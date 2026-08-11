@@ -58,6 +58,35 @@ function run(cmd, args, { dryRun }) {
   return r.status ?? 1;
 }
 
+// Cache de marketplace from-source (Claude/Codex) precisa ser apagável pelo usuário.
+// Se uma instalação anterior rodou com sudo, o dir fica owned por root e o
+// `plugin marketplace add` falha com EACCES ao finalizar o cache — mensagem
+// opaca da CLI. Fail-cedo com remédio explícito.
+function assertMarketplaceCacheWritable(cacheDir, hostLabel) {
+  if (!fs.existsSync(cacheDir)) return;
+  const parent = path.dirname(cacheDir);
+  try {
+    fs.accessSync(cacheDir, fs.constants.W_OK);
+    fs.accessSync(parent, fs.constants.W_OK);
+  } catch {
+    let ownerHint = '';
+    try {
+      const st = fs.statSync(cacheDir);
+      const uid = typeof process.getuid === 'function' ? process.getuid() : null;
+      if (uid != null && typeof st.uid === 'number' && st.uid !== uid) {
+        ownerHint = ` (owner uid=${st.uid}, seu uid=${uid})`;
+      }
+    } catch { /* ignore */ }
+    fail(
+      `cache marketplace ${hostLabel} não é gravável${ownerHint}: ${cacheDir}\n` +
+      `provável causa: instalação anterior com sudo.\n` +
+      `corrija (NÃO rode o Talos com sudo):\n` +
+      `  sudo rm -rf '${cacheDir}'\n` +
+      `depois rode de novo o init sem sudo.`
+    );
+  }
+}
+
 function rmPath(p, { dryRun }) {
   if (!fs.existsSync(p)) return false;
   log(`  rm ${p}`);
@@ -269,8 +298,16 @@ function mergeServerInto(file, containerKey, serverName, entry, { dryRun, schema
 
 function installClaude(opts) {
   if (!which('claude')) fail('CLI `claude` não encontrada no PATH. Instale o Claude Code primeiro.');
+  const cacheDir = path.join(homedir(), '.claude', 'plugins', 'marketplaces', 'talos');
+  if (!opts.dryRun) assertMarketplaceCacheWritable(cacheDir, 'Claude/Cursor');
   log(`instalando Talos (claude/cursor) via marketplace from-source @ ${REPO_SLUG}`);
-  if (run('claude', ['plugin', 'marketplace', 'add', REPO_SLUG], opts)) fail('falha no `claude plugin marketplace add`');
+  if (run('claude', ['plugin', 'marketplace', 'add', REPO_SLUG], opts)) {
+    fail(
+      'falha no `claude plugin marketplace add`\n' +
+      `se a CLI pediu para apagar ${cacheDir} e falhou com EACCES/permission denied,\n` +
+      `rode: sudo rm -rf '${cacheDir}'  e tente de novo sem sudo.`
+    );
+  }
   // Atualiza snapshot do marketplace (add é idempotente mas não faz pull de commits novos).
   run('claude', ['plugin', 'marketplace', 'update'], opts);
   if (run('claude', ['plugin', 'install', PLUGIN_ID], opts)) fail('falha no `claude plugin install`');
@@ -279,12 +316,19 @@ function installClaude(opts) {
 
 function installCodex(opts) {
   if (!which('codex')) fail('CLI `codex` não encontrada no PATH. Instale o Codex primeiro.');
+  const codexHome = process.env.CODEX_HOME?.trim() || path.join(homedir(), '.codex');
+  const cacheDir = path.join(codexHome, 'plugins', 'marketplaces', 'talos');
+  if (!opts.dryRun) assertMarketplaceCacheWritable(cacheDir, 'Codex');
   log(`instalando Talos (codex) via marketplace from-source @ ${REPO_SLUG}`);
-  if (run('codex', ['plugin', 'marketplace', 'add', REPO_SLUG], opts)) fail('falha no `codex plugin marketplace add`');
+  if (run('codex', ['plugin', 'marketplace', 'add', REPO_SLUG], opts)) {
+    fail(
+      'falha no `codex plugin marketplace add`\n' +
+      `se falhou com EACCES/permission denied no cache, rode: sudo rm -rf '${cacheDir}'  e tente de novo sem sudo.`
+    );
+  }
   // Atualiza snapshot do marketplace (add é idempotente mas não faz pull de commits novos).
   run('codex', ['plugin', 'marketplace', 'upgrade'], opts);
   if (run('codex', ['plugin', 'add', PLUGIN_ID], opts)) fail('falha no `codex plugin add`');
-  const codexHome = process.env.CODEX_HOME?.trim() || path.join(homedir(), '.codex');
   const agentsDir = path.join(codexHome, 'agents');
   const srcAgents = path.join(ROOT, 'plugins/talos/.codex/agents');
   if (!fs.existsSync(srcAgents)) fail('agentes Codex ausentes no catálogo: plugins/talos/.codex/agents (rode build/build-plugins.sh)');
@@ -1020,8 +1064,8 @@ hosts:
                         --global: ~/.vscode-talos/ + user settings MCP + agents/skills no prompt folder
 
 flags:
-  --dir <d>    diretório alvo (opencode/pi por-projeto); default: diretório atual
-  --global,-g  instalação global (opencode/pi); claude/codex/antigravity já são globais
+  --dir <d>    diretório alvo (opencode/pi/vscode por-projeto); default: diretório atual
+  --global,-g  instalação global (opencode/pi/vscode); claude/codex/antigravity já são globais
   --yes,-y     auto-instala deps faltantes (pi, no init); sempre ativo com host=all
   --dry-run    mostra o que faria, sem alterar nada
   -h,--help    esta ajuda

@@ -2,8 +2,13 @@
 .DS_Store
 **/.DS_Store
 
-# Vault local
-.app-vault/
+# Vault legado (renomeado para _app-vault/)
+# _app-vault/ é versionado — não ignorar
+
+# Área de processo (.app-work é privado do Paulo: brainstorming,
+# guides, auditorias, PRDs, referências de outros projetos, etc.)
+# Não versionar — fica local.
+.app-work/
 
 # Config local do Claude Code
 .claude/settings.local.json
@@ -21,3 +26,16 @@ node_modules/
 #Talos
 .talos-smoke/
 .talos
+
+.zcode
+
+
+# Backup físico do .git criado antes de git filter-repo (pré-publicação)
+.git.backup-prefilterrepo/
+
+
+references/
+# Exceção: mandato canônico da revisão fria do backlog (VC2 — precisa ser versionado e empacotado)
+!packages/skills/talos-backlog-generator/references/
+
+

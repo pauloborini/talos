@@ -36,7 +36,7 @@ mascará-la atrás de nomes parecidos.
 | **Talos** | pipeline determinística PRD→plano→execução→validação | autômato de bronze, executa regra fixa sem desvio — fit com determinismo/gates duros, sem improviso | `talos` (este repo) | linha 0.12.x, com usuário (mesmo que só o Paulo) |
 | **Athena** | documentação/conhecimento contínuo do projeto | deusa da sabedoria/estratégia — fit com conhecimento acumulado | `atlas-brain` (a renomear) | repo existe, fase de pesquisa (`_analysis/gbrain` — referência arquitetural de memória/graph/synthesis, não é fonte a copiar) |
 
-**Nota sobre o app Flutter `atlas`** (`/Volumes/Dados/projetos/atlas`, monorepo
+**Nota sobre o app Flutter `atlas`** (`<repo-local-path>/atlas`, monorepo
 "Atlas Monorepo" com `apps/atlas`): produto de consumo final completamente
 não-relacionado a este ecossistema de dev tooling — mesmo nome, domínio
 diferente. Fora do escopo desta decisão; mencionado aqui só para não confundir
@@ -132,7 +132,7 @@ real em `packages/cortex/` (não na raiz).
 | 12 | Plugin Codex App | `plugins/atlas-cortex/.codex-plugin/plugin.json`, `.mcp.json` (versão hardcoded) | dir → `plugins/argus/`, conteúdo atualizado |
 | 13 | Scripts de release/CI | `scripts/check-release.mjs` (path hardcoded + `CORTEX_VERSION`), `scripts/homologate.mjs` (`CORTEX_HOMOLOGATION_REPOS`, literal `.cortex`), `scripts/smoke-package.mjs` (testa os 2 bins + client name), `.github/workflows/release.yml` (`--workspace=atlas-cortex`) | atualizar todos |
 | 14 | Docs | `README.md`, `README.pt-BR.md`, `COMMANDS.md` (105 menções), `COMMANDS.pt-BR.md` (106 menções), `CHANGELOG.md`, `THIRD_PARTY_NOTICES.md` | find-replace, `COMMANDS*.md` é o mais pesado |
-| 15 | `.app-vault/` (docs internas) | não auditado em detalhe (fora do código-fonte) | revisar separadamente, fora do código crítico |
+| 15 | `_app-vault/` (docs internas) | vault de produto (AppVault) | decisões em `_app-vault/docs/decisions/` |
 | 16 | Repo GitHub | `origin = github.com/pauloborini/atlas-cortex` | renomear para `argus` — sem custo de redirect de usuário, é o momento certo |
 | 17 | Versão | `1.1.0` atual | rename de marca → `2.0.0` ou reset simbólico para `1.0.0`/`0.1.0` sob novo nome (decisão de gosto, sem implicação técnica já que não há consumidor) |
 

@@ -1,6 +1,6 @@
 ---
 name: talos-findings-repair
-description: Reparador enxuto da família Talos. Despachado pelo orquestrador apenas após `talos-task-validator` retornar `fail` em topologia sibling. Corrige findings P0/P1/P2 dentro do boundary da slice sem carregar `talos-plan-execute`/`talos-direct-execute` e sem despachar novo validator.
+description: "Reparador enxuto da família Talos. Despachado pelo orquestrador apenas após `talos-task-validator` retornar `fail` em topologia sibling. Corrige findings P0/P1/P2 dentro do boundary da slice sem carregar `talos-plan-execute`/`talos-direct-execute` e sem despachar novo validator."
 tools: read, write, edit, grep, find, ls, bash
 ---
 
@@ -110,7 +110,7 @@ Leia do plano apenas o mínimo necessário:
 
 Capture também `state_schema_version`, `base_sha`, `head_sha`, `check_table`, `task_evidence`, `repair_evidence`, `worktree_baseline` e `worktree_final` do state.
 
-Se o state declarar sprint (`sprint_id`/`sprint_file_path`), leia também `eval_results` e `policy_scope`. Em schema v2, `evidence_to_claim` não existe; não recrie. O reparo não pode tocar `policy_scope.forbidden_scope`; se o finding exigir isso, pare em `blocked` com causa explícita.
+Se o state declarar sprint (`sprint_id`/`sprint_file_path`), leia também `eval_results`, `proof_refs` e `policy_scope`. Em schema v3, `evidence_to_claim` não existe; não recrie. O reparo não pode tocar `policy_scope.forbidden_scope`; se o finding exigir isso, pare em `blocked` com causa explícita.
 
 ### 2. Ler os findings recebidos
 
@@ -165,7 +165,7 @@ Ao terminar:
 - atualize `files_changed` com todo arquivo tocado, inclusive novo/adjacente
 - recompute `head_sha` (`git rev-parse HEAD`) e `diff_stat`; preserve `base_sha`
 - preserve `worktree_baseline` e recapture `worktree_final` após o repair; derive o boundary completo do delta entre snapshots
-- acrescente `repair_evidence[]`: em schema v2 use `{finding_id, files: [índices em files_changed], checks: [índices em check_table], status}`; em v1 compat use `{finding_id, files_touched, checks_run, status}`
+- acrescente `repair_evidence[]`: em schema v3 use `{finding_id, files: [índices em files_changed], checks: [índices em check_table], status}` (forma compacta) ou `{finding_id, files_touched, checks_run, status}` (forma expandida)
 - atualize `eval_results` somente quando o reparo mudar a prova de um `EVAL-*`; não marque claim como `passed` sem evidência nova
 - garanta que cada arquivo referenciado por `repair_evidence` esteja em `files_changed`
 - mantenha a mesma slice

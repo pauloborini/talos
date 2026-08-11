@@ -1,165 +1,93 @@
-# Talos — Comandos rápidos
+<!-- Language: **English** · [Português](COMMANDS.pt-BR.md) -->
 
-Referência de 1 linha para instalar, atualizar e remover o Talos em cada host.
-Instalador único via **npx-from-GitHub** (não precisa clonar o repo).
+# Talos — command reference
 
----
+Commands below install, update, or remove only Talos artifacts. Existing user configuration, skills, and MCP servers are preserved.
 
-## Atualizar
+## Update
 
 ```bash
 # Claude Code / Cursor
 claude plugin marketplace update talos
 claude plugin update talos@talos
 
-# Codex — recomendado: reinstala plugin + custom agents em CODEX_HOME/agents
+# Other hosts: reinstall the current runtime
 npx github:pauloborini/talos init codex
-
-# Antigravity — reinstalar pega runtime novo (mesmo comando do init)
 npx github:pauloborini/talos init antigravity
-
-# opencode / pi — reinstalar pega runtime novo (mesmo comando do init)
+npx github:pauloborini/talos init zcode
 npx github:pauloborini/talos init opencode --global
 npx github:pauloborini/talos init pi --global --yes
-
-# zcode — reinstalar pega runtime novo (mesmo comando do init; installer já habilita o plugin)
-npx github:pauloborini/talos init zcode
-
-# vscode — reinstalar pega runtime novo (mesmo comando do init)
 npx github:pauloborini/talos init vscode --global
-
 ```
 
-Smoke pós-update: `talos_ping` → `version: 0.13.0`; `talos_capabilities` → `schema_version: 5` (sibling-only).
+After an update, call `talos_ping` and `talos_capabilities` in the host. `talos_ping` should report `version: 0.17.0`.
 
----
-
-## Instalar
+## Install
 
 ```bash
-# Todos os hosts de uma vez (detecta automaticamente quais estão instalados)
+# Detect and install every available host
 npx github:pauloborini/talos init all
 
-# Claude Code / Cursor  (global por natureza — registro da CLI)
-npx github:pauloborini/talos init claudecode
-npx github:pauloborini/talos init cursor
-
-# Codex  (global por natureza)
+# Individual hosts
+npx github:pauloborini/talos init claudecode   # Cursor uses the same marketplace
 npx github:pauloborini/talos init codex
-
-# Antigravity (global por natureza)
 npx github:pauloborini/talos init antigravity
-
-# ZCode (global por natureza — cache do host; installer já habilita em enabledPlugins)
 npx github:pauloborini/talos init zcode
-
-# opencode  — global (recomendado) ou por-projeto
 npx github:pauloborini/talos init opencode --global
-npx github:pauloborini/talos init opencode
-
-# pi  — global (recomendado) ou por-projeto; --yes auto-instala as 2 deps obrigatórias
 npx github:pauloborini/talos init pi --global --yes
-npx github:pauloborini/talos init pi --yes
-
-# vscode  — global (recomendado) ou por-projeto
 npx github:pauloborini/talos init vscode --global
-npx github:pauloborini/talos init vscode
 ```
 
-## Desinstalar
+Omit `--global` for a project-only OpenCode, Pi, or VS Code installation. Use `--dry-run` to inspect changes without applying them.
+
+## Uninstall
 
 ```bash
-# Todos os hosts de uma vez (detecta automaticamente quais estão instalados)
 npx github:pauloborini/talos uninstall all
-
-# Claude Code / Cursor / Codex / Antigravity / ZCode (sempre globais)
-npx github:pauloborini/talos uninstall claudecode   
+npx github:pauloborini/talos uninstall claudecode
 npx github:pauloborini/talos uninstall codex
 npx github:pauloborini/talos uninstall antigravity
 npx github:pauloborini/talos uninstall zcode
-
-# opencode / pi — desinstalação global (recomendado)
 npx github:pauloborini/talos uninstall opencode --global
 npx github:pauloborini/talos uninstall pi --global
-
-# opencode / pi — desinstalação por-projeto (caso não tenha usado --global)
-npx github:pauloborini/talos uninstall opencode
-npx github:pauloborini/talos uninstall pi
-
-# vscode — global (recomendado) ou por-projeto
 npx github:pauloborini/talos uninstall vscode --global
-npx github:pauloborini/talos uninstall vscode
 ```
 
-Remove **só** os artefatos do Talos. Preserva config, skills e outros MCP servers do usuário.
-
----
+For a project-only install, omit `--global` for OpenCode, Pi, or VS Code.
 
 ## Flags
 
-| Flag | Vale para | Efeito |
-|------|-----------|--------|
-| `--global`, `-g` | opencode, pi, vscode | instala em `~/.config/opencode/` / `~/.pi/agent/` / `~/.vscode-talos/` (todos os projetos) |
-| `--dir <d>` | opencode, pi, vscode (por-projeto) | diretório alvo; default = diretório atual |
-| `--yes`, `-y` | pi (init) | auto-instala deps faltantes (`pi-mcp-adapter` + `pi-subagents`) |
-| `--dry-run` | todos | mostra o que faria, sem alterar nada |
-| `-h`, `--help` | — | ajuda |
+| Flag | Applies to | Meaning |
+|---|---|---|
+| `--global`, `-g` | OpenCode, Pi, VS Code | Install for all projects |
+| `--dir <dir>` | Project-only installs | Select target directory |
+| `--yes`, `-y` | Pi `init` | Install missing required dependencies |
+| `--dry-run` | all | Print changes without writing |
+| `-h`, `--help` | all | Show command help |
 
----
+## Smoke test
 
-## Onde cada host instala (global)
+Do not invoke `talos-task-validator` directly: Talos dispatches it with a real state file during a pipeline run.
 
-| Host | Local global | Config MCP |
-|------|--------------|------------|
-| claude/cursor | registro da CLI (`claude plugin`) | — |
-| codex | registro da CLI (`codex plugin`) | — |
-| antigravity | `~/.gemini/config/` | `mcp_config.json` |
-| zcode | `~/.zcode/cli/plugins/cache/zcode-plugins-official/talos/<version>/` | `.zcode-plugin/plugin.json` (MCP via `${ZCODE_PLUGIN_ROOT}`; installer já habilita em `~/.zcode/cli/config.json`) |
-| opencode | `~/.config/opencode/` (Win: `%APPDATA%\opencode`; honra `XDG_CONFIG_HOME`) | `opencode.json` |
-| pi | `~/.pi/agent/` (honra `PI_CODING_AGENT_DIR`) | `mcp.json` |
-| vscode | `~/.vscode-talos/` (runtime) + `~/Library/Application Support/Code/User/prompts/` (agents/skills) | `settings.json` (`github.copilot.chat.mcpServers`) |
-
----
-
-## Smoke pós-install (em qualquer host)
-
-Abra a CLI no host e chame as tools:
-
-- `talos_ping` → deve retornar `host=<claude|codex|antigravity|zcode|opencode|pi|vscode>`
-- `talos_capabilities` → descritores + `prereq_policy`
-
-> **Não** dispare o `talos-task-validator` à mão: ele roda automaticamente dentro do
-> pipeline, com um state file real (`.talos/state/<run_id>/<slice>.json`).
-
----
-
-## Instalação manual (equivalente, sem npx)
-
-```bash
-# Claude Code / Cursor
-claude plugin marketplace add pauloborini/talos
-claude plugin install talos@talos
-
-# Codex (garante agent_type talos-* para spawn_agent)
-npx github:pauloborini/talos init codex
+```text
+talos_ping
+talos_capabilities
 ```
 
-Atualizar (claude/codex):
+For a sprint requiring manual smoke validation, update its report under `.talos/manual-validation/` and call `talos_sync_manual_validation`; do not invent a verdict in the state file.
+
+## Documentation check
 
 ```bash
-# Claude Code / Cursor
-claude plugin marketplace update talos
-claude plugin update talos@talos
-
-# Codex (reinstala plugin + custom agents)
-npx github:pauloborini/talos init codex
+node build/check-public-docs.mjs
 ```
 
-Alternativa equivalente para qualquer host com npx: `npx github:pauloborini/talos init <host>`.
+Checks that each public English/Portuguese document pair exists and cross-links from its header.
 
----
+## Troubleshooting
 
-## Plataformas
+`Failed to finalize marketplace cache` or `EACCES` under the Claude marketplace usually means a prior installation created files as `root`. Do not run Talos with `sudo`; repair ownership/cache according to your host policy, then rerun `init claudecode` without `sudo`.
 
-- **macOS / Linux** — suportados (mesmo caminho POSIX).
-- **Windows** — suporte por código (spawn via shell; opencode em `%APPDATA%`, pi em `%USERPROFILE%\.pi\agent`); smoke real pendente. Defina `XDG_CONFIG_HOME` para forçar o caminho do opencode.
+## Platforms
+
+macOS and Linux are supported. Windows paths are handled by the installer; the runtime smoke is not yet fully validated there.

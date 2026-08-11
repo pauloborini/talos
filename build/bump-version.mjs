@@ -39,7 +39,9 @@ const edits = [
   ['.claude-plugin/plugin.json', (t) => replaceOnce(t, `"version": "${current}"`, `"version": "${next}"`, '.claude-plugin/plugin.json')],
   // Prosa de versão atual — replace-all é seguro (sem changelog embutido).
   ['README.md', (t) => replaceAll(t, esc, next, 'README.md')],
+  ['README.pt-BR.md', (t) => replaceAll(t, esc, next, 'README.pt-BR.md')],
   ['COMMANDS.md', (t) => replaceAll(t, esc, next, 'COMMANDS.md')],
+  ['COMMANDS.pt-BR.md', (t) => replaceAll(t, esc, next, 'COMMANDS.pt-BR.md')],
   ['packages/mcp-server/README.md', (t) => replaceAll(t, esc, next, 'mcp-server/README.md')],
   // Orchestrator README tem "Novidades vX" (histórico) — só a linha Plugin version.
   ['packages/orchestrator/README.md', (t) => replaceOnce(t, `**Plugin version:** ${current}`, `**Plugin version:** ${next}`, 'orchestrator/README.md (Plugin version)')],

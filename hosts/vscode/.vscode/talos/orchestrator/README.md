@@ -1,6 +1,6 @@
 # Talos Orchestrator
 
-Orquestra pipelines completos de desenvolvimento de features no projeto Talos, automatizando a sequência de skills (backlog macro → sprint file → PRD → planejamento → execução → validação fria → review) sob demanda.
+Orquestra pipelines completos de desenvolvimento de features no projeto Talos, automatizando a sequência de skills (backlog macro → sprint file §7 → planejamento → execução → validação fria → review) sob demanda.
 
 ## Quick Start
 
@@ -10,13 +10,12 @@ Orquestra pipelines completos de desenvolvimento de features no projeto Talos, a
 
 Pipeline completo executado automaticamente:
 1. Resolve S05 no backlog e valida o sprint file vivo
-2. Gera PRD a partir do sprint file
-3. Valida PRD (inclui TC com `require_sprint_file:true`)
-4. Executa entrevista se houver decisões em aberto
-5. Cria plano com Eval/Policy por task
-6. Executa plano e grava state com `eval_results`/`policy_scope`
-7. Despacha validator frio
-8. (Opcional) Executa review
+2. Valida/matura o contrato §7 com `AC-*` (entrevista se necessário)
+3. Cria plano com Eval/Policy por task (`require_sprint_file:true`)
+4. Executa plano e grava state v3 com `eval_results`/`acceptance_results`/`policy_scope`
+5. Despacha validator frio (nota contra §7 / oráculo T-outcome)
+6. Review se `--review` ou `critical_review.required:true` (G8 — antes do fechamento de status)
+7. Fecha status: `done` (todos `AC-*` proved, sem M) ou `manual_validation_pending` (M aberto; satisfaz DEP; sem handoff)
 
 ## Sintaxe
 
@@ -26,22 +25,27 @@ Pipeline completo executado automaticamente:
 
 ### Modes
 
-- `full` — Pipeline completo (sprint file → PRD → plano → executor → validator → review opcional)
-- `direct` — Pipeline enxuto (sprint file/PRD → executor → validator → review opcional)
-- `interview-only` — Entrevista direta (brainstorm, resolução de decisões)
+- `full` — Pipeline completo (sprint file §7 → plano → executor → validator → review sob policy → status)
+- `direct` — Pipeline enxuto (sprint file §7 → executor → validator → review sob policy → status)
+- `interview-only` — Entrevista direta (brainstorm → sprint standalone §7)
+- `execute` — Executa `PLAN_*.md` pronto
+- `audit` — Auditoria sem correção
 
 ### Input Types
 
 - `sprint` — Sprint ID (ex: S05) ancorado no backlog e em sprint file vivo
 - `backlog-item` — alias legado de `sprint`
-- `idea` — Indicação/brainstorm curto
-- `prd` — Path para PRD existente
+- `idea` — Indicação/brainstorm curto ou spec legado (não gera PRD — contrato mora no §7)
+- `plan` — Path para plano pronto (modo `execute`)
 - `brainstorm` — Texto livre (só para interview-only)
+- `target` — Arquivo/diretório/feature (só em `audit`)
 
 ### Flags
 
-- `--interview` — Força entrevista de PRD mesmo sem ambiguidades
-- `--review` — Executa slice-review ao final
+- `--interview` — Força entrevista do contrato §7 do sprint mesmo sem ambiguidades
+- `--review` — Executa slice-review ao final (senão opcional; sprints com `policy_manifest.critical_review.required: true` no §10 tornam a review obrigatória — G8)
+- `--handoff` — Só em `audit`: grava `.talos/plans/PLAN_AUDIT_*.md` TC-conforme
+- `--scope <descrição>` — Só em `audit`: restringe o boundary textual
 - `--help` — Mostra sintaxe completa
 
 ## Exemplos
@@ -56,22 +60,16 @@ Output:
 ```
 ✅ Talos: claude full sprint completed
 
-📄 PRD: /path/to/PRD_S05_login.md
+📄 Sprint: /path/to/SPRINT_S05_login.md
 📋 Plan: /path/to/PLAN_S05_login.md
 🚀 Output: [summary do executor]
 
 Status:
-  ✅ PRD valid
+  ✅ Sprint file / contrato §7 valid
   ✅ Ambiguidades resolvidas (2 decisões coletadas)
   ✅ Plano generated
   ✅ Executor output ready (required in full/direct)
   ⏭️  Slice review: not executed
-```
-
-### Direct pipeline com PRD existente + review
-
-```
-/talos direct prd "/path/to/PRD_S05.md" --review
 ```
 
 ### Direct pipeline com sprint S05
@@ -105,43 +103,43 @@ Status:
    ↓
 4. Validate Sprint file (`talos_verify_sprint_file`)
    ↓
-5. Generate PRD (`talos-sprint-prd-generator`)
+5. Scan aceite (`talos_scan_acceptance` / G5 — AC-* / §7)
    ↓
-6. Validate PRD (G5 + TC `require_sprint_file:true`)
+6. Interview (automático se ambiguidades OU --interview)
+   └─ Atualiza §7 + sela ao aprovar (`talos-sprint-interview`)
    ↓
-7. Interview (automático se ambiguidades OU --interview)
-   └─ Atualiza PRD com decisões coletadas
+7. Plan (`talos-plan-handoff`)
    ↓
-8. Plan (`talos-plan-handoff`)
+8. Validate Plan (TC `require_sprint_file:true`)
    ↓
-9. Validate Plan (TC `require_sprint_file:true`)
+9. Execute obrigatório em `full` (`talos-plan-execute`, state v3 + acceptance_results)
    ↓
-10. Execute obrigatório em `full` (`talos-plan-execute`, state com `eval_results`)
+10. Validator frio (`talos-task-validator` vs §7 / oráculo T-outcome)
    ↓
-11. Validator frio (`talos-task-validator`)
+11. Review (se --review ou critical_review.required:true no §10 — G8)
+   └─ `talos-slice-review` (antes do fechamento de status)
    ↓
 12. Update sprint status (`talos_update_sprint_status`)
+   └─ done (sem M) | manual_validation_pending (M aberto; sem handoff)
    ↓
-13. Review (se --review)
-   └─ `talos-slice-review`
-   ↓
-14. Output (resumo + próximos passos)
+13. Output (resumo + próximos passos: sync M e/ou memory-promote)
 ```
 
 ### Direct Mode
 
 ```
-1. Parse/Generate PRD
+1. Parse / Sprint file / Contrato §7 (AC-*)
    ↓
-2. Validate PRD + Interview (condicional)
+2. Validate aceite + Interview (condicional)
    ↓
 3. Execute (`talos-direct-execute`, mantendo `phase: plan_execute`)
    ↓
 4. Validator frio (`talos-task-validator`)
    ↓
-5. Update sprint status (`talos_update_sprint_status`, quando houver backlog/sprint)
+5. Review (se --review ou critical_review.required:true no §10 — G8)
    ↓
-6. Review (se --review)
+6. Update sprint status (`talos_update_sprint_status`, quando houver backlog/sprint)
+   └─ done | manual_validation_pending
    ↓
 7. Output
 ```
@@ -149,11 +147,11 @@ Status:
 ### Interview-Only Mode
 
 ```
-1. Cria draft mínimo pelo `PRD_TEMPLATE.md` quando a entrada é brainstorm
+1. Cria draft mínimo pelo `SPRINT_TEMPLATE.md` (standalone §7) quando a entrada é brainstorm
    ↓
-2. Entrevista `talos-prd-interview` com `prd_path` válido
+2. Entrevista `talos-sprint-interview` com `sprint_file_path` válido
    ↓
-3. Output (PRD esboço + decisões)
+3. Output (sprint file §7 aprovado+selo)
 ```
 
 ## Sequências canônicas
@@ -162,37 +160,37 @@ Talos é família única. Cliente (Claude Code, Cursor, Codex App) é apenas o h
 
 | Mode | Sequência |
 |------|-----------|
-| `full` | `talos-sprint-prd-generator` → `talos-prd-interview` quando necessário → `talos-plan-handoff` → `talos-plan-execute` → `talos-task-validator` → `talos-findings-repair` (no `fail`) → `talos-slice-review` somente com `--review` |
-| `direct` | PRD/spec existente → `talos-direct-execute` → `talos-task-validator` → `talos-findings-repair` (no `fail`) → `talos-slice-review` somente com `--review` |
-| `interview-only` | draft PRD mínimo (se brainstorm) → `talos-prd-interview` |
+| `full` | `talos-sprint-interview` quando necessário → `talos-plan-handoff` → `talos-plan-execute` → `talos-task-validator` → `talos-findings-repair` (no `fail`) → `talos-slice-review` (com `--review`; obrigatória quando `critical_review.required:true` — G8) |
+| `direct` | sprint/contrato §7 → `talos-direct-execute` → `talos-task-validator` → `talos-findings-repair` (no `fail`) → `talos-slice-review` (com `--review`; obrigatória quando `critical_review.required:true` — G8) |
+| `interview-only` | draft sprint standalone §7 (se brainstorm) → `talos-sprint-interview` |
 
 ## Validação automática
 
-Plugin detecta ambiguidades em:
-- **Contexto e objetivo (§1):** TBD, "a confirmar", vago
-- **Escopo (§2):** incompleto, "depende de"
-- **Decisões (§3):** vazio ou muito vago
-- **Fluxos e cenários UX (§4):** gaps, "a definir"
-- **Contrato funcional e invariantes (§5):** "ainda não definido", "mock"
+Plugin detecta ambiguidades no contrato §7 do sprint file (`talos_scan_acceptance`):
+- **Decisões D*:** TBD, "a confirmar", vago
+- **Cenários UX:** gaps, "a definir"
+- **Aceite `AC-*`:** `behavior` TBD, YAML incompleto, hierarquia AC⊃EVAL quebrada
 
-Se encontra ambiguidades → o orquestrador conduz `talos-prd-interview` automaticamente no fio principal.
+Se encontra ambiguidades → o orquestrador conduz `talos-sprint-interview` automaticamente no fio principal (fire-and-continue: **não** há menu para adiar ou marcar TBD e seguir).
 
-## Lógica de decisão
+## Decisão em aberto ≠ parada
 
-Quando há decisões pendentes:
+Decisões pendentes **disparam entrevista** e o pipeline **continua** após o contrato ser maturável. O orquestrador não pede “quer que eu continue?” nem oferece adiar/TBD como atalho — gates duros (`blocked`) ou bloqueio real de ambiente são as únicas paradas.
 
-```
-Plugin: Tenho decisões em aberto:
-  Q-XXX-01: [decisão 1]
-  Q-XXX-02: [decisão 2]
+## Fechamento: `done` vs validação manual
 
-Opções:
-  A) Volta pra resolver tudo (roda interview agora)
-  B) Continua com recomendações (marca TBD)
-  C) Adia essas decisões
-```
+| Status | Quando | DEP | Handoff |
+|--------|--------|-----|---------|
+| `done` | Todos `AC-*` `proved`; sem `M` aberto (ou M já syncado) | satisfaz | emite `HANDOFF_*.md` |
+| `manual_validation_pending` | Prova auto ok + ≥1 `M` pendente | satisfaz | **não** emite |
 
-Você escolhe A/B/C → pipeline continua conforme.
+Com M aberto, o próximo passo humano é:
+
+1. Criar/preencher `.talos/manual-validation/<backlog-slug>.md` (IDs `MV-<sprint>-<ac>`)
+2. Chamar `talos_sync_manual_validation`
+3. Em `passed` + `handoff_path` → opcional `$talos-memory-promote <handoff_path>`
+
+`M` `failed` bloqueia a origem e liga a flag `revalidation_required` no cone de dependentes (coluna *Revalidação*).
 
 ## Integração com seu workflow
 
@@ -214,23 +212,25 @@ Plugin automatiza tudo. Você valida output.
 
 ### Depois de workflow
 
-1. Validação de output do executor
-2. (Opcional) Rodada de slice-review quando `--review` foi solicitado
-3. Avança para S06
+1. Conferir status: `done` ou `manual_validation_pending`
+2. Se MVP: preencher relatório M → `talos_sync_manual_validation` → `done` + handoff
+3. Se `handoff_path`: opcional `$talos-memory-promote <handoff_path>`
+4. Avança para a próxima sprint (`talos_select_next_sprint`; deps em MVP já liberam)
 
 ## Skills envolvidas
 
 | Skill | Função |
 |-------|--------|
 | `talos-backlog-generator` | Cria backlog mestre a partir de ideia, prompt, conversa ou briefing; roda explicitamente ou como primeira fase documental em macro input `backlog_first` |
-| `talos-sprint-prd-generator` | Gera PRD a partir de sprint/indicação |
-| `talos-prd-interview` | Entrevista de PRD (resolve ambiguidades) |
+| `talos-sprint-interview` | Matura o contrato §7 do sprint file com `AC-*` (resolve ambiguidades; aprova+sela) |
 | `talos-audit` | Audita target/boundary sem patch: lê regras locais, detecta stack, produz achados com `arquivo:linha`; com `--handoff`, grava `.talos/plans/PLAN_AUDIT_*.md` TC-conforme sem executar |
-| `talos-plan-handoff` | Cria plano executável |
+| `talos-plan-handoff` | Cria plano executável a partir do contrato §7 + código |
 | `talos-plan-execute` | Executa plano (com `talos-task-validator` sub-agent) |
+| `talos-direct-execute` | Executa direto a partir do sprint/contrato §7 (modo `direct`) |
 | `talos-findings-repair` | Corrige findings P0/P1/P2 após `fail` do validator dentro do boundary executado |
-| `talos-task-validator` | Validador frio sibling; lê `state_path`, emite veredito estruturado e nunca corrige |
-| `talos-slice-review` | Review fria de implementação quando `--review` está presente |
+| `talos-task-validator` | Validador frio sibling; lê `state_path`, emite veredito estruturado + `acceptance_results` e nunca corrige |
+| `talos-slice-review` | Review fria quando `--review` ou `critical_review.required:true` (G8) |
+| `talos-memory-promote` | Promove candidatos de `HANDOFF_*.md` após `done` (nunca em MVP); sink Argus opcional |
 
 ## Configuração
 
@@ -240,8 +240,8 @@ Plugin usa configuração embutida no MCP para modos, skills `talos-*` e validad
 
 - **Sprint não encontrado:** reporta sprints disponíveis
 - **Skill falha:** para, reporta erro, oferece retry/skip/abort
-- **PRD inválido:** reporta sections faltando
-- **Ambiguidades não resolvidas:** pergunta próximos passos
+- **Sprint file / contrato §7 inválido:** reporta pendências do gate (`talos_verify_sprint_file` / `talos_scan_acceptance`)
+- **Ambiguidades não resolvidas:** dispara `talos-sprint-interview`, propaga e continua
 
 ## Dúvidas?
 
@@ -249,9 +249,67 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `talos-*` para o
 
 ---
 
-**Plugin version:** 0.13.0
+**Plugin version:** 0.17.0
 **Author:** Paulo Borini
-**Last updated:** 2026-07-03
+**Last updated:** 2026-08-08
+
+### Novidades v0.16.1 — docs de adapters (VS Code + `question_prompt`)
+
+- **`host-adapters.md` com o 8º host** — coluna `vscode` na matriz de adapters (`runSubagent`, `manage_todo_list`, perfil `self_evident`, `dispatch_capability: 'mutable'`, config MCP via `.vscode/mcp.json`/`settings.json` com `TALOS_HOST=vscode`), linha de detecção `TALOS_HOST=vscode`, nota de instalação e "Status multi-host" com o VS Code.
+- **Contrato de entrevista documentado** — campo `question_prompt` (`{mechanism, mode, max_questions, options_per_question, persistence, resume_after_interview?}`) na tabela do contrato (schema v5) e linha de concern na matriz com o mechanism por host (AskUserQuestion/request_user_input/question/interactive_prompt/ask_question/vscode_askQuestions/native_structured_question).
+- **Cosmético** — "Estado atual (2026-08)" em `AGENTS.md`/`CLAUDE.md`; contagem de colunas das linhas finais da matriz corrigida (6 → 8 células).
+- Sem mudança de runtime MCP, gates ou topologia sibling. Schema MCP v5 intacto.
+
+### Novidades v0.16.0 — procedência por linha e revisão fria do backlog (BREAKING)
+
+- **Procedência obrigatória** — coluna `Origem` na §7.1 e nas decisões do backlog; campo `origin` em cada `AC-*` (`usuario` \| `derivado:<path>` \| `premissa`); schema pré-0.16 recusado com `migrar_para_0_16`.
+- **Gates de procedência** — `premissa` não sustenta sprint `Must`/`P0`; `derivado:<path>` resolvido contra o disco; §4 `Discussão` obrigatória.
+- **Entrevista estruturada no generator** — rascunho escaneado em memória (`sprint_markdown`), perguntas via `question_prompt`, resposta vira decisão `Origem: usuario`.
+- **Revisão fria** — passo final da skill lê o mandato de `references/COLD_BACKLOG_REVIEW_PROMPT.md`, despacha subagente genérico por `subagent_dispatch` e regateia os gates sobre artefatos corrigidos.
+- **Não entrou** — nenhuma tool MCP nova, nenhum gate novo de orquestrador, nenhum selo de revisão.
+- **Breaking (corte seco)** — artefatos pré-0.16 não são suportados; iniciar backlog/sprint novo. Schema MCP v5 e topologia sibling/G4/dispatch intactos.
+
+### Novidades v0.15.2 — docs alinhadas ao contrato 0.15
+
+- **Docs distribuídas** — README/orquestrador/COMMANDS/MCP descrevem `AC-*`, `manual_validation_pending`, `talos_sync_manual_validation`, `critical_review` e 16 tools MCP.
+- **Removido** — menu A/B/C (anti-padrão); “15 tools”; DEP só-`done`; mapa G8/G9 invertido.
+- Schema MCP v5 e topologia sibling intactos.
+
+### Novidades v0.15.1 — preflight de cache marketplace (EACCES)
+
+- **Packaging** — `init` Claude/Cursor/Codex detecta cache `~/.…/plugins/marketplaces/talos` não gravável (ex.: owned por root após `sudo`) e falha cedo com `sudo rm -rf …` explícito.
+- **Docs** — Troubleshooting em `COMMANDS.md` para `Failed to finalize marketplace cache`.
+- Schema MCP v5 e topologia sibling intactos.
+
+### Novidades v0.15.0 — aceite atômico (`AC-*`) e validação manual não bloqueante (BREAKING)
+
+- **Contrato §7** — §7.3 com YAML `acceptance`/`AC-*` (hierarquia AC⊃EVAL, selo §7 write-once); checkbox dos 4 grupos removido (LEG1); smoke mora em `evidence.manual` do AC (LEG4).
+- **State v3 + oráculo** — `state_schema_version:3` obrigatório (v1/v2 hard-fail — LEG2); `acceptance_results`/`proof_refs` por AC; `talos_lock_validator` exige `acceptance_results` ecoando o oráculo mecânico T-outcome quando sprint presente.
+- **Status/DEP/handoff** — `manual_validation_pending` (satisfaz DEP — LEG3; nunca emite handoff); `done` exige `acceptance_results` com todos os `AC-*` `proved`; handoff só em `done`.
+- **Validação manual** — relatório `.talos/manual-validation/<backlog>.md` + `talos_sync_manual_validation` (lock por backlog; `validated`/`waived` com justificativa; `failed` bloqueia a origem; todos `validated` → `done` com handoff).
+- **Flag revalidação** — coluna `Revalidação` (índice 15) no backlog; cone transitivo `Depende de` no `M` failed; `done` bloqueado até revalidação; select não filtra.
+- **Review crítica** — `policy_manifest.critical_review` (§10, reasons enum fixo); slice-review obrigatória antes de `talos_update_sprint_status` quando `required:true` (G8).
+- **Fechamento** — `done` sem `acceptance_results` bloqueia; persist do oráculo fail-closed; guard VERSION cobre vscode/plugins.
+- **Breaking (D19)** — artefatos pré-v0.15 não suportados; iniciar backlog/sprint novo. Schema MCP v5 e topologia sibling/G4/G12 intactos.
+
+### Novidades v0.14.2 — MCP spawn com path com espaço
+
+- **Packaging** — spawn do MCP via `/bin/bash` + path do `run.sh` em `args[]` (evita ENOENT em paths com espaço, ex. Parallels/`Application Support`).
+- **Agents** — `description` citada no frontmatter YAML dos 5 agents da família.
+- Schema MCP v5 e topologia sibling intactos.
+
+### Novidades v0.14.1 — `select_next_sprint` sem `gerar_prd`
+
+- **Patch de contrato** — `talos_select_next_sprint` deixa de retornar `next_action: "gerar_prd"`; deriva `sprint_interview` / `plan_handoff` / `plan_execute` do §7 + PLAN + `mode` (direct nunca sugere plan_handoff). Orquestrador consome o verbo obrigatoriamente.
+- **Legado** — `prd_path` no payload/update permanece posicional no backlog; aceite mora no §7.
+- Schema MCP v5 e topologia sibling intactos.
+
+### Novidades v0.14.0 — sprint file absorve o PRD (BREAKING documental)
+
+- **PRD removido do pipeline** — `full`/`direct`/`execute` não geram nem exigem `PRD_*.md`; contrato de produto vive na §7 do sprint file (congelado + selo sha256).
+- **Skills retargetadas** — `talos-sprint-interview` (ex-`talos-prd-interview`); generator de PRD removido; validador frio nota contra §7.
+- **Gates MCP** — TC só `plan`; scan → `talos_scan_acceptance`; plano linka `**Sprint file**`. Schema v5 / sibling G4 intactos.
+- **Migração** — ver `CHANGELOG.md` 0.14.0 e bloco "Migração 0.13.x → 0.14.0" em `CLAUDE.md`/`AGENTS.md`.
 
 ### Novidades v0.13.0 — host VS Code (8º host)
 
@@ -302,14 +360,14 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `talos-*` para o
 - **Backlog em 2 camadas**: mestre enxuto (índice estratégico — fases, tabela de sprints, MoSCoW, dependências, links) + sprint files vivos (`sprints/SNN_<slug>.md`, 16 seções: DoR/DoD, `eval_manifest`, `policy_manifest`, §14 Execução e validação, §16 Histórico). Skills priorizam sprint file como fonte primária de contexto; backlog mestre só para deps/ordem macro.
 - **`talos_verify_sprint_file`** — valida conformidade do arquivo vivo contra `SPRINT_TEMPLATE.md`: seções obrigatórias, link bidirecional ao backlog, DoR, eval_manifest. Fail-closed (ausente ou vazio = blocked).
 - **`talos_verify_backlog_index`** — valida backlog mestre: §7 Registro de sprints, enums válidos (MoSCoW/prioridade/status), links para sprint files reais, sem duplicata de sprint ID, detecção de ciclo de dependência, status drift backlog↔sprint file = blocked.
-- **`talos_select_next_sprint`** — seleção determinística: filtra `state=ready` + deps done + sprint file válido + DoR verde; ordena por MoSCoW→prioridade→ganho→esforço→ID. Resultado único, sem ambiguidade.
-- **`talos_update_sprint_status`** — atualiza status atomicamente em backlog e sprint file: pré-condição (FSM de transições, `done` exige validator terminal + `state_path`), escrita com rollback P2 (se write do sprint file falhar após o backlog ser escrito, backlog é restaurado), pós-validação antes de `passed`.
+- **`talos_select_next_sprint`** — seleção determinística: filtra `state=ready` + deps `done`/`manual_validation_pending` + sprint file válido + DoR verde; ordena por MoSCoW→prioridade→ganho→esforço→ID. Resultado único, sem ambiguidade.
+- **`talos_update_sprint_status`** — atualiza status atomicamente em backlog e sprint file: pré-condição (FSM de transições, `done`/`manual_validation_pending` exigem validator terminal + `state_path`; `done` bloqueado com M aberto), escrita com rollback P2 (se write do sprint file falhar após o backlog ser escrito, backlog é restaurado), pós-validação antes de `passed`. Handoff só em `done`.
 - **`SPRINT_TEMPLATE.md`** canônico — template de 16 seções para sprint files vivos.
 - **`BACKLOG_MESTRE_TEMPLATE.md` refatorado** — índice enxuto sem duplicar conteúdo de sprint.
 
 ### Novidades v0.9.4 — audit handoff TC-conforme + perfis de stack
 
-- `/talos audit --handoff` passa a escrever `.talos/plans/PLAN_AUDIT_<slug>.md` **conforme ao `PLAN_TEMPLATE.md`** (cabeçalho com `| **PRD** | N/A — origem auditoria |`, ref a `BOUNDARY_PRD_PLAN.md`, §1–§6/§8, tasks `#### T01.`): passa no gate TC e é de fato consumível por `/talos execute plan`. Fecha a promessa quebrada da estrutura ad-hoc anterior, que falharia o gate.
+- `/talos audit --handoff` passa a escrever `.talos/plans/PLAN_AUDIT_<slug>.md` **conforme ao `PLAN_TEMPLATE.md`** (cabeçalho com `| **Sprint file** | N/A — origem auditoria |`, ref a `BOUNDARY_SPRINT_PLAN.md`, §1–§6/§8, tasks `#### T01.`): passa no gate TC e é de fato consumível por `/talos execute plan`. Fecha a promessa quebrada da estrutura ad-hoc anterior, que falharia o gate.
 - Perfis de stack ganham 6 linhas detectáveis — `go`, `rust`, `java_kotlin`, `firebase`, `supabase`, `rest_openapi` — no baseline universal e no validador frio, ativadas só por manifests/deps/comandos reais no boundary.
 - `audit`/`interview-only` não declaram `guarantee_level` (não há execução a garantir); descrição do `talos_preflight` endurecida para refletir a impl.
 
@@ -348,11 +406,11 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `talos-*` para o
 - `talos-backlog-generator` cria backlog mestre a partir de ideia, prompt ou conversa quando acionado explicitamente ou como primeira fase documental em macro input `backlog_first`.
 - O backlog padrão vai para `.talos/backlog/BACKLOG_MESTRE_<slug>.md` quando o usuário não informa path.
 - `BACKLOG_MESTRE_TEMPLATE.md` inclui MoSCoW, esforço x ganho, dependências, riscos e próxima sprint executável.
-- Em `full`/`direct`, macro input sem backlog canônico passa por backlog antes do PRD; `sprint`/`backlog-item`, PRD e plano existentes continuam começando no artefato já recortado.
+- Em `full`/`direct`, macro input sem backlog canônico passa por backlog antes do contrato §7; `sprint`/`backlog-item` e plano existentes continuam começando no artefato já recortado.
 
 ### Novidades v0.6.1 — fronteira documental no orquestrador
 
-- Fases documentais (`PRD`, entrevista, `PLAN_*.md`) são conduzidas no orquestrador; o primeiro sub-agent obrigatório do `full` nasce em `talos-plan-execute`.
+- Fases documentais (`contrato §7`, entrevista, `PLAN_*.md`) são conduzidas no orquestrador; o primeiro sub-agent obrigatório do `full` nasce em `talos-plan-execute`.
 - Os únicos sub-agents do pipeline são `talos-plan-execute`/`talos-direct-execute`, `talos-task-validator`, `talos-findings-repair` e `talos-slice-review`.
 - A topologia é **sibling** em todos os hosts: o orquestrador coordena o validator irmão a partir do `state_path` retornado pelo executor e só reabre execução em `fail`. Host sem join síncrono é rejeitado no preflight (gate JOIN).
 - `talos_preflight`/dispatchability distinguem skills documentais de skills executoras, evitando exigir sub-agent para entrevista/plano.

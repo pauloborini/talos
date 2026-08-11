@@ -1,7 +1,7 @@
 {
   "name": "talos",
-  "version": "0.13.0",
-  "description": "Orquestra pipelines via sub-agents (PRD, entrevista, plan handoff, execução, validator, repair, review), auditoria universal e geração explícita de backlog mestre. Bundle único: 10 skills talos-* + orquestrador + 5 templates canônicos.",
+  "version": "0.17.0",
+  "description": "Orquestra pipelines via sub-agents (sprint file com contrato §7, entrevista, plan handoff, execução, validator, repair, review), auditoria universal e geração explícita de backlog mestre. Bundle único: skills talos-* + orquestrador + templates canônicos.",
   "author": {
     "name": "Paulo Borini"
   },
@@ -9,7 +9,8 @@
     "talos",
     "pipeline",
     "orchestration",
-    "prd",
+    "sprint",
+    "contrato",
     "planning",
     "execution",
     "codex"
@@ -19,7 +20,7 @@
   "interface": {
     "displayName": "Talos",
     "shortDescription": "Pipeline completo por sub-agents.",
-    "longDescription": "Porta o Talos para Codex: o orquestrador decide fases e usa skills talos-* para PRD, entrevista, plano e auditoria; depois despacha sub-agents bloqueantes para plan_execute, task_validator e slice_review opcional nos modos com execução. A geração de backlog mestre fica disponível como skill explícita, não automática.",
+    "longDescription": "Porta o Talos para Codex: o orquestrador decide fases e usa skills talos-* para contrato §7 no sprint file, entrevista, plano e auditoria; depois despacha sub-agents bloqueantes para plan_execute, task_validator e slice_review opcional nos modos com execução. A geração de backlog mestre fica disponível como skill explícita, não automática.",
     "developerName": "Paulo Borini",
     "category": "Engineering",
     "capabilities": [
@@ -30,7 +31,7 @@
     "defaultPrompt": [
       "Use $talos-backlog-generator para criar um backlog mestre a partir desta ideia:",
       "/talos full sprint S05",
-      "/talos direct prd PRD_S05.md --review",
+      "/talos direct sprint S05 --review",
       "/talos interview-only brainstorm nova ideia",
       "/talos audit apps/mobile/lib/features/auth --handoff"
     ]

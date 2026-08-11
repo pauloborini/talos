@@ -11,7 +11,7 @@ description: Skill `talos-task-validator`. Validador frio de slice executada por
 
 Use this skill as an isolated sibling subagent dispatched by the **orchestrator** from the `state_path` the executor writes and returns (`validator_handoff_required`), after all tasks in a slice are implemented and locally gated. It is never invoked by the executor.
 
-Purpose: perform a cold, structured validation pass of the delivered slice against the plan contract. 
+Purpose: perform a cold, structured validation pass of the delivered slice against the **frozen Sprint §7 product contract** (and the plan technical sections). Business acceptance is judged from §7; the seal keeps that target stable. Do not treat PLAN §8 alone as the acceptance SSoT.
 
 ---
 
@@ -34,32 +34,33 @@ Read the JSON file at `.talos/state/<run_id>/<slice>.json` using the schema in `
 3. **Executed task ids** — `tasks`.
 4. **Boundary refs** — `boundary_refs`.
 5. **Explicit cold-review note** — you did not observe implementation; read current code only.
-6. **Deterministic boundary** — `base_sha`, `head_sha`, `contract_kind`, and evidence/probe IDs. Schema v2 uses `contract_ids`, `check_table`, indexed file/check refs, and snapshot tuples.
-7. **Sprint evidence** — when present, load `sprint_id`, `sprint_file_path`, `prd_path`, `eval_results` and `policy_scope`; verify all `EVAL-*` from `Sprint §9` are proved by current code/check evidence and no file violates `Sprint §10`.
-8. **Working-tree delta** — compare `worktree_baseline`/`worktree_final` and current tree; unchanged preexisting dirt stays outside, later mutations must be evidenced.
-9. **Repair correlation** — on attempt 2, correlate every target finding id with `repair_evidence` in the same state path.
+6. **Deterministic boundary** — `base_sha`, `head_sha`, `contract_kind`, and evidence/probe IDs. Schema v3 uses `contract_ids`, `check_table`, indexed file/check refs, and snapshot tuples.
+7. **Sprint evidence** — when present, load `sprint_id`, `sprint_file_path`, `eval_results`, `proof_refs` and `policy_scope`; verify all `EVAL-*` from `Sprint §9` are proved by current code/check evidence, no file violates `Sprint §10`, and business acceptance is judged against the **frozen Sprint §7** contract (not against the plan §8 alone).
+8. **Acceptance results** — when the state declares `sprint_file_path`, emit `acceptance_results[]` in the output covering every `AC-NNN` from §7.3 (the MCP persists the validated echo into the state file on disk; `talos_update_sprint_status` reads it from there — do not write the state file yourself). For each AC, locate the `proof_refs` (checks + files) and cite them. The MCP classifies `proved`/`unproved`/`violated`/`manual_pending` via the mechanical oráculo (D22): a check with an assert of return/effect is eligible for `proved`; a check that only exercises the path (no assert) is `unproved`. Shape invalid → structural fail (like findings).
+9. **Working-tree delta** — compare `worktree_baseline`/`worktree_final` and current tree; unchanged preexisting dirt stays outside, later mutations must be evidenced.
+10. **Repair correlation** — on attempt 2, correlate every target finding id with `repair_evidence` in the same state path.
 
 Do not accept inline contract, copied diff, or pasted task lists as the validation boundary. If `state_path` is missing, unreadable, or lacks any required field, return JSON with `verdict: "fail"` and one P1 finding for `Input insuficiente: <missing item>`.
 
-Compatibilidade: schema v2 é canônico. Reader/MCP aceita v1 por compat e normaliza v2 internamente para o shape canônico. State legado mínimo sem `contract_kind` só é aceito quando `executor_skill=talos-plan-execute`; nesse caso o plano continua autoritativo. State de `talos-direct-execute` exige extensão completa e obligations não vazio (`contract_ids.obligations` no v2).
+Compatibilidade: schema v3 é canônico e a única versão aceita em 0.15 (D19). v1/v2 são hard-fail — artefatos pré-0.15 não são suportados. Reader/MCP normaliza v3 internamente para o shape canônico antes dos gates. State de `talos-direct-execute` exige extensão completa e obligations não vazio (`contract_ids.obligations` no v3).
 
 Antes de validar código, compare `base_sha...head_sha`, `HEAD`, snapshot final atual e delta `worktree_baseline→worktree_final` com `files_changed`/evidências. Não infira base pelo nome da branch. Divergência gera `boundary_violations` e finding P1 estruturado.
 
-Se o state declara sprint file, trate `eval_results` ausente, EVAL não `passed`, evidência ausente, sprint file inválido ou mutação em `policy_scope.forbidden_scope` como falha P1 de boundary. Em v2, `evidence_to_claim` não deve existir; `eval_results` é fonte única. Não rebaixe claim de sprint não provada para observação.
+Se o state declara sprint file, trate `eval_results` ausente, EVAL não `passed`, evidência ausente, sprint file inválido ou mutação em `policy_scope.forbidden_scope` como falha P1 de boundary. Em v3, `evidence_to_claim` não deve existir; `eval_results` é fonte única. Não rebaixe claim de sprint não provada para observação. `proof_refs` ausente para um AC que exige prova automática resulta em `unproved`.
 
 ---
 
 ## Resolução Canônica de Templates
 
 * Fonte única: `packages/templates/` empacotado no plugin Talos.
-* Antes da validação, resolver `PLAN_TEMPLATE.md` e `BOUNDARY_PRD_PLAN.md` a partir da raiz do plugin/bundle.
+* Antes da validação, resolver `PLAN_TEMPLATE.md` e `BOUNDARY_SPRINT_PLAN.md` a partir da raiz do plugin/bundle.
 * Template local do repo consumidor nunca sobrepõe o template empacotado.
-* Se `packages/templates/PLAN_TEMPLATE.md` ou `packages/templates/BOUNDARY_PRD_PLAN.md` não existir, abortar com erro claro: `Template canônico ausente: <nome-do-template>`.
+* Se `packages/templates/PLAN_TEMPLATE.md` ou `packages/templates/BOUNDARY_SPRINT_PLAN.md` não existir, abortar com erro claro: `Template canônico ausente: <nome-do-template>`.
 * Não usar fallback silencioso para cópias antigas, vault local ou templates globais.
 
 ## Conformidade de Template via MCP
 
-* Para PRD ou PLAN validado como artefato documental da slice, consumir o resultado `talos_verify_template_conformance`.
+* Para PLAN (e sprint file) validado como artefato documental da slice, consumir o resultado `talos_verify_template_conformance` / `talos_verify_sprint_file`.
 * Resultado `passed` com `pending_count: 0` é pré-condição para aceitar conformidade documental.
 * Resultado ausente, `blocked` ou com pendências vira finding bloqueante contra o contrato da slice; citar categoria, pendência e `next_action`.
 * Não recriar regra paralela em texto quando o MCP já retornou pendências rastreáveis no estado da run.
@@ -70,15 +71,15 @@ Se o state declara sprint file, trate `eval_results` ausente, EVAL não `passed`
 
 | Target Concept | PLAN Section |
 |----------------|--------------|
-| Executive translation, PRD link, Sprint file link | Section 1 / header |
-| Execution invariants (`PRD §3` D* + `Sprint §9 EVAL-*` cited) | Section 2 (Invariantes de execução) |
+| Executive translation, Sprint file link | Section 1 / header |
+| Execution invariants (`Sprint §7.1` D* + `Sprint §9 EVAL-*` cited) | Section 2 (Invariantes de execução) |
 | Pitfalls | Section 3 |
 | Codebase state at opening | Section 4 (Estado na abertura da sprint) |
 | Tasks, done criteria, local validation | Section 5 (Tarefas de execução) |
 | Technical contracts | Section 6 (Contratos técnicos) |
 | Execution slices | Section 7 (Slices) |
 | Validator checklist | Section 8 (Validação e checklist) |
-| Business acceptance when §8 is thin | **PRD §4–6** (from plan header PRD path) |
+| Business acceptance when §8 is thin | **Sprint §7 congelada** (contrato de produto; selo íntegro se `aprovado`) |
 
 ---
 

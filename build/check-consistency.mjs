@@ -257,11 +257,15 @@ if (versionFile != null) {
       errors.push(`Drift de versão: ${rel} (${got}) != VERSION (${want})`);
     }
   }
-  // Catálogos opencode/pi/zcode carregam VERSION crua (não plugin.json).
+  // Catálogos from-source e mirror de packaging carregam VERSION crua.
+  // Inclui vscode (INV5 / Plano F) e plugins/talos — omitir qualquer um deixa
+  // drift silencioso no mirror que o instalador from-source lê.
   for (const rel of [
     'hosts/opencode/.opencode/talos/VERSION',
     'hosts/pi/talos/VERSION',
     'hosts/zcode/packages/mcp-server/VERSION',
+    'hosts/vscode/.vscode/talos/VERSION',
+    'plugins/talos/VERSION',
   ]) {
     const raw = read(rel);
     if (raw != null && raw.trim() !== want) {
@@ -277,10 +281,24 @@ if (versionFile != null) {
     }
   }
 
+  const readmePtBr = read('README.pt-BR.md');
+  if (readmePtBr != null) {
+    if (!readmePtBr.includes(`v${want}`) || !readmePtBr.includes(`(\`${want}\`)`)) {
+      errors.push(`Drift de versão em README.pt-BR.md: deve conter "v${want}" e "(\`${want}\`)"`);
+    }
+  }
+
   const commands = read('COMMANDS.md');
   if (commands != null) {
     if (!commands.includes(`version: ${want}`)) {
       errors.push(`Drift de versão em COMMANDS.md: deve conter "version: ${want}"`);
+    }
+  }
+
+  const commandsPtBr = read('COMMANDS.pt-BR.md');
+  if (commandsPtBr != null) {
+    if (!commandsPtBr.includes(`version: ${want}`)) {
+      errors.push(`Drift de versão em COMMANDS.pt-BR.md: deve conter "version: ${want}"`);
     }
   }
 
@@ -345,6 +363,16 @@ if (orchestratorSkill != null) {
       errors.push(`G4 prosa-regressão: SKILL do orquestrador não cita '${token}'`);
     }
   }
+  // Plano 6 (CN5/D06/D09): review crítica obrigatória quando
+  // policy_manifest.critical_review.required:true — o sink da regra é o SKILL do
+  // orquestrador (G8). Se o texto do gate deixar de exigir slice-review ANTES de
+  // talos_update_sprint_status nesse caso, o orquestrador pode fechar status sem review.
+  const g8Row = orchestratorSkill.split('\n').find((line) => /^\|\s*G8\s*\|/.test(line)) ?? '';
+  if (!/critical_review\.required/.test(g8Row)) {
+    errors.push('G8 review-crítica prosa-regressão: linha G8 do orquestrador não cita critical_review.required');
+  } else if (!/slice-review[\s\S]*talos_update_sprint_status/.test(g8Row)) {
+    errors.push('G8 review-crítica prosa-regressão: linha G8 não exige slice-review ANTES de talos_update_sprint_status quando critical_review.required:true');
+  }
 }
 
 const validatorAgent = read('agents/talos-task-validator.md');
@@ -378,7 +406,7 @@ if (sliceReviewSkill != null && !/node scripts\/classify_findings\.mjs/.test(sli
 }
 if (nodeFindingsGate == null) errors.push('portabilidade-regressão: gate Node de findings ausente');
 
-const interviewSkill = read('packages/skills/talos-prd-interview/SKILL.md');
+const interviewSkill = read('packages/skills/talos-sprint-interview/SKILL.md');
 if (interviewSkill != null) {
   if (/AskUserQuestion/.test(interviewSkill)) errors.push('interview-regressão: skill hardcoda AskUserQuestion');
   for (const token of ['talos_capabilities', 'question_prompt', 'persistInterviewRound', 'pendingInterviewQuestions']) {
@@ -387,14 +415,14 @@ if (interviewSkill != null) {
 }
 const backlogSkill = read('packages/skills/talos-backlog-generator/SKILL.md');
 if (backlogSkill != null) {
-  for (const token of ['routing.document_flow.priority = backlog_first', 'próxima sprint executável', 'talos_verify_backlog_index', 'talos_select_next_sprint', 'Não gerar PRD/plano/código']) {
+  for (const token of ['routing.document_flow.priority = backlog_first', 'próxima sprint executável', 'talos_verify_backlog_index', 'talos_select_next_sprint', 'Não gerar plano/código']) {
     if (!backlogSkill.includes(token)) {
       errors.push(`backlog-regressão: talos-backlog-generator não cita '${token}'`);
     }
   }
 }
 if (orchestratorSkill != null) {
-  for (const token of ['routing.document_flow.priority = backlog_first', 'talos-backlog-generator', 'talos_verify_backlog_index', 'talos_select_next_sprint', 'talos_update_sprint_status', 'Não gerar PRD direto do macro input']) {
+  for (const token of ['routing.document_flow.priority = backlog_first', 'talos-backlog-generator', 'talos_verify_backlog_index', 'talos_select_next_sprint', 'talos_update_sprint_status', 'Não avançar ao plano direto do macro input']) {
     if (!orchestratorSkill.includes(token)) {
       errors.push(`backlog-regressão: orquestrador não cita '${token}'`);
     }
@@ -403,7 +431,7 @@ if (orchestratorSkill != null) {
 
 const sprintTemplate = read('packages/templates/SPRINT_TEMPLATE.md');
 if (sprintTemplate != null) {
-  for (const token of ['eval_manifest:', 'policy_manifest:', 'Evidence-to-claim', 'Backlog mestre', 'State / evidência']) {
+  for (const token of ['eval_manifest:', 'policy_manifest:', 'Evidence-to-claim', 'Backlog mestre', 'State / evidência', 'critical_review:']) {
     if (!sprintTemplate.includes(token)) {
       errors.push(`sprint-template-regressão: SPRINT_TEMPLATE.md não contém '${token}'`);
     }
@@ -454,9 +482,19 @@ if (smokeInstall != null) {
   }
 }
 
+for (const [english, portuguese] of [['README.md', 'README.pt-BR.md'], ['COMMANDS.md', 'COMMANDS.pt-BR.md']]) {
+  for (const [file, peer, marker] of [[english, portuguese, 'Language:'], [portuguese, english, 'Idioma:']]) {
+    const contents = read(file);
+    const header = contents == null ? '' : contents.split('\n').slice(0, 5).join('\n');
+    if (!header.includes(marker) || !header.includes(`](${peer})`)) {
+      errors.push(`documentação bilíngue: ${file} deve referenciar ${peer} no cabeçalho`);
+    }
+  }
+}
+
 if (errors.length) {
   console.error('check-consistency: FALHOU');
   for (const e of errors) console.error(`  - ${e}`);
   process.exit(3);
 }
-console.log('check-consistency: ok (validator sincronizado cross-host; catálogos opencode/pi presentes+versão; skills sem hardcode; sem regressão A1/A2)');
+console.log('check-consistency: ok (validator sincronizado cross-host; catálogos opencode/pi presentes+versão; skills sem hardcode; documentação bilíngue; sem regressão A1/A2)');

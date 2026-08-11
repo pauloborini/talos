@@ -12,10 +12,10 @@ Estes defaults viajam no pacote do plugin. O workflow não exige arquivo de conf
 
 | Artefato | Default |
 |----------|---------|
-| PRD | path informado pelo usuário; senão diretório do backlog/template encontrado pela skill geradora |
-| PLAN | mesmo diretório do PRD, salvo se a skill de handoff resolver path mais específico |
+| Sprint file | path no backlog (`Sprint file`) ou `.talos/backlog/sprints/SPRINT_S<NN>_*.md`; standalone sob `.talos/backlog/sprints/` |
+| PLAN | mesmo diretório do sprint file / handoff, salvo se a skill de handoff resolver path mais específico |
 | Evidência de execução | relatório emitido pelo executor + diff real do workspace |
 
 ## Regra
 
-Path específico de produto/repo nunca é obrigatório no orquestrador. Skills de PRD/plano podem descobrir templates/backlog no workspace, mas ausência de layout específico não autoriza implementação inline.
+Path específico de produto/repo nunca é obrigatório no orquestrador. Skills de sprint/plano podem descobrir templates/backlog no workspace, mas ausência de layout específico não autoriza implementação inline.

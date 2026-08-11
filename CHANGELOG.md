@@ -1,5 +1,288 @@
 # Changelog
 
+## 0.17.0 - 2026-08-08
+
+Tipo: **release** (marco). **Sem breaking** no contrato do plugin (schema MCP v5, topologia sibling, gates PREREQ/DISPATCH/JOIN inalterados). **Breaking no histórico do Git**: reescrita via `git filter-repo` mudou todos os hashes de commits e tags. Clones existentes precisam refazer `git clone`.
+
+Resumo: marca a primeira release **pública** do Talos no GitHub. Pré-publicação removeu PII, conteúdo interno, e rastros de versão antiga (archive/v0.1.10, .atlas, .app-work, .argus, atlas-workflow-orchestrator) de todos os commits; o HEAD do main agora é um snapshot limpo de `talos` apenas, sem referências a projetos paralelos ou domínios de email privados.
+
+Mudanças:
+- **Higiene pré-publicação (4 commits)**: `git rm --cached` em 75 `references/` órfãos que casavam com `.gitignore`; `git rm` em 2 relatórios internos de smoke (`reports/RELATORIO_PIPELINE_TALOS_S27_PAYTRAINER_2026-06-08.md`, `…S30_S32_…`) com paths absolutos do disco; `git rm -r archive/v0.1.10/` (168 KB, redundante); rename da logo `docs/assets/atlas-logo.png` → `talos-logo.png` (asset binário preservado, nome coerente com a marca).
+- **Redaction de PII**: `packages/orchestrator/references/qa_s13_matrix.md` (linha 29: email de conta anterior → `cursor-agent@local`; paths absolutos do disco → `<install>/…`); `NAMING.md:39` (path de disco do autor → `<repo-local-path>/atlas`); `raycast/talos-snippets.json` (6 snippets: path de disco do autor → `<repo-local-path>`).
+- **Reescrita de histórico (`git filter-repo`)**: remove de TODOS os commits `references/`, `archive/`, `.app-work/`, `.atlas/`, `.argus/`, `atlas-workflow-orchestrator/`, e cópias legadas de skills (`atlas-*`, `talos-prd-interview`, `talos-sprint-prd-generator`). Tags reescritas (28 tags), pushes via `--force --tags`. `main` atualizado via PR com merge `--admin`. Clone público validado: zero PII no HEAD, zero paths internos.
+- **Restauração**: `packages/skills/talos-backlog-generator/references/COLD_BACKLOG_REVIEW_PROMPT.md` (mandato canônico da revisão fria do backlog, VC2) recuperado e commitado — a exceção do `.gitignore` o cobre.
+
+Impacto:
+- Repo agora está pronto para virar público (`gh repo edit --visibility public`).
+- Hashes de commits e tags mudaram — quem clonou antes precisa refazer `git clone` (a branch `main` antiga fica acessível via tags anteriores, mas seu conteúdo inclui o que foi removido).
+- Distribuição dos bundles: `bump-version 0.16.1 → 0.17.0` regenera `dist/talos-{claude,codex,opencode,pi,zcode,vscode}.plugin` e `dist/SHA256SUMS`; `check-consistency` ok; catálogos `hosts/{opencode,pi,zcode,vscode}/` sincronizados.
+
+Validação:
+- `node build/check-consistency.mjs` — ok.
+- `claude plugin validate ./ --strict` — passed.
+- `git grep` por padrões de PII conhecida (lista de strings fora do escopo deste changelog) no HEAD — zero hits fora deste arquivo. Ver nota 1.
+
+**Nota 1 — redação também no CHANGELOG:** esta release documenta as redações aplicadas; os padrões auditados podem coincidir com este texto. Auditoria final contra o HEAD público deve excluir `CHANGELOG.md` da busca.
+- `git ls-tree -r HEAD archive/` e `.atlas/`, `atlas-workflow-orchestrator/` — zero entries.
+- Clone em `/tmp/talos-test-clone` (teste de aceitação): 9.3 MB, HEAD limpo, 28 tags.
+
+## 0.16.1 - 2026-08-08
+
+Tipo: **docs** (artefato distribuído). **Sem breaking**. Schema MCP: v5 (inalterado).
+
+Resumo: fecha a lacuna de documentação do contrato de adapters — a matriz de `host-adapters.md` passa a listar o 8º host (VS Code), o campo `question_prompt` (entrevista estruturada da v0.16) entra no contrato `talos_capabilities` documentado, e o estado atual de `AGENTS.md`/`CLAUDE.md` ganha a data do release vigente.
+
+Mudanças:
+- **`packages/orchestrator/references/host-adapters.md`** — coluna `vscode` na matriz de adapters (`runSubagent`, `manage_todo_list`, perfil `self_evident`, `dispatch_capability: 'mutable'`, config MCP via `.vscode/mcp.json`/`settings.json` com `TALOS_HOST=vscode`); linha de detecção `TALOS_HOST=vscode`; linha de concern "Entrevista estruturada (`question_prompt`)" com o mechanism por host; campo `question_prompt` documentado na tabela do contrato (schema v5 — `{mechanism, mode, max_questions, options_per_question, persistence, resume_after_interview?}`); nota de instalação do vscode; "Status multi-host" com o 8º host. Corrige também a contagem de colunas das linhas finais da matriz (6 → 8 células).
+- **`AGENTS.md` / `CLAUDE.md`** — "Estado atual (2026-07)" → "(2026-08)" (release vigente é 0.16.0, de 2026-08-06).
+- **Catálogos** — `plugins/talos/**` e `hosts/{opencode,pi,zcode,vscode}/**` regenerados em `0.16.1`; `dist/**` + `SHA256SUMS` regenerados.
+
+Impacto:
+- A doc pública de adapters deixa de omitir o host VS Code e o contrato de entrevista estruturada — sem mudança de runtime MCP, gates ou topologia sibling.
+
+Arquivos/artefatos:
+- `VERSION` → `0.16.1`; `package.json`; `.claude-plugin/plugin.json`; `packages/mcp-server/package.json`; manifests/READMEs concretos regenerados; `CHANGELOG.md`; `packages/orchestrator/references/host-adapters.md`; `AGENTS.md`; `CLAUDE.md`; `packages/orchestrator/README.md`.
+
+Validação:
+- `node build/bump-version.mjs 0.16.1` + `bash build/build-plugins.sh` — ok.
+- `node build/check-consistency.mjs` — ok.
+- `node --test packages/mcp-server/server.test.js` — ok (0 fail).
+- `node --test build/tests/classify-findings.test.mjs build/tests/etapa3.test.mjs` — ok (0 fail).
+- `node build/smoke-hosts.mjs` — ok (7 hosts + override).
+- `node build/conformance-matrix.mjs` — ok (hosts × 10 cenários).
+- `shasum -a 256 -c dist/SHA256SUMS` — 6/6 OK; `unzip -t` nos `.plugin` — ok.
+- `claude plugin validate ./ --strict` — ok.
+
+## 0.16.0 - 2026-08-06
+
+Tipo: **BREAKING release** (procedência por linha e revisão fria do backlog). Schema MCP: v5 (inalterado). Contrato de execução (G4/DISPATCH/PREREQ/JOIN): preservado.
+
+Resumo: toda decisão e todo critério de aceite passam a declarar **de onde vieram** (`Origem`), a ambiguidade é fechada por entrevista estruturada **antes** de o backlog existir em disco, e a skill de geração de backlog encerra despachando um revisor frio que audita e corrige o que ela própria escreveu. **Artefatos anteriores a 0.16.0 não são suportados (corte seco): iniciar backlog/sprint novo.**
+
+Mudanças (contrato documental):
+- **Coluna `Origem` obrigatória na §7.1** do sprint file (`| ID | Decisão | Origem |`) e nas decisões do backlog (`| ID | Decisão | Bloqueia | Dono | Origem | Status |`); schema anterior é recusado com `next_action: 'migrar_para_0_16'`.
+- **Campo `origin` obrigatório em cada `AC-*`** do §7.3 (enum `usuario` \| `derivado:<path>` \| `premissa`); ausência é pendência de schema.
+- **`premissa` proibida em sprint `Must`/`P0`** — o gate `talos_verify_sprint_file` bloqueia nomeando o `AC-*` e a linha.
+- **`derivado:<path>` resolvido contra o disco** — path inexistente recusa a sprint/backlog antes da execução.
+- **§4 `Discussão` obrigatória** (sempre, sem detectar origem) — a fonte que o revisor frio usa como oráculo de intenção deixa de ser opcional.
+- **Entrevista estruturada no `talos-backlog-generator`** — substitui o texto livre ("até 3 perguntas objetivas"); o rascunho é escaneado em memória (`talos_scan_acceptance` com `sprint_markdown`) e cada resposta vira decisão com `Origem: usuario`.
+- **Revisão fria interna à skill** — o passo final lê o mandato de `references/COLD_BACKLOG_REVIEW_PROMPT.md`, despacha um subagente genérico do host por `capabilities.subagent_dispatch` (incondicional, em foreground) e entrega o relatório ao chamador; artefatos corrigidos pelo revisor são regateados pelos gates antes da entrega.
+
+Não entrou (para não gerar expectativa):
+- Nenhuma tool MCP nova (16 tools, conjunto inalterado).
+- Nenhum gate novo de orquestrador (nenhuma fase nova).
+- Nenhum selo de revisão no artefato.
+
+Migração (0.15.x → 0.16.0):
+- **Corte seco, sem retrocompatibilidade.** Sprint files sem a coluna `Origem` na §7.1, AC sem `origin` ou §4 sem `Discussão` são rejeitados pelos gates com instrução explícita de reinício (`migrar_para_0_16`). Iniciar backlog e sprint files novos no padrão 0.16.
+
+Impacto:
+- Backlog/sprint pré-0.16 são recusados em vez de passarem despercebidos; o gate nomeia a linha que falta.
+- O artefato que alimenta o pipeline deixa de ser o único que ninguém revisa: o output da execução é auditado e corrigido por contexto novo.
+
+Arquivos/artefatos:
+- `VERSION` → `0.16.0`; `.claude-plugin/plugin.json`; `package.json`; `packages/mcp-server/package.json`; `CHANGELOG.md`; `AGENTS.md`; `CLAUDE.md`; `README.md`; `COMMANDS.md`; `packages/mcp-server/README.md`; `packages/orchestrator/README.md`.
+- Templates: `packages/templates/SPRINT_TEMPLATE.md`, `packages/templates/BACKLOG_MESTRE_TEMPLATE.md`.
+- `packages/skills/_shared/scripts/document_quality.mjs`, `packages/skills/talos-backlog-generator/` (SKILL.md + `references/COLD_BACKLOG_REVIEW_PROMPT.md`), `packages/mcp-server/server.js`.
+- Catálogos: `plugins/talos/**` e `hosts/{opencode,pi,zcode,vscode}/**` regenerados em `0.16.0`; `dist/**` + `SHA256SUMS` regenerados.
+
+Validação:
+- `node build/bump-version.mjs 0.16.0` + `bash build/build-plugins.sh` — ok.
+- `node build/check-consistency.mjs` — ok.
+- `bash build/test-all.sh` — OK (287/287 MCP, etapa3 + fixtures §9, smoke-hosts, conformance multi-host, smoke-install, checksums 6/6).
+- `claude plugin validate ./ --strict` — ok.
+
+## 0.15.2 - 2026-08-04
+
+Tipo: **docs** (artefato distribuído). **Sem breaking**. Schema MCP: v5 (inalterado).
+
+Resumo: alinha a documentação de usuário e do orquestrador ao contrato operacional 0.15 (AC-*, validação manual, critical review, 16 tools MCP); remove copy obsoleto (menu A/B/C, “15 tools”, DEP só-done, G8/G9 invertidos).
+
+Mudanças:
+- **`README.md`** — seção “Aceite 0.15 e validação manual”; tabela MCP com `talos_sync_manual_validation`; DEP aceita `manual_validation_pending`; gates G8/G9 alinhados à SKILL; flags audit/`critical_review`; estrutura com `hosts/vscode` e `talos-findings-repair`.
+- **`packages/orchestrator/README.md`** — remove lógica A/B/C; fluxos full/direct com review antes do status e fechamento M; skill `talos-memory-promote`.
+- **`COMMANDS.md`**, **`commands/talos.md`**, **MCP README** — smoke/sync M; deps `done`|MVP no select/update.
+- **Catálogos** — `plugins/talos/**` e `hosts/{opencode,pi,zcode,vscode}/**` regenerados em `0.15.2`.
+
+Impacto:
+- Usuário/orquestrador deixam de seguir caminhos pré-0.15 (PRD/checkbox/A-B-C) descritos na doc pública.
+- Sem mudança de runtime MCP, gates ou topologia sibling.
+
+Arquivos/artefatos:
+- `VERSION` → `0.15.2`; manifests/bundles regenerados; `CHANGELOG.md`; docs listadas acima.
+
+Validação:
+- `node build/bump-version.mjs 0.15.2` + `bash build/build-plugins.sh` — ok.
+- `node build/check-consistency.mjs` — ok.
+- `node --test packages/mcp-server/server.test.js` — 281/281.
+- `node --test build/tests/classify-findings.test.mjs build/tests/etapa3.test.mjs` — 11/11.
+- `node build/smoke-hosts.mjs` — ok.
+- `node build/conformance-matrix.mjs` — ok (hosts × 10).
+- `shasum -a 256 -c dist/SHA256SUMS` + `unzip -t` nos 6 `.plugin` — ok.
+- `npm pack` + `npm exec` tarball (`talos --help` → v0.15.2; `init opencode/codex --dry-run`) — ok.
+- `claude plugin validate ./ --strict` — ok.
+- `codex plugin validate` — CLI sem subcomando `validate` (registrado).
+
+## 0.15.1 - 2026-08-02
+
+Tipo: **packaging**. **Sem breaking**. Schema MCP: v5 (inalterado).
+
+Resumo: instalador detecta cache de marketplace owned por root (EACCES no `claude plugin marketplace add`) e falha cedo com remédio explícito; publica na `main` o linha 0.15.x (origin ainda estava em 0.14.2).
+
+Mudanças:
+- **`talos-init`** — `assertMarketplaceCacheWritable` antes de `marketplace add` (Claude/Cursor e Codex); mensagem de falha aponta `sudo rm -rf ~/.claude/plugins/marketplaces/talos` (sem rodar o init com sudo).
+- **`COMMANDS.md`** — seção Troubleshooting para o sintoma `Failed to finalize marketplace cache` / EACCES.
+
+Impacto:
+- `npx github:pauloborini/talos init …` deixa de falhar com erro opaco da CLI quando o cache está root-owned; usuário recebe o comando de correção.
+- Inclui o conteúdo BREAKING de 0.15.0 para quem ainda estava em 0.14.2 via `origin/main`.
+
+Arquivos/artefatos:
+- `build/cli/talos-init.mjs`, `COMMANDS.md`, `VERSION` → `0.15.1`, manifests/bundles regenerados.
+
+Validação:
+- `node build/bump-version.mjs 0.15.1` + `bash build/build-plugins.sh` — ok.
+- `node build/check-consistency.mjs` — ok.
+- `node --test packages/mcp-server/server.test.js` — 281/281.
+- `node --test build/tests/classify-findings.test.mjs build/tests/etapa3.test.mjs` — 11/11.
+- `node build/smoke-hosts.mjs` — ok.
+- `node build/conformance-matrix.mjs` — ok (7 hosts × 10).
+- `shasum -a 256 -c dist/SHA256SUMS` + `unzip -t` nos 6 `.plugin` — ok.
+- `npm pack` + `npm exec` tarball (`talos --help` → v0.15.1; `init opencode/codex --dry-run`) — ok.
+- `claude plugin validate ./ --strict` — ok.
+- `codex plugin validate` — CLI sem subcomando `validate` (registrado).
+
+## 0.15.0 - 2026-08-02
+
+Tipo: **BREAKING release** (contrato de aceite atômico e validação manual não bloqueante).
+
+Resumo: aceite de produto vira atômico (`AC-*`), prova automática tipada (oráculo mecânico T-outcome) e smoke manual não bloqueante: sprint sem `M` fecha em `done` com `HANDOFF_*` só quando todos os `AC-*` estão `proved`; sprint com `M` aberto fica `manual_validation_pending` (libera DEP, não emite handoff); `M` falho bloqueia a origem e liga a flag `revalidation_required` no cone de dependentes sem impedir execução. **Artefatos pré-v0.15 não são suportados (D19): iniciar backlog/sprint novo.**
+
+Mudanças:
+- **Contrato §7 (Plano 1)** — §7.3 com YAML `acceptance`/`AC-*` + hierarquia AC⊃EVAL; selo §7 cobre o bloco; scan bloqueia `behavior` TBD; checkbox dos 4 grupos (LEG1) e `manual_checks` como SSoT de smoke (LEG4) removidos.
+- **State v3 + oráculo (Plano 2)** — `state_schema_version:3` obrigatório (v1/v2 hard-fail — LEG2); `acceptance_results`/`proof_refs` por AC; `classifyAcceptanceResults` (oráculo determinístico T-outcome) exigido no `talos_lock_validator` quando sprint presente.
+- **Status/DEP/handoff (Plano 3)** — `manual_validation_pending` no enum e transições; `depsSatisfied` aceita `done` | `manual_validation_pending` (LEG3); `done` exige `acceptance_results` no state com todos os `AC-*` `proved` (fechamento: removeu escape “quando presentes”); handoff só em `done`.
+- **Relatório M (Plano 4)** — `MANUAL_VALIDATION_REPORT_TEMPLATE.md` + `talos_sync_manual_validation` (lock por backlog; `validated`/`waived` com justificativa; `failed` bloqueia a origem; todos `validated` → `done` com handoff).
+- **Flag revalidação (Plano 5)** — coluna `Revalidação` (índice 15) no backlog; `propagateRevalidation` no fecho de `Depende de`; `done` bloqueado com flag até revalidação; select não filtra.
+- **Review crítica (Plano 6)** — `policy_manifest.critical_review` (§10, reasons enum fixo); slice-review obrigatória antes de `talos_update_sprint_status` quando `required:true` (G8).
+- **Memória pós-validação** — emit de `HANDOFF_*.md` no `done` + skill `talos-memory-promote` (sink Argus opcional, soft-fail sem sink).
+- **Fixtures §9 + release (Plano 7)** — gate `build/tests/fixtures-s9.test.mjs` (itens 1–8 red/green na suíte); bump `0.15.0`; `plugins/talos/**`, `hosts/{opencode,pi,zcode,vscode}/**` e `dist/**` regenerados.
+- **Fechamento (Plano F)** — `done` sem `acceptance_results` bloqueia (A6 vs SKILL); persist do eco no `validatorComplete` fail-closed; `readStateAcceptanceResults` rejeita schema ≠ 3; guard `check-consistency` cobre `hosts/vscode` e `plugins/talos/VERSION`.
+
+Migração (0.14.x → 0.15.0):
+- **Não há migração de artefatos antigos (D19).** Sprint files com §7.3 checkbox e state v1/v2 são rejeitados (hard-fail). Iniciar backlog/sprint novo no padrão 0.15.
+
+Impacto:
+- `done` só com todos os `AC-*` provados (sem `M`) ou `M` resolvido por sync; sem `acceptance_results` no state → `done` blocked (sem handoff); `manual_validation_pending` nunca emite `HANDOFF_*`.
+- State v3-only: qualquer state antigo falha no boundary (e no side-path do status).
+- Schema MCP v5 e topologia sibling/G4/G12 intactos.
+
+Arquivos/artefatos:
+- `VERSION` → `0.15.0`; `.claude-plugin/plugin.json`; `package.json`; `packages/mcp-server/package.json`; `plugins/talos/**`; `hosts/{opencode,pi,zcode,vscode}/**`; `dist/**`.
+- Templates: `SPRINT_TEMPLATE.md`, `STATE_FILE_SCHEMA.md`, `MANUAL_VALIDATION_REPORT_TEMPLATE.md`, `BACKLOG_MESTRE_TEMPLATE.md`.
+- `packages/mcp-server/server.js` + `server.test.js`, `packages/skills/_shared/scripts/document_quality.mjs`, skills orquestrador/validator/executores/interview, `build/tests/fixtures-s9.test.mjs`, `build/check-consistency.mjs`.
+
+Validação:
+- `node build/bump-version.mjs 0.15.0` + `bash build/build-plugins.sh` — ok.
+- `node build/check-consistency.mjs` — ok.
+- `bash build/test-all.sh` — OK (inclui fixtures §9 itens 1–8).
+- `node --test packages/mcp-server/server.test.js` — 281/281.
+- `git diff --check` — exit 0.
+- `claude plugin validate ./ --strict` — ok.
+
+## 0.14.2 - 2026-07-20
+
+Tipo: **packaging**. **Sem breaking**. Schema MCP: v5 (inalterado).
+
+Resumo: corrige spawn do MCP em paths com espaço (ex.: `Application Support` no Parallels/macOS) e cita `description` dos agents no frontmatter YAML para parse estável.
+
+Mudanças:
+- **MCP spawn** — manifests Claude passam a usar `command: "/bin/bash"` + `args: ["${CLAUDE_PLUGIN_ROOT}/packages/mcp-server/run.sh"]` em vez de colocar o path do script em `command` (ENOENT quando o path contém espaços).
+- **`run.sh`** — comentário documentando a regra de spawn para hosts/Parallels.
+- **Agents** — `description` entre aspas no frontmatter dos 5 agents da família (`talos-direct-execute`, `talos-plan-execute`, `talos-findings-repair`, `talos-slice-review`, `talos-task-validator`) e espelhos em `plugins/` + `hosts/`.
+
+Impacto:
+- Instalação/atualização em diretórios com espaço deixa de quebrar o MCP stdio.
+- Sem mudança de contrato MCP, gates ou topologia sibling.
+
+Arquivos/artefatos:
+- `.claude-plugin/plugin.json`, `plugin-manifests/claude/plugin.json`, `packages/mcp-server/run.sh`
+- `agents/*.md`, `plugins/talos/agents/*.md`, `hosts/{opencode,pi,zcode,vscode}/**/agents/*.md`
+- `VERSION`, bundles `dist/**`, catálogos regenerados
+
+Validação:
+- `node build/bump-version.mjs 0.14.2` + `bash build/build-plugins.sh` — ok.
+- `node build/check-consistency.mjs` — ok.
+- `node --test packages/mcp-server/server.test.js` — 230/230.
+- `node build/smoke-hosts.mjs` — ok.
+- `node build/conformance-matrix.mjs` — ok (7 hosts × 10).
+- `shasum -a 256 -c dist/SHA256SUMS` + `unzip -t` nos 6 `.plugin` — ok.
+- `npm pack` + `npm exec` tarball (`talos --help`, `init opencode/codex --dry-run`) — ok.
+- `claude plugin validate ./ --strict` — ok.
+- `codex plugin validate` — CLI sem subcomando `validate` (registrado).
+
+## 0.14.1 - 2026-07-19
+
+Tipo: **patch de confiabilidade de contrato** (MCP + orquestrador + entry points; schema v5 intacto).
+
+Resumo: remove o resíduo `next_action: "gerar_prd"` pós-remoção do PRD e fecha desalinhamentos de entry point/orquestrador que ainda ensinavam ou ignoravam a cadeia §7.
+
+Mudanças:
+- **`talos_select_next_sprint`** — `next_action` canônico e **mode-aware** (`mode` opcional): §7 draft → `sprint_interview`; `direct` + §7 selado → `plan_execute` (nunca `plan_handoff`); `full` + §7 selado sem PLAN → `plan_handoff`; PLAN real → `plan_execute`. Nunca `gerar_prd`.
+- **Orquestrador** — gate `SELECT_NEXT_SPRINT` obriga consumir `next_action` + passar `mode`; fluxos `full`/`direct` ramificam pelo verbo MCP.
+- **Payload `selected`** — adiciona `contrato_status` / `contrato_sealed`; `prd_path` permanece como legado posicional do backlog (documentado).
+- **`talos_update_sprint_status`** — `prd_path` só atualiza a coluna legado do backlog; não grava campo PRD no sprint file.
+- **Capabilities** — `question_prompt.persistence`: `prd_after_each_round` → `sprint_after_each_round`.
+- **Entry points** — README (`talos_scan_acceptance`, G5 §7); manifests Claude/Codex/ZCode (sem `direct prd` / copy PRD); shim `talos-direct-execute` + `openai.yaml` retargetados a §7; Raycast snippets sem `direct prd`/família legada.
+- **Docs** — MCP README, `STATE_FILE_SCHEMA`, `SPRINT_TEMPLATE`, `subagent_dispatch`, missão CLAUDE/AGENTS alinhados a §7.
+
+Impacto:
+- Orquestradores/consumidores que seguiam `gerar_prd` ou `/talos direct prd` ao pé da letra passam ao verbo/caminho corretos.
+- Nenhuma skill/artefato PRD reintroduzido.
+
+## 0.14.0 - 2026-07-19
+
+> ⚠️ **BREAKING (contrato documental):** o artefato `PRD_*.md` deixa de ser etapa do pipeline. O sprint file absorve o contrato de produto (§7 congelado + selo sha256). Schema MCP `talos_capabilities` permanece v5; topologia sibling (G4), dispatch e locks intactos. Bump minor pré-1.0 é proposital (SemVer 0.y.z permite breaking sem major).
+
+Tipo: **breaking de contrato documental** + packaging multi-host. Schema MCP: v5 (inalterado). Contrato de execução (G4/DISPATCH/PREREQ/JOIN): preservado.
+
+Resumo: corta o PRD como artefato e etapa. `full`/`direct`/`execute` completam sem gerar nem exigir `PRD_*.md`; o sprint file carrega decisões D*, cenários UX e aceite binário na §7 write-once; o validador frio nota código contra esse contrato selado.
+
+Mudanças:
+- **Sprint file = contrato de produto** — `SPRINT_TEMPLATE.md` §7 "Contrato de produto (congelado)"; `validateSprintFileConformance` exige D* + UX + aceite binário + `Contrato status`; `validateAcceptanceSeal` bloqueia tamper (`FROZEN_ACCEPTANCE_TAMPERED`).
+- **Roteamento sem PRD** — `documentFlowForRouting` não emite `prd_generator`/`PRD_*.md`; `sprint_interview` no lugar de `prd_interview`; tipo de input `prd` removido.
+- **Gates MCP retargetados** — `talos_verify_template_conformance` aceita só `plan`; `verifyPlanConformance` exige `**Sprint file**`; `talos_scan_prd` → `talos_scan_acceptance` (escaneia §7).
+- **Skills** — `talos-prd-interview` → `talos-sprint-interview`; `talos-sprint-prd-generator` removido; plan-handoff/direct-execute/task-validator/backlog retargetados para §7.
+- **Orquestrador/templates** — fases sem PRD; `BOUNDARY_PRD_PLAN.md` → `BOUNDARY_SPRINT_PLAN.md`; `PRD_TEMPLATE.md` removido; interview-only cria sprint file standalone.
+- **Bundles regenerados** — `dist/talos-{claude,codex,opencode,pi,zcode,vscode}.plugin`, `SHA256SUMS`, `plugins/talos/**` e `hosts/{opencode,pi,zcode,vscode}/**` em `0.14.0`.
+
+Impacto:
+- Consumidores/docs que assumiam etapa PRD devem migrar para o contrato §7 do sprint file.
+- Nenhum adapter `HOST_ADAPTERS` muda; 8 hosts mantêm join/dispatch/prereq.
+
+**Nota de migração (BREAKING):**
+1. Sprint files legados com §7 "Critérios candidatos para PRD" → reescrever §7 "Contrato de produto (congelado)" (usar PRD legado como insumo, se houver).
+2. Aprovar contrato → `Contrato status: aprovado` + `Selo do contrato: sha256:<hash>` (via `talos-sprint-interview`).
+3. Planos novos linkam `**Sprint file**` (não `**PRD**`).
+4. PRDs existentes viram insumo manual e saem do pipeline (arquivar fora; não usamos `archive/` automaticamente).
+5. Input `prd` removido — trate como ideia/spec livre.
+6. Standalone vive no sprint file (`Backlog link: Não aplicável (standalone)`), não em PRD.
+
+Arquivos/artefatos:
+- `VERSION`, `.claude-plugin/plugin.json`, `package.json`, `packages/mcp-server/package.json`
+- `CLAUDE.md`, `AGENTS.md`, `README.md`, `COMMANDS.md`, `packages/orchestrator/README.md`
+- `packages/mcp-server/server.js`, `packages/skills/**`, `packages/templates/**`, `packages/orchestrator/**`
+- `hosts/**`, `plugins/talos/**`, `dist/**` (espelhos regenerados por `build/build-plugins.sh`)
+
+Validação:
+- `node build/bump-version.mjs 0.14.0` + `bash build/build-plugins.sh` — ok.
+- `node build/check-consistency.mjs` — ok.
+- `node build/smoke-hosts.mjs` — ok (claude/cursor/codex/zcode/opencode/pi + generic).
+- `node build/conformance-matrix.mjs` — ok (claude/codex/opencode/pi/zcode/vscode/generic × 10).
+- `bash build/test-all.sh` — ok (incl. smoke-install + checksums 6 plugins).
+- `claude plugin validate ./ --strict` — ok.
+- Smoke ponta a ponta Claude Code (`/talos direct`) — pendente (ambiente Cursor; ver Impl Plano 6).
+
 ## 0.13.0 - 2026-07-03
 
 Tipo: **runtime + packaging**. **Sem breaking**. Schema MCP: v5 (inalterado). Contrato de execução: preservado.

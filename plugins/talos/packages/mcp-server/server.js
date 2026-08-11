@@ -7,7 +7,10 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
   parseSprintRows,
+  parseDecisionRows,
   validateSprintFileConformance,
+  validateAcceptanceSeal,
+  parseAcceptanceContract,
 } from '../skills/_shared/scripts/document_quality.mjs';
 
 const SERVER_NAME = 'talos';
@@ -20,35 +23,22 @@ const SENSITIVE_KEY = /(authorization|credential|password|secret|token|api[_-]?k
 // permanece sujeita a redação para não expor segredos de payloads de usuário.
 const NON_SENSITIVE_KEYS = new Set(['dispatch_token']);
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
-const PRD_PATTERNS = {
-  section_1_context: ['TBD', 'a confirmar', 'talvez', 'não definido'],
-  section_2_scope: ['pode ser', 'depende de', 'ainda não', 'incompleto'],
-  section_3_decisions: ['vago'],
-  section_4_experience: ['a definir', 'gap', 'depende de'],
-  section_5_contracts: ['ainda não definido', 'mock apenas', 'a confirmar'],
+// Gate G5: padrões de ambiguidade bloqueante no bloco de contrato (§7) do sprint file.
+const ACCEPTANCE_PATTERNS = {
+  section_7_decisions: ['vago', 'TBD', 'a confirmar', 'talvez', 'não definido', '[...]'],
+  section_7_ux: ['a definir', 'gap', 'depende de', 'TBD', 'a confirmar', '[...]'],
+  section_7_aceite: ['TBD', 'a confirmar', 'ainda não', 'incompleto', 'pode ser', '[...]'],
 };
 const SECTION_LABELS = {
-  section_1_context: '§1 Contexto e objetivo',
-  section_2_scope: '§2 Escopo',
-  section_3_decisions: '§3 Decisões de produto',
-  section_4_experience: '§4 Fluxos e cenários UX',
-  section_5_contracts: '§5 Contrato funcional e invariantes',
+  section_7_decisions: '§7.1 Decisões de produto',
+  section_7_ux: '§7.2 Cenários UX',
+  section_7_aceite: '§7.3 Aceite binário',
 };
 const SECTION_HEADING = {
-  section_1_context: /^##\s+1\.\s+/,
-  section_2_scope: /^##\s+2\.\s+/,
-  section_3_decisions: /^##\s+3\.\s+/,
-  section_4_experience: /^##\s+4\.\s+/,
-  section_5_contracts: /^##\s+5\.\s+/,
+  section_7_decisions: /^###\s+7\.1\s+/,
+  section_7_ux: /^###\s+7\.2(?:\.\d+)?\s+/,
+  section_7_aceite: /^###\s+7\.3\s+/,
 };
-const REQUIRED_PRD_SECTIONS = [
-  ['1', 'Contexto e objetivo'],
-  ['2', 'Escopo'],
-  ['3', 'Decisões de produto'],
-  ['4', 'Fluxos e cenários UX'],
-  ['5', 'Contrato funcional e invariantes'],
-  ['6', 'Critérios de aceite'],
-];
 const REQUIRED_PLAN_SECTIONS = [
   ['1', 'Tradução executiva'],
   ['2', 'Invariantes de execução'],
@@ -63,8 +53,7 @@ const WORKFLOW_CONFIG = {
   path: 'builtin:talos',
   skills: {
     backlog_generator: 'talos-backlog-generator',
-    prd_generator: 'talos-sprint-prd-generator',
-    prd_interview: 'talos-prd-interview',
+    sprint_interview: 'talos-sprint-interview',
     plan_handoff: 'talos-plan-handoff',
     plan_execute: 'talos-plan-execute',
     direct_execute: 'talos-direct-execute',
@@ -135,14 +124,14 @@ function expectedExecutorSkill(mode) {
 // pronta — nunca monta texto livre. Data-driven como HOST_ADAPTERS: tabela única
 // `event → template`, sem string de banner inline espalhada pelos gates.
 // Símbolo fixo `▸`, idioma pt-BR, exatamente uma linha por evento. Os 11 eventos
-// fechados do PRD §4. Slots no formato {nome} são preenchidos por renderBanner.
+// fechados do contrato §7. Slots no formato {nome} são preenchidos por renderBanner.
 const BANNER_TEMPLATES = {
   roteia: '▸ talos: roteamento · input={tipo} → modo={modo}',
   roteia_troca: '▸ talos: roteamento · pediu={x} mas input={y} → modo={z}',
   preflight_ok: '▸ talos: preflight · ok ({caps})',
   preflight_fail: '▸ talos: preflight · BLOCK · {motivo}',
-  prd_lacunas: '▸ talos: prd · {n} lacunas',
-  prd_ok: '▸ talos: prd · ok',
+  aceite_lacunas: '▸ talos: aceite · {n} lacunas',
+  aceite_ok: '▸ talos: aceite · ok',
   entrevista: '▸ talos: entrevista · {n} perguntas',
   plano: '▸ talos: plano · validado (TC pass)',
   exec: '▸ talos: exec · slice {i}/{n}',
@@ -152,19 +141,18 @@ const BANNER_TEMPLATES = {
 };
 const BANNER_EVENTS = Object.keys(BANNER_TEMPLATES);
 
-// Modo-alvo do roteamento por tipo de input (PRD D3/D6): o tipo de fato manda
-// sobre o modo pedido. plan → execute (executa plano pronto); prd/backlog → full
-// (gera/usa plano). Data-driven: alimenta o slot {modo} do banner `roteia`.
+// Modo-alvo do roteamento por tipo de input: o tipo de fato manda sobre o modo
+// pedido. plan → execute (executa plano pronto); backlog → full (gera/usa plano).
+// Spec/PRD-ish classifica como idea → direct (D9). Data-driven: alimenta o slot
+// {modo} do banner `roteia`.
 const ROUTED_MODE_BY_TYPE = {
   plan: 'execute',
-  prd: 'full',
   backlog: 'full',
-  // idea = descrição livre (não é arquivo). Roteia para `direct` (implementa a partir da
-  // descrição/spec, sem artefato de plano separado). Não é "input ilegível".
+  // idea = descrição livre ou spec (não é arquivo de plano). Roteia para `direct`.
   idea: 'direct',
 };
-const BACKLOG_PRIORITY_INPUT_TYPES = new Set(['idea', 'briefing', 'roadmap', 'conversation', 'prd-macro']);
-const BACKLOG_STATES = new Set(['backlog', 'ready', 'doing', 'review', 'done', 'blocked']);
+const BACKLOG_PRIORITY_INPUT_TYPES = new Set(['idea', 'briefing', 'roadmap', 'conversation', 'spec-macro']);
+const BACKLOG_STATES = new Set(['backlog', 'ready', 'doing', 'review', 'manual_validation_pending', 'done', 'blocked']);
 const BACKLOG_MOSCOW = new Set(['Must', 'Should', 'Could', "Won't now"]);
 const BACKLOG_LEVEL = new Set(['alto', 'médio', 'baixo']);
 const BACKLOG_PRIORITY = new Set(['P0', 'P1', 'P2', 'P3']);
@@ -175,7 +163,8 @@ const SPRINT_STATUS_TRANSITIONS = {
   backlog: new Set(['ready', 'blocked']),
   ready: new Set(['doing', 'review', 'done', 'blocked']),
   doing: new Set(['review', 'done', 'blocked']),
-  review: new Set(['done', 'doing', 'blocked']),
+  review: new Set(['manual_validation_pending', 'done', 'doing', 'blocked']),
+  manual_validation_pending: new Set(['done', 'blocked']),
   blocked: new Set(['ready', 'backlog']),
   done: new Set(['done']),
 };
@@ -183,6 +172,17 @@ const MOSCOW_RANK = new Map([['Must', 0], ['Should', 1], ['Could', 2], ["Won't n
 const GAIN_RANK = new Map([['alto', 0], ['médio', 1], ['baixo', 2]]);
 const EFFORT_RANK = new Map([['baixo', 0], ['médio', 1], ['alto', 2]]);
 const PRIORITY_RANK = new Map([['P0', 0], ['P1', 1], ['P2', 2], ['P3', 3]]);
+// Plano 4 — relatório de validação manual (D11-D15/D24). Um relatório por backlog;
+// IDs estáveis MV-<sprint>-<ac>; estados válidos do relatório (proposta §6).
+const MANUAL_VALIDATION_DIR = '.talos/manual-validation';
+const MANUAL_VALIDATION_REPORT_STATUSES = new Set(['pending', 'in_progress', 'validated', 'waived', 'failed']);
+const MANUAL_VALIDATION_MV_ID_RE = /^MV-(S\d{2}(?:[a-z]|\.\d+)?)-(AC-\d+)$/;
+// D14/D24: resultado humano mapeado para o acceptance_results do state (oráculo).
+const MANUAL_VALIDATION_STATE_MAP = {
+  validated: { to: 'proved', proof: 'M:validated' },
+  waived: { to: 'proved', proof: 'M:waived' },
+  failed: { to: 'violated', proof: 'M:failed' },
+};
 
 function documentFlowForRouting(mode, inputType = null, artifactType = null) {
   const normalizedInput = typeof inputType === 'string' ? inputType.trim().toLowerCase() : null;
@@ -194,14 +194,12 @@ function documentFlowForRouting(mode, inputType = null, artifactType = null) {
       reason: 'entrada_macro_sem_backlog_canonico',
       skills: [
         WORKFLOW_CONFIG.skills.backlog_generator,
-        WORKFLOW_CONFIG.skills.prd_generator,
-        WORKFLOW_CONFIG.skills.prd_interview,
+        WORKFLOW_CONFIG.skills.sprint_interview,
         ...(mode === 'full' ? [WORKFLOW_CONFIG.skills.plan_handoff] : []),
       ],
       artifacts: [
         'BACKLOG_MESTRE_*.md',
         'SPRINT_S<NN>_*.md',
-        'PRD_*.md',
         ...(mode === 'full' ? ['PLAN_*.md'] : []),
       ],
     };
@@ -211,27 +209,24 @@ function documentFlowForRouting(mode, inputType = null, artifactType = null) {
       priority: 'sprint_from_backlog',
       reason: 'backlog_canonico_ja_fornecido',
       skills: [
-        WORKFLOW_CONFIG.skills.prd_generator,
-        WORKFLOW_CONFIG.skills.prd_interview,
+        WORKFLOW_CONFIG.skills.sprint_interview,
         ...(mode === 'full' ? [WORKFLOW_CONFIG.skills.plan_handoff] : []),
       ],
       artifacts: [
         'SPRINT_S<NN>_*.md',
-        'PRD_*.md',
         ...(mode === 'full' ? ['PLAN_*.md'] : []),
       ],
     };
   }
   return {
-    priority: 'prd_first',
+    priority: 'recorte_first',
     reason: 'entrada_ja_recortada_ou_modo_sem_backlog',
     skills: [
-      WORKFLOW_CONFIG.skills.prd_generator,
-      WORKFLOW_CONFIG.skills.prd_interview,
+      WORKFLOW_CONFIG.skills.sprint_interview,
       ...(mode === 'full' ? [WORKFLOW_CONFIG.skills.plan_handoff] : []),
     ],
     artifacts: [
-      'PRD_*.md',
+      'SPRINT_S<NN>_*.md',
       ...(mode === 'full' ? ['PLAN_*.md'] : []),
     ],
   };
@@ -274,7 +269,7 @@ const HOST_ADAPTERS = {
         mechanism: 'Agent(subagent_type) bloqueante por design do host',
       },
     },
-    question_prompt: { mechanism: 'AskUserQuestion', mode: 'structured', max_questions: 4, options_per_question: 3, persistence: 'prd_after_each_round' },
+    question_prompt: { mechanism: 'AskUserQuestion', mode: 'structured', max_questions: 4, options_per_question: 3, persistence: 'sprint_after_each_round' },
     todo_tool: 'TodoWrite',
     hooks: { supported: true, mechanism: 'hooks/claude/settings.snippet.json' },
     capabilities_flags: { subagent_available: true, mcp_available: true, todo_available: true },
@@ -299,7 +294,7 @@ const HOST_ADAPTERS = {
         mechanism: 'spawn_agent bloqueante; retorno via state_path + veredito; no Codex deve usar explicitamente agent_type="talos-task-validator"',
       },
     },
-    question_prompt: { mechanism: 'request_user_input', mode: 'structured', max_questions: 3, options_per_question: 3, persistence: 'prd_after_each_round' },
+    question_prompt: { mechanism: 'request_user_input', mode: 'structured', max_questions: 3, options_per_question: 3, persistence: 'sprint_after_each_round' },
     todo_tool: 'tasks',
     hooks: { supported: false, mechanism: null },
     // Codex subagents are native, but spawned agents do not receive spawn_agent in
@@ -324,7 +319,7 @@ const HOST_ADAPTERS = {
         mechanism: '@<name> bloqueante presumido',
       },
     },
-    question_prompt: { mechanism: 'question', mode: 'structured', max_questions: 4, options_per_question: 3, persistence: 'prd_after_each_round' },
+    question_prompt: { mechanism: 'question', mode: 'structured', max_questions: 4, options_per_question: 3, persistence: 'sprint_after_each_round' },
     // opencode expõe `todowrite` nativo ao agente primário (orquestrador). O `todoread`
     // foi fundido em `todowrite` (mar/2026): a tool retorna a lista atual no output.
     // Subagentes têm `todowrite` desabilitado por padrão, mas o todo é usado pelo
@@ -353,7 +348,7 @@ const HOST_ADAPTERS = {
         mechanism: 'subagent({agent,task}) via pi-subagents; join depende de dep externa',
       },
     },
-    question_prompt: { mechanism: 'interactive_prompt', mode: 'structured', max_questions: 4, options_per_question: 3, persistence: 'prd_after_each_round' },
+    question_prompt: { mechanism: 'interactive_prompt', mode: 'structured', max_questions: 4, options_per_question: 3, persistence: 'sprint_after_each_round' },
     todo_tool: null,
     hooks: { supported: false, mechanism: null },
     // pi exige 2 deps externas obrigatórias (DEC-005): pi-mcp-adapter (MCP) e
@@ -383,7 +378,7 @@ const HOST_ADAPTERS = {
     //   — invoke_subagent é BLOQUEANTE por design: não polling, não background.
     //   — Workspace: "branch" garante isolamento de contexto (fronteira G4/G9).
     //
-    // Fases documentais (PRD, entrevista, plano) NÃO usam subagente — o orquestrador
+    // Fases documentais (contrato §7, entrevista, plano) NÃO usam subagente — o orquestrador
     // conduz no fio principal; define_subagent não é chamado para essas fases.
     subagent_dispatch: {
       mechanism: 'define_subagent(name, system_prompt) + invoke_subagent(Subagents: [{TypeName, Role, Prompt, Workspace}])',
@@ -402,17 +397,17 @@ const HOST_ADAPTERS = {
         mechanism: 'invoke_subagent bloqueante por design do host — sem polling, sem callback',
       },
     },
-    // question_prompt: usado pela talos-prd-interview para fazer perguntas ao usuário.
+    // question_prompt: usado pela talos-sprint-interview para fazer perguntas ao usuário.
     // No Antigravity, usar ask_question (ferramenta nativa de perguntas interativas).
     // IMPORTANTE — resume_after_interview: após receber respostas via ask_question,
-    // persistir no PRD e RETOMAR O PIPELINE IMEDIATAMENTE sem nova confirmação.
+    // persistir no sprint file (§7) e RETOMAR O PIPELINE IMEDIATAMENTE sem nova confirmação.
     // Nunca aguardar input adicional do usuário entre fases — viola fire-and-continue.
     question_prompt: {
       mechanism: 'ask_question',
       mode: 'structured',
       max_questions: 4,
       options_per_question: 3,
-      persistence: 'prd_after_each_round',
+      persistence: 'sprint_after_each_round',
       resume_after_interview: 'automatic',
     },
     todo_tool: null,
@@ -463,7 +458,7 @@ const HOST_ADAPTERS = {
         mechanism: 'Agent(subagent_type) bloqueante por design do host (Claude Agent SDK)',
       },
     },
-    question_prompt: { mechanism: 'AskUserQuestion', mode: 'structured', max_questions: 4, options_per_question: 3, persistence: 'prd_after_each_round' },
+    question_prompt: { mechanism: 'AskUserQuestion', mode: 'structured', max_questions: 4, options_per_question: 3, persistence: 'sprint_after_each_round' },
     todo_tool: 'TodoWrite',
     hooks: { supported: true, mechanism: '.zcode-plugin/plugin.json (hooks)' },
     // ZCode é clone estrutural do Claude Code (Claude Agent SDK): subagente +
@@ -500,7 +495,7 @@ const HOST_ADAPTERS = {
       mode: 'structured',
       max_questions: 4,
       options_per_question: 3,
-      persistence: 'prd_after_each_round',
+      persistence: 'sprint_after_each_round',
     },
     // VS Code Copilot Chat expõe manage_todo_list nativo ao agente primário.
     todo_tool: 'manage_todo_list',
@@ -529,7 +524,7 @@ const HOST_ADAPTERS = {
         mechanism: 'indeterminado; host deve reportar',
       },
     },
-    question_prompt: { mechanism: 'native_structured_question', mode: 'structured', max_questions: 4, options_per_question: 3, persistence: 'prd_after_each_round' },
+    question_prompt: { mechanism: 'native_structured_question', mode: 'structured', max_questions: 4, options_per_question: 3, persistence: 'sprint_after_each_round' },
     todo_tool: null,
     hooks: { supported: false, mechanism: null },
     // generic EXIGE subagente+MCP do host (DEC-004); host MCP-only sem subagente
@@ -1583,13 +1578,13 @@ function verifyArtifact(args = {}) {
   const artifactPath = requiredString(args, 'artifact_path');
   const absolutePath = resolveConsumerPath(artifactPath, args);
   const timestamp = nowIso();
-  // Banner correto por tipo de artefato: verificar um PRD não pode ecoar
-  // "plano · validado". `artifact_kind` é opcional e aditivo — `prd` → banner de
-  // PRD; ausente/`plan` mantém o banner de plano (compat com callers antigos que
+  // Banner correto por tipo de artefato: verificar sprint/contrato não pode ecoar
+  // "plano · validado". `artifact_kind` é opcional e aditivo — `sprint` → banner de
+  // aceite; ausente/`plan` mantém o banner de plano (compat com callers antigos que
   // só verificavam plano).
   const artifactKind = optionalString(args, 'artifact_kind');
-  const okBanner = artifactKind === 'prd'
-    ? renderBanner('prd_ok', {})
+  const okBanner = artifactKind === 'sprint'
+    ? renderBanner('aceite_ok', {})
     : artifactKind === 'json'
       ? renderBanner('validacao', { status: 'json_ok' })
       : renderBanner('plano', {});
@@ -1664,7 +1659,7 @@ function verifyArtifact(args = {}) {
   return result;
 }
 
-function splitPrdSections(content) {
+function splitAcceptanceSections(content) {
   const sections = {};
   let current = null;
   const lines = content.split(/\r?\n/);
@@ -1689,11 +1684,28 @@ function lineIsExcluded(line) {
 function scanSectionPatterns(sections) {
   const matches = [];
 
-  for (const [sectionKey, patterns] of Object.entries(PRD_PATTERNS)) {
+  // §7.3 acceptance: `behavior` de AC com ambiguidade bloqueante (AC-1.2.2).
+  const acceptanceLines = sections.section_7_aceite ?? [];
+  const acceptanceText = acceptanceLines.map((entry) => entry.text).join('\n');
+  if (/```ya?ml\b/i.test(acceptanceText) && /^\s*-?\s*id:\s*["']?AC-\d+/m.test(acceptanceText)) {
+    const ambiguousRe = /^\s*behavior:\s*["']?.*\b(?:TBD|a confirmar|a definir|incompleto)\b/im;
+    if (ambiguousRe.test(acceptanceText)) {
+      const offender = acceptanceLines.find((entry) => ambiguousRe.test(entry.text)) ?? acceptanceLines[0];
+      matches.push({
+        section: SECTION_LABELS.section_7_aceite,
+        pattern: 'behavior ambíguo',
+        line: offender?.line ?? null,
+        excerpt: offender?.text.trim().slice(0, 240) ?? '',
+        reason: 'AC com `behavior` ambíguo (TBD/a confirmar) bloqueia planejamento.',
+      });
+    }
+  }
+
+  for (const [sectionKey, patterns] of Object.entries(ACCEPTANCE_PATTERNS)) {
     const lines = sections[sectionKey] ?? [];
     const sectionText = lines.map((line) => line.text).join('\n').trim();
 
-    if (sectionKey === 'section_3_decisions') {
+    if (sectionKey === 'section_7_decisions') {
       const hasDecisionRows = /\|\s*D\d+\s*\|/.test(sectionText);
       if (!hasDecisionRows) {
         matches.push({
@@ -1709,6 +1721,16 @@ function scanSectionPatterns(sections) {
     for (const { line, text } of lines) {
       if (lineIsExcluded(text)) continue;
       const lower = text.toLowerCase();
+      // Q- aberta no contrato §7 também é ambiguidade bloqueante.
+      if (/\bQ-\d+\b/.test(text) && !/\b(fechada|resolvida|done)\b/i.test(text)) {
+        matches.push({
+          section: SECTION_LABELS[sectionKey],
+          pattern: 'Q- aberta',
+          line,
+          excerpt: text.trim().slice(0, 240),
+          reason: 'Pergunta em aberto no contrato de produto bloqueia avanço.',
+        });
+      }
       for (const pattern of patterns) {
         if (lower.includes(pattern.toLowerCase())) {
           matches.push({
@@ -1726,68 +1748,116 @@ function scanSectionPatterns(sections) {
   return matches;
 }
 
-function scanPrd(args = {}) {
+function scanAcceptance(args = {}) {
   const runId = validateRunId(args.run_id);
-  const prdPath = requiredString(args, 'prd_path');
-  const absolutePath = resolveConsumerPath(prdPath, args);
+  const sprintPath = optionalString(args, 'sprint_path');
+  const sprintMarkdown = optionalString(args, 'sprint_markdown');
   const timestamp = nowIso();
-  let result;
 
-  try {
-    const content = fs.readFileSync(absolutePath, 'utf8');
-    if (content.trim() === '') {
-      result = {
-        gate: 'G5',
-        status: 'blocked',
-        prd_path: prdPath,
-        timestamp,
-        blocking_count: 1,
-        banner: renderBanner('prd_lacunas', { n: 1 }),
-        blocking_matches: [{
-          section: 'documento',
-          pattern: '(empty file)',
-          line: null,
-          excerpt: '',
-          reason: 'PRD vazio não pode avançar como documento pronto.',
-        }],
-        next_action: 'entrevista',
-      };
-    } else {
-      const blockingMatches = scanSectionPatterns(splitPrdSections(content));
-      result = {
-        gate: 'G5',
-        status: blockingMatches.length === 0 ? 'passed' : 'blocked',
-        prd_path: prdPath,
-        timestamp,
-        blocking_count: blockingMatches.length,
-        banner: blockingMatches.length === 0
-          ? renderBanner('prd_ok', {})
-          : renderBanner('prd_lacunas', { n: blockingMatches.length }),
-        blocking_matches: blockingMatches,
-        next_action: blockingMatches.length === 0 ? 'avançar' : 'entrevista',
-        message: blockingMatches.length === 0
-          ? 'Ambiguity scan: 0 padrões bloqueantes — entrevista pulada'
-          : 'Ambiguity scan: padrões bloqueantes encontrados — entrevista obrigatória',
-      };
+  // CN1/D8 (v0.16.0): o scan também aceita o rascunho em memória
+  // (`sprint_markdown`), antes de o artefato existir em disco. Os dois
+  // parâmetros são mutuamente exclusivos: aceitar ambos criaria ambiguidade
+  // sobre qual conteúdo foi escaneado (regressão provável declarada na task 02.2).
+  if (sprintPath !== undefined && sprintMarkdown !== undefined) {
+    const result = {
+      gate: 'G5',
+      status: 'blocked',
+      sprint_path: null,
+      timestamp,
+      blocking_count: 1,
+      banner: renderBanner('aceite_lacunas', { n: 1 }),
+      blocking_matches: [{
+        section: 'argumentos',
+        pattern: '(sprint_path e sprint_markdown juntos)',
+        line: null,
+        excerpt: '',
+        reason: 'sprint_path e sprint_markdown são mutuamente exclusivos — informe exatamente um.',
+      }],
+      next_action: 'usar_um_dos_dois',
+      error: 'Use exatamente um dos parâmetros: sprint_path ou sprint_markdown.',
+    };
+    patchGateResult(runId, 'G5', result, args);
+    return result;
+  }
+  // Erro de argumento obrigatório existente (nada mudou para chamadas antigas):
+  // sem path e sem markdown, ou path em branco, segue lançando `sprint_path
+  // obrigatório`. `sprint_markdown` explicitamente vazio NÃO é "argumento ausente":
+  // é rascunho vazio, e cai no ramo de arquivo vazio (`blocking_count: 1`,
+  // `source: 'draft'`) — comportamento declarado na task 02.2.
+  if (sprintMarkdown === undefined && (!sprintPath || sprintPath.trim() === '')) {
+    requiredString(args, 'sprint_path');
+  }
+
+  const source = sprintMarkdown !== undefined ? 'draft' : 'file';
+  const reportedPath = sprintPath ?? null;
+  let content = null;
+  let readError = null;
+  if (sprintMarkdown !== undefined) {
+    content = sprintMarkdown; // rascunho em memória: nada é gravado nem lido do disco
+  } else {
+    try {
+      content = fs.readFileSync(resolveConsumerPath(sprintPath, args), 'utf8');
+    } catch (error) {
+      readError = error;
     }
-  } catch (error) {
+  }
+
+  let result;
+  if (readError) {
     result = {
       gate: 'G5',
       status: 'blocked',
-      prd_path: prdPath,
+      sprint_path: reportedPath,
+      source,
       timestamp,
       blocking_count: 1,
-      banner: renderBanner('prd_lacunas', { n: 1 }),
+      banner: renderBanner('aceite_lacunas', { n: 1 }),
       blocking_matches: [{
         section: 'documento',
         pattern: '(read error)',
         line: null,
         excerpt: '',
-        reason: `PRD ilegível: ${prdPath}`,
+        reason: `Sprint file ilegível: ${sprintPath}`,
       }],
-      error: `PRD ausente ou ilegível: ${prdPath}`,
-      cause: error.message,
+      error: `Sprint file ausente ou ilegível: ${sprintPath}`,
+      cause: readError.message,
       next_action: 'entrevista',
+    };
+  } else if (content.trim() === '') {
+    result = {
+      gate: 'G5',
+      status: 'blocked',
+      sprint_path: reportedPath,
+      source,
+      timestamp,
+      blocking_count: 1,
+      banner: renderBanner('aceite_lacunas', { n: 1 }),
+      blocking_matches: [{
+        section: 'documento',
+        pattern: '(empty file)',
+        line: null,
+        excerpt: '',
+        reason: 'Sprint file vazio não pode avançar como contrato pronto.',
+      }],
+      next_action: 'entrevista',
+    };
+  } else {
+    const blockingMatches = scanSectionPatterns(splitAcceptanceSections(content));
+    result = {
+      gate: 'G5',
+      status: blockingMatches.length === 0 ? 'passed' : 'blocked',
+      sprint_path: reportedPath,
+      source,
+      timestamp,
+      blocking_count: blockingMatches.length,
+      banner: blockingMatches.length === 0
+        ? renderBanner('aceite_ok', {})
+        : renderBanner('aceite_lacunas', { n: blockingMatches.length }),
+      blocking_matches: blockingMatches,
+      next_action: blockingMatches.length === 0 ? 'avançar' : 'entrevista',
+      message: blockingMatches.length === 0
+        ? 'Ambiguity scan: 0 padrões bloqueantes — entrevista pulada'
+        : 'Ambiguity scan: padrões bloqueantes encontrados — entrevista obrigatória',
     };
   }
 
@@ -1824,76 +1894,6 @@ function verifyRequiredSections(headings, requiredSections) {
     ));
 }
 
-function verifyPrdConformance(content, requiredStatus, { requireSprintFile = false } = {}) {
-  const pendencies = verifyRequiredSections(collectHeadings(content), REQUIRED_PRD_SECTIONS);
-
-  if (requiredStatus && !hasRequiredStatus(content, requiredStatus)) {
-    pendencies.push(conformancePending(
-      'status',
-      requiredStatus,
-      null,
-      `Status documental requerido ausente: ${requiredStatus}`,
-      'ajustar_status_documental',
-    ));
-  }
-
-  if (!/\|\s*D\d+\s*\|/.test(content)) {
-    pendencies.push(conformancePending(
-      'decisões',
-      'D*',
-      null,
-      'PRD sem decisões D* fechadas.',
-      'registrar_decisoes_fechadas',
-    ));
-  }
-
-  for (const group of ['Produto', 'UX', 'Dados', 'Regressão de produto']) {
-    if (!new RegExp(`\\*\\*${group}\\*\\*`, 'i').test(content)) {
-      pendencies.push(conformancePending(
-        'critérios_de_aceite',
-        group,
-        null,
-        `Grupo de critérios ausente: ${group}`,
-        'completar_criterios_de_aceite',
-      ));
-    }
-  }
-
-  const checkboxCount = (content.match(/^- \[[ xX]\]\s+\S/gm) ?? []).length;
-  if (checkboxCount === 0) {
-    pendencies.push(conformancePending(
-      'critérios_de_aceite',
-      'checkboxes',
-      null,
-      'Critérios de aceite observáveis não encontrados.',
-      'completar_criterios_de_aceite',
-    ));
-  }
-
-  if (requireSprintFile) {
-    if (!/\|\s*\*\*Sprint file\*\*\s*\|/i.test(content)) {
-      pendencies.push(conformancePending(
-        'sprint_file',
-        'Sprint file',
-        null,
-        'PRD sem link/campo Sprint file no cabeçalho.',
-        'vincular_sprint_file',
-      ));
-    }
-    if (!/\bEval source\b/i.test(content) && !/\bEVAL-\d+\b/.test(content)) {
-      pendencies.push(conformancePending(
-        'eval_manifest',
-        'EVAL-*',
-        null,
-        'PRD sem referência ao eval_manifest/EVAL-* da sprint.',
-        'referenciar_eval_manifest',
-      ));
-    }
-  }
-
-  return pendencies;
-}
-
 function verifyPlanConformance(content, { requireSprintFile = false } = {}) {
   // §7 Slices só é obrigatória em `execution_mode: orchestrated-per-slice` (template).
   // Em `sequencial` a seção é dispensável — não force "§7 Não aplicável" só para passar
@@ -1904,26 +1904,17 @@ function verifyPlanConformance(content, { requireSprintFile = false } = {}) {
     : REQUIRED_PLAN_SECTIONS.filter(([number]) => number !== '7');
   const pendencies = verifyRequiredSections(collectHeadings(content), requiredSections);
 
-  if (!/\|\s*\*\*PRD\*\*\s*\|/.test(content)) {
+  if (!/\|\s*\*\*Sprint file\*\*\s*\|/i.test(content)) {
     pendencies.push(conformancePending(
-      'referência_prd',
-      'PRD',
+      'sprint_file',
+      'Sprint file',
       null,
-      'Plano sem link/campo PRD no cabeçalho.',
-      'vincular_prd',
+      'Plano sem link/campo Sprint file no cabeçalho.',
+      'vincular_sprint_file',
     ));
   }
 
   if (requireSprintFile) {
-    if (!/\|\s*\*\*Sprint file\*\*\s*\|/i.test(content)) {
-      pendencies.push(conformancePending(
-        'sprint_file',
-        'Sprint file',
-        null,
-        'Plano sem link/campo Sprint file no cabeçalho.',
-        'vincular_sprint_file',
-      ));
-    }
     if (!/\bEval\/Policy\b/i.test(content)) {
       pendencies.push(conformancePending(
         'eval_policy',
@@ -1954,12 +1945,12 @@ function verifyPlanConformance(content, { requireSprintFile = false } = {}) {
     ));
   }
 
-  if (!/BOUNDARY_PRD_PLAN\.md/.test(content)) {
+  if (!/BOUNDARY_SPRINT_PLAN\.md/.test(content)) {
     pendencies.push(conformancePending(
       'boundary',
-      'BOUNDARY_PRD_PLAN.md',
+      'BOUNDARY_SPRINT_PLAN.md',
       null,
-      'Plano sem referência à fronteira PRD/PLAN.',
+      'Plano sem referência à fronteira Sprint/PLAN.',
       'vincular_boundary',
     ));
   }
@@ -1971,8 +1962,8 @@ function verifyTemplateConformance(args = {}) {
   const runId = validateRunId(args.run_id);
   const artifactPath = requiredString(args, 'artifact_path');
   const artifactType = requiredString(args, 'artifact_type');
-  if (!['prd', 'plan'].includes(artifactType)) {
-    throw rpcError(-32602, 'artifact_type inválido: use prd ou plan');
+  if (!['plan'].includes(artifactType)) {
+    throw rpcError(-32602, 'artifact_type inválido: use plan');
   }
 
   const requiredStatus = optionalString(args, 'required_status');
@@ -2001,9 +1992,7 @@ function verifyTemplateConformance(args = {}) {
         next_action: 'corrigir_artefato',
       };
     } else {
-      const pendencies = artifactType === 'prd'
-        ? verifyPrdConformance(content, requiredStatus, { requireSprintFile })
-        : verifyPlanConformance(content, { requireSprintFile });
+      const pendencies = verifyPlanConformance(content, { requireSprintFile });
       result = {
         gate: 'template_conformance',
         status: pendencies.length === 0 ? 'passed' : 'blocked',
@@ -2021,6 +2010,7 @@ function verifyTemplateConformance(args = {}) {
       };
     }
   } catch (error) {
+    if (error?.code === -32602) throw error;
     result = {
       gate: 'template_conformance',
       status: 'blocked',
@@ -2075,6 +2065,7 @@ function verifySprintFile(args = {}) {
       ? {
         valid: false,
         pending_count: 1,
+        premissa_count: 0,
         pendencies: [conformancePending('documento', 'arquivo_vazio', null, 'Sprint file vazio não pode passar.', 'preencher_sprint_file')],
       }
       : validateSprintFileConformance(content, {
@@ -2082,6 +2073,8 @@ function verifySprintFile(args = {}) {
         sprintId,
         backlogPath,
         backlogMarkdown,
+        // D5 (v0.16.0): root do consumidor para resolver `derivado:<path>`.
+        root: consumerRoot(args),
       });
     const pendencies = [...validation.pendencies, ...extraPendencies];
     result = {
@@ -2092,6 +2085,8 @@ function verifySprintFile(args = {}) {
       backlog_path: backlogPath ?? null,
       timestamp,
       pending_count: pendencies.length,
+      // D6 (v0.16.0): contagem de `premissa` sempre presente, inclusive zero.
+      premissa_count: validation.premissa_count ?? 0,
       banner: pendencies.length === 0
         ? renderBanner('plano', {})
         : renderBanner('preflight_fail', { motivo: `sprint file: ${pendencies.length} pendências` }),
@@ -2241,9 +2236,14 @@ function inspectBacklogIndex(args = {}) {
       sprint_file: sprintPath || null,
       sprint_file_status: pendingPathToken(row.sprint_file) ? 'missing' : 'unread',
       dor_status: null,
+      // prd: coluna legado posicional do backlog (compat); aceite mora no §7.
       prd: cleanBacklogPathToken(row.prd) || null,
       plan: cleanBacklogPathToken(row.plan) || null,
       state_file: cleanBacklogPathToken(row.state_file) || null,
+      // D2/D20 (Plano 5): flag de revalidação (coluna 15) — projeção observável.
+      revalidation_required: row.revalidation_required === true,
+      contrato_status: null,
+      contrato_sealed: false,
     };
     if (!pendingPathToken(row.sprint_file)) {
       try {
@@ -2253,11 +2253,19 @@ function inspectBacklogIndex(args = {}) {
           sprintId: row.id,
           backlogPath,
           backlogMarkdown,
+          // D5 (v0.16.0): root do consumidor — sem root, a resolução de
+          // `derivado:<path>` ficaria inerte aqui e o gate de backlog daria
+          // veredicto diferente do gate de sprint para o mesmo artefato.
+          root: consumerRoot(args),
         });
         const sprintStatus = sprintMetadataValue(sprintMarkdown, 'Status');
         info.sprint_file_status = validation.valid ? 'valid' : 'invalid';
         info.pending_count = validation.pending_count;
+        info.premissa_count = validation.premissa_count ?? 0;
         info.dor_status = sprintDorStatus(sprintMarkdown);
+        info.contrato_status = sprintMetadataValue(sprintMarkdown, 'Contrato status');
+        const seal = validateAcceptanceSeal(sprintMarkdown);
+        info.contrato_sealed = seal.sealed && !seal.tampered;
         if (sprintStatus && sprintStatus !== row.state) {
           pendencies.push(conformancePending('status_drift', row.id, null, `Status divergente em ${row.id}: backlog=${row.state}, sprint_file=${sprintStatus}.`, 'sincronizar_status_backlog_sprint'));
         }
@@ -2271,7 +2279,8 @@ function inspectBacklogIndex(args = {}) {
     }
     sprints.push(info);
   }
-  return { backlog_path: backlogPath, rows, sprints, pendencies };
+  const premissaCount = sprints.reduce((sum, info) => sum + (info.premissa_count ?? 0), 0);
+  return { backlog_path: backlogPath, rows, sprints, pendencies, premissa_count: premissaCount };
 }
 
 function verifyBacklogIndex(args = {}) {
@@ -2281,6 +2290,11 @@ function verifyBacklogIndex(args = {}) {
   let result;
   try {
     const index = inspectBacklogIndex(args);
+    // D6 (v0.16.0): `premissa_count` agrega as decisões do backlog (tabela
+    // `### Decisões bloqueantes`) e as contagens por sprint do índice.
+    const backlogMarkdown = fs.readFileSync(resolveConsumerPath(backlogPath, args), 'utf8');
+    const backlogDecisionPremissas = parseDecisionRows(backlogMarkdown)
+      .filter((row) => row.origin === 'premissa').length;
     result = {
       gate: 'backlog_index_conformance',
       status: index.pendencies.length === 0 ? 'passed' : 'blocked',
@@ -2288,6 +2302,7 @@ function verifyBacklogIndex(args = {}) {
       timestamp,
       sprint_count: index.sprints.length,
       pending_count: index.pendencies.length,
+      premissa_count: backlogDecisionPremissas + (index.premissa_count ?? 0),
       sprints: index.sprints,
       pendencies: index.pendencies,
       banner: index.pendencies.length === 0
@@ -2319,9 +2334,38 @@ function depsSatisfied(row, byId) {
   const unmet = [];
   for (const dep of sprintDeps(row.dependencies)) {
     const depRow = byId.get(dep);
-    if (!depRow || depRow.state !== 'done') unmet.push({ id: dep, state: depRow?.state ?? 'missing' });
+    // D5/D23: manual_validation_pending satisfaz DEP (só done não bloqueia a
+    // cadeia — LEG3 morto). Flag de revalidação (Plano 5) é ignorada aqui.
+    if (!depRow || (depRow.state !== 'done' && depRow.state !== 'manual_validation_pending')) {
+      unmet.push({ id: dep, state: depRow?.state ?? 'missing' });
+    }
   }
   return unmet;
+}
+
+// D2/D20 (Plano 5 / CN4): fecho transitivo de `Depende de` a partir das origens
+// com `M` falho. Dependentes diretos e indiretos ganham a flag
+// `revalidation_required` (coluna 15 do backlog); a origem fica `blocked` sem
+// flag (CN4: só dependentes são marcados); sprints independentes não são
+// tocadas (AC-5.2.1). Retorna o Set de ids flagados — a escrita da célula fica
+// com o chamador via `replaceBacklogSprintRow` (escrita absoluta: montar a
+// lista final completa com 16 células, preservando os índices 0–14).
+function propagateRevalidation(rows, originIds) {
+  const flagged = new Set();
+  const queue = [...originIds];
+  const visited = new Set();
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (visited.has(current)) continue;
+    visited.add(current);
+    for (const row of rows) {
+      if (row.id !== current && !flagged.has(row.id) && sprintDeps(row.dependencies).includes(current)) {
+        flagged.add(row.id);
+        queue.push(row.id);
+      }
+    }
+  }
+  return flagged;
 }
 
 function sprintSortKey(info) {
@@ -2344,8 +2388,28 @@ function compareSprintCandidates(a, b) {
   return 0;
 }
 
+/**
+ * Próxima ação canônica pós-seleção (pipeline 0.14+), mode-aware:
+ * - §7 draft / sem selo → sprint_interview (qualquer modo)
+ * - interview-only → sprint_interview (mesmo com §7 selado)
+ * - direct + §7 selado → plan_execute (direct_execute; sem plan_handoff)
+ * - full/execute + PLAN real → plan_execute
+ * - full/execute + §7 selado sem PLAN → plan_handoff
+ * Verbos alinhados a WORKFLOW_CONFIG / expectedNextPhase. Nunca `gerar_prd`.
+ */
+function nextActionForSelectedSprint(info, mode = 'full') {
+  const sealed = /^aprovado$/i.test(info?.contrato_status ?? '') && info?.contrato_sealed === true;
+  const hasPlan = Boolean(info?.plan && !pendingPathToken(info.plan));
+
+  if (!sealed || mode === 'interview-only') return 'sprint_interview';
+  if (mode === 'direct') return 'plan_execute';
+  if (hasPlan) return 'plan_execute';
+  return 'plan_handoff';
+}
+
 function derivedSprintGateStatus(status, validatorVerdict) {
   if (status === 'done') return `validator:${validatorVerdict}`;
+  if (status === 'manual_validation_pending') return `validator:${validatorVerdict};manual_pending`;
   if (status === 'review') return 'validator:pending';
   if (status === 'doing') return 'exec:running';
   if (status === 'blocked') return validatorVerdict === 'fail' ? 'validator:fail' : 'blocked';
@@ -2401,19 +2465,85 @@ function appendToMarkdownSectionTable(markdown, sectionRe, rowCells) {
   return lines.join('\n');
 }
 
+function deriveHandoffSlugFromSprintPath(sprintFilePath) {
+  const basename = path.basename(sprintFilePath, '.md');
+  const withoutPrefix = basename.startsWith('SPRINT_') ? basename.slice('SPRINT_'.length) : basename;
+  return withoutPrefix.toLowerCase();
+}
+
+function formatHandoffFileDate(timestamp) {
+  return timestamp.slice(0, 10).replace(/-/g, '');
+}
+
+function emitMemoryHandoff({
+  projectRoot,
+  sprintId,
+  sprintFilePath,
+  validatorVerdict,
+  statePath = null,
+  planPath = null,
+  timestamp = nowIso(),
+}) {
+  const templateRel = '.talos/memory/HANDOFF_TEMPLATE.md';
+  const templateAbs = path.resolve(projectRoot, templateRel);
+  if (!fs.existsSync(templateAbs)) {
+    return { ok: false, reason: 'template_missing' };
+  }
+
+  const slug = deriveHandoffSlugFromSprintPath(sprintFilePath);
+  const dateStr = timestamp.slice(0, 10);
+  const handoffFileName = `HANDOFF_${slug}_${formatHandoffFileDate(timestamp)}.md`;
+  const handoffRel = `.talos/memory/${handoffFileName}`;
+  const handoffAbs = path.resolve(projectRoot, handoffRel);
+
+  let content = fs.readFileSync(templateAbs, 'utf8');
+  content = replaceMarkdownTableValue(content, 'sprint_id', sprintId);
+  content = replaceMarkdownTableValue(content, 'data', dateStr);
+  content = replaceMarkdownTableValue(content, 'status_pos_validator', validatorVerdict);
+  content = replaceMarkdownTableValue(content, 'origem', 'talos_update_sprint_status');
+
+  const contextBlock = [
+    '## Contexto da entrega',
+    '',
+    '| Campo | Valor |',
+    '|---|---|',
+    `| state_path | \`${statePath ?? '—'}\` |`,
+    `| plan_path | \`${planPath ?? '—'}\` |`,
+    '',
+  ].join('\n');
+  content = content.replace(
+    /(\n---\n\n)(## Regras do filtro)/,
+    `\n---\n\n${contextBlock}\n---\n\n$2`,
+  );
+
+  const candidatesText = '0 candidatos — nenhum fato durável promovido automaticamente. Sucesso.';
+  content = content.replace(
+    /## Candidatos \(0–3\)[\s\S]*?(?=\n## Exemplos)/,
+    `## Candidatos (0–3)\n\n${candidatesText}\n\n`,
+  );
+
+  fs.mkdirSync(path.dirname(handoffAbs), { recursive: true });
+  fs.writeFileSync(handoffAbs, content);
+  return { ok: true, handoff_path: handoffRel };
+}
+
 function updatedSprintMarkdown(markdown, {
   status,
-  prdPath = null,
   planPath = null,
   statePath = null,
   evidence = null,
   validatorVerdict = 'not_run',
   timestamp,
+  revalidation = null,
 }) {
   let next = replaceMarkdownTableValue(markdown, 'Status', status);
-  if (prdPath) next = replaceMarkdownTableValue(next, 'PRD', prdPath);
+  // prd_path não grava mais metadado no sprint (template 0.14 removeu campo PRD).
   if (planPath) next = replaceMarkdownTableValue(next, 'PLAN', planPath);
   if (statePath) next = replaceMarkdownTableValue(next, 'State / evidência', statePath);
+  // D2 (Plano 5): metadado `Revalidação` sync no sprint file quando o MCP
+  // escreve a flag (limpa na revalidação concluída). Sprint file legado sem o
+  // campo: replace é no-op (sem drift).
+  if (revalidation !== null) next = replaceMarkdownTableValue(next, 'Revalidação', revalidation ? 'true' : 'false');
   const evidenceText = evidence || statePath || validatorVerdict;
   next = appendToMarkdownSectionTable(next, /^##\s+14\.\s+Execução e validação\s*$/i, [
     'Sprint status update',
@@ -2426,6 +2556,24 @@ function updatedSprintMarkdown(markdown, {
     `Status -> ${status}; validator=${validatorVerdict}; evidence=${evidenceText}`,
   ]);
   return next;
+}
+
+// D5/D23 + A6 (fechamento Plano F): lê acceptance_results do state v3 apontado
+// por state_path. Retorno { results: array|null } — null quando ausente/ilegível
+// ou quando o state não é v3 (LEG2: side-path do status não pode aceitar v1/v2).
+// `done` e `manual_validation_pending` exigem o campo presente (SKILL
+// SPRINT_STATUS_SYNC / objetivo da trilha: sem prova de AC não há done+handoff).
+function readStateAcceptanceResults(statePath, args) {
+  if (!statePath) return { results: null };
+  let state;
+  try {
+    state = JSON.parse(fs.readFileSync(resolveConsumerPath(statePath, args), 'utf8'));
+  } catch {
+    return { results: null };
+  }
+  const version = Number(state?.state_schema_version ?? 1);
+  if (version !== 3) return { results: null };
+  return { results: Array.isArray(state?.acceptance_results) ? state.acceptance_results : null };
 }
 
 function updateSprintStatus(args = {}) {
@@ -2452,6 +2600,14 @@ function updateSprintStatus(args = {}) {
   if (status === 'done' && !args.state_path) {
     pendencies.push(conformancePending('state_path', 'done', null, 'Status done exige state_path como evidência.', 'informar_state_path'));
   }
+  // D5/D23: manual_validation_pending é status terminal de validação (não done).
+  // Exige veredito terminal do validator — o M aberto não dispensa a prova automática.
+  if (status === 'manual_validation_pending' && !TERMINAL_VALIDATOR_VERDICTS.has(validatorVerdict)) {
+    pendencies.push(conformancePending('validator_verdict', 'manual_validation_pending', null, 'Status manual_validation_pending exige validator_verdict pass ou pass_with_observations.', 'rodar_validator_frio'));
+  }
+  if (status === 'manual_validation_pending' && !args.state_path) {
+    pendencies.push(conformancePending('state_path', 'manual_validation_pending', null, 'Status manual_validation_pending exige state_path como evidência.', 'informar_state_path'));
+  }
   try {
     const backlogAbs = resolveConsumerPath(backlogPath, args);
     const backlogBefore = fs.readFileSync(backlogAbs, 'utf8');
@@ -2466,6 +2622,88 @@ function updateSprintStatus(args = {}) {
         pendencies.push(conformancePending('sprint_file', sprintId, null, `Linha ${sprintId} não aponta Sprint file real.`, 'preencher_sprint_file_no_backlog'));
       }
     }
+    // D5/D23 + A6 (fechamento Plano F): gate de aceite por estado.
+    // acceptance_results moram no state v3 (eco do oráculo classifyAcceptanceResults —
+    // VC5; o validator emite no packet e o MCP persiste o eco no complete).
+    // `done` e `manual_validation_pending` exigem o campo presente — SKILL
+    // SPRINT_STATUS_SYNC e o objetivo da trilha: sem prova de AC não há done+handoff.
+    // (Plano 3 tinha "quando presentes" para done; o fechamento removeu o escape
+    // porque a superfície declarativa e o runtime divergiam — A6 P1.)
+    if (status === 'done' || status === 'manual_validation_pending') {
+      const acceptance = readStateAcceptanceResults(args.state_path, args);
+      // D2/D10/D20 (Plano 5): `revalidation_required` é flag, não status (INV4 —
+      // AC-5.1.1). done fica bloqueado enquanto a flag estiver ligada e os AC-*
+      // afetados não forem revalidados (state com acceptance_results todos
+      // proved = revalidação concluída com provas verdes — AC-5.1.2). Sem state
+      // de aceite legível, a flag bloqueia (fail-closed).
+      if (status === 'done' && row?.revalidation_required) {
+        const revalidated = Array.isArray(acceptance.results) && acceptance.results.length > 0
+          && acceptance.results.every((item) => item?.status === 'proved');
+        if (!revalidated) {
+          pendencies.push(conformancePending(
+            'revalidation_required',
+            sprintId,
+            null,
+            'Sprint com Revalidação pendente (dependente de sprint com M falho): done exige revalidação dos AC-* afetados com provas verdes.',
+            'revalidar_aceite_afetado',
+          ));
+        }
+      }
+      if (status === 'done') {
+        if (!Array.isArray(acceptance.results)) {
+          pendencies.push(conformancePending(
+            'acceptance_results',
+            sprintId,
+            null,
+            'Status done exige acceptance_results no state (todos AC proved; sem M/unproved/violated).',
+            'emitir_acceptance_results_no_state',
+          ));
+        } else {
+          const blockers = acceptance.results.filter((item) => item?.status !== 'proved');
+          if (blockers.length > 0) {
+            pendencies.push(conformancePending(
+              'acceptance_results',
+              sprintId,
+              null,
+              `Status done exige todos os AC proved; bloqueado por: ${blockers.map((b) => `${b.id}:${b.status}`).join(', ')} (M aberto ou prova pendente).`,
+              'resolver_aceite_ou_avancar_manual_validation_pending',
+            ));
+          }
+        }
+      }
+      if (status === 'manual_validation_pending') {
+        if (!Array.isArray(acceptance.results)) {
+          pendencies.push(conformancePending(
+            'acceptance_results',
+            sprintId,
+            null,
+            'Status manual_validation_pending exige acceptance_results no state (≥1 AC manual_pending, sem unproved/violated).',
+            'emitir_acceptance_results_no_state',
+          ));
+        } else {
+          const blocked = acceptance.results.filter((item) => item?.status === 'unproved' || item?.status === 'violated');
+          if (blocked.length > 0) {
+            pendencies.push(conformancePending(
+              'acceptance_results',
+              sprintId,
+              null,
+              `manual_validation_pending exige sem unproved/violated; bloqueado por: ${blocked.map((b) => `${b.id}:${b.status}`).join(', ')}.`,
+              'resolver_provas_automaticas',
+            ));
+          }
+          const manualPending = acceptance.results.filter((item) => item?.status === 'manual_pending');
+          if (manualPending.length === 0) {
+            pendencies.push(conformancePending(
+              'acceptance_results',
+              sprintId,
+              null,
+              'manual_validation_pending exige pelo menos 1 AC manual_pending (M aberto).',
+              'usar_done_quando_sem_validacao_manual',
+            ));
+          }
+        }
+      }
+    }
     if (pendencies.length > 0) {
       throw new Error('update_sprint_status_precondition_failed');
     }
@@ -2473,13 +2711,22 @@ function updateSprintStatus(args = {}) {
     const sprintPath = cleanBacklogPathToken(row.sprint_file);
     const sprintAbs = resolveConsumerPath(sprintPath, args);
     const sprintBefore = fs.readFileSync(sprintAbs, 'utf8');
+    // D10 (Plano 5): done só avança com a flag ligada quando a revalidação foi
+    // observada (todos os AC proved — gate acima); nesse caso a flag é limpa.
+    const clearRevalidation = status === 'done' && row.revalidation_required === true;
     const nextBacklog = replaceBacklogSprintRow(backlogBefore, sprintId, (cells) => {
       const nextCells = [...cells];
+      // Coluna PRD (índice 8): legado posicional — só atualiza se o caller passar prd_path.
       nextCells[8] = args.prd_path ?? nextCells[8];
       nextCells[10] = status;
       nextCells[11] = args.gate_status ?? derivedSprintGateStatus(status, validatorVerdict);
       nextCells[13] = args.plan_path ?? nextCells[13];
       nextCells[14] = args.state_path ?? nextCells[14];
+      // D6 (Plano 5): `replaceBacklogSprintRow` é escrita absoluta — montar a
+      // lista final completa com 16 células; Revalidação vive na coluna 15
+      // (fim do índice), preservada ou limpa na revalidação concluída.
+      while (nextCells.length < 16) nextCells.push('');
+      if (clearRevalidation) nextCells[15] = '';
       return nextCells;
     });
     if (!nextBacklog.updated) {
@@ -2488,12 +2735,13 @@ function updateSprintStatus(args = {}) {
     }
     const nextSprint = updatedSprintMarkdown(sprintBefore, {
       status,
-      prdPath: args.prd_path,
       planPath: args.plan_path,
       statePath: args.state_path,
       evidence: args.evidence,
       validatorVerdict,
       timestamp,
+      // D2: metadado sync no sprint file (flag limpa na revalidação concluída).
+      revalidation: clearRevalidation ? false : null,
     });
     const sprintValidation = validateSprintFileConformance(nextSprint, {
       sprintPath,
@@ -2510,9 +2758,26 @@ function updateSprintStatus(args = {}) {
       throw new Error('update_sprint_status_postcondition_failed');
     }
 
+    const needsHandoff = status === 'done' && TERMINAL_VALIDATOR_VERDICTS.has(validatorVerdict);
+    // Fail-fast: template ausente bloqueia ANTES de qualquer write (sem drift).
+    if (needsHandoff) {
+      const templateAbs = path.resolve(consumerRoot(args), '.talos/memory/HANDOFF_TEMPLATE.md');
+      if (!fs.existsSync(templateAbs)) {
+        pendencies.push(conformancePending(
+          'handoff_emit',
+          sprintId,
+          null,
+          'HANDOFF_TEMPLATE.md ausente — emit bloqueado.',
+          'restaurar_handoff_template',
+        ));
+        throw new Error('update_sprint_status_handoff_emit_failed');
+      }
+    }
+
     // Escrita com rollback (P2): backlog primeiro; se o sprint file falhar (erro de
     // FS real — EACCES/ENOSPC), restaura o backlog ao estado original para não deixar
     // drift backlog↔sprint. Ou ambos escritos, ou nenhum efeito visível.
+    // Handoff após writes: se emit falhar, restaura backlog+sprint (atomicidade P2).
     fs.writeFileSync(backlogAbs, nextBacklog.markdown);
     try {
       fs.writeFileSync(sprintAbs, nextSprint);
@@ -2520,6 +2785,40 @@ function updateSprintStatus(args = {}) {
       fs.writeFileSync(backlogAbs, backlogBefore);
       throw writeError;
     }
+
+    let handoffPath = null;
+    if (needsHandoff) {
+      let handoff;
+      try {
+        handoff = emitMemoryHandoff({
+          projectRoot: consumerRoot(args),
+          sprintId,
+          sprintFilePath: sprintPath,
+          validatorVerdict,
+          statePath: args.state_path ?? null,
+          planPath: args.plan_path ?? null,
+          timestamp,
+        });
+      } catch (emitError) {
+        fs.writeFileSync(backlogAbs, backlogBefore);
+        fs.writeFileSync(sprintAbs, sprintBefore);
+        throw emitError;
+      }
+      if (!handoff.ok) {
+        fs.writeFileSync(backlogAbs, backlogBefore);
+        fs.writeFileSync(sprintAbs, sprintBefore);
+        pendencies.push(conformancePending(
+          'handoff_emit',
+          sprintId,
+          null,
+          'HANDOFF_TEMPLATE.md ausente — emit bloqueado.',
+          'restaurar_handoff_template',
+        ));
+        throw new Error('update_sprint_status_handoff_emit_failed');
+      }
+      handoffPath = handoff.handoff_path;
+    }
+
     result = {
       gate: 'update_sprint_status',
       status: 'passed',
@@ -2533,7 +2832,12 @@ function updateSprintStatus(args = {}) {
       pending_count: 0,
       pendencies: [],
       banner: renderBanner('preflight_ok', { caps: `sprint_status=${sprintId}:${status}` }),
-      next_action: status === 'done' ? 'selecionar_proxima_sprint' : 'continuar_pipeline',
+      next_action: status === 'done'
+        ? (handoffPath ? 'promover_handoff' : 'selecionar_proxima_sprint')
+        : status === 'manual_validation_pending'
+          ? 'aguardar_validacao_manual'
+          : 'continuar_pipeline',
+      ...(handoffPath ? { handoff_path: handoffPath } : {}),
     };
   } catch (error) {
     result = {
@@ -2561,6 +2865,7 @@ function updateSprintStatus(args = {}) {
 function selectNextSprint(args = {}) {
   const runId = validateRunId(args.run_id);
   const backlogPath = requiredString(args, 'backlog_path');
+  const mode = typeof args.mode === 'string' && args.mode.trim() ? args.mode.trim() : 'full';
   const timestamp = nowIso();
   let result;
   try {
@@ -2591,21 +2896,26 @@ function selectNextSprint(args = {}) {
       selected: selected ? {
         sprint_id: selected.id,
         sprint_file_path: selected.sprint_file,
+        // Legado posicional do backlog; null/`—` é o esperado pós-0.14. Aceite = §7.
         prd_path: selected.prd,
         plan_path: selected.plan,
         state_path: selected.state_file,
-        reason: 'ready + deps done + sprint file válido + DoR verde + maior prioridade determinística',
+        contrato_status: selected.contrato_status,
+        contrato_sealed: selected.contrato_sealed === true,
+        reason: 'ready + deps done/manual_validation_pending + sprint file válido + DoR verde + maior prioridade determinística',
       } : null,
       candidates: candidates.map((item) => item.id),
       rejected,
       pending_count: blocked ? (structuralPendencies.length || 1) : 0,
       pendencies: structuralPendencies.length > 0 ? structuralPendencies : (selected ? [] : [
-        conformancePending('seleção', 'next_sprint', null, 'Nenhuma sprint executável: exige state=ready, deps done, sprint file válido e DoR verde.', 'atualizar_sprint_file_ou_dependencias'),
+        conformancePending('seleção', 'next_sprint', null, 'Nenhuma sprint executável: exige state=ready, deps done ou manual_validation_pending, sprint file válido e DoR verde.', 'atualizar_sprint_file_ou_dependencias'),
       ]),
       banner: blocked
         ? renderBanner('preflight_fail', { motivo: selected ? `backlog index: ${structuralPendencies.length} pendências` : 'nenhuma sprint executável' })
         : renderBanner('preflight_ok', { caps: `next=${selected.id}` }),
-      next_action: blocked ? (structuralPendencies[0]?.next_action ?? 'atualizar_sprint_file_ou_dependencias') : 'gerar_prd',
+      next_action: blocked
+        ? (structuralPendencies[0]?.next_action ?? 'atualizar_sprint_file_ou_dependencias')
+        : nextActionForSelectedSprint(selected, mode),
     };
   } catch (error) {
     result = {
@@ -2628,13 +2938,528 @@ function selectNextSprint(args = {}) {
   return result;
 }
 
-// Detecta tipo de input para roteamento (PRD D4/D5). Hierarquia de confiança:
+// ===== Plano 4 — relatório de validação manual e sync (CN3 / D11-D15, D24) =====
+
+// D11: slug do backlog = nome do arquivo sem extensão, normalizado para o path
+// `.talos/manual-validation/<slug>.md`. Backlogs nunca compartilham arquivo.
+function manualValidationSlug(backlogPath) {
+  return path.basename(backlogPath, '.md').toLowerCase().replace(/[^a-z0-9_-]+/g, '-');
+}
+
+function manualValidationReportRel(backlogPath, reportPath = null) {
+  if (reportPath) return reportPath;
+  return path.join(MANUAL_VALIDATION_DIR, `${manualValidationSlug(backlogPath)}.md`);
+}
+
+// Parser determinístico do relatório: a tabela `## Pendências` (8 colunas) é o
+// contrato; o restante do markdown é livre. Sem dependência externa (padrão do
+// parser YAML próprio do Plano 1).
+function parseManualValidationReport(markdown) {
+  const lines = markdown.split(/\r?\n/);
+  const heading = lines.findIndex((line) => /^##\s+Pendências\s*$/i.test(line.trim()));
+  if (heading < 0) return { rows: [], error: 'Seção ## Pendências ausente no relatório.' };
+  const rows = [];
+  for (let i = heading + 1; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (/^##\s+/.test(line)) break;
+    if (!/^\|.*\|\s*$/.test(line)) continue;
+    const cells = line.split('|').slice(1, -1).map((cell) => cell.trim());
+    if (cells.length === 0 || cells.every((cell) => /^-+$/.test(cell))) continue;
+    if (cells[0] === 'ID') continue;
+    rows.push(cells);
+  }
+  return { rows, error: null };
+}
+
+// Regrava o relatório no formato canônico do template, com apenas as linhas
+// restantes (pendências abertas — D12) e `Atualizado em` novo.
+function renderManualValidationReport(slug, backlogPath, timestamp, rows) {
+  const body = rows.map((row) => `| ${row.join(' | ')} |`).join('\n');
+  return [
+    `# Validações manuais abertas — ${slug}`,
+    '',
+    '| Campo | Valor |',
+    '|---|---|',
+    `| Backlog | \`${backlogPath}\` |`,
+    `| Atualizado em | ${timestamp} |`,
+    '',
+    '## Pendências',
+    '',
+    '| ID | Sprint / AC | Severidade | Status | Cenário | Ambiente | Evidência esperada | Resultado / justificativa |',
+    '|---|---|---|---|---|---|---|---|',
+    body,
+    '',
+  ].join('\n');
+}
+
+// Validação estrita de uma linha do relatório. Devolve o MV parseado ou uma
+// pendência bloqueante (AC-4.1.1 waiver sem justificativa; formato/id/status).
+function parseManualValidationRow(row) {
+  if (row.length < 8) {
+    return { mv: null, pendency: conformancePending('relatorio_manual', row[0] ?? '<sem id>', null, `Linha do relatório com ${row.length} colunas (esperado 8).`, 'fix_manual_validation_report') };
+  }
+  const mvId = row[0];
+  const match = MANUAL_VALIDATION_MV_ID_RE.exec(mvId);
+  if (!match) {
+    return { mv: null, pendency: conformancePending('relatorio_manual', mvId, null, `ID MV inválido: ${mvId} (esperado MV-<Sprint>-<AC>).`, 'fix_manual_validation_report') };
+  }
+  const [, sprintId, acId] = match;
+  const status = row[3];
+  if (!MANUAL_VALIDATION_REPORT_STATUSES.has(status)) {
+    return { mv: null, pendency: conformancePending('relatorio_manual', mvId, null, `Status inválido: ${status} (válidos: pending, in_progress, validated, waived, failed).`, 'fix_manual_validation_report') };
+  }
+  if (row[1] !== `${sprintId} / ${acId}`) {
+    return { mv: null, pendency: conformancePending('relatorio_manual', mvId, null, `Coluna Sprint/AC (${row[1]}) não corresponde ao id ${mvId}.`, 'fix_manual_validation_report') };
+  }
+  const result = row[7];
+  const resultEmpty = !result || result === '—' || result === '-';
+  // D14: waiver exige justificativa; validated exige evidência humana (AC-4.2.1).
+  if ((status === 'waived' || status === 'validated') && resultEmpty) {
+    return { mv: null, pendency: conformancePending('relatorio_manual', mvId, null, status === 'waived'
+      ? `Waiver sem justificativa em ${mvId}: preencha Resultado/justificativa.`
+      : `Validated sem evidência em ${mvId}: preencha Resultado/justificativa.`, 'fix_manual_validation_report') };
+  }
+  return {
+    mv: {
+      mv_id: mvId,
+      sprint_id: sprintId,
+      ac_id: acId,
+      status,
+      severity: row[2],
+      scenario: row[4],
+      ambiente: row[5],
+      expected_evidence: row[6],
+      result,
+      raw: row,
+    },
+    pendency: null,
+  };
+}
+
+// Valida a sprint referenciada pelo relatório: linha no backlog, sprint file com
+// `AC-*` declarando `evidence.manual` (item fantasma = AC-4.1.2) e state v3 com
+// `acceptance_results` (alvo da sincronização D24). Devolve o plano da sprint ou
+// null (pendências já registradas).
+function planManualValidationSprint(sprintId, mvList, byId, args, pendencies) {
+  const backlogRow = byId.get(sprintId);
+  if (!backlogRow) {
+    pendencies.push(conformancePending('backlog_index', sprintId, null, `Backlog não contém sprint ${sprintId} referenciada no relatório.`, 'fix_manual_validation_report'));
+    return null;
+  }
+  if (pendingPathToken(backlogRow.sprint_file)) {
+    pendencies.push(conformancePending('sprint_file', sprintId, null, `Linha ${sprintId} não aponta Sprint file real.`, 'preencher_sprint_file_no_backlog'));
+    return null;
+  }
+  let sprintMarkdown;
+  try {
+    sprintMarkdown = fs.readFileSync(resolveConsumerPath(cleanBacklogPathToken(backlogRow.sprint_file), args), 'utf8');
+  } catch {
+    pendencies.push(conformancePending('sprint_file', sprintId, null, `Sprint file ilegível para ${sprintId}.`, 'corrigir_sprint_file_path'));
+    return null;
+  }
+  const contract = parseAcceptanceContract(sprintMarkdown);
+  const manualAcs = new Map();
+  if (Array.isArray(contract)) {
+    for (const item of contract) {
+      if (item?.id && item?.evidence?.manual && typeof item.evidence.manual === 'object') {
+        manualAcs.set(item.id, item);
+      }
+    }
+  }
+  for (const mv of mvList) {
+    if (!manualAcs.has(mv.ac_id)) {
+      pendencies.push(conformancePending('relatorio_manual', mv.mv_id, null, `Item fantasma: ${mv.mv_id} sem AC.manual correspondente no §7.3 de ${sprintId}.`, 'fix_manual_validation_report'));
+    }
+  }
+  const stateRel = backlogRow.state_file ? cleanBacklogPathToken(backlogRow.state_file) : '';
+  if (!stateRel) {
+    pendencies.push(conformancePending('state_file', sprintId, null, `Linha ${sprintId} sem State file para sincronizar M.`, 'vincular_state_no_backlog'));
+    return null;
+  }
+  let state;
+  try {
+    state = JSON.parse(fs.readFileSync(resolveConsumerPath(stateRel, args), 'utf8'));
+  } catch {
+    pendencies.push(conformancePending('state_file', sprintId, null, `State ilegível para ${sprintId}: ${stateRel}.`, 'corrigir_state_path'));
+    return null;
+  }
+  if (!Array.isArray(state.acceptance_results)) {
+    pendencies.push(conformancePending('acceptance_results', sprintId, null, `State de ${sprintId} sem acceptance_results — sync manual não pode registrar M.`, 'revalidar_estado_com_acceptance_results'));
+    return null;
+  }
+  const resultsById = new Map(state.acceptance_results.map((item) => [item?.id, item]));
+  for (const mv of mvList) {
+    if (!resultsById.has(mv.ac_id)) {
+      pendencies.push(conformancePending('acceptance_results', `${sprintId}:${mv.ac_id}`, null, `AC ${mv.ac_id} ausente do acceptance_results do state de ${sprintId}.`, 'revalidar_estado_com_acceptance_results'));
+    }
+  }
+  // Veredito terminal do validator que levou a sprint ao MVP (célula Gate do
+  // backlog) — reutilizado na promoção a `done` (exigência do updateSprintStatus).
+  const gateMatch = /^validator:(pass|pass_with_observations)/.exec(backlogRow.gate ?? '');
+  return {
+    sprintId,
+    mvList,
+    backlogRow,
+    stateRel,
+    state,
+    resultsById,
+    gateVerdict: gateMatch ? gateMatch[1] : null,
+  };
+}
+
+// D24: ledger append-only da sync manual no run state (run.json). Re-run que
+// sobrescreve o state de slice não apaga este histórico — o upsert faz merge
+// top-level e o array só cresce.
+function patchManualValidationLedger(runId, events, args) {
+  let previous = null;
+  try {
+    previous = readState(runId, args);
+  } catch (error) {
+    if (error.code !== -32004) throw error;
+  }
+  return upsertState({
+    run_id: runId,
+    project_root: args.project_root,
+    phase: previous?.phase ?? 'manual_validation_sync',
+    status: previous?.status ?? 'manual_validation_synced',
+    summary: `manual_validation_sync: ${events.length} evento(s)`,
+    data: {
+      ...(previous?.data ?? {}),
+      manual_validation: [...(previous?.data?.manual_validation ?? []), ...events],
+    },
+  });
+}
+
+// D15: sync humano do relatório `.talos/manual-validation/<slug>.md` com lock por
+// backlog. Valida IDs MV-*, status e justificativa (AC-4.1.1/4.1.2); sincroniza
+// state (acceptance_results) / sprint / ledger (D24); promove `done` quando todos
+// os M validated/waived (CN3/AC-4.2.1) e `blocked` quando algum M falhou (o cone
+// de revalidação é do Plano 5). Relatório inválido/dirty bloqueia sem drift.
+function syncManualValidation(args = {}) {
+  const runId = validateRunId(args.run_id);
+  const backlogPath = requiredString(args, 'backlog_path');
+  const timestamp = nowIso();
+  const pendencies = [];
+  let result;
+  try {
+    const slug = manualValidationSlug(backlogPath);
+    const reportRel = manualValidationReportRel(backlogPath, args.report_path);
+    const reportAbs = resolveConsumerPath(reportRel, args);
+    const lockRel = path.join(MANUAL_VALIDATION_DIR, `${slug}.lock`);
+    const lockAbs = resolveConsumerPath(lockRel, args);
+
+    let lockHeld = false;
+    try {
+      fs.mkdirSync(path.dirname(lockAbs), { recursive: true });
+      fs.writeFileSync(lockAbs, JSON.stringify(
+        { run_id: runId, backlog_path: backlogPath, report_path: reportRel, acquired_at: timestamp },
+        null,
+        2,
+      ), { flag: 'wx', mode: 0o600 });
+      lockHeld = true;
+    } catch {
+      pendencies.push(conformancePending('lock', slug, null, `Sync já em andamento ou lock residual: ${lockRel}.`, 'aguardar_sync_anterior_ou_remover_lock_manual'));
+    }
+    if (pendencies.length > 0) throw new Error('manual_validation_sync_lock_held');
+
+    try {
+      // 1) Relatório: parse + validação estrita antes de qualquer write (sem drift).
+      let reportMarkdown;
+      try {
+        reportMarkdown = fs.readFileSync(reportAbs, 'utf8');
+      } catch {
+        pendencies.push(conformancePending('relatorio_manual', reportRel, null, `Relatório ausente ou ilegível: ${reportRel}.`, 'criar_relatorio_manual'));
+        throw new Error('manual_validation_sync_report_missing');
+      }
+      const parsed = parseManualValidationReport(reportMarkdown);
+      if (parsed.error) {
+        pendencies.push(conformancePending('relatorio_manual', reportRel, null, parsed.error, 'fix_manual_validation_report'));
+        throw new Error('manual_validation_sync_invalid_report');
+      }
+      const rawRows = parsed.rows;
+      if (rawRows.length === 0) {
+        pendencies.push(conformancePending('relatorio_manual', reportRel, null, 'Relatório sem linhas MV-* em ## Pendências.', 'fix_manual_validation_report'));
+        throw new Error('manual_validation_sync_invalid_report');
+      }
+      const mvRows = [];
+      const seenMv = new Set();
+      for (const row of rawRows) {
+        const parsedMv = parseManualValidationRow(row);
+        if (parsedMv.pendency) {
+          pendencies.push(parsedMv.pendency);
+        } else if (seenMv.has(parsedMv.mv.mv_id)) {
+          pendencies.push(conformancePending('relatorio_manual', parsedMv.mv.mv_id, null, `MV duplicado: ${parsedMv.mv.mv_id}.`, 'fix_manual_validation_report'));
+        } else {
+          seenMv.add(parsedMv.mv.mv_id);
+          mvRows.push(parsedMv.mv);
+        }
+      }
+      if (pendencies.length > 0) throw new Error('manual_validation_sync_invalid_report');
+
+      // 2) Backlog + contrato + state por sprint (item fantasma = AC-4.1.2).
+      const backlogMarkdown = fs.readFileSync(resolveConsumerPath(backlogPath, args), 'utf8');
+      const backlogRows = parseSprintRows(backlogMarkdown);
+      const byId = new Map(backlogRows.map((row) => [row.id, row]));
+      const bySprint = new Map();
+      for (const mv of mvRows) {
+        if (!bySprint.has(mv.sprint_id)) bySprint.set(mv.sprint_id, []);
+        bySprint.get(mv.sprint_id).push(mv);
+      }
+      const sprintPlans = [];
+      for (const [sprintId, mvList] of bySprint) {
+        const plan = planManualValidationSprint(sprintId, mvList, byId, args, pendencies);
+        if (plan) sprintPlans.push(plan);
+      }
+      if (pendencies.length > 0) throw new Error('manual_validation_sync_invalid_report');
+
+      // Plano 5 / CN4: `M` falho na origem → origem `blocked` (promoção no loop
+      // abaixo) e cone dependente com `revalidation_required=true` (fecho
+      // transitivo de `Depende de` — AC-5.2.1). A flag não filtra seleção
+      // (AC-5.2.2) e bloqueia `done` até revalidação (AC-5.1.2). Escrita antes
+      // das promoções para o `updateSprintStatus` (que relê o backlog do disco)
+      // enxergar a flag; dependente revalidado no mesmo sync (todos proved)
+      // limpa a flag na própria promoção.
+      const failedOrigins = sprintPlans
+        .filter((plan) => plan.mvList.some((mv) => mv.status === 'failed'))
+        .map((plan) => plan.sprintId);
+      if (failedOrigins.length > 0) {
+        const flagged = propagateRevalidation(backlogRows, failedOrigins);
+        if (flagged.size > 0) {
+          const backlogAbs = resolveConsumerPath(backlogPath, args);
+          let nextBacklog = backlogMarkdown;
+          for (const flaggedId of flagged) {
+            const res = replaceBacklogSprintRow(nextBacklog, flaggedId, (cells) => {
+              // Escrita absoluta: lista final completa com 16 células (índices
+              // 0–14 preservados; Revalidação = coluna 15, fim do índice).
+              const nextCells = [...cells];
+              while (nextCells.length < 16) nextCells.push('');
+              nextCells[15] = 'true';
+              return nextCells;
+            });
+            nextBacklog = res.markdown;
+          }
+          fs.writeFileSync(backlogAbs, nextBacklog);
+          // D2: metadado sync no sprint file dos dependentes flagados. Sprint
+          // file ausente/ilegível: a flag permanece no backlog — o drift é
+          // tratado a jusante (done exige revalidação via estado, fail-closed).
+          for (const flaggedId of flagged) {
+            const flaggedRow = byId.get(flaggedId);
+            if (!flaggedRow || pendingPathToken(flaggedRow.sprint_file)) continue;
+            try {
+              const flaggedSprintAbs = resolveConsumerPath(cleanBacklogPathToken(flaggedRow.sprint_file), args);
+              fs.writeFileSync(
+                flaggedSprintAbs,
+                replaceMarkdownTableValue(fs.readFileSync(flaggedSprintAbs, 'utf8'), 'Revalidação', 'true'),
+              );
+            } catch {}
+          }
+        }
+      }
+
+      // 3) Escritas: state (acceptance_results), promoção (done/blocked), relatório,
+      // ledger. Promoção reusa a escrita atômica de status (mesmo caminho do CN1).
+      const ledgerEvents = [];
+      const sprintsOut = [];
+      let handoffPath = null;
+      let anyFailed = false;
+      let anyPending = false;
+      for (const plan of sprintPlans) {
+        const stateUpdates = [];
+        for (const mv of plan.mvList) {
+          const mapped = MANUAL_VALIDATION_STATE_MAP[mv.status];
+          if (!mapped) continue; // pending/in_progress: sem mudança de state
+          stateUpdates.push({
+            mv,
+            from: plan.resultsById.get(mv.ac_id)?.status ?? null,
+            to: mapped.to,
+            proof: mapped.proof,
+          });
+        }
+        if (stateUpdates.length > 0) {
+          const nextState = JSON.parse(JSON.stringify(plan.state));
+          nextState.acceptance_results = nextState.acceptance_results.map((item) => {
+            const upd = stateUpdates.find((u) => u.mv.ac_id === item.id);
+            if (!upd) return item;
+            return {
+              ...item,
+              status: upd.to,
+              proof_types: [...(Array.isArray(item.proof_types) ? item.proof_types : []).filter((t) => !/^M:/.test(t)), upd.proof],
+            };
+          });
+          // D24: referência do relatório que sincronizou este state (append-only).
+          nextState.manual_validation_report = reportRel;
+          fs.writeFileSync(resolveConsumerPath(plan.stateRel, args), `${JSON.stringify(nextState, null, 2)}\n`);
+          for (const upd of stateUpdates) {
+            ledgerEvents.push({
+              timestamp,
+              backlog_path: backlogPath,
+              report_path: reportRel,
+              mv_id: upd.mv.mv_id,
+              sprint_id: plan.sprintId,
+              ac_id: upd.mv.ac_id,
+              status: upd.mv.status,
+              result: upd.mv.result,
+              previous_status: upd.from,
+              next_status: upd.to,
+            });
+          }
+        }
+
+        const closedByReport = plan.mvList
+          .filter((mv) => mv.status === 'validated' || mv.status === 'waived')
+          .map((mv) => mv.ac_id);
+        const closedSet = new Set(closedByReport);
+        // M que permanecem abertos após esta sync (manual_pending sem linha fechada).
+        const openAfter = plan.state.acceptance_results.filter((item) => (
+          item.status === 'manual_pending' && !closedSet.has(item.id)
+        )).length;
+        const sprintFailed = plan.mvList.some((mv) => mv.status === 'failed');
+        const wantsPromotion = sprintFailed || (openAfter === 0 && closedByReport.length > 0);
+        if (plan.backlogRow.state === 'manual_validation_pending' && wantsPromotion && !plan.gateVerdict) {
+          pendencies.push(conformancePending('veredito', plan.sprintId, null, `Gate da linha ${plan.sprintId} sem veredito validator legível para promover (${plan.backlogRow.gate}).`, 'corrigir_gate_no_backlog'));
+          throw new Error('manual_validation_sync_promotion_failed');
+        }
+
+        let promotedTo = null;
+        let up = null;
+        const canPromote = plan.backlogRow.state === 'manual_validation_pending' && plan.gateVerdict;
+        if (canPromote && sprintFailed) {
+          promotedTo = 'blocked';
+          up = updateSprintStatus({
+            run_id: runId,
+            project_root: args.project_root,
+            backlog_path: backlogPath,
+            sprint_id: plan.sprintId,
+            status: 'blocked',
+            validator_verdict: plan.gateVerdict,
+            state_path: plan.stateRel,
+            evidence: `M failed: ${plan.mvList.filter((mv) => mv.status === 'failed').map((mv) => mv.mv_id).join(', ')}`,
+          });
+        } else if (canPromote && openAfter === 0 && closedByReport.length > 0) {
+          promotedTo = 'done';
+          up = updateSprintStatus({
+            run_id: runId,
+            project_root: args.project_root,
+            backlog_path: backlogPath,
+            sprint_id: plan.sprintId,
+            status: 'done',
+            validator_verdict: plan.gateVerdict,
+            state_path: plan.stateRel,
+            evidence: `sync manual: ${closedByReport.map((acId) => `MV-${plan.sprintId}-${acId}`).join(', ')}`,
+          });
+        }
+        if (up) {
+          if (up.status !== 'passed') {
+            pendencies.push(...(up.pendencies ?? []));
+            throw new Error('manual_validation_sync_promotion_failed');
+          }
+          handoffPath = up.handoff_path ?? handoffPath;
+          ledgerEvents.push({
+            timestamp,
+            backlog_path: backlogPath,
+            report_path: reportRel,
+            mv_id: null,
+            sprint_id: plan.sprintId,
+            ac_id: null,
+            status: 'sync',
+            result: null,
+            previous_status: plan.backlogRow.state,
+            next_status: promotedTo,
+          });
+        }
+        if (sprintFailed) anyFailed = true;
+        if (plan.mvList.some((mv) => mv.status === 'pending' || mv.status === 'in_progress')) anyPending = true;
+        // D24: histórico no sprint também — sprint sem promoção ganha linha §16 com
+        // o resultado dos M sincronizados (promovidos já ganham via updateSprintStatus).
+        if (!up && stateUpdates.length > 0) {
+          const sprintAbs = resolveConsumerPath(cleanBacklogPathToken(plan.backlogRow.sprint_file), args);
+          const sprintBefore = fs.readFileSync(sprintAbs, 'utf8');
+          const mvSummary = stateUpdates.map((u) => `${u.mv.mv_id}:${u.mv.status}`).join(', ');
+          fs.writeFileSync(sprintAbs, appendToMarkdownSectionTable(sprintBefore, /^##\s+16\.\s+Histórico\s*$/i, [
+            timestamp.slice(0, 10),
+            'Talos MCP sync manual',
+            `MV sync: ${mvSummary}`,
+          ]));
+        }
+        sprintsOut.push({
+          sprint_id: plan.sprintId,
+          state: promotedTo ?? plan.backlogRow.state,
+          promoted: Boolean(promotedTo),
+          handoff_path: up?.handoff_path ?? null,
+          synced_rows: stateUpdates.length,
+        });
+      }
+      if (pendencies.length > 0) throw new Error('manual_validation_sync_promotion_failed');
+
+      // 4) Relatório reescrito só com pendências abertas; removido quando vazio (D12).
+      const remainingRows = rawRows.filter((row) => {
+        const status = row[3];
+        return status === 'pending' || status === 'in_progress';
+      });
+      if (remainingRows.length === 0) {
+        fs.rmSync(reportAbs, { force: true });
+      } else {
+        fs.writeFileSync(reportAbs, renderManualValidationReport(slug, backlogPath, timestamp, remainingRows));
+      }
+
+      // 5) Ledger append-only no run state (D24).
+      if (ledgerEvents.length > 0) patchManualValidationLedger(runId, ledgerEvents, args);
+
+      result = {
+        gate: 'manual_validation_sync',
+        status: 'passed',
+        backlog_path: backlogPath,
+        report_path: reportRel,
+        slug,
+        timestamp,
+        synced_items: ledgerEvents.length,
+        sprints: sprintsOut,
+        handoff_path: handoffPath,
+        pending_count: 0,
+        pendencies: [],
+        banner: renderBanner('preflight_ok', { caps: `manual_validation_sync=${slug}` }),
+        next_action: handoffPath
+          ? 'promover_handoff'
+          : anyFailed
+            ? 'corrigir_smoke_falho'
+            : anyPending
+              ? 'aguardar_validacao_manual'
+              : 'avançar',
+      };
+    } finally {
+      if (lockHeld) {
+        try { fs.rmSync(lockAbs, { force: true }); } catch {}
+      }
+    }
+  } catch (error) {
+    result = {
+      gate: 'manual_validation_sync',
+      status: 'blocked',
+      backlog_path: backlogPath,
+      report_path: manualValidationReportRel(backlogPath, args.report_path),
+      timestamp,
+      pending_count: pendencies.length || 1,
+      pendencies: pendencies.length > 0 ? pendencies : [
+        conformancePending('leitura', backlogPath, null, `Não foi possível sincronizar o relatório: ${error.message}`, 'corrigir_relatorio_manual'),
+      ],
+      banner: renderBanner('preflight_fail', { motivo: `manual validation sync: ${pendencies.length || 1} pendências` }),
+      error: 'Não foi possível sincronizar o relatório de validação manual.',
+      cause: error.message,
+      next_action: pendencies[0]?.next_action ?? 'corrigir_relatorio_manual',
+    };
+  }
+  patchGateResult(runId, 'manual_validation_sync', result, args);
+  return result;
+}
+
+// Detecta tipo de input para roteamento. Hierarquia de confiança:
 //   (1) verdade forte: conformidade de template de plano passa → 'plan';
 //   (2) dica: cabeçalho/frontmatter canônico de plano → 'plan';
-//   (3) dica fraca: nome casando PLAN_*.md → 'plan';
-//   PRD/backlog por marcadores de template; senão 'unknown'.
-// Nome de arquivo nunca basta sozinho nem engana (PRD §5 Contrato): só conta como dica
-// fraca e cede para a verdade forte. Reusa verifyPlanConformance para (1).
+//   (3) sprint file vivo (contrato §7) → 'backlog' (rota sprint_from_backlog);
+//   (4) spec/PRD-ish (`# PRD:`) → 'idea' (D9: tipo prd removido);
+//   (5) backlog por marcadores; (6) dica fraca PLAN_*.md; senão 'unknown'.
+// Nome de arquivo nunca basta sozinho: só conta como dica fraca e cede para a
+// verdade forte. Reusa verifyPlanConformance para (1).
 function classifyArtifactContent(content, fileName = '') {
   const text = content ?? '';
 
@@ -2644,22 +3469,29 @@ function classifyArtifactContent(content, fileName = '') {
   }
 
   // (2) Dica de cabeçalho/frontmatter canônico de plano.
-  const planHeaderHint = /\|\s*\*\*PRD\*\*\s*\|/.test(text)
+  const planHeaderHint = /\|\s*\*\*Sprint file\*\*\s*\|/i.test(text)
     || /^#\s+PLAN[\s_]/im.test(text)
     || /\bexecution_mode\b/.test(text);
   if (planHeaderHint && /####\s+T\d+\./.test(text)) {
     return { artifact_type: 'plan', signal: 'header_hint' };
   }
 
-  // PRD: marcadores do template canônico de PRD.
-  const prdHint = /^#\s+PRD[:\s]/im.test(text)
-    || /\|\s*D\d+\s*\|/.test(text)
-    || /Decisões de produto/i.test(text);
-  if (prdHint) {
-    return { artifact_type: 'prd', signal: 'prd_markers' };
+  // (3) Sprint file vivo: contrato absorvido — roteia como backlog (sprint_from_backlog).
+  const sprintHint = /##\s+7\.\s+Contrato de produto/i.test(text)
+    || /\|\s*Sprint ID\s*\|/i.test(text)
+    || /^#\s+Sprint\b/im.test(text);
+  if (sprintHint) {
+    return { artifact_type: 'backlog', signal: 'sprint_file_markers' };
   }
 
-  // Backlog: marcadores do template canônico de backlog/roadmap.
+  // (4) Spec/PRD-ish legado → idea (D9; tipo prd removido do vocabulário de entrada).
+  const specHint = /^#\s+PRD[:\s]/im.test(text)
+    || (/##\s+3\.\s+Decisões de produto/i.test(text) && /\|\s*D\d+\s*\|/.test(text));
+  if (specHint) {
+    return { artifact_type: 'idea', signal: 'spec_markers' };
+  }
+
+  // (5) Backlog: marcadores do template canônico de backlog/roadmap.
   const backlogHint = /\bBACKLOG[\s_]/i.test(text)
     || /\bSprint\s+S\d+/i.test(text)
     || /\bRoadmap\b/i.test(text);
@@ -2667,7 +3499,7 @@ function classifyArtifactContent(content, fileName = '') {
     return { artifact_type: 'backlog', signal: 'backlog_markers' };
   }
 
-  // (3) Dica fraca: nome PLAN_*.md, só se nada mais classificou.
+  // (6) Dica fraca: nome PLAN_*.md, só se nada mais classificou.
   if (/(^|\/)PLAN_[^/]*\.md$/i.test(fileName)) {
     return { artifact_type: 'plan', signal: 'weak_name_hint' };
   }
@@ -2705,8 +3537,8 @@ function classifyInput(args = {}) {
   try {
     const content = fs.readFileSync(absolutePath, 'utf8');
     const { artifact_type, signal } = classifyArtifactContent(content, inputPath);
-    // Modo-alvo por tipo de input (PRD D3/D6): o fato manda. plan → execute;
-    // prd/backlog → full (gera/usa plano). Data-driven; sem ramo solto.
+    // Modo-alvo por tipo de input: o fato manda. plan → execute;
+    // backlog → full; idea/spec → direct. Data-driven; sem ramo solto.
     const routedMode = ROUTED_MODE_BY_TYPE[artifact_type] ?? null;
     result = {
       gate: 'classify_input',
@@ -2923,7 +3755,7 @@ function expectedNextPhase(routing, dispatch) {
   if (routing.mode === 'direct') return 'plan_execute';
   if (routing.mode === 'execute') return 'plan_execute';
   if (routing.mode === 'audit') return 'audit_report';
-  return 'prd_interview';
+  return 'sprint_interview';
 }
 
 function initialExecutorLiveness(timestamp) {
@@ -3451,7 +4283,7 @@ const STATE_EXTENSION_ARRAYS = [
   'obligations', 'invariants', 'scenario_probes', 'risk_probes',
   'validation_map', 'task_evidence', 'worktree_baseline', 'worktree_final',
 ];
-const STATE_COMPACT_SCHEMA_VERSION = 2;
+const STATE_COMPACT_SCHEMA_VERSION = 3;
 const SPRINT_ID_PATTERN = /^S\d{2}(?:[a-z]|\.\d+)?$/;
 const EVAL_ID_PATTERN = /^EVAL-\d+$/;
 const EVAL_STATUSES = new Set(['passed', 'failed', 'blocked', 'not_applicable']);
@@ -3479,6 +4311,180 @@ function stateEvidenceFiles(state) {
   return [...new Set(result.filter((item) => typeof item === 'string' && item.trim()))].sort();
 }
 
+// D22: Oráculo mecânico de prova (T-outcome). Padrões de assert determinam se
+// um check indexado em check_table — ou o arquivo de teste que ele referencia —
+// prova um outcome observável. Um comando/arquivo que só exercita o caminho
+// (sem assert) não prova — é `unproved`.
+// A regex casa CHAMADAS reais de assert — não palavras soltas em descrições ou
+// comentários (ex.: `test('should return X', ...)` sem assert não é prova).
+// Casa: assert(...) | assert.equal(...) | expect(x).toEqual(...) | x.should.equal(...)
+//       ok(...) | fail(...) | .toEqual( .toBe( .deepEqual( .strictEqual( .notStrictEqual( .throws( .rejects(
+const ASSERT_PATTERNS = /(?:\b(?:assert|expect)\s*(?:\(|\.\s*\w+\s*\()|(?:\.\s*)?\bshould\s*\.\s*\w+\s*\(|\b(?:ok|fail)\s*\(|(?:\.\s*|\b)(?:toEqual|toBe|deepEqual|strictEqual|notStrictEqual|throws|rejects)\s*\()/i;
+const SOURCE_PATH_IN_COMMAND = /(?:\.\/|[A-Za-z0-9_@./-]+)\.(?:js|mjs|cjs|ts)\b/g;
+const TEST_PATH_HINT = /\.(?:test|spec)\./i;
+const TEST_DIR_HINT = /(?:^|\/)(?:tests?|__tests__)\//i;
+
+const ACCEPTANCE_STATUSES = new Set(['proved', 'unproved', 'violated', 'manual_pending']);
+
+function looksLikeTestPath(relPath) {
+  return TEST_PATH_HINT.test(relPath) || TEST_DIR_HINT.test(relPath);
+}
+
+// Proposta §4.1: assert no comando OU no teste referenciado (conteúdo do arquivo).
+// options.readText(relPath) → string; sem FS, só a string do comando conta.
+function checkProvesOutcome(command, state, fileIndexes, options = {}) {
+  if (ASSERT_PATTERNS.test(command)) return true;
+  const candidates = new Set();
+  for (const match of command.matchAll(SOURCE_PATH_IN_COMMAND)) {
+    candidates.add(match[0]);
+  }
+  const filesChanged = Array.isArray(state?.files_changed) ? state.files_changed : [];
+  for (const idx of fileIndexes) {
+    if (!Number.isInteger(idx) || idx < 0 || idx >= filesChanged.length) continue;
+    const rel = filesChanged[idx];
+    if (typeof rel === 'string' && rel.trim() && looksLikeTestPath(rel)) candidates.add(rel);
+  }
+  const readText = typeof options.readText === 'function' ? options.readText : null;
+  if (!readText) return false;
+  for (const rel of candidates) {
+    try {
+      const text = readText(rel);
+      if (typeof text === 'string' && ASSERT_PATTERNS.test(text)) return true;
+    } catch {
+      // arquivo ausente/ilegível: não prova
+    }
+  }
+  return false;
+}
+
+// Classifica acceptance_results[] a partir de proof_refs no state e do
+// contrato AC-* do sprint file. Helper determinístico, sem LLM.
+// options.readText opcional: lê arquivos referenciados pelo check/proof_refs.
+// Retorna { results: [{id, status, proof_types}], violations: [] }.
+function classifyAcceptanceResults(state, sprintAcceptance, options = {}) {
+  const violations = [];
+  const checkTable = Array.isArray(state?.check_table) ? state.check_table : [];
+  const proofRefs = (state?.proof_refs && typeof state.proof_refs === 'object'
+    && !Array.isArray(state.proof_refs)) ? state.proof_refs : {};
+  const acItems = Array.isArray(sprintAcceptance) ? sprintAcceptance : [];
+
+  const results = [];
+  const seenIds = new Set();
+  for (const ac of acItems) {
+    if (!ac || typeof ac !== 'object') continue;
+    const id = typeof ac.id === 'string' ? ac.id.trim() : null;
+    if (!id) {
+      violations.push('AC sem id em acceptance contract');
+      continue;
+    }
+    if (seenIds.has(id)) {
+      violations.push(`AC id duplicado: ${id}`);
+      continue;
+    }
+    seenIds.add(id);
+
+    const ref = proofRefs[id] ?? {};
+    const checkIndexes = Array.isArray(ref.checks) ? ref.checks : [];
+    const fileIndexes = Array.isArray(ref.files) ? ref.files : [];
+    const required = Array.isArray(ac?.evidence?.required) ? ac.evidence.required : [];
+    const hasManual = ac?.evidence?.manual !== null && ac?.evidence?.manual !== undefined;
+
+    const proofTypes = [];
+    // T-outcome: check referenciado deve ter assert (comando ou arquivo de teste).
+    let tOutcomeProved = false;
+    let tOutcomePresent = false;
+    for (const idx of checkIndexes) {
+      if (!Number.isInteger(idx) || idx < 0 || idx >= checkTable.length) {
+        violations.push(`proof_refs[${id}].checks índice inválido: ${idx}`);
+        continue;
+      }
+      tOutcomePresent = true;
+      const command = String(checkTable[idx] ?? '');
+      if (checkProvesOutcome(command, state, fileIndexes, options)) {
+        tOutcomeProved = true;
+      }
+    }
+    if (required.includes('T-outcome')) {
+      if (tOutcomePresent) proofTypes.push(tOutcomeProved ? 'T-outcome:proved' : 'T-outcome:unproved');
+      else proofTypes.push('T-outcome:absent');
+    }
+    // I (implementation): files referenciados no boundary
+    if (required.includes('I')) {
+      if (fileIndexes.length > 0) proofTypes.push('I:present');
+      else proofTypes.push('I:absent');
+    }
+    // W (wiring): tratado como I aqui (presença de files)
+    if (required.includes('W')) {
+      if (fileIndexes.length > 0) proofTypes.push('W:present');
+      else proofTypes.push('W:absent');
+    }
+    // M (manual): não é provado automaticamente
+    if (hasManual) proofTypes.push('M:pending');
+
+    // Decisão de status (D22/§5.4):
+    // - provas automáticas obrigatórias (I, T-outcome, W) todas proved/present
+    //   e sem M aberto → proved
+    // - provas automáticas provadas + M aberto → manual_pending
+    // - alguma prova automática unproved/absent → unproved
+    // - (violated é setado externamente por findings do validator)
+    const autoRequired = required.filter((r) => r !== 'M');
+    const autoFail = proofTypes.some((p) => p.endsWith(':unproved') || p.endsWith(':absent'));
+    let status;
+    if (autoFail) {
+      status = 'unproved';
+    } else if (hasManual) {
+      status = 'manual_pending';
+    } else {
+      // Sem M: todas as provas automáticas obrigatórias precisam estar proved
+      const allAutoProved = autoRequired.every((r) => {
+        const match = proofTypes.find((p) => p.startsWith(`${r}:`));
+        return match && (match.endsWith(':proved') || match.endsWith(':present'));
+      });
+      status = allAutoProved ? 'proved' : 'unproved';
+    }
+    results.push({ id, status, proof_types: proofTypes });
+  }
+
+  return { results, violations };
+}
+
+// Valida o shape de acceptance_results[] recebido pelo validatorComplete.
+// Shape inválido → fail estrutural (como findings). Não classifica — só valida.
+function validateAcceptanceResultsShape(packet, acIds) {
+  const violations = [];
+  const results = Array.isArray(packet?.acceptance_results) ? packet.acceptance_results : null;
+  if (results === null) return { hasField: false, violations };
+  const seen = new Set();
+  for (const [index, item] of results.entries()) {
+    const label = `acceptance_results[${index}]`;
+    if (!item || typeof item !== 'object') {
+      violations.push(`${label} deve ser objeto`);
+      continue;
+    }
+    if (typeof item.id !== 'string' || !/^AC-\d+$/.test(item.id.trim())) {
+      violations.push(`${label}.id deve ser AC-NNN`);
+      continue;
+    }
+    if (seen.has(item.id.trim())) {
+      violations.push(`${label}.id duplicado`);
+    }
+    seen.add(item.id.trim());
+    if (!ACCEPTANCE_STATUSES.has(item.status)) {
+      violations.push(`${label}.status deve ser proved|unproved|violated|manual_pending`);
+    }
+    if (item.proof_types !== undefined && !Array.isArray(item.proof_types)) {
+      violations.push(`${label}.proof_types deve ser array quando presente`);
+    }
+  }
+  // Se o state declara ACs, todo AC deve aparecer em acceptance_results
+  if (Array.isArray(acIds) && acIds.length > 0) {
+    for (const acId of acIds) {
+      if (!seen.has(acId)) violations.push(`acceptance_results sem AC: ${acId}`);
+    }
+  }
+  return { hasField: true, violations };
+}
+
 function stateSchemaVersion(state) {
   return Number(state?.state_schema_version ?? state?.schema ?? 1);
 }
@@ -3490,7 +4496,7 @@ function isCompactStateSchema(state) {
 function compactStateStrings(values, label, violations) {
   if (values === undefined) return [];
   if (!Array.isArray(values)) {
-    violations.push(`${label} deve ser array no schema v2`);
+    violations.push(`${label} deve ser array no schema compacto`);
     return [];
   }
   return values.filter((value, index) => {
@@ -3501,9 +4507,20 @@ function compactStateStrings(values, label, violations) {
 }
 
 function normalizeCompactStateContractIds(state, violations) {
+  // Em state_schema_version 3, o writer pode usar forma compacta (contract_ids
+  // com arrays de IDs) ou forma expandida (obligations/invariants como arrays
+  // de objetos). contract_ids ausente preserva os arrays canônicos do state.
   const ids = state.contract_ids;
+  if (ids === undefined) {
+    return {
+      obligations: Array.isArray(state.obligations) ? state.obligations : [],
+      invariants: Array.isArray(state.invariants) ? state.invariants : [],
+      scenario_probes: Array.isArray(state.scenario_probes) ? state.scenario_probes : [],
+      risk_probes: Array.isArray(state.risk_probes) ? state.risk_probes : [],
+    };
+  }
   if (!ids || typeof ids !== 'object' || Array.isArray(ids)) {
-    violations.push('contract_ids deve ser objeto no schema v2');
+    violations.push('contract_ids deve ser objeto no schema compacto');
     return {
       obligations: [], invariants: [], scenario_probes: [], risk_probes: [],
     };
@@ -3521,7 +4538,7 @@ function normalizeCompactStateContractIds(state, violations) {
 function normalizeCompactStateRefs(refs, table, label, violations) {
   if (refs === undefined) return [];
   if (!Array.isArray(refs)) {
-    violations.push(`${label} deve ser array no schema v2`);
+    violations.push(`${label} deve ser array no schema compacto`);
     return [];
   }
   const out = [];
@@ -3552,7 +4569,7 @@ function normalizeCompactState(state, violations) {
   const fileTable = Array.isArray(state.files_changed) ? state.files_changed : [];
   const checkTable = Array.isArray(state.check_table) ? state.check_table : [];
   if (state.check_table !== undefined && !Array.isArray(state.check_table)) {
-    violations.push('check_table deve ser array no schema v2');
+    violations.push('check_table deve ser array no schema compacto');
   }
   for (const [index, value] of checkTable.entries()) {
     if (typeof value !== 'string' || !value.trim()) violations.push(`check_table[${index}] deve ser string não vazia`);
@@ -3811,6 +4828,15 @@ function validateStateBoundary(statePathValue, args = {}) {
     return { ok: false, violations: [`state_path inválido: ${error.message}`] };
   }
   const violations = [];
+  const schemaVersion = stateSchemaVersion(state);
+  // D8/LEG2: em 0.15, state v3 é a única versão aceita. v1 (implícito, sem
+  // state_schema_version) e v2 são hard-fail — sem reader de migração (D19).
+  if (schemaVersion !== STATE_COMPACT_SCHEMA_VERSION) {
+    violations.push(
+      `state_schema_version deve ser ${STATE_COMPACT_SCHEMA_VERSION} (recebido ${schemaVersion}); artefatos pré-0.15 não são suportados`,
+    );
+    return { ok: false, legacy: false, state, violations };
+  }
   state = normalizeCompactState(state, violations);
   for (const field of STATE_REQUIRED_FIELDS) {
     if (state[field] === undefined || state[field] === null) violations.push(`campo obrigatório ausente: ${field}`);
@@ -3820,24 +4846,24 @@ function validateStateBoundary(statePathValue, args = {}) {
   }
   const isDirect = state.executor_skill === 'talos-direct-execute';
   const hasExtension = state.contract_kind !== undefined;
-  if (!hasExtension && state.executor_skill !== 'talos-plan-execute') violations.push('schema legado permitido somente para talos-plan-execute');
+  if (!hasExtension) violations.push('contract_kind obrigatório em state_schema_version 3 (legado pré-extensão removido)');
   if (isDirect && state.contract_kind !== 'direct') violations.push('talos-direct-execute exige contract_kind=direct');
   if (hasExtension && state.executor_skill === 'talos-plan-execute' && state.contract_kind !== 'plan') violations.push('talos-plan-execute exige contract_kind=plan');
   if (hasExtension && !['plan', 'direct'].includes(state.contract_kind)) violations.push('contract_kind deve ser plan ou direct');
-  if (hasExtension || isDirect) {
-    for (const field of ['base_sha', 'head_sha']) {
-      if (typeof state[field] !== 'string' || !state[field].trim()) violations.push(`${field} obrigatório na extensão`);
-    }
-    for (const field of STATE_EXTENSION_ARRAYS) {
-      if (!Array.isArray(state[field])) violations.push(`${field} deve ser array na extensão`);
-    }
-    if (isDirect && Array.isArray(state.obligations) && state.obligations.length === 0) violations.push('direct exige obligations não vazio');
-    validateSprintEvidenceState(state, args, violations);
-    validateSnapshot(state.worktree_baseline, 'worktree_baseline', violations);
-    validateSnapshot(state.worktree_final, 'worktree_final', violations);
+  // Extensão (base_sha/head_sha/contract_kind/snapshots) agora obrigatória em todo
+  // state v3: o caminho legacy mínimo de talos-plan-execute foi removido (D8/LEG2).
+  for (const field of ['base_sha', 'head_sha']) {
+    if (typeof state[field] !== 'string' || !state[field].trim()) violations.push(`${field} obrigatório em state_schema_version 3`);
   }
-  if (violations.length > 0 || !hasExtension) {
-    return { ok: violations.length === 0, legacy: !hasExtension, state, violations };
+  for (const field of STATE_EXTENSION_ARRAYS) {
+    if (!Array.isArray(state[field])) violations.push(`${field} deve ser array em state_schema_version 3`);
+  }
+  if (isDirect && Array.isArray(state.obligations) && state.obligations.length === 0) violations.push('direct exige obligations não vazio');
+  validateSprintEvidenceState(state, args, violations);
+  validateSnapshot(state.worktree_baseline, 'worktree_baseline', violations);
+  validateSnapshot(state.worktree_final, 'worktree_final', violations);
+  if (violations.length > 0) {
+    return { ok: violations.length === 0, legacy: false, state, violations };
   }
   const root = consumerRoot(args);
   try {
@@ -4301,6 +5327,111 @@ function validatorComplete(args, context) {
       error: `Finding estruturado inválido: ${packetResult.violations.join('; ')}`,
       next_action: 'corrigir_shape_estruturado_do_finding',
     };
+  }
+
+  // D05/D22: quando o state declara sprint_file_path, o validator deve emitir
+  // acceptance_results[] com shape estrito cobrindo todos os AC-* do §7.3.
+  // Shape inválido ou cobertura incompleta → fail estrutural (como findings).
+  // Classificação proved/unproved/manual_pending é do oráculo mecânico
+  // (classifyAcceptanceResults); o packet do LLM deve ecoar o oráculo.
+  // `violated` pode ser escalado pelo validator via findings (não pelo oráculo).
+  let sprintAcIds = null;
+  let boundaryStateForOracle = null;
+  let sprintAcceptanceForOracle = null;
+  try {
+    boundaryStateForOracle = JSON.parse(fs.readFileSync(resolveConsumerPath(statePathValue, args), 'utf8'));
+    if (typeof boundaryStateForOracle?.sprint_file_path === 'string' && boundaryStateForOracle.sprint_file_path.trim()) {
+      const sprintMarkdown = fs.readFileSync(
+        resolveConsumerPath(boundaryStateForOracle.sprint_file_path, args),
+        'utf8',
+      );
+      sprintAcceptanceForOracle = parseAcceptanceContract(sprintMarkdown);
+      sprintAcIds = sprintAcceptanceForOracle
+        .map((ac) => ac.id)
+        .filter((id) => typeof id === 'string' && id.trim());
+    }
+  } catch {
+    // State/sprint ilegível: o boundary já foi validado no start; aqui apenas
+    // não conseguimos derivar AC ids — a checagem de shape segue sem cobertura.
+    sprintAcIds = null;
+    boundaryStateForOracle = null;
+    sprintAcceptanceForOracle = null;
+  }
+  const acceptanceCheck = validateAcceptanceResultsShape(packet, sprintAcIds);
+  if (acceptanceCheck.hasField && acceptanceCheck.violations.length > 0) {
+    return {
+      gate: 'G4', action: 'complete', status: 'blocked', timestamp,
+      validator_attempt: cycle.active.attempt, validator_run_id: activeValidatorRunId,
+      state_path: statePathValue, validator_status: 'invalid_acceptance_shape',
+      error: `acceptance_results com shape inválido: ${acceptanceCheck.violations.join('; ')}`,
+      next_action: 'corrigir_shape_de_acceptance_results',
+    };
+  }
+  if (sprintAcIds && sprintAcIds.length > 0 && !acceptanceCheck.hasField) {
+    return {
+      gate: 'G4', action: 'complete', status: 'blocked', timestamp,
+      validator_attempt: cycle.active.attempt, validator_run_id: activeValidatorRunId,
+      state_path: statePathValue, validator_status: 'missing_acceptance_results',
+      error: `state declara sprint_file_path; validator deve emitir acceptance_results cobrindo ${sprintAcIds.join(', ')}`,
+      next_action: 'emitir_acceptance_results_no_output_do_validator',
+    };
+  }
+  if (acceptanceCheck.hasField && sprintAcceptanceForOracle && boundaryStateForOracle) {
+    const root = consumerRoot(args);
+    const oracle = classifyAcceptanceResults(
+      boundaryStateForOracle,
+      sprintAcceptanceForOracle,
+      {
+        readText: (rel) => fs.readFileSync(path.join(root, rel), 'utf8'),
+      },
+    );
+    const oracleById = new Map(oracle.results.map((item) => [item.id, item]));
+    const mismatches = [];
+    for (const item of packet.acceptance_results) {
+      if (!item || typeof item !== 'object') continue;
+      const id = typeof item.id === 'string' ? item.id.trim() : '';
+      const expected = oracleById.get(id);
+      if (!expected) continue;
+      // Findings podem escalar para violated; demais status devem ecoar o oráculo.
+      if (item.status === 'violated') continue;
+      if (item.status !== expected.status) {
+        mismatches.push(
+          `${id}: packet=${item.status} oracle=${expected.status}`
+          + ` [${(expected.proof_types ?? []).join(',')}]`,
+        );
+      }
+    }
+    if (mismatches.length > 0) {
+      return {
+        gate: 'G4', action: 'complete', status: 'blocked', timestamp,
+        validator_attempt: cycle.active.attempt, validator_run_id: activeValidatorRunId,
+        state_path: statePathValue, validator_status: 'acceptance_oracle_mismatch',
+        error: `acceptance_results diverge do oráculo mecânico: ${mismatches.join('; ')}`,
+        next_action: 'corrigir_acceptance_results_para_ecoar_oraculo',
+      };
+    }
+  }
+
+  // D05/D22 + CN2/VC1 (Plano 3) + A6 (fechamento Plano F): o eco validado do
+  // oráculo é persistido no state em disco — fonte que o gate de status consome
+  // (`readStateAcceptanceResults`). Sem esta escrita, MVP/done ficam inalcançáveis
+  // (ambos exigem o campo). Falha de FS aqui é fail-closed no próprio complete:
+  // não devolver passed com eco só no packet — o gate de done deixaria de mentir
+  // só se o state tivesse sido gravado; se a gravação falhou, o complete bloqueia.
+  if (acceptanceCheck.hasField && Array.isArray(packet.acceptance_results) && boundaryStateForOracle) {
+    try {
+      const stateAbs = resolveConsumerPath(statePathValue, args);
+      boundaryStateForOracle.acceptance_results = packet.acceptance_results;
+      fs.writeFileSync(stateAbs, `${JSON.stringify(boundaryStateForOracle, null, 2)}\n`);
+    } catch (err) {
+      return {
+        gate: 'G4', action: 'complete', status: 'blocked', timestamp,
+        validator_attempt: cycle.active.attempt, validator_run_id: activeValidatorRunId,
+        state_path: statePathValue, validator_status: 'acceptance_results_persist_failed',
+        error: `Falha ao persistir acceptance_results no state: ${err?.message ?? err}`,
+        next_action: 'corrigir_gravacao_do_state_e_reemitir_complete',
+      };
+    }
   }
 
   const normalizedVerdict = verdict === 'pass'
@@ -4840,7 +5971,7 @@ function dispatchBanner(result) {
   if (result.phase === 'plan_handoff') {
     return renderBanner('plano', {});
   }
-  // demais fases (prd_interview etc.): exec genérico da fase em andamento.
+  // demais fases (sprint_interview etc.): exec genérico da fase em andamento.
   return renderBanner('exec', { i: 1, n: 1 });
 }
 
@@ -4988,27 +6119,28 @@ function toolsList() {
             run_id: { type: 'string', minLength: 1 },
             project_root: { type: 'string', minLength: 1 },
             artifact_path: { type: 'string', minLength: 1 },
-            artifact_kind: { enum: ['prd', 'plan', 'json'] },
+            artifact_kind: { enum: ['sprint', 'plan', 'json'] },
           },
         },
       },
       {
-        name: 'talos_scan_prd',
-        description: 'G5: ambiguidades bloqueantes no PRD.',
+        name: 'talos_scan_acceptance',
+        description: 'G5: ambiguidades bloqueantes no contrato §7 do sprint file — por sprint_path (arquivo salvo) ou sprint_markdown (rascunho em memória, antes de existir em disco). Exatamente um dos dois.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
-          required: ['run_id', 'prd_path'],
+          required: ['run_id'],
           properties: {
             run_id: { type: 'string', minLength: 1 },
             project_root: { type: 'string', minLength: 1 },
-            prd_path: { type: 'string', minLength: 1 },
+            sprint_path: { type: 'string', minLength: 1 },
+            sprint_markdown: { type: 'string', minLength: 1 },
           },
         },
       },
       {
         name: 'talos_verify_template_conformance',
-        description: 'TC: PRD/plano contra template.',
+        description: 'TC: plano contra template.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
@@ -5017,7 +6149,7 @@ function toolsList() {
             run_id: { type: 'string', minLength: 1 },
             project_root: { type: 'string', minLength: 1 },
             artifact_path: { type: 'string', minLength: 1 },
-            artifact_type: { type: 'string', enum: ['prd', 'plan'] },
+            artifact_type: { type: 'string', enum: ['plan'] },
             required_status: { type: 'string' },
             require_sprint_file: { type: 'boolean' },
           },
@@ -5055,7 +6187,7 @@ function toolsList() {
       },
       {
         name: 'talos_select_next_sprint',
-        description: 'Seleciona próxima sprint executável.',
+        description: 'Seleciona próxima sprint executável. next_action é mode-aware (§7 + PLAN + mode).',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
@@ -5064,6 +6196,11 @@ function toolsList() {
             run_id: { type: 'string', minLength: 1 },
             project_root: { type: 'string', minLength: 1 },
             backlog_path: { type: 'string', minLength: 1 },
+            mode: {
+              type: 'string',
+              enum: ['full', 'direct', 'execute', 'interview-only', 'audit'],
+              description: 'Modo do pipeline; altera next_action (ex.: direct nunca sugere plan_handoff). Default: full.',
+            },
           },
         },
       },
@@ -5082,7 +6219,8 @@ function toolsList() {
             status: { type: 'string', enum: [...BACKLOG_STATES] },
             validator_verdict: { type: 'string', enum: [...VALIDATOR_VERDICTS] },
             gate_status: { type: 'string', minLength: 1 },
-            prd_path: { type: 'string', minLength: 1 },
+            // Legado: só atualiza coluna PRD do backlog (compat posicional). Não gera artefato PRD.
+            prd_path: { type: 'string', minLength: 1, description: 'Legado posicional do backlog; opcional. Aceite mora no §7 do sprint file.' },
             plan_path: { type: 'string', minLength: 1 },
             state_path: { type: 'string', minLength: 1 },
             evidence: { type: 'string', minLength: 1 },
@@ -5091,8 +6229,23 @@ function toolsList() {
         },
       },
       {
+        name: 'talos_sync_manual_validation',
+        description: 'Sync do relatório de validação manual (MV-*) com lock por backlog: valida IDs/status/waiver, sincroniza state/sprint/ledger; promove done quando todos M validated/waived (com handoff); failed bloqueia a origem. Relatório inválido → next_action=fix_manual_validation_report.',
+        inputSchema: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['run_id', 'backlog_path'],
+          properties: {
+            run_id: { type: 'string', minLength: 1 },
+            project_root: { type: 'string', minLength: 1 },
+            backlog_path: { type: 'string', minLength: 1 },
+            report_path: { type: 'string', minLength: 1, description: 'Path do relatório; default .talos/manual-validation/<slug>.md.' },
+          },
+        },
+      },
+      {
         name: 'talos_classify_input',
-        description: 'Classifica input: backlog|prd|plan|unknown.',
+        description: 'Classifica input: backlog|plan|idea|unknown.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
@@ -5115,8 +6268,8 @@ function toolsList() {
             run_id: { type: 'string', minLength: 1 },
             project_root: { type: 'string', minLength: 1 },
             mode: { type: 'string', enum: WORKFLOW_CONFIG.modes },
-            input_type: { type: 'string', enum: ['backlog-item', 'sprint', 'idea', 'briefing', 'roadmap', 'conversation', 'prd-macro', 'prd', 'plan', 'brainstorm', 'target'] },
-            artifact_type: { type: 'string', enum: ['backlog', 'prd', 'plan', 'idea', 'unknown'] },
+            input_type: { type: 'string', enum: ['backlog-item', 'sprint', 'idea', 'briefing', 'roadmap', 'conversation', 'spec-macro', 'plan', 'brainstorm', 'target'] },
+            artifact_type: { type: 'string', enum: ['backlog', 'plan', 'idea', 'unknown'] },
             expected_version: { type: 'string' },
             host: { type: 'string', enum: HOST_NAMES },
             // additionalProperties:false é enforçado pelo client MCP; o servidor ainda
@@ -5228,13 +6381,14 @@ function handleRequest(message) {
           name === 'talos_capabilities' ? capabilities(args) :
             name === 'talos_run_state' ? runState(args) :
               name === 'talos_verify_artifact' ? verifyArtifact(args) :
-                name === 'talos_scan_prd' ? scanPrd(args) :
+                name === 'talos_scan_acceptance' ? scanAcceptance(args) :
                   name === 'talos_verify_template_conformance' ? verifyTemplateConformance(args) :
                     name === 'talos_verify_sprint_file' ? verifySprintFile(args) :
                       name === 'talos_verify_backlog_index' ? verifyBacklogIndex(args) :
                         name === 'talos_select_next_sprint' ? selectNextSprint(args) :
                           name === 'talos_update_sprint_status' ? updateSprintStatus(args) :
-                            name === 'talos_classify_input' ? classifyInput(args) :
+                            name === 'talos_sync_manual_validation' ? syncManualValidation(args) :
+                              name === 'talos_classify_input' ? classifyInput(args) :
                               name === 'talos_preflight' ? preflight(args) :
                                 name === 'talos_lock_dispatch' ? lockDispatch(args) :
                                   name === 'talos_lock_validator' ? lockValidator(args) :
@@ -5322,8 +6476,20 @@ function startStdioLoop() {
 
 // Só inicia o loop stdio quando executado como entrypoint (node server.js).
 // Importado por testes (node --test), o módulo expõe funções puras sem bootar I/O.
-const isEntrypoint = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
-if (isEntrypoint) startStdioLoop();
+function isMainModule() {
+  if (!process.argv[1]) return false;
+  const entry = path.resolve(process.argv[1]);
+  const modulePath = fileURLToPath(import.meta.url);
+  if (entry === modulePath) return true;
+  try {
+    // Parall/Cursor: HOME pode ser symlink (Library/p2 → Application Support/Parall/N).
+    // argv[1] fica no path lógico; import.meta.url no físico — sem realpath o stdio não sobe.
+    return fs.realpathSync(entry) === fs.realpathSync(modulePath);
+  } catch {
+    return false;
+  }
+}
+if (isMainModule()) startStdioLoop();
 
 export {
   HOST_ADAPTERS,
@@ -5346,18 +6512,23 @@ export {
   BANNER_EVENTS,
   renderBanner,
   verifyArtifact,
-  scanPrd,
+  scanAcceptance,
   verifyTemplateConformance,
   verifySprintFile,
   verifyBacklogIndex,
   selectNextSprint,
+  nextActionForSelectedSprint,
   updateSprintStatus,
+  syncManualValidation,
+  emitMemoryHandoff,
+  propagateRevalidation,
   classifyInput,
   preflight,
   lockDispatch,
   lockValidator,
   captureWorktreeSnapshot,
   validateStateBoundary,
+  classifyAcceptanceResults,
   assertAfterPlan,
   runState,
   ping,

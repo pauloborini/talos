@@ -1,8 +1,8 @@
 # Sprint viva — S<NN> — [NOME_DA_SPRINT]
 
-Arquivo vivo da sprint **S<NN>**. Este documento conecta o backlog macro ao PRD/PLAN sem inflar nenhum dos dois.
+Arquivo vivo da sprint **S<NN>**. Este documento conecta o backlog macro ao PLAN sem inflar nenhum dos dois.
 
-Regra: este arquivo guarda **escopo, estado, decisões, dependências, gates, evidência e aprendizado da sprint**. O PRD guarda produto/aceite. O PLAN guarda execução técnica.
+Regra: este arquivo guarda **escopo, estado, decisões locais, dependências, gates, evidência e aprendizado da sprint**, e o **contrato de produto congelado** (§7: decisões D*, cenários UX e aceite binário). O PLAN guarda execução técnica. Variante standalone: `Backlog mestre: Não aplicável (standalone)`.
 
 ---
 
@@ -12,11 +12,13 @@ Regra: este arquivo guarda **escopo, estado, decisões, dependências, gates, ev
 |---|---|
 | Sprint ID | S<NN> |
 | Nome | [nome curto] |
-| Status | [backlog / ready / doing / review / done / blocked] |
-| Backlog mestre | [path + anchor da linha S<NN>] |
-| PRD | [pendente ou path] |
+| Status | [backlog / ready / doing / review / manual_validation_pending / done / blocked] |
+| Backlog mestre | [path + anchor da linha S<NN> — ou `Não aplicável (standalone)`] |
+| Contrato status | [draft / aprovado] |
+| Selo do contrato | [pendente até aprovação] |
 | PLAN | [pendente ou path] |
 | State / evidência | [pendente ou path] |
+| Revalidação | [false — flag `true` ligada pelo MCP quando `M` falhou em sprint da qual esta depende (cone de revalidação, D2/D20)] |
 | Fase | [F0/F1/F2/F3/F4/F5] |
 | MoSCoW | [Must / Should / Could / Won't now] |
 | Prioridade | [P0/P1/P2/P3] |
@@ -70,10 +72,16 @@ Regra: este arquivo guarda **escopo, estado, decisões, dependências, gates, ev
 | Código real | [path/símbolo opcional] | [padrão/estado atual] |
 | Discussão | [link/resumo] | [decisão/contexto] |
 
+> A linha `Discussão` é **obrigatória** (v0.16.0, CN6): todo sprint file declara a discussão de onde nasceu — é a fonte de intenção que o revisor frio usa como oráculo. Célula vazia ou placeholder (`[link/resumo]`, `[...]`, `—`, `N/A`) faz `talos_verify_sprint_file` recusar o artefato, inclusive em sprint standalone. Exemplo preenchido:
+
+| Tipo | Fonte | Uso nesta sprint |
+|---|---|---|
+| Discussão | `_app-vault/docs/decisions/artefatos.md` (DEC-027) | decisão/contexto da origem |
+
 Notas:
 
 - Não copiar implementação aqui.
-- Se uma fonte virar contrato de produto, refletir no PRD.
+- Se uma fonte virar contrato de produto, refletir na §7.
 - Se uma fonte virar task técnica, refletir no PLAN.
 
 ---
@@ -97,7 +105,7 @@ Notas:
 
 ## 6. Decisões da sprint
 
-Decisões locais que moldam esta sprint. Decisão de produto que vira aceite deve aparecer no PRD.
+Decisões locais que moldam esta sprint. Decisão de produto que vira aceite deve aparecer na §7.1 (D*).
 
 | ID | Decisão | Fonte | Impacto | Status |
 |---|---|---|---|---|
@@ -105,36 +113,86 @@ Decisões locais que moldam esta sprint. Decisão de produto que vira aceite dev
 
 ---
 
-## 7. Critérios candidatos para PRD
+## 7. Contrato de produto (congelado)
 
-Pré-PRD. Depois que o PRD existir, ele vira a fonte de verdade de produto/aceite; manter aqui só resumo e link.
+Casa única de produto desta sprint: decisões D*, cenários UX e aceite binário. O validador frio nota código contra este bloco (não contra o PLAN). Fluxo de congelamento: `draft` (maturação) → ao aprovar, gravar `Contrato status: aprovado` + `Selo do contrato: sha256:<hash do §7>`; qualquer edição do bloco aprovado sem re-aprovação é tamper (`FROZEN_ACCEPTANCE_TAMPERED`). Para reeditar: voltar a `draft` (limpa o selo), editar, re-aprovar.
 
-### Produto
+### 7.1 Decisões de produto (D*)
 
-- [ ] [critério observável candidato]
+> SSoT das decisões de produto. Demais seções referenciam por `D-id`. Toda decisão declara procedência na coluna `Origem` (v0.16.0).
 
-### UX / operação
+| ID | Decisão | Origem |
+|---|---|---|
+| D1 | [decisão fechada — produto, não implementação — dada pelo usuário] | usuario |
+| D2 | [decisão lida do código ou contrato real] | derivado:packages/exemplo.js |
+| D3 | [decisão inferida pelo modelo — fechar por entrevista antes de sustentar aceite Must/P0] | premissa |
 
-- [ ] [loading/empty/error/success/permissão, se aplicável]
+Legenda `Origem` (enum):
 
-### Dados / contrato funcional
+- `usuario` — resposta de entrevista ou citação direta do brainstorm.
+- `derivado:<path>` — lida do código/contrato real; `<path>` relativo à raiz do repo; sufixo ` (novo)` quando o arquivo ainda será criado (ex.: `derivado:packages/novo_modulo.js (novo)`).
+- `premissa` — inferida pelo modelo; não sustenta aceite de sprint `Must`/`P0` enquanto não for confirmada.
 
-- [ ] [integridade/regra observável]
+### 7.2 Cenários UX
 
-### Regressão
+> Por cenário: Entrada / Comportamento (loading · vazio · erro) / Sucesso.
 
-- [ ] [fluxo existente que não pode quebrar]
+### 7.2.1 [Cenário A — ex.: criar / carregar]
+
+- **Entrada:** [de onde o usuário vem]
+- **Comportamento:** [passo a passo; loading / vazio / erro]
+- **Sucesso:** [o que o usuário vê]
+
+### 7.2.2 [Cenário B — ex.: editar / dados insuficientes]
+
+- **Entrada:** […]
+- **Comportamento:** […]
+- **Sucesso:** […]
+
+### 7.3 Aceite binário
+
+> Critérios observáveis e atômicos (`AC-*`). Hierarquia: `AC-*` ⊃ `EVAL-*`. Todo `EVAL-*` do `eval_manifest` §9 deve ser referenciado por ≥1 `AC-*`. Granularidade: ≥1 `AC-*` por cenário §7.2 + ≥1 de regressão quando houver regressão material.
+
+```yaml
+acceptance:
+  - id: AC-001
+    origin: "usuario"
+    behavior: "[efeito observável]"
+    decisions: [D1]
+    scenario: "[cenário §7.2]"
+    evals: [EVAL-001]
+    evidence:
+      required: [I, T-outcome, W]
+      manual: null
+  - id: AC-002
+    origin: "derivado:packages/exemplo.js"
+    behavior: "[efeito observável que requer smoke manual]"
+    decisions: [D2]
+    scenario: "[cenário §7.2]"
+    evals: [EVAL-002]
+    evidence:
+      required: [I, T-outcome, M]
+      manual:
+        severity: alta
+        scenario: "[passos mínimos humanos]"
+        expected_evidence: "[resultado observável]"
+        impact_paths: ["packages/foo.js"]
+```
+
+Todo `AC-*` declara `origin` (mesmo enum da §7.1: `usuario` | `derivado:<path>` | `premissa`). `premissa` não sustenta aceite em sprint `Must`/`P0`: o gate `talos_verify_sprint_file` bloqueia nomeando o `AC-*` até a premissa ser fechada em entrevista.
+
+Tipos de evidência (D4): `I` implementação, `T-outcome` resultado observável (assert de retorno/efeito), `W` wiring, `M` smoke manual. `manual` deve ser `null` quando `required` não inclui `M`; objeto (severity/scenario/expected_evidence/impact_paths) quando inclui.
 
 ---
 
 ## 8. Definition of Ready
 
-- [ ] Backlog aponta para este sprint file.
-- [ ] Este sprint file aponta para o backlog.
+- [ ] Backlog aponta para este sprint file (exceto standalone).
+- [ ] Este sprint file aponta para o backlog (ou `Não aplicável (standalone)`).
 - [ ] Objetivo único e escopo fechado.
 - [ ] Dependências críticas resolvidas.
 - [ ] Bloqueios críticos resolvidos ou registrados.
-- [ ] Critérios candidatos suficientes para gerar PRD.
+- [ ] Contrato §7 completo (D*, cenários UX, `AC-*` em YAML `acceptance`) e `Contrato status` preenchido.
 - [ ] `eval_manifest` mínimo preenchido.
 - [ ] Próxima ação explícita.
 
@@ -144,7 +202,7 @@ Pré-PRD. Depois que o PRD existir, ele vira a fonte de verdade de produto/aceit
 
 ## 9. Eval manifest
 
-Manifesto mínimo de avaliação da sprint. Serve para PRD, PLAN, executor e validator saberem o que precisa ser comprovado.
+Manifesto mínimo de avaliação da sprint. Serve para PLAN, executor e validator saberem o que precisa ser comprovado. `EVAL-*` é meio de prova subordinado a `AC-*` via `evals:` na §7.3. Smoke manual (M) mora no `evidence.manual` do AC; não há `manual_checks` solto aqui como autoridade de aceite.
 
 ```yaml
 eval_manifest:
@@ -153,14 +211,12 @@ eval_manifest:
   must_prove:
     - id: "EVAL-001"
       claim: "[claim verificável]"
-      source: "[PRD §6 / PLAN §8 / state path / teste]"
+      source: "[Sprint §7 / PLAN §8 / state path / teste]"
       evidence_required: "[teste, comando, print, state, log, fixture]"
   regression_guards:
     - "[fluxo/regra que não pode quebrar]"
   negative_paths:
     - "[erro/permissão/vazio/retry relevante]"
-  manual_checks:
-    - "[check manual mínimo, se aplicável]"
 ```
 
 ---
@@ -168,7 +224,7 @@ eval_manifest:
 ## 10. Policy manifest
 
 Regras locais da sprint. Não substitui AGENTS.md nem regras do projeto.
-Áreas previstas pertencem ao escopo da sprint/PRD/PLAN; não use lista positiva como lista permitida de arquivos.
+Áreas previstas pertencem ao escopo da sprint/PLAN; não use lista positiva como lista permitida de arquivos.
 
 ```yaml
 policy_manifest:
@@ -178,9 +234,11 @@ policy_manifest:
     - "[sem apagar dados / sem migrar contrato / sem segredo em log]"
   required_gates:
     - "talos_verify_sprint_file"
-    - "talos_verify_template_conformance:prd"
     - "talos_verify_template_conformance:plan"
     - "talos-task-validator"
+  critical_review:               # opcional — true torna slice-review obrigatória (D06/D09)
+    required: false
+    reasons: []                  # enum fixo: authorization | payment | data_migration | public_contract | host_adapter_dispatch
 ```
 
 ---
@@ -195,7 +253,7 @@ policy_manifest:
 ### Sensores de drift
 
 - [ ] Escopo crescendo além do objetivo único.
-- [ ] PRD copiando implementação.
+- [ ] Contrato §7 copiando implementação.
 - [ ] PLAN copiando roadmap.
 - [ ] Claim sem evidência.
 - [ ] Dependência não-done tratada como pronta.
@@ -209,22 +267,13 @@ Tabela viva para fechar o loop entre promessa e prova.
 
 | Claim | Onde foi prometido | Evidência esperada | Evidência real | Status |
 |---|---|---|---|---|
-| [claim] | [PRD § / PLAN § / backlog] | [teste/gate/state] | [path/link] | [pending/pass/fail] |
+| [claim] | [Sprint §7 / PLAN § / backlog] | [teste/gate/state] | [path/link] | [pending/pass/fail] |
 
 ---
 
-## 13. PRD e PLAN
+## 13. PLAN
 
-### PRD
-
-| Campo | Valor |
-|---|---|
-| Status | [pendente / draft / aprovado / implementado] |
-| Path | [path] |
-| Geração | [manual / talos-sprint-prd-generator] |
-| Observações | [resumo] |
-
-### PLAN
+> O aceite de produto mora na §7 deste sprint file. Esta seção só rastreia o PLAN de execução.
 
 | Campo | Valor |
 |---|---|
@@ -242,14 +291,14 @@ Tabela viva para fechar o loop entre promessa e prova.
 | Gate | Status | Evidência |
 |---|---|---|
 | Sprint file válido | [pending/pass/fail] | [path/resultado] |
-| PRD válido | [pending/pass/fail] | [path/resultado] |
+| Contrato §7 | [pending/pass/fail] | [status + selo] |
 | PLAN válido | [pending/pass/fail] | [path/resultado] |
 | Execução concluída | [pending/pass/fail] | [state path] |
 | Validator frio | [pending/pass/fail] | [veredito/path] |
 
 ### Definition of Done
 
-- [ ] Critérios do PRD verdes.
+- [ ] Critérios de aceite §7.3 (`AC-*`) verdes.
 - [ ] PLAN executado dentro do boundary.
 - [ ] Validações locais registradas.
 - [ ] Validator frio `pass` ou `pass_with_observations`.

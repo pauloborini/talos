@@ -1,6 +1,6 @@
 ---
 name: talos-plan-execute
-description: Executor de plano da família Talos. Despachado em contexto isolado pelo orquestrador após o plano validado — toda mutação de código (editar, rodar build/testes, commitar) acontece aqui, nunca no fio do orquestrador (Gate G9). Primeira ação: carregar a skill completa talos-plan-execute. Antes do relatório final, escreve o state_path e retorna validator_handoff_required; o orquestrador despacha a validação fria sibling (talos-task-validator, Gate G4).
+description: "Executor de plano da família Talos. Despachado em contexto isolado pelo orquestrador após o plano validado — toda mutação de código (editar, rodar build/testes, commitar) acontece aqui, nunca no fio do orquestrador (Gate G9). Primeira ação: carregar a skill completa talos-plan-execute. Antes do relatório final, escreve o state_path e retorna validator_handoff_required; o orquestrador despacha a validação fria sibling (talos-task-validator, Gate G4)."
 tools: read, write, edit, grep, find, ls, bash
 ---
 
@@ -71,7 +71,7 @@ talos_lock_dispatch({
 Em seguida, emita checkpoints materiais conforme avança:
 
 - `skill_loaded` — skill carregada e contrato reconhecido.
-- `plan_loaded` — plano/PRD de entrada lido.
+- `plan_loaded` — plano/sprint file de entrada lido.
 - `handoff_accepted` — `plan_path`, `state_path` alvo, boundary e tasks aceitos.
 - `task_started` — primeira task começou.
 - `first_write` — primeira mutação de workspace feita.
@@ -101,9 +101,9 @@ The plan is the SSoT. Map `ready` to `pending`, `implementing`/`gating` to `in_p
 
 ## Review gate
 
-`talos-slice-review` is dispatched only when `--review` is present in the user command or executor arguments. Without `--review`, the orchestrator closes the slice upon receiving `pass` or `pass_with_observations` from the validator — this executor is not involved in that decision and never observes the validator verdict directly.
+`talos-slice-review` is dispatched when `--review` is present in the user command or executor arguments, or when the sprint file's `policy_manifest.critical_review.required: true` makes the review mandatory (CN5/D06 — G8, dispatched by the orchestrator without `--review`). Without either condition, the orchestrator closes the slice upon receiving `pass` or `pass_with_observations` from the validator — this executor is not involved in that decision and never observes the validator verdict directly.
 
-## Entrada via modo `execute` (PRD D1/D13)
+## Entrada via modo `execute` (standalone / pipeline curta)
 
 Esta skill aceita entrada pelo modo `execute` do orquestrador: um `PLAN_*.md` pronto de pipeline curta, apontado diretamente e já reverificado na entrada (`talos_verify_artifact` + TC) pelo orquestrador. **A entrada `execute` é o mesmo executor, com as mesmas garantias** — o contrato não muda: o state file (`.talos/state/<run_id>/<slice>.json`) permanece **obrigatório** e o `talos-task-validator` (validador frio, só `state_path`) permanece **obrigatório** antes do relatório final. Não há caminho de execução sem state file nem sem validador, em nenhum modo de entrada.
 
@@ -116,7 +116,7 @@ First, emit `executor_started`, then `skill_loaded`, before doing any long scan.
 
 Read the `talos-plan-handoff` artifact. Extract at minimum:
 * **Execution metadata**: Prefix, mode, and validator options.
-* **Executive translation, PRD link and Sprint file link** (from Section 1/header — include path to PRD and `SPRINT_S<NN>_*.md`; cite `PRD §3` D* and `Sprint §9 EVAL-*`, do not paste full tables/YAML).
+* **Executive translation and Sprint file link** (from Section 1/header — include path to `SPRINT_S<NN>_*.md`; cite `Sprint §7.1` D* and `Sprint §9 EVAL-*`, do not paste full tables/YAML).
 * **Execution invariants** (from Section 2), including invariants derived from `Sprint §9 eval_manifest` and `Sprint §10 policy_manifest`.
 * **Current state at sprint opening** (from Section 4 — not Section 2).
 * **Pitfalls** (from Section 3).
@@ -127,9 +127,9 @@ Read the `talos-plan-handoff` artifact. Extract at minimum:
 
 Treat headings as semantic. If the plan uses equivalent wording but carries the same contract, continue. If the plan is missing the substance, stop and report. 
 The old Gate of Readiness (§15) and Handoff Prompt (§16) are **no longer required** in the compact template.
-If optional Section 9 (open questions / real blockers — **not** PRD §7 Apêndice/Referências) has active blocking items, stop execution and request clarification.
+If optional Section 9 (open questions / real blockers) has active blocking items, stop execution and request clarification.
 
-When Section 8 checklist is thin, read **PRD §4–6** from the PRD path in the plan header for business acceptance and **Sprint §9/§10** from the sprint file for eval/policy obligations.
+When Section 8 checklist is thin, read **Sprint §7** (contrato congelado, especialmente §7.3) from the sprint file path in the plan header for business acceptance and **Sprint §9/§10** for eval/policy obligations.
 
 After the plan is loaded, emit `plan_loaded`. After validating the execution boundary and `state_path` target, emit `handoff_accepted`.
 
@@ -160,11 +160,11 @@ After all tasks in the current slice are complete, write the state file boundary
 
 Create `.talos/state/<run_id>/<slice>.json` following `packages/templates/STATE_FILE_SCHEMA.md`.
 
-State file = deterministic context layer, not a human report. Keep it compact: IDs, paths, checks, hashes, short status. Do not paste plan/PRD text, diffs, logs, reasoning, prose summaries, or transcripts. Prefer one-line compact JSON on disk; JSON parsing, not formatting, is the contract.
+State file = deterministic context layer, not a human report. Keep it compact: IDs, paths, checks, hashes, short status. Do not paste plan/sprint-contract text, diffs, logs, reasoning, prose summaries, or transcripts. Prefer one-line compact JSON on disk; JSON parsing, not formatting, is the contract.
 
 ```json
 {
-  "state_schema_version": 2,
+  "state_schema_version": 3,
   "run_id": "<run_id>",
   "slice": "<slice id>",
   "base_sha": "<base commit explícito do plano/handoff>",
@@ -174,15 +174,18 @@ State file = deterministic context layer, not a human report. Keep it compact: I
   "files_changed": ["relative/path.ext"],
   "diff_stat": "N files, +X -Y",
   "plan_path": ".talos/plans/<id>.plan.md",
-  "boundary_refs": ["§2.I1", "§6.1", "§8", "Sprint §9 EVAL-001"],
+  "boundary_refs": ["§2.I1", "§6.1", "§8", "Sprint §7.3", "Sprint §9 EVAL-001"],
   "sprint_id": "S01",
   "sprint_file_path": ".talos/backlog/sprints/SPRINT_S01_slug.md",
-  "prd_path": ".talos/prd/PRD_S01_slug.md",
-  "contract_ids": {"obligations": [], "invariants": ["I1"], "scenarios": ["S1"], "risks": ["R1"]},
+  "contract_ids": {"obligations": ["§7.3.O1"], "invariants": ["I1"], "scenarios": ["S1"], "risks": ["R1"]},
   "eval_results": [{"id": "EVAL-001", "status": "passed", "evidence": ["<path/check/state>"], "checks": [0]}],
+  "proof_refs": {
+    "AC-001": {"checks": [0], "files": [0]}
+  },
+  "acceptance_results": [{"id": "AC-001", "status": "proved", "proof_types": ["T-outcome:proved", "I:present"]}],
   "policy_scope": {"forbidden_scope": ["<path>"], "required_gates": ["talos_verify_sprint_file", "talos-task-validator"]},
   "check_table": ["<comando>"],
-  "validation_map": [{"obligation_ids": [], "checks": [0], "status": "passed"}],
+  "validation_map": [{"obligation_ids": ["§7.3.O1"], "checks": [0], "status": "passed"}],
   "task_evidence": [{"task": "T01", "files": [0], "checks": [0], "result": "passed"}],
   "repair_evidence": [],
   "worktree_baseline": [["relative/preexisting.ext", "M", "<64 hex>"]],
@@ -194,9 +197,11 @@ State file = deterministic context layer, not a human report. Keep it compact: I
 
 Capture `base_sha` da referência explícita do plano/handoff; nunca infira pelo nome da branch. Antes da primeira mutação, capture `worktree_baseline`; imediatamente antes do handoff, capture `worktree_final`. `files_changed` e `task_evidence` representam exatamente `base_sha...head_sha` + delta entre snapshots. Dirty preexistente byte/status-idêntico fica fora; qualquer alteração posterior entra.
 
-Use schema v2. `contract_ids` referencia IDs autoritativos do plano/PRD/Sprint; não copie narrativa de invariantes, cenários ou riscos. `check_table` deduplica comandos; `task_evidence.files` referencia índices de `files_changed`; snapshots usam tuplas `[path,status,sha256]`.
+Use schema v3 (`state_schema_version:3`). v1/v2 são hard-fail em 0.15 (D19). `contract_ids` referencia IDs autoritativos do plano/Sprint §7/§9; não copie narrativa de invariantes, cenários ou riscos. `check_table` deduplica comandos; `task_evidence.files` referencia índices de `files_changed`; snapshots usam tuplas `[path,status,sha256]`.
 
-Se o plano tiver Sprint file, o state deve provar todos os `EVAL-*` do `eval_manifest` com `eval_results.status="passed"` e evidência real. Não grave `evidence_to_claim` no v2; `eval_results` é fonte única. `policy_scope` deve refletir somente gates executáveis de `Sprint §10` em forma resumida; arquivo em `forbidden_scope` não pode aparecer em `files_changed`. `allowed_scope`, quando existir em state legado, é informativo e nunca limita `files_changed`.
+Se o plano tiver Sprint file, o state deve provar todos os `EVAL-*` do `eval_manifest` com `eval_results.status="passed"` e evidência real. Não grave `evidence_to_claim` no v3; `eval_results` é fonte única. `policy_scope` deve refletir somente gates executáveis de `Sprint §10` em forma resumida; arquivo em `forbidden_scope` não pode aparecer em `files_changed`. `allowed_scope`, quando existir em state legado, é informativo e nunca limita `files_changed`.
+
+`proof_refs` (v0.15) mapeia cada `AC-NNN` do §7.3 para `{ checks: [índices de check_table], files: [índices de files_changed] }`. O executor registra a evidência citada por AC (o comando de teste com assert de outcome e os arquivos do sink). `acceptance_results` é emitido pelo validator sibling no `complete` — não pelo executor — e **persistido pelo MCP no state em disco** após a confrontação do eco com o oráculo mecânico (D22). É essa persistência que alimenta o gate de status de `talos_update_sprint_status` (CN2/VC1): sem ela, o state nunca teria `acceptance_results` no fluxo real, `manual_validation_pending` ficaria inalcançável e `done` com M aberto passaria. O MCP classifica `proved`/`unproved`/`violated`/`manual_pending` via oráculo mecânico (D22): um check com assert de retorno/efeito é elegível a `proved`; um check que só exercita o caminho (sem assert) é `unproved`.
 
 Validation is always **sibling**, on every host. The validator is registered as a real subagent on every host, but this executor **never** dispatches it and never validates its own work. After tasks and local gates pass and the state file is written, this executor **stops mutation** and returns `validator_handoff_required` with the `state_path`. The orchestrator dispatches `talos-task-validator` as the next isolated sibling phase, locks it via `talos_lock_validator`, and — if the verdict is `fail` — dispatches `talos-findings-repair` (not this executor) before the **2nd and last** validator.
 

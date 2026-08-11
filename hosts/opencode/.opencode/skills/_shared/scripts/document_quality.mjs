@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -7,7 +8,7 @@ const VALID = Object.freeze({
   gain: new Set(['alto', 'médio', 'baixo']),
   effort: new Set(['alto', 'médio', 'baixo']),
   priority: new Set(['P0', 'P1', 'P2', 'P3']),
-  state: new Set(['backlog', 'ready', 'doing', 'review', 'done', 'blocked']),
+  state: new Set(['backlog', 'ready', 'doing', 'review', 'manual_validation_pending', 'done', 'blocked']),
 });
 const SPRINT_ID_SOURCE = 'S\\d{2}(?:[a-z]|\\.\\d+)?';
 const SPRINT_ID_REGEX = new RegExp(`^${SPRINT_ID_SOURCE}$`);
@@ -141,7 +142,12 @@ export function parseSprintRows(markdown) {
   return rows.slice(header + 1).filter((row) => SPRINT_ID_REGEX.test(row[0])).map((row) => ({
     id: row[0], name: row[1], phase: row[2], objective: row[3], moscow: row[4], gain: (row[5] ?? '').toLowerCase(),
     effort: (row[6] ?? '').toLowerCase(), priority: row[7], prd: row[8], dependencies: row[9], state: row[10], gate: row[11],
-    sprint_file: row[12] ?? null, plan: row[13] ?? null, state_file: row[14] ?? null, raw: row,
+    sprint_file: row[12] ?? null, plan: row[13] ?? null, state_file: row[14] ?? null,
+    // D2/D6 (v0.15.0): flag de revalidação na coluna 15 (fim do índice, após
+    // State). Célula ausente em artefato pré-coluna = vazia → false (sem quebrar
+    // linhas legadas com 15 células). Flag ≠ status (INV4): não entra em enums.
+    revalidation_required: /^(true|yes|1)$/i.test(row[15] ?? ''),
+    raw: row,
   }));
 }
 
@@ -163,6 +169,205 @@ function fencedYamlBlock(markdown, key) {
   return match ? match[1] : null;
 }
 
+function unquoteYaml(value) {
+  const v = (value ?? '').trim();
+  if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) return v.slice(1, -1);
+  return v;
+}
+
+function parseInlineYamlList(value) {
+  const v = (value ?? '').trim();
+  const match = /^\[(.*)\]$/.exec(v);
+  if (!match) return null;
+  if (!match[1].trim()) return [];
+  return match[1].split(',').map((token) => unquoteYaml(token.trim())).filter(Boolean);
+}
+
+function applyItemField(item, text) {
+  const match = /^([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*(.*)$/.exec(text);
+  if (!match) return;
+  const [, key, raw] = match;
+  const val = raw.trim();
+  if (key === 'id') item.id = unquoteYaml(val);
+  else if (key === 'behavior') item.behavior = unquoteYaml(val);
+  else if (key === 'scenario') item.scenario = unquoteYaml(val);
+  else if (key === 'origin') item.origin = unquoteYaml(val);
+  else if (key === 'decisions') item.decisions = parseInlineYamlList(val) ?? [];
+  else if (key === 'evals') item.evals = parseInlineYamlList(val) ?? [];
+}
+
+function applyManualField(manual, text) {
+  const match = /^([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*(.*)$/.exec(text);
+  if (!match) return;
+  const [, key, raw] = match;
+  const val = raw.trim();
+  if (val.startsWith('[')) manual[key] = parseInlineYamlList(val) ?? [];
+  else manual[key] = unquoteYaml(val);
+}
+
+/**
+ * Parser minimalista do subset `acceptance` do contrato §7.3.
+ * Determinístico para o formato definido em PROPOSTA_V0_15_0 §4: lista de maps
+ * com campos escalares, listas inline `[...]` e submapa `evidence` (required + manual).
+ * Não é parser YAML geral. Retorna `null` se não houver bloco `acceptance`; `[]` se vazio.
+ */
+function parseAcceptanceItems(blockText) {
+  const lines = blockText.split(/\r?\n/);
+  let start = -1;
+  for (let i = 0; i < lines.length; i += 1) {
+    if (/^\s*acceptance\s*:\s*$/.test(lines[i])) { start = i + 1; break; }
+    if (/^\s*acceptance\s*:\s*\[\]\s*$/.test(lines[i])) return [];
+  }
+  if (start < 0) return null;
+
+  const items = [];
+  let item = null;
+  let baseIndent = -1;
+  let evidenceIndent = -1;
+  let manualIndent = -1;
+
+  const flush = () => {
+    if (item) {
+      if (!item.evidence) item.evidence = { required: [], manual: null };
+      items.push(item);
+    }
+    item = null; evidenceIndent = -1; manualIndent = -1;
+  };
+
+  for (let i = start; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (!line.trim()) continue;
+    const indent = line.search(/\S/);
+    const trimmed = line.trim();
+    if (indent === 0 && /^[a-zA-Z_][a-zA-Z0-9_]*\s*:/.test(trimmed)) { flush(); break; }
+
+    if (/^- /.test(trimmed)) {
+      flush();
+      item = {};
+      baseIndent = indent;
+      applyItemField(item, trimmed.replace(/^-\s+/, ''));
+      continue;
+    }
+    if (!item) continue;
+
+    if (manualIndent >= 0 && indent > manualIndent) {
+      if (item.evidence && item.evidence.manual) applyManualField(item.evidence.manual, trimmed);
+      continue;
+    }
+    if (manualIndent >= 0 && indent <= manualIndent) manualIndent = -1;
+
+    if (evidenceIndent >= 0 && indent > evidenceIndent) {
+      if (trimmed.startsWith('manual:')) {
+        const val = trimmed.replace(/^manual:\s*/, '').trim();
+        if (val === 'null' || val === '') {
+          item.evidence.manual = val === '' ? {} : null;
+          if (val === '') manualIndent = indent;
+        } else {
+          item.evidence.manual = null;
+        }
+      } else if (trimmed.startsWith('required:')) {
+        const val = trimmed.replace(/^required:\s*/, '');
+        item.evidence.required = parseInlineYamlList(val);
+        if (!item.evidence.required) {
+          item.evidence.required = (val.trim() && val.trim() !== 'null') ? [unquoteYaml(val)] : [];
+        }
+      }
+      continue;
+    }
+    if (evidenceIndent >= 0 && indent <= evidenceIndent) evidenceIndent = -1;
+
+    if (trimmed.startsWith('evidence:')) {
+      item.evidence = { required: [], manual: null };
+      evidenceIndent = indent;
+    } else {
+      applyItemField(item, trimmed);
+    }
+  }
+  flush();
+  return items;
+}
+
+/** Extrai e parseia o bloco `acceptance` (AC-*) do §7.3. `null` se ausente; `[]` se vazio. */
+export function parseAcceptanceContract(markdown) {
+  const section7 = extractSectionMarkdown(markdown, 7) ?? '';
+  const fenceRe = /```ya?ml\s*\n([\s\S]*?)```/gi;
+  let blockText = null;
+  let match;
+  while ((match = fenceRe.exec(section7)) !== null) {
+    if (/^\s*acceptance\s*:/m.test(match[1])) { blockText = match[1]; break; }
+  }
+  if (blockText == null) return null;
+  return parseAcceptanceItems(blockText);
+}
+
+/** Conjunto de ids `EVAL-*` declarados no `eval_manifest` do §9. */
+export function extractEvalIds(markdown) {
+  const block = fencedYamlBlock(markdown, 'eval_manifest');
+  if (!block) return new Set();
+  return new Set([...block.matchAll(/id:\s*["']?(EVAL-\d+)["']?/g)].map((m) => m[1]));
+}
+
+/** Enum fixo de reasons da review crítica (D06/D09 — sem inferência por prosa). */
+export const CRITICAL_REVIEW_REASONS = Object.freeze([
+  'authorization', 'payment', 'data_migration', 'public_contract', 'host_adapter_dispatch',
+]);
+
+/**
+ * Parseia o subbloco `critical_review` do `policy_manifest` (subset determinístico,
+ * mesmo padrão do parser de acceptance — sem js-yaml).
+ * Retorna `null` quando `critical_review` está ausente; senão
+ * `{ required, reasons }` — `required` preserva o valor cru (true/false/outro,
+ * para a conformance julgar boolean) e `reasons` é array (vazio se ausente).
+ */
+export function parseCriticalReview(policyBlock) {
+  if (!policyBlock) return null;
+  const lines = policyBlock.split(/\r?\n/);
+  let found = false;
+  let required = null;
+  let reasons = null;
+  let collectingList = false;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const indent = line.search(/\S/);
+    if (!found) {
+      if (/^critical_review\s*:\s*$/.test(trimmed)) found = true;
+      continue;
+    }
+    // Indent <= 2 com chave = volta ao topo do policy_manifest (fim do subbloco).
+    if (indent <= 2 && /^[a-zA-Z_][a-zA-Z0-9_]*\s*:/.test(trimmed)) break;
+    if (collectingList && indent > 4 && /^-\s+/.test(trimmed)) {
+      reasons.push(unquoteYaml(trimmed.replace(/^-\s+/, '')));
+      continue;
+    }
+    collectingList = false;
+    const field = /^([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*(.*)$/.exec(trimmed);
+    if (!field) continue;
+    if (field[1] === 'required') {
+      const raw = field[2].trim();
+      required = /^true$/i.test(raw) ? true : /^false$/i.test(raw) ? false : raw;
+    } else if (field[1] === 'reasons') {
+      const inline = parseInlineYamlList(field[2]);
+      if (inline !== null) {
+        reasons = inline;
+      } else if (field[2].trim() === '') {
+        reasons = [];
+        collectingList = true;
+      } else {
+        reasons = [unquoteYaml(field[2])];
+      }
+    }
+  }
+  if (!found) return null;
+  return { required, reasons: reasons ?? [] };
+}
+
+/** D06/D09: review crítica só se `policy_manifest.critical_review.required === true`. */
+export function requiresCriticalReview(policyBlock) {
+  const critical = parseCriticalReview(policyBlock);
+  return critical !== null && critical.required === true;
+}
+
 function cleanPathToken(value) {
   if (!value || value === '—') return '';
   const link = /\[[^\]]+\]\(([^)]+)\)/.exec(value);
@@ -182,13 +387,154 @@ function sprintConformancePending(category, item, line, message, nextAction = 'c
   return { category, item, line, message, next_action: nextAction };
 }
 
+function isStandaloneBacklog(value) {
+  return typeof value === 'string' && /^Não aplicável \(standalone\)$/i.test(value.trim());
+}
+
+/**
+ * Procedência por linha (v0.16.0, D3/D5). Enum: `usuario` | `premissa` |
+ * `derivado:<path>`. Para `derivado:` sem sufixo ` (novo)`, resolve o path
+ * contra `root` com `fs.existsSync` quando `root` é fornecido; sem `root`,
+ * pula a resolução e devolve `kind: 'derivado'` sem julgar existência
+ * (parse puro sem acesso a disco). Erro de leitura no path conta como
+ * inexistente, com o motivo em `reason`.
+ */
+export function validateOriginToken(raw, { root = null } = {}) {
+  if (typeof raw !== 'string' || raw.trim() === '') {
+    return { valid: false, kind: null, path: null, reason: 'origem ausente' };
+  }
+  const token = raw.trim();
+  if (token === 'usuario') return { valid: true, kind: 'usuario', path: null, reason: null };
+  if (token === 'premissa') return { valid: true, kind: 'premissa', path: null, reason: null };
+  if (token.startsWith('derivado:')) {
+    let target = token.slice('derivado:'.length).trim();
+    const isNew = target.endsWith('(novo)');
+    if (isNew) target = target.slice(0, -(('(novo)').length)).trim();
+    if (!target) return { valid: false, kind: 'derivado', path: null, reason: 'derivado sem path' };
+    if (isNew || !root) return { valid: true, kind: 'derivado', path: target, reason: null };
+    const normalized = target.replaceAll('\\', '/').replace(/^\.\//, '');
+    const absolute = path.resolve(root, normalized);
+    let exists = false;
+    let failure = null;
+    try {
+      exists = fs.existsSync(absolute);
+    } catch (error) {
+      failure = error.message;
+    }
+    if (!exists) {
+      return {
+        valid: false,
+        kind: 'derivado',
+        path: target,
+        reason: failure ? `erro de leitura no path: ${failure}` : 'path não existe no root do consumidor',
+      };
+    }
+    return { valid: true, kind: 'derivado', path: target, reason: null };
+  }
+  return { valid: false, kind: null, path: null, reason: `fora do enum (usuario | derivado:<path> | premissa): ${token}` };
+}
+
+/** Linhas `D<n>` da §7.1 com célula `Origem` resolvida pela posição do cabeçalho. */
+function contractDecisionRows(markdown) {
+  const section7 = extractSectionMarkdown(markdown, 7);
+  if (!section7) return { hasOriginColumn: false, rows: [] };
+  const headingMatch = /^###\s+7\.1\b[^\n]*$/im.exec(section7);
+  if (!headingMatch) return { hasOriginColumn: false, rows: [] };
+  const tail = section7.slice(headingMatch.index + headingMatch[0].length);
+  const end = tail.search(/\n#{2,3}\s/);
+  const body = end < 0 ? tail : tail.slice(0, end);
+  const tableRows = body.split('\n')
+    .filter((line) => /^\|.*\|\s*$/.test(line))
+    .map((line) => line.split('|').slice(1, -1).map((cell) => cell.trim()))
+    .filter((cells) => cells.length > 0 && !cells.every((cell) => /^:?-+:?$/.test(cell)));
+  const headerIndex = tableRows.findIndex((cells) => cells[0] === 'ID');
+  if (headerIndex < 0) return { hasOriginColumn: false, rows: [] };
+  const header = tableRows[headerIndex];
+  const originIndex = header.findIndex((cell) => /^Origem$/i.test(cell));
+  const rows = tableRows.slice(headerIndex + 1)
+    .filter((cells) => /^D\d+$/.test(cells[0]))
+    .map((cells) => ({
+      id: cells[0],
+      origin: originIndex >= 0 && originIndex < cells.length ? cells[originIndex] : null,
+    }));
+  return { hasOriginColumn: originIndex >= 0, rows };
+}
+
+function extractSectionMarkdown(markdown, sectionNumber) {
+  const start = new RegExp(`^##\\s+${sectionNumber}\\.\\s`, 'im').exec(markdown);
+  if (!start) return null;
+  const from = start.index;
+  const tail = markdown.slice(from + start[0].length);
+  const next = /\n##\s+\d+\./.exec(tail);
+  return next ? markdown.slice(from, from + start[0].length + next.index) : markdown.slice(from);
+}
+
+function normalizeAcceptanceBlock(text) {
+  return text
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map((line) => line.trimEnd())
+    .join('\n')
+    .trim();
+}
+
+/** Extrai o bloco §7 (contrato) normalizado — mesma normalização na gravação e na verificação. */
+export function extractAcceptanceBlock(markdown) {
+  const start = /^##\s+7\.\s/im.exec(markdown);
+  if (!start) return null;
+  const from = start.index;
+  const tail = markdown.slice(from);
+  const afterHeading = tail.slice(start[0].length);
+  const next = /\n##\s/.exec(afterHeading);
+  const raw = next ? tail.slice(0, start[0].length + next.index) : tail;
+  return normalizeAcceptanceBlock(raw);
+}
+
+/** Retorna `sha256:<hex>` do bloco §7, ou null se §7 ausente. */
+export function computeAcceptanceSeal(markdown) {
+  const block = extractAcceptanceBlock(markdown);
+  if (block == null) return null;
+  const hash = crypto.createHash('sha256').update(block, 'utf8').digest('hex');
+  return `sha256:${hash}`;
+}
+
+/**
+ * Selo write-once do contrato de produto.
+ * - draft (ou status ≠ aprovado): selo ignorado → { sealed:false, tampered:false }
+ * - aprovado sem selo válido: { sealed:false, tampered:true }
+ * - aprovado com selo: compara sha256 do §7 → tampered se divergir
+ */
+export function validateAcceptanceSeal(markdown) {
+  const status = tableValue(markdown, 'Contrato status');
+  if (!status || !/^aprovado$/i.test(status.trim())) {
+    return { sealed: false, tampered: false };
+  }
+  const sealRaw = tableValue(markdown, 'Selo do contrato');
+  if (!sealRaw || !/^sha256:[a-f0-9]{64}$/i.test(sealRaw.trim())) {
+    return { sealed: false, tampered: true };
+  }
+  const expected = computeAcceptanceSeal(markdown);
+  if (!expected) {
+    return { sealed: false, tampered: true };
+  }
+  return {
+    sealed: true,
+    tampered: expected.toLowerCase() !== sealRaw.trim().toLowerCase(),
+  };
+}
+
 export function validateSprintFileConformance(markdown, {
   sprintPath = null,
   sprintId = null,
   backlogPath = null,
   backlogMarkdown = null,
+  root = null,
 } = {}) {
   const pendencies = [];
+  let premissaCount = 0;
+  const moscowValue = tableValue(markdown, 'MoSCoW');
+  const prioridadeValue = tableValue(markdown, 'Prioridade');
+  const prioridadeSprint = moscowValue === 'Must' || prioridadeValue === 'P0';
   const requiredSections = [
     '1. Metadados',
     '2. Objetivo e valor',
@@ -196,13 +542,13 @@ export function validateSprintFileConformance(markdown, {
     '4. Contexto e fontes',
     '5. Dependências e bloqueios',
     '6. Decisões da sprint',
-    '7. Critérios candidatos para PRD',
+    '7. Contrato de produto (congelado)',
     '8. Definition of Ready',
     '9. Eval manifest',
     '10. Policy manifest',
     '11. Guia e sensores',
     '12. Evidence-to-claim',
-    '13. PRD e PLAN',
+    '13. PLAN',
     '14. Execução e validação',
     '15. Aprendizados e handoff para próximas sprints',
     '16. Histórico',
@@ -210,6 +556,38 @@ export function validateSprintFileConformance(markdown, {
   for (const section of requiredSections) {
     if (!new RegExp(`^##\\s+${section.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`, 'im').test(markdown)) {
       pendencies.push(sprintConformancePending('seção_obrigatória', section, null, `Seção obrigatória ausente: ${section}`));
+    }
+  }
+
+  // CN6/D2 (v0.16.0): toda sprint declara a discussão de onde nasceu — é a fonte
+  // de intenção que o revisor frio usa como oráculo (D1). "Sempre obrigatória",
+  // inclusive standalone (decisão de autoria: sem detectar a origem da sprint).
+  // A §4 é tabela de TRÊS colunas (`Tipo | Fonte | Uso nesta sprint`): o
+  // casamento é pelo rótulo da primeira célula (`Discussão`), não por posição e
+  // não via `tableValue` (que só casa linha de duas colunas). §4 ausente por
+  // completo já é coberta pela pendência `seção_obrigatória` acima — aqui a
+  // pendência é única por sprint file, com a linha da §4 no campo `line`.
+  const section4 = extractSectionMarkdown(markdown, 4);
+  if (section4 != null) {
+    const discussaoRow = /^\|\s*Discussão\s*\|\s*([^|\n]*)/im.exec(section4);
+    const fonte = discussaoRow ? discussaoRow[1].trim() : '';
+    const semFonte = discussaoRow == null
+      || fonte === ''
+      || /^\[.*\]$/.test(fonte)          // placeholders: [link/resumo], [...]
+      || fonte === '—'
+      || /^N\/A$/i.test(fonte);
+    if (semFonte) {
+      // Pendência nomeada no pack (CN6/AC-02.1.1/02.1.2): `fonte_discussao_ausente`.
+      // O plano prescrevia "categoria `contexto_fontes`", mas o modelo de pendências
+      // tem campo único `category` (que é o id da pendência, padrão do repo:
+      // `procedencia_ausente`, `origem_path_inexistente`, ...) — o nome do pack prevalece.
+      pendencies.push(sprintConformancePending(
+        'fonte_discussao_ausente',
+        'Discussão',
+        lineOf(markdown, /^\|\s*Discussão\s*\|/i),
+        '§4 sem fonte de discussão preenchida — a sprint não declara a discussão de onde nasceu (obrigatória no schema 0.16.0, inclusive standalone).',
+        'preencher_fonte_discussao',
+      ));
     }
   }
 
@@ -232,12 +610,266 @@ export function validateSprintFileConformance(markdown, {
   }
 
   const backlog = tableValue(markdown, 'Backlog mestre');
-  if (!backlog || sprintFilePending(backlog)) {
+  const standalone = isStandaloneBacklog(backlog);
+  if (!standalone && (!backlog || sprintFilePending(backlog))) {
     pendencies.push(sprintConformancePending('metadados', 'Backlog mestre', lineOf(markdown, /^\|\s*Backlog mestre\s*\|/i), 'Backlog mestre ausente no sprint file.', 'vincular_backlog_mestre'));
   }
 
+  const contratoStatus = tableValue(markdown, 'Contrato status');
+  if (!contratoStatus || !/^(draft|aprovado)$/i.test(contratoStatus)) {
+    pendencies.push(sprintConformancePending(
+      'contrato_produto',
+      'Contrato status',
+      lineOf(markdown, /^\|\s*Contrato status\s*\|/i),
+      `Contrato status inválido ou ausente: ${contratoStatus ?? '<ausente>'} (esperado draft|aprovado).`,
+      'preencher_contrato_status',
+    ));
+  }
+
+  const section7 = extractSectionMarkdown(markdown, 7) ?? '';
+  if (!/\|\s*D\d+\s*\|/.test(section7)) {
+    pendencies.push(sprintConformancePending(
+      'contrato_produto',
+      'decisoes',
+      lineOf(markdown, /^##\s+7\./i),
+      'Contrato §7 sem decisão de produto D* (| D<n> |).',
+      'preencher_decisoes_produto',
+    ));
+  }
+  // LEG1: validação de aceite substitui os 4 grupos checkbox por AC-* (YAML acceptance).
+  const acceptanceItems = parseAcceptanceContract(markdown);
+  if (acceptanceItems == null) {
+    pendencies.push(sprintConformancePending(
+      'contrato_produto',
+      'aceite',
+      lineOf(markdown, /^##\s+7\./i),
+      'Contrato §7 sem bloco `acceptance` (YAML com AC-*).',
+      'preencher_aceite_binario',
+    ));
+  } else {
+    const VALID_EVIDENCE = new Set(['I', 'T-outcome', 'W', 'M']);
+    const seenIds = new Set();
+    const evalIds = extractEvalIds(markdown);
+    for (const item of acceptanceItems) {
+      if (!item.id || !/^AC-\d+$/.test(item.id)) {
+        pendencies.push(sprintConformancePending(
+          'contrato_produto',
+          'aceite',
+          lineOf(markdown, /^##\s+7\./i),
+          `AC com id inválido/ausente: ${item.id ?? '<ausente>'} (esperado AC-\\d+).`,
+          'corrigir_aceite_id',
+        ));
+        continue;
+      }
+      if (seenIds.has(item.id)) {
+        pendencies.push(sprintConformancePending(
+          'contrato_produto',
+          'aceite',
+          lineOf(markdown, /^##\s+7\./i),
+          `AC duplicado: ${item.id}.`,
+          'corrigir_aceite_duplicado',
+        ));
+      }
+      seenIds.add(item.id);
+      // Procedência por linha (v0.16.0, D3/D5/D17): todo AC declara `origin`.
+      if (item.origin === undefined || item.origin === null || String(item.origin).trim() === '') {
+        pendencies.push(sprintConformancePending(
+          'procedencia_ausente',
+          item.id,
+          lineOf(markdown, /^##\s+7\./i),
+          `AC ${item.id} sem \`origin\` (procedência obrigatória no schema 0.16.0).`,
+          'migrar_para_0_16',
+        ));
+      } else {
+        const originCheck = validateOriginToken(item.origin, { root });
+        if (!originCheck.valid) {
+          if (originCheck.kind === 'derivado' && originCheck.path) {
+            pendencies.push(sprintConformancePending(
+              'origem_path_inexistente',
+              item.id,
+              lineOf(markdown, /^##\s+7\./i),
+              `AC ${item.id} com origem inexistente: ${item.origin} (${originCheck.reason}).`,
+              'corrigir_origem_path',
+            ));
+          } else {
+            pendencies.push(sprintConformancePending(
+              'procedencia_invalida',
+              item.id,
+              lineOf(markdown, /^##\s+7\./i),
+              `AC ${item.id} com origem inválida: ${item.origin} (${originCheck.reason}).`,
+              'corrigir_origem',
+            ));
+          }
+        } else if (originCheck.kind === 'premissa') {
+          premissaCount += 1;
+          if (prioridadeSprint) {
+            pendencies.push(sprintConformancePending(
+              'procedencia_premissa_em_prioridade',
+              item.id,
+              lineOf(markdown, /^##\s+7\./i),
+              `AC ${item.id} apoiado em \`origin: premissa\` em sprint ${moscowValue === 'Must' ? 'MoSCoW Must' : 'Prioridade P0'} — fechar em entrevista antes de sustentar aceite.`,
+              'fechar_premissa_em_entrevista',
+            ));
+          }
+        }
+      }
+      if (!item.behavior || !item.behavior.trim()) {
+        pendencies.push(sprintConformancePending(
+          'contrato_produto',
+          'aceite',
+          lineOf(markdown, /^##\s+7\./i),
+          `AC ${item.id} sem behavior observável.`,
+          'preencher_aceite_behavior',
+        ));
+      }
+      const evidence = item.evidence ?? { required: [], manual: null };
+      const required = Array.isArray(evidence.required) ? evidence.required : [];
+      if (required.length === 0) {
+        pendencies.push(sprintConformancePending(
+          'contrato_produto',
+          'aceite',
+          lineOf(markdown, /^##\s+7\./i),
+          `AC ${item.id} sem evidence.required.`,
+          'preencher_aceite_evidence',
+        ));
+      } else {
+        const invalid = required.filter((t) => !VALID_EVIDENCE.has(t));
+        if (invalid.length > 0) {
+          pendencies.push(sprintConformancePending(
+            'contrato_produto',
+            'aceite',
+            lineOf(markdown, /^##\s+7\./i),
+            `AC ${item.id} com evidence.required inválido: ${invalid.join(', ')} (válidos: I, T-outcome, W, M).`,
+            'corrigir_aceite_evidence',
+          ));
+        }
+      }
+      // AC sem M exige provas automáticas; com M, `manual` deve ser objeto (não vazio) ou null.
+      const hasManual = !!required.includes('M');
+      const manualObj = evidence.manual && typeof evidence.manual === 'object' ? evidence.manual : null;
+      if (hasManual && !manualObj) {
+        pendencies.push(sprintConformancePending(
+          'contrato_produto',
+          'aceite',
+          lineOf(markdown, /^##\s+7\./i),
+          `AC ${item.id} declara evidence M mas sem objeto manual.`,
+          'preencher_aceite_manual',
+        ));
+      }
+      if (!hasManual && manualObj) {
+        pendencies.push(sprintConformancePending(
+          'contrato_produto',
+          'aceite',
+          lineOf(markdown, /^##\s+7\./i),
+          `AC ${item.id} tem objeto manual sem evidence M em required.`,
+          'corrigir_aceite_manual_sem_M',
+        ));
+      }
+      // D3/D21: hierarquia AC ⊃ EVAL. Todo EVAL referenciado deve existir no §9.
+      for (const evalId of (item.evals ?? [])) {
+        if (!/^EVAL-\d+$/.test(evalId)) {
+          pendencies.push(sprintConformancePending(
+            'contrato_produto',
+            'aceite',
+            lineOf(markdown, /^##\s+7\./i),
+            `AC ${item.id} referencia EVAL inválido: ${evalId}.`,
+            'corrigir_aceite_evals',
+          ));
+        } else if (evalIds.size > 0 && !evalIds.has(evalId)) {
+          pendencies.push(sprintConformancePending(
+            'contrato_produto',
+            'aceite',
+            lineOf(markdown, /^##\s+7\./i),
+            `AC ${item.id} referencia EVAL órfão: ${evalId} não declarado no eval_manifest (§9).`,
+            'corrigir_aceite_evals',
+          ));
+        }
+      }
+    }
+    // D21: todo EVAL do must_prove deve aparecer em ≥1 AC.
+    for (const evalId of evalIds) {
+      const referenced = acceptanceItems.some((item) => (item.evals ?? []).includes(evalId));
+      if (!referenced) {
+        pendencies.push(sprintConformancePending(
+          'contrato_produto',
+          'aceite',
+          lineOf(markdown, /^##\s+7\./i),
+          `EVAL órfão: ${evalId} declarado no §9 mas não referenciado por nenhum AC.`,
+          'vincular_eval_a_ac',
+        ));
+      }
+    }
+  }
+
+  // Procedência por linha nas decisões D* da §7.1 (v0.16.0, D3/D5/D17).
+  const contractDecisions = contractDecisionRows(markdown);
+  if (/\|\s*D\d+\s*\|/.test(extractSectionMarkdown(markdown, 7) ?? '')) {
+    if (!contractDecisions.hasOriginColumn) {
+      pendencies.push(sprintConformancePending(
+        'procedencia_ausente',
+        '§7.1',
+        lineOf(markdown, /^###\s+7\.1/i),
+        '§7.1 sem coluna `Origem` — schema anterior a 0.16.0; migrar (reinicio do artefato).',
+        'migrar_para_0_16',
+      ));
+    }
+    for (const decision of contractDecisions.rows) {
+      if (decision.origin === null || decision.origin === undefined || decision.origin.trim() === '') {
+        pendencies.push(sprintConformancePending(
+          'procedencia_ausente',
+          decision.id,
+          lineOf(markdown, new RegExp(`^\\|\\s*${decision.id}\\s*\\|`, 'm')),
+          `Decisão ${decision.id} da §7.1 sem \`Origem\`.`,
+          'migrar_para_0_16',
+        ));
+        continue;
+      }
+      const originCheck = validateOriginToken(decision.origin, { root });
+      if (!originCheck.valid) {
+        if (originCheck.kind === 'derivado' && originCheck.path) {
+          pendencies.push(sprintConformancePending(
+            'origem_path_inexistente',
+            decision.id,
+            lineOf(markdown, new RegExp(`^\\|\\s*${decision.id}\\s*\\|`, 'm')),
+            `Decisão ${decision.id} da §7.1 com origem inexistente: ${decision.origin} (${originCheck.reason}).`,
+            'corrigir_origem_path',
+          ));
+        } else {
+          pendencies.push(sprintConformancePending(
+            'procedencia_invalida',
+            decision.id,
+            lineOf(markdown, new RegExp(`^\\|\\s*${decision.id}\\s*\\|`, 'm')),
+            `Decisão ${decision.id} da §7.1 com origem inválida: ${decision.origin} (${originCheck.reason}).`,
+            'corrigir_origem',
+          ));
+        }
+      } else if (originCheck.kind === 'premissa') {
+        premissaCount += 1;
+        if (prioridadeSprint) {
+          pendencies.push(sprintConformancePending(
+            'procedencia_premissa_em_prioridade',
+            decision.id,
+            lineOf(markdown, new RegExp(`^\\|\\s*${decision.id}\\s*\\|`, 'm')),
+            `Decisão ${decision.id} da §7.1 apoiada em \`Origem: premissa\` em sprint ${moscowValue === 'Must' ? 'MoSCoW Must' : 'Prioridade P0'} — fechar em entrevista.`,
+            'fechar_premissa_em_entrevista',
+          ));
+        }
+      }
+    }
+  }
+
+  const sealResult = validateAcceptanceSeal(markdown);
+  if (sealResult.tampered) {
+    pendencies.push(sprintConformancePending(
+      'contrato_congelado',
+      'FROZEN_ACCEPTANCE_TAMPERED',
+      lineOf(markdown, /^##\s+7\./i),
+      'Contrato aprovado foi alterado sem re-aprovação (selo divergente).',
+      'reaprovar_contrato',
+    ));
+  }
+
   for (const [label, nextAction] of [
-    ['PRD', 'informar_prd_ou_pendente'],
     ['PLAN', 'informar_plan_ou_pendente'],
     ['State / evidência', 'informar_state_ou_pendente'],
   ]) {
@@ -273,6 +905,27 @@ export function validateSprintFileConformance(markdown, {
         pendencies.push(sprintConformancePending('policy_manifest', token, null, `policy_manifest sem ${token}`, 'completar_policy_manifest'));
       }
     }
+    // Plano 6 (D06/D09): `critical_review` é opcional no policy_manifest; quando
+    // presente, o shape é estrito — required booleano e reasons ⊆ enum fixo.
+    // Proibido inferir reasons por prosa/diff: required:true sem reasons = pendência.
+    const critical = parseCriticalReview(policyBlock);
+    if (critical !== null) {
+      if (typeof critical.required !== 'boolean') {
+        pendencies.push(sprintConformancePending('policy_manifest', 'critical_review.required', null,
+          'critical_review.required deve ser true ou false.', 'corrigir_policy_manifest'));
+      }
+      const invalidReasons = critical.reasons.filter((reason) => !CRITICAL_REVIEW_REASONS.includes(reason));
+      if (invalidReasons.length > 0) {
+        pendencies.push(sprintConformancePending('policy_manifest', 'critical_review.reasons', null,
+          `critical_review.reasons contém valor fora do enum fixo: ${invalidReasons.join(', ')}.`,
+          'corrigir_policy_manifest'));
+      }
+      if (critical.required === true && critical.reasons.length === 0) {
+        pendencies.push(sprintConformancePending('policy_manifest', 'critical_review.reasons', null,
+          'critical_review.required:true exige reasons não vazio (sem inferência por prosa — D09).',
+          'corrigir_policy_manifest'));
+      }
+    }
   }
 
   const evidenceLine = lineOf(markdown, /^\|\s*Claim\s*\|\s*Onde foi prometido\s*\|\s*Evidência esperada\s*\|\s*Evidência real\s*\|\s*Status\s*\|/i);
@@ -280,7 +933,7 @@ export function validateSprintFileConformance(markdown, {
     pendencies.push(sprintConformancePending('evidence_to_claim', 'tabela', lineOf(markdown, /^##\s+12\./i), 'Tabela Evidence-to-claim ausente ou inválida.', 'criar_evidence_to_claim'));
   }
 
-  if (backlogPath && backlogMarkdown != null) {
+  if (!standalone && backlogPath && backlogMarkdown != null) {
     const rows = parseSprintRows(backlogMarkdown);
     const row = rows.find((entry) => entry.id === expectedSprintId);
     if (!row) {
@@ -300,14 +953,27 @@ export function validateSprintFileConformance(markdown, {
     valid: pendencies.length === 0,
     pending_count: pendencies.length,
     pendencies,
+    premissa_count: premissaCount,
   };
 }
 
 export function parseDecisionRows(markdown) {
   const rows = parseTable(markdown, '### Decisões bloqueantes');
   const header = rows.findIndex((row) => row[0] === 'ID');
+  if (header < 0) return [];
+  // v0.16.0: coluna `Origem` resolvida pela posição do cabeçalho, não por
+  // índice fixo; ausência da coluna deixa `origin: null` (pendência na validação).
+  const headerCells = rows[header];
+  const originIndex = headerCells.findIndex((cell) => /^Origem$/i.test(cell));
+  const statusIndex = headerCells.findIndex((cell) => /^Status$/i.test(cell));
   return rows.slice(header + 1).filter((row) => /^D\d+$/.test(row[0])).map((row) => ({
-    id: row[0], decision: row[1], blocks: row[2], owner: row[3], status: row[4], raw: row,
+    id: row[0],
+    decision: row[1],
+    blocks: row[2],
+    owner: row[3],
+    origin: originIndex >= 0 && originIndex < row.length ? row[originIndex] : null,
+    status: statusIndex >= 0 && statusIndex < row.length ? row[statusIndex] : (row[4] ?? ''),
+    raw: row,
   }));
 }
 
@@ -364,6 +1030,11 @@ export function validateBacklogUpdate(before, after, { authorizedIds = [] } = {}
     else if (/^(decidido|fechado|aprovado)$/i.test(row.status)
       && JSON.stringify(row.raw) !== JSON.stringify(next.raw) && !authorized.has(id)) errors.push(`CLOSED_DECISION_CHANGED:${id}`);
   }
+  // v0.16.0 (D3/D17): toda decisão do backlog declara `Origem` dentro do enum.
+  for (const [id, row] of newDecisions) {
+    const originCheck = validateOriginToken(row.origin);
+    if (!originCheck.valid) errors.push(`INVALID_ORIGIN:${id}:${row.origin ?? '<ausente>'}`);
+  }
   for (const row of newRows) {
     for (const [field, values] of Object.entries(VALID)) if (!values.has(row[field])) errors.push(`INVALID_ENUM:${row.id}:${field}:${row[field]}`);
     for (const dependency of dependencyIds(row.dependencies)) {
@@ -396,16 +1067,81 @@ export function resolveSprintAuthority({ sprintId, explicitPath, canonicalPath, 
   return matches[0];
 }
 
-export function closedDecisionIds(prd) {
-  return new Set([...prd.matchAll(/^\|\s*(D\d+)\s*\|\s*(?!<|\[)(.+?)\s*\|\s*$/gm)].map((match) => match[1]));
+function setTableValue(markdown, label, value) {
+  const re = new RegExp(
+    `^(\\|\\s*${label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\|\\s*)(.*?)(\\s*\\|\\s*)$`,
+    'im',
+  );
+  if (re.test(markdown)) return markdown.replace(re, `$1${value}$3`);
+  const contratoStatus = /^\|\s*Contrato status\s*\|.*$/im;
+  if (contratoStatus.test(markdown)) {
+    return markdown.replace(contratoStatus, (row) => `${row}\n| ${label} | ${value} |`);
+  }
+  return `${markdown.trimEnd()}\n| ${label} | ${value} |\n`;
 }
 
-export function pendingInterviewQuestions(prd, questions) {
-  const closed = closedDecisionIds(prd);
+/** Prefer §7 (contrato) quando presente; senão varre o documento inteiro. */
+export function closedDecisionIds(markdown) {
+  const scope = extractSectionMarkdown(markdown, 7) ?? markdown;
+  return new Set([...scope.matchAll(/^\|\s*(D\d+)\s*\|\s*(?!<|\[)(.+?)\s*\|\s*$/gm)].map((match) => match[1]));
+}
+
+export function pendingInterviewQuestions(markdown, questions) {
+  const closed = closedDecisionIds(markdown);
   return questions.filter((question) => !closed.has(question.decision_id));
 }
 
-export function applyInterviewRound(prd, answers, date = new Date().toISOString().slice(0, 10)) {
+/**
+ * Aprova o contrato §7: `Contrato status: aprovado` + `Selo do contrato` (sha256 do §7).
+ * Status/selo vivem no §1 — fora do bloco hasheado — mesma normalização de `validateAcceptanceSeal`.
+ */
+export function approveAcceptanceContract(markdown) {
+  let updated = setTableValue(markdown, 'Contrato status', 'aprovado');
+  const seal = computeAcceptanceSeal(updated);
+  if (!seal) throw new Error('ACCEPTANCE_BLOCK_MISSING');
+  updated = setTableValue(updated, 'Selo do contrato', seal);
+  return updated;
+}
+
+/**
+ * Upsert da linha `D<n>` na §7.1 (v0.16.0: três colunas `| ID | Decisão | Origem |`).
+ * A lista final montada é sempre completa — nunca subconjunto de colunas:
+ * - linha existente: preserva a célula `Origem` atual quando a linha já tem a
+ *   terceira coluna; se o chamador informar `origin` explícito, ela vence;
+ *   linha legada de duas colunas ganha `origin` (entrevista = usuário).
+ * - linha nova: insert com as três células, sob o cabeçalho de três colunas.
+ *   Cabeçalho de duas colunas é schema pré-0.16.0 (corte seco D17): continua
+ *   lançando `DECISION_TABLE_MISSING:<id>`.
+ */
+function applyDecisionRow(markdown, decisionId, value, origin = null) {
+  const section7 = extractSectionMarkdown(markdown, 7);
+  const scope = section7 ?? markdown;
+  const rowRe = new RegExp(`^\\|\\s*${decisionId}\\s*\\|.*$`, 'm');
+  let nextScope;
+  if (rowRe.test(scope)) {
+    const existing = rowRe.exec(scope)[0];
+    const cells = existing.split('|').slice(1, -1).map((cell) => cell.trim());
+    const resolvedOrigin = origin ?? (cells.length >= 3 && cells[2] !== '' ? cells[2] : 'usuario');
+    const replacement = `| ${decisionId} | ${value} | ${resolvedOrigin} |`;
+    nextScope = scope.replace(rowRe, replacement);
+  } else if (/(\| ID \| Decisão \| Origem \|\n\|[-| ]+\|)/.test(scope)) {
+    const resolvedOrigin = origin ?? 'usuario';
+    const replacement = `| ${decisionId} | ${value} | ${resolvedOrigin} |`;
+    nextScope = scope.replace(/(\| ID \| Decisão \| Origem \|\n\|[-| ]+\|)/, `$1\n${replacement}`);
+  } else {
+    throw new Error(`DECISION_TABLE_MISSING:${decisionId}`);
+  }
+  if (section7 == null) return nextScope;
+  return markdown.slice(0, markdown.indexOf(section7)) + nextScope + markdown.slice(markdown.indexOf(section7) + section7.length);
+}
+
+/**
+ * Persiste respostas D* no markdown do sprint file (§7.1).
+ * Se o contrato estava `aprovado`, volta a `draft` e limpa o selo antes de editar.
+ * Com `{ approve: true }`, fecha com `approveAcceptanceContract` (selo byte-idêntico ao Plano 2).
+ */
+export function applyInterviewRound(markdown, answers, date = new Date().toISOString().slice(0, 10), options = {}) {
+  const { approve = false } = options;
   const ids = new Set();
   for (const answer of answers) {
     if (!answer || typeof answer.decision_id !== 'string' || !/^D\d+$/.test(answer.decision_id)) throw new Error('INVALID_DECISION_ID');
@@ -413,25 +1149,30 @@ export function applyInterviewRound(prd, answers, date = new Date().toISOString(
     if (typeof answer.value !== 'string' || !answer.value.trim()) throw new Error(`EMPTY_DECISION_VALUE:${answer.decision_id}`);
     ids.add(answer.decision_id);
   }
-  let updated = prd;
+  let updated = markdown;
+  const status = tableValue(updated, 'Contrato status');
+  if (status && /^aprovado$/i.test(status.trim())) {
+    updated = setTableValue(updated, 'Contrato status', 'draft');
+    updated = setTableValue(updated, 'Selo do contrato', 'pendente até aprovação');
+  }
   for (const answer of answers) {
-    const row = new RegExp(`^\\|\\s*${answer.decision_id}\\s*\\|.*$`, 'm');
-    const replacement = `| ${answer.decision_id} | ${answer.value} |`;
-    updated = row.test(updated) ? updated.replace(row, replacement) : updated.replace(/(\| ID \| Decisão \|\n\|[-| ]+\|)/, `$1\n${replacement}`);
+    // Toda resposta de entrevista é resposta do usuário: procedência `usuario`.
+    updated = applyDecisionRow(updated, answer.decision_id, answer.value, 'usuario');
   }
   const log = `${date} — entrevista: ${answers.map((answer) => answer.decision_id).join(', ')} persistida(s)`;
   updated = /\*\*Histórico:\*\*/.test(updated)
     ? updated.replace(/(\*\*Histórico:\*\*[^\n]*)/, `$1 · ${log}`)
     : `${updated.trimEnd()}\n\n**Histórico:** ${log}\n`;
+  if (approve) updated = approveAcceptanceContract(updated);
   return updated;
 }
 
-export function persistInterviewRound(prdPath, answers, date = new Date().toISOString().slice(0, 10)) {
-  const absolute = path.resolve(prdPath);
+export function persistInterviewRound(sprintPath, answers, date = new Date().toISOString().slice(0, 10), options = {}) {
+  const absolute = path.resolve(sprintPath);
   const temporary = path.join(path.dirname(absolute), `.${path.basename(absolute)}.${process.pid}.${Date.now()}.tmp`);
   try {
     const current = fs.readFileSync(absolute, 'utf8');
-    const updated = applyInterviewRound(current, answers, date);
+    const updated = applyInterviewRound(current, answers, date, options);
     const materialized = closedDecisionIds(updated);
     const missingBeforeWrite = answers.filter((answer) => !materialized.has(answer.decision_id));
     if (missingBeforeWrite.length > 0) {

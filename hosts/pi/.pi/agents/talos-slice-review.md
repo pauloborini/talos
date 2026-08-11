@@ -1,6 +1,6 @@
 ---
 name: talos-slice-review
-description: Revisor frio de slice da família Talos (--review). Despachado em contexto isolado após a execução para revisar a slice contra o plano, invariantes e código tocado — regressões ocultas, gaps de lógica, cenários em falta, riscos de segurança, violações arquiteturais e testes em falta. Read-only: não edita código nem despacha outros sub-agents. Primeira ação: carregar a skill completa talos-slice-review.
+description: "Revisor frio de slice da família Talos (--review). Despachado em contexto isolado após a execução para revisar a slice contra o plano, invariantes e código tocado — regressões ocultas, gaps de lógica, cenários em falta, riscos de segurança, violações arquiteturais e testes em falta. Read-only: não edita código nem despacha outros sub-agents. Primeira ação: carregar a skill completa talos-slice-review."
 tools: read, grep, find, ls, bash
 ---
 
@@ -33,13 +33,13 @@ O orquestrador passa o caminho do plano/estado (`plan_path` / `state_path`) e o 
 
 # Talos Slice Review
 
-Use this skill only when `--review` is present after `talos-plan-execute` or any equivalent implementation pass has finished a specific plan slice.
+Use this skill when `--review` is present after `talos-plan-execute` (or any equivalent implementation pass has finished a specific plan slice), or when the sprint file's `policy_manifest.critical_review.required: true` makes the review mandatory (CN5/D06 — dispatched by the orchestrator without `--review`).
 
 Review only the slice that was executed. Do not widen into a generic repo audit unless the user explicitly asks for that.
 
 ## Invocation gate
 
-`--review` is the only automatic dispatch condition. Do not auto-trigger from heuristics, diff size, risk level, or validator observations. If `--review` is absent, report that external review was skipped by contract.
+Dispatch conditions are: (1) `--review` in the user command; or (2) `policy_manifest.critical_review.required: true` in the sprint file §10 (declared contract value — mandatory review, G8). Do not auto-trigger from heuristics, diff size, risk level, or validator observations. If neither condition is present, report that external review was skipped by contract.
 
 ## Uso standalone — rótulo de garantia reduzida obrigatório (PRD D10/D11)
 

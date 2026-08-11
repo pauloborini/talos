@@ -29,43 +29,92 @@ import {
   BANNER_EVENTS,
   renderBanner,
   verifyArtifact,
-  scanPrd,
+  scanAcceptance,
   verifyTemplateConformance,
   verifySprintFile,
   verifyBacklogIndex,
   selectNextSprint,
+  nextActionForSelectedSprint,
   updateSprintStatus,
+  syncManualValidation,
+  emitMemoryHandoff,
+  propagateRevalidation,
   classifyInput,
   preflight,
   lockDispatch,
   lockValidator as lockValidatorCore,
   captureWorktreeSnapshot,
   validateStateBoundary,
+  classifyAcceptanceResults,
   assertAfterPlan,
   runState,
   ping,
   toolsList,
 } from './server.js';
-import { parseSprintRows } from '../skills/_shared/scripts/document_quality.mjs';
+import {
+  parseSprintRows,
+  validateSprintFileConformance,
+  validateAcceptanceSeal,
+  computeAcceptanceSeal,
+  extractAcceptanceBlock,
+  applyInterviewRound,
+  approveAcceptanceContract,
+  closedDecisionIds,
+  parseCriticalReview,
+  requiresCriticalReview,
+  CRITICAL_REVIEW_REASONS,
+} from '../skills/_shared/scripts/document_quality.mjs';
+import { fileURLToPath } from 'node:url';
+
+const SPRINT_TEMPLATE_PATH = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '../templates/SPRINT_TEMPLATE.md',
+);
+const SPRINT_INTERVIEW_SKILL_PATH = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '../skills/talos-sprint-interview/SKILL.md',
+);
+const ORCHESTRATOR_SKILL_PATH = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '../orchestrator/skills/talos/SKILL.md',
+);
+
+function ensureValidatorStateFixture(root, runId, statePath) {
+  // Em state_schema_version 3, o boundary exige git real (base_sha/head_sha +
+  // snapshots coerentes). Para testes do ciclo validator que não focam em
+  // boundary (FSM, dispatch_token, idempotência), este helper garante um repo
+  // git mínimo + state v3 coerente quando o fixture ainda não existe.
+  const abs = path.resolve(root, statePath);
+  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  if (fs.existsSync(abs)) return;
+  try {
+    execFileSync('git', ['-C', root, 'rev-parse', '--is-inside-work-tree'], { stdio: 'ignore' });
+  } catch {
+    execFileSync('git', ['-C', root, 'init', '-q']);
+    execFileSync('git', ['-C', root, 'config', 'user.email', 'talos@example.invalid']);
+    execFileSync('git', ['-C', root, 'config', 'user.name', 'Talos Test']);
+    fs.writeFileSync(path.join(root, 'README.md'), 'base\n');
+    execFileSync('git', ['-C', root, 'add', 'README.md']);
+    execFileSync('git', ['-C', root, 'commit', '-qm', 'base']);
+  }
+  const head = execFileSync('git', ['-C', root, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  const baseline = captureWorktreeSnapshot(root);
+  fs.writeFileSync(abs, JSON.stringify({
+    state_schema_version: 3,
+    run_id: runId, slice: 'test', base_sha: head, head_sha: head, contract_kind: 'plan',
+    tasks: [], files_changed: [],
+    diff_stat: '0 files', plan_path: '.talos/plans/test.md',
+    boundary_refs: [], obligations: [], invariants: [], scenario_probes: [],
+    risk_probes: [], validation_map: [], task_evidence: [], repair_evidence: [],
+    worktree_baseline: baseline, worktree_final: baseline,
+    executed_at: new Date().toISOString(), executor_skill: 'talos-plan-execute',
+  }, null, 2));
+}
 
 function lockValidator(args) {
   if (args.action === 'start' && args.state_path) {
     try {
-      const abs = path.resolve(args.project_root, args.state_path);
-      fs.mkdirSync(path.dirname(abs), { recursive: true });
-      if (!fs.existsSync(abs)) {
-        fs.writeFileSync(abs, JSON.stringify({
-          run_id: args.run_id,
-          slice: 'test',
-          tasks: [],
-          files_changed: [],
-          diff_stat: '0 files',
-          plan_path: '.talos/plans/test.md',
-          boundary_refs: [],
-          executed_at: new Date().toISOString(),
-          executor_skill: 'talos-plan-execute',
-        }, null, 2));
-      }
+      ensureValidatorStateFixture(args.project_root, args.run_id, args.state_path);
       lockDispatch({
         run_id: args.run_id,
         project_root: args.project_root,
@@ -91,6 +140,28 @@ function lockValidator(args) {
       // Testes de hard-fail sem slot/estado devem alcançar o runtime sem token.
     }
   }
+  if (args.action === 'complete' && args.challenge_response === undefined) {
+    // Testes do ciclo validator que não focam em proof-of-work esperam que o
+    // challenge (se emitido) seja satisfeito automaticamente. O recovery expõe
+    // o arquivo do challenge; injetamos o hash real para que o veredito do
+    // teste reflita a lógica sob prova (FSM, idempotência), não o challenge.
+    try {
+      const state = runState({
+        action: 'get',
+        run_id: args.run_id,
+        project_root: args.project_root,
+      });
+      const challenge = state.validator_recovery?.challenge;
+      if (challenge?.file) {
+        const challengeAbs = path.resolve(args.project_root, challenge.file);
+        if (fs.existsSync(challengeAbs)) {
+          args = { ...args, challenge_response: sha256File(args.project_root, challenge.file) };
+        }
+      }
+    } catch {
+      // Sem recovery acessível: o runtime original decide (challenge_failed se exigido).
+    }
+  }
   if (args.action === 'complete' && !Object.hasOwn(args, 'data')) {
     args = { ...args, data: { findings: [] } };
   }
@@ -113,6 +184,18 @@ function resolvedRepair(root, statePath, findingId = 'F-001', file = 'x.ts') {
     finding_id: findingId, files_touched: [file], checks_run: ['node --test'], status: 'resolved',
   };
   state.repair_evidence = [evidence];
+  // Em state_schema_version 3, o repair_complete revalida boundary e compara o
+  // delta de snapshots (before vs after) contra os arquivos tocados pelo repair.
+  // Para o delta ser não-vazio, o repair precisa modificar de fato o worktree.
+  // Criar/mutar o arquivo garante que snapshotDeltaFiles detecte a mudança.
+  const fileAbs = path.join(root, file);
+  const previous = fs.existsSync(fileAbs) ? fs.readFileSync(fileAbs, 'utf8') : '';
+  fs.mkdirSync(path.dirname(fileAbs), { recursive: true });
+  fs.writeFileSync(fileAbs, `${previous}// repair ${findingId} ${Date.now()}\n`);
+  const filesChanged = [...new Set([...(state.files_changed ?? []), file])].sort();
+  state.files_changed = filesChanged;
+  state.worktree_final = captureWorktreeSnapshot(root);
+  state.diff_stat = `${filesChanged.length} files`;
   fs.writeFileSync(abs, JSON.stringify(state, null, 2));
   return { repairs: [evidence] };
 }
@@ -126,6 +209,32 @@ test('ping: capabilities cobre exatamente a superfície de tools (sem drift)', (
   const capList = [...ping().capabilities].sort();
   assert.deepEqual(capList, toolNames);
   assert.ok(capList.includes('talos_classify_input'), 'talos_classify_input deve estar nas capabilities');
+});
+
+test('tools: conjunto registrado é exatamente a lista canônica, sem adição (AC-04.3.1 / INV3)', () => {
+  // Lista nomeada explicitamente no teste: qualquer tool nova exige atualização
+  // consciente desta lista (e revisão de INV3) — adicionar aqui é a decisão, não
+  // o acidente. A revisão fria do backlog não entra no MCP (Q-CBR-06): sem lock,
+  // sem selo, sem gate novo.
+  const expected = [
+    'talos_assert_after_plan',
+    'talos_capabilities',
+    'talos_classify_input',
+    'talos_lock_dispatch',
+    'talos_lock_validator',
+    'talos_ping',
+    'talos_preflight',
+    'talos_run_state',
+    'talos_scan_acceptance',
+    'talos_select_next_sprint',
+    'talos_sync_manual_validation',
+    'talos_update_sprint_status',
+    'talos_verify_artifact',
+    'talos_verify_backlog_index',
+    'talos_verify_sprint_file',
+    'talos_verify_template_conformance',
+  ].sort();
+  assert.deepEqual(toolsList().tools.map((tool) => tool.name).sort(), expected);
 });
 
 test('detectHost: arg host explícito tem prioridade máxima', () => {
@@ -165,7 +274,7 @@ test('capabilities: schema_version atual e campos do contrato v5', () => {
   assert.ok(cap.validator_dispatch);
   assert.ok(cap.question_prompt);
   assert.equal(cap.question_prompt.mode, 'structured');
-  assert.equal(cap.question_prompt.persistence, 'prd_after_each_round');
+  assert.equal(cap.question_prompt.persistence, 'sprint_after_each_round');
   assert.ok(cap.hooks);
   assert.deepEqual(cap.prerequisites, PREREQUISITES);
   assert.deepEqual(cap.known_hosts, HOST_NAMES);
@@ -753,50 +862,62 @@ test('WORKFLOW_CONFIG: modo execute presente; audit e interview-only/interview_o
   assert.equal(WORKFLOW_CONFIG.skills.audit, 'talos-audit');
 });
 
-test('documentFlowForRouting: macro input prioriza backlog antes de PRD/plano', () => {
+test('documentFlowForRouting: macro input prioriza backlog antes de sprint/plano', () => {
   const full = documentFlowForRouting('full', 'idea');
   assert.equal(full.priority, 'backlog_first');
   assert.deepEqual(full.skills, [
     'talos-backlog-generator',
-    'talos-sprint-prd-generator',
-    'talos-prd-interview',
+    'talos-sprint-interview',
     'talos-plan-handoff',
   ]);
-  assert.deepEqual(full.artifacts, ['BACKLOG_MESTRE_*.md', 'SPRINT_S<NN>_*.md', 'PRD_*.md', 'PLAN_*.md']);
+  assert.deepEqual(full.artifacts, ['BACKLOG_MESTRE_*.md', 'SPRINT_S<NN>_*.md', 'PLAN_*.md']);
+  assert.ok(!full.skills.includes('talos-sprint-prd-generator'));
+  assert.ok(!full.artifacts.includes('PRD_*.md'));
 
   const direct = documentFlowForRouting('direct', 'roadmap');
   assert.equal(direct.priority, 'backlog_first');
   assert.deepEqual(direct.skills, [
     'talos-backlog-generator',
-    'talos-sprint-prd-generator',
-    'talos-prd-interview',
+    'talos-sprint-interview',
   ]);
+  assert.ok(!direct.artifacts.includes('PRD_*.md'));
 });
 
 test('documentFlowForRouting: backlog existente preserva execução pequena por sprint', () => {
   const flow = documentFlowForRouting('full', 'backlog-item', 'backlog');
   assert.equal(flow.priority, 'sprint_from_backlog');
   assert.ok(!flow.skills.includes('talos-backlog-generator'));
-  assert.deepEqual(flow.artifacts, ['SPRINT_S<NN>_*.md', 'PRD_*.md', 'PLAN_*.md']);
+  assert.deepEqual(flow.artifacts, ['SPRINT_S<NN>_*.md', 'PLAN_*.md']);
+  assert.ok(flow.skills.includes('talos-sprint-interview'));
+  assert.ok(!flow.artifacts.includes('PRD_*.md'));
 });
 
 test('documentFlowForRouting: input sprint é alias estrito de backlog-item', () => {
   const full = documentFlowForRouting('full', 'sprint');
   assert.equal(full.priority, 'sprint_from_backlog');
   assert.ok(!full.skills.includes('talos-backlog-generator'));
-  assert.deepEqual(full.artifacts, ['SPRINT_S<NN>_*.md', 'PRD_*.md', 'PLAN_*.md']);
+  assert.deepEqual(full.artifacts, ['SPRINT_S<NN>_*.md', 'PLAN_*.md']);
 
   const direct = documentFlowForRouting('direct', 'sprint');
   assert.equal(direct.priority, 'sprint_from_backlog');
   assert.ok(!direct.skills.includes('talos-backlog-generator'));
-  assert.deepEqual(direct.artifacts, ['SPRINT_S<NN>_*.md', 'PRD_*.md']);
+  assert.deepEqual(direct.artifacts, ['SPRINT_S<NN>_*.md']);
+});
+
+test('documentFlowForRouting: fallback é recorte_first sem PRD (AC-3.1.3/3.1.4)', () => {
+  const flow = documentFlowForRouting('full', 'plan');
+  assert.equal(flow.priority, 'recorte_first');
+  assert.ok(flow.skills.includes('talos-sprint-interview'));
+  assert.ok(!flow.skills.includes('talos-sprint-prd-generator'));
+  assert.ok(!flow.artifacts.includes('PRD_*.md'));
+  assert.notEqual(flow.priority, 'prd_first');
 });
 
 test('expectedNextPhase: execute → plan_execute sem regredir full/direct/interview (T02)', () => {
   assert.equal(expectedNextPhase({ mode: 'execute' }, {}), 'plan_execute');
   assert.equal(expectedNextPhase({ mode: 'full' }, {}), 'plan_handoff');
   assert.equal(expectedNextPhase({ mode: 'direct' }, {}), 'plan_execute');
-  assert.equal(expectedNextPhase({ mode: 'interview-only' }, {}), 'prd_interview');
+  assert.equal(expectedNextPhase({ mode: 'interview-only' }, {}), 'sprint_interview');
   assert.equal(expectedNextPhase({ mode: 'audit' }, {}), 'audit_report');
   // next_phase explícito do dispatch sempre prevalece
   assert.equal(expectedNextPhase({ mode: 'execute' }, { next_phase: 'slice_review' }), 'slice_review');
@@ -846,47 +967,6 @@ test('talos_preflight materializa document_flow backlog_first para macro input',
   assert.equal(expectedNextPhase(result.routing, {}), 'plan_handoff');
 });
 
-test('contrato interview-only materializa PRD real e passa artifact+TC antes da entrevista (Etapa 1 T04)', () => {
-  const root = tmpRoot();
-  const runId = 'interview-only-real-prd';
-  preflight({ run_id: runId, project_root: root, mode: 'interview-only', host: 'codex' });
-  const prdPath = path.join(root, 'PRD_BRAINSTORM.md');
-  assert.equal(verifyArtifact({ run_id: runId, project_root: root, artifact_path: prdPath, artifact_kind: 'prd' }).status, 'blocked');
-  fs.writeFileSync(prdPath, [
-    '# PRD: Brainstorm',
-    '| Campo | Valor |',
-    '|---|---|',
-    '| **Status** | Em decisão |',
-    '## 1. Contexto e objetivo',
-    'Objetivo inicial da entrevista.',
-    '## 2. Escopo',
-    'Escopo preliminar.',
-    '## 3. Decisões de produto (fechadas)',
-    '| ID | Decisão |',
-    '|---|---|',
-    '| D1 | Levar este draft para entrevista estruturada |',
-    '## 4. Fluxos e cenários UX',
-    'Fluxo inicial.',
-    '## 5. Contrato funcional e invariantes',
-    'Contrato inicial.',
-    '## 6. Critérios de aceite (negócio)',
-    '**Produto**', '- [ ] Objetivo confirmado.',
-    '**UX**', '- [ ] Fluxo confirmado.',
-    '**Dados**', '- [ ] Dados confirmados.',
-    '**Regressão de produto**', '- [ ] Regressões confirmadas.',
-  ].join('\n'));
-  const artifact = verifyArtifact({ run_id: runId, project_root: root, artifact_path: prdPath, artifact_kind: 'prd' });
-  const conformance = verifyTemplateConformance({
-    run_id: runId, project_root: root, artifact_path: prdPath, artifact_type: 'prd',
-  });
-  assert.equal(artifact.status, 'passed');
-  assert.equal(conformance.status, 'passed');
-  fs.writeFileSync(path.join(root, 'PRD_INVALIDO.md'), '# PRD incompleto\n');
-  assert.equal(verifyTemplateConformance({
-    run_id: runId, project_root: root, artifact_path: path.join(root, 'PRD_INVALIDO.md'), artifact_type: 'prd',
-  }).status, 'blocked');
-});
-
 test('guaranteeLevelForMode: execute/full/direct = full_pipeline (T04)', () => {
   assert.equal(guaranteeLevelForMode('execute'), 'full_pipeline');
   assert.equal(guaranteeLevelForMode('full'), 'full_pipeline');
@@ -923,10 +1003,9 @@ const CONFORMANT_PLAN = [
   '',
   '| Campo | Valor |',
   '|-------|-------|',
-  '| **PRD** | [PRD_x.md](./PRD_x.md) |',
   '| **Sprint file** | [SPRINT_S01_runtime.md](./SPRINT_S01_runtime.md) — `eval_manifest` §9 |',
   '',
-  'Política: [BOUNDARY_PRD_PLAN.md](./TEMPLATES/BOUNDARY_PRD_PLAN.md).',
+  'Política: [BOUNDARY_SPRINT_PLAN.md](./TEMPLATES/BOUNDARY_SPRINT_PLAN.md).',
   '',
   '## 1. Tradução executiva',
   '## 2. Invariantes de execução',
@@ -941,7 +1020,24 @@ const CONFORMANT_PLAN = [
   '',
 ].join('\n');
 
-test('classifyArtifactContent: plano renomeado (sem prefixo PLAN_) classifica como plan via verdade forte (T03, PRD §5)', () => {
+test('contrato interview-only: TC rejeita artifact_type prd (AC-3.2.1)', () => {
+  const root = tmpRoot();
+  const runId = 'interview-only-tc-plan-only';
+  preflight({ run_id: runId, project_root: root, mode: 'interview-only', host: 'codex' });
+  const planPath = path.join(root, 'PLAN_BRAINSTORM.md');
+  fs.writeFileSync(planPath, CONFORMANT_PLAN);
+  assert.equal(verifyTemplateConformance({
+    run_id: runId, project_root: root, artifact_path: planPath, artifact_type: 'plan',
+  }).status, 'passed');
+  assert.throws(
+    () => verifyTemplateConformance({
+      run_id: runId, project_root: root, artifact_path: planPath, artifact_type: 'prd',
+    }),
+    (err) => err?.code === -32602 || /artifact_type inválido/.test(String(err?.message ?? err)),
+  );
+});
+
+test('classifyArtifactContent: plano renomeado (sem prefixo PLAN_) classifica como plan via verdade forte (T03)', () => {
   const r = classifyArtifactContent(CONFORMANT_PLAN, 'docs/algo_renomeado.md');
   assert.equal(r.artifact_type, 'plan');
   assert.equal(r.signal, 'template_conformance');
@@ -953,10 +1049,11 @@ test('classifyArtifactContent: nome PLAN_*.md é só dica fraca, não verdade (T
   assert.equal(r.signal, 'weak_name_hint');
 });
 
-test('classifyArtifactContent: PRD por marcadores de template (T03)', () => {
+test('classifyArtifactContent: PRD-ish classifica como idea (D9 / AC-3.1.4)', () => {
   const prd = '# PRD: algo\n\n## 3. Decisões de produto\n\n| ID | Decisão |\n|----|---------|\n| D1 | x |';
   const r = classifyArtifactContent(prd, 'docs/PRD_algo.md');
-  assert.equal(r.artifact_type, 'prd');
+  assert.equal(r.artifact_type, 'idea');
+  assert.equal(r.signal, 'spec_markers');
 });
 
 test('classifyArtifactContent: backlog por marcadores (T03)', () => {
@@ -973,26 +1070,25 @@ test('classifyArtifactContent: input sem marcadores → unknown (T03)', () => {
 
 const BANNER_RE = /^▸ talos: /;
 
-test('BANNER_TEMPLATES: banco tem exatamente os 11 eventos do PRD §4 (T06)', () => {
+test('BANNER_TEMPLATES: banco tem exatamente os 11 eventos lógicos (T06 / AC-3.3.2)', () => {
   // 12 entradas: os 11 eventos do banco + a variante preflight ok/fail conta como
-  // dois templates (preflight_ok/preflight_fail) e prd como dois (prd_ok/prd_lacunas).
-  // O PRD §4 enumera 11 EVENTOS lógicos; o banco materializa cada variante de status.
+  // dois templates (preflight_ok/preflight_fail) e aceite como dois (aceite_ok/aceite_lacunas).
   const eventos = [
     'roteia', 'roteia_troca', 'preflight_ok', 'preflight_fail',
-    'prd_lacunas', 'prd_ok', 'entrevista', 'plano', 'exec',
+    'aceite_lacunas', 'aceite_ok', 'entrevista', 'plano', 'exec',
     'validacao', 'review', 'done',
   ];
   for (const ev of eventos) {
     assert.ok(Object.prototype.hasOwnProperty.call(BANNER_TEMPLATES, ev), `falta evento ${ev}`);
     assert.match(BANNER_TEMPLATES[ev], BANNER_RE, `template ${ev} sem prefixo canônico`);
   }
-  // Os 11 eventos lógicos do PRD: roteia, roteia c/ troca, preflight, prd, entrevista,
-  // plano, exec, validação, review, done + preflight_ok/fail e prd_ok/lacunas como pares.
   assert.deepEqual(BANNER_EVENTS, eventos);
   assert.equal(BANNER_EVENTS.length, 12);
+  assert.ok(!Object.prototype.hasOwnProperty.call(BANNER_TEMPLATES, 'prd_ok'));
+  assert.ok(!Object.prototype.hasOwnProperty.call(BANNER_TEMPLATES, 'prd_lacunas'));
 });
 
-test('renderBanner: preenche slots e devolve string pt-BR canônica (T06)', () => {
+test('renderBanner: preenche slots e devolve string pt-BR canônica (T06 / AC-3.3.3)', () => {
   assert.equal(
     renderBanner('roteia', { tipo: 'plan', modo: 'execute' }),
     '▸ talos: roteamento · input=plan → modo=execute',
@@ -1003,8 +1099,8 @@ test('renderBanner: preenche slots e devolve string pt-BR canônica (T06)', () =
   );
   assert.equal(renderBanner('preflight_ok', { caps: 'subagent+mcp' }), '▸ talos: preflight · ok (subagent+mcp)');
   assert.equal(renderBanner('preflight_fail', { motivo: 'x' }), '▸ talos: preflight · BLOCK · x');
-  assert.equal(renderBanner('prd_lacunas', { n: 3 }), '▸ talos: prd · 3 lacunas');
-  assert.equal(renderBanner('prd_ok', {}), '▸ talos: prd · ok');
+  assert.equal(renderBanner('aceite_lacunas', { n: 3 }), '▸ talos: aceite · 3 lacunas');
+  assert.equal(renderBanner('aceite_ok', {}), '▸ talos: aceite · ok');
   assert.equal(renderBanner('exec', { i: 2, n: 5 }), '▸ talos: exec · slice 2/5');
   assert.equal(renderBanner('validacao', { status: 'pass' }), '▸ talos: validação · pass');
   assert.equal(renderBanner('review', { status: 'ok' }), '▸ talos: review · ok');
@@ -1046,10 +1142,9 @@ const CONFORMANT_PLAN_DOC = [
   '',
   '| Campo | Valor |',
   '|-------|-------|',
-  '| **PRD** | [PRD_x.md](./PRD_x.md) |',
   '| **Sprint file** | [SPRINT_S01_runtime.md](./SPRINT_S01_runtime.md) — `eval_manifest` §9 |',
   '',
-  'Política: [BOUNDARY_PRD_PLAN.md](./TEMPLATES/BOUNDARY_PRD_PLAN.md).',
+  'Política: [BOUNDARY_SPRINT_PLAN.md](./TEMPLATES/BOUNDARY_SPRINT_PLAN.md).',
   '',
   '## 1. Tradução executiva',
   '## 2. Invariantes de execução',
@@ -1105,8 +1200,72 @@ function sprintDoc({
   backlog = 'BACKLOG.md#S01',
   status = 'ready',
   dorStatus = null,
+  contratoStatus = 'draft',
+  includeContrato = true,
+  omitDecisions = false,
+  omitAceiteBlock = false,
+  /** "manual" = AC com M (valida manual); null = omitir bloco acceptance */
+  omitAcceptance = null,
+  /** undefined = auto-selo quando aprovado; null = omitir campo; string = valor literal */
+  selo = undefined,
+  /** v0.16.0: prioridade da §1 usada pelo bloqueio de `premissa` (D4) */
+  moscow = 'Must',
+  prioridade = 'P0',
+  /** v0.16.0: procedência da linha D1 da §7.1 e dos ACs da §7.3 */
+  decisionOrigin = 'usuario',
+  acceptanceOrigin = 'usuario',
+  /** v0.16.0 (CN6): célula `Fonte` da linha `Discussão` da §4; `null` omite a linha */
+  discussao = '.app-work/brainstorming/runtime-harness/BRAINSTORM.md',
 } = {}) {
-  return [
+  const acceptanceBlock = omitAceiteBlock ? [] : [
+    '### 7.3 Aceite binário',
+    '```yaml',
+    'acceptance:',
+    '  - id: AC-001',
+    `    origin: "${acceptanceOrigin}"`,
+    '    behavior: "Gate observável passa quando AC válido"',
+    '    decisions: [D1]',
+    '    scenario: "Carregar harness"',
+    '    evals: [EVAL-001]',
+    '    evidence:',
+    '      required: [I, T-outcome, W]',
+    '      manual: null',
+    '  - id: AC-002',
+    `    origin: "${acceptanceOrigin}"`,
+    '    behavior: "Parser antigo preservado após mudança"',
+    '    decisions: [D1]',
+    '    scenario: "Regressão de produto"',
+    '    evals: [EVAL-001]',
+    '    evidence:',
+    '      required: [I, T-outcome]',
+    '      manual: null',
+    '```',
+  ];
+  const contratoBlock = includeContrato ? [
+    '## 7. Contrato de produto (congelado)',
+    '### 7.1 Decisões de produto (D*)',
+    '| ID | Decisão | Origem |',
+    '|---|---|---|',
+    ...(omitDecisions ? [] : [`| D1 | Runtime harness entrega gate observável | ${decisionOrigin} |`]),
+    '### 7.2 Cenários UX',
+    '### 7.2.1 Carregar harness',
+    '- **Entrada:** operador abre o harness',
+    '- **Comportamento:** loading / vazio / erro',
+    '- **Sucesso:** gate passa',
+    ...acceptanceBlock,
+  ] : [
+    '## 7. Contrato de produto (congelado)',
+    'sem contrato',
+  ];
+  const sealMeta = [];
+  if (selo === null) {
+    // omitir campo (AC-2.1.3)
+  } else if (typeof selo === 'string') {
+    sealMeta.push(`| Selo do contrato | ${selo} |`);
+  } else if (contratoStatus !== 'aprovado') {
+    sealMeta.push('| Selo do contrato | pendente até aprovação |');
+  }
+  let doc = [
     `# Sprint viva — ${id} — Runtime harness`,
     '',
     '## 1. Metadados',
@@ -1116,12 +1275,15 @@ function sprintDoc({
     '| Nome | Runtime harness |',
     `| Status | ${status} |`,
     `| Backlog mestre | ${backlog} |`,
+    `| Contrato status | ${contratoStatus} |`,
+    ...sealMeta,
     '| PRD | pendente |',
     '| PLAN | pendente |',
     '| State / evidência | pendente |',
-    '| Fase | F0 |',
-    '| MoSCoW | Must |',
-    '| Prioridade | P0 |',
+    '| Revalidação | false |',
+    `| Fase | F0 |`,
+    `| MoSCoW | ${moscow} |`,
+    `| Prioridade | ${prioridade} |`,
     '| Responsável | Talos |',
     '| Criado em | 2026-06-29 |',
     '| Última atualização | 2026-06-29 |',
@@ -1134,6 +1296,7 @@ function sprintDoc({
     '| Tipo | Fonte | Uso nesta sprint |',
     '|---|---|---|',
     '| Backlog | BACKLOG.md#S01 | escopo |',
+    ...(discussao === null ? [] : [`| Discussão | ${discussao} | decisão/contexto |`]),
     '## 5. Dependências e bloqueios',
     '| ID | Tipo | Descrição | Status | Evidência |',
     '|---|---|---|---|---|',
@@ -1142,8 +1305,7 @@ function sprintDoc({
     '| ID | Decisão | Fonte | Impacto | Status |',
     '|---|---|---|---|---|',
     '| SD-001 | seguir | backlog | baixo | aprovada |',
-    '## 7. Critérios candidatos para PRD',
-    '- [ ] Critério',
+    ...contratoBlock,
     '## 8. Definition of Ready',
     '- [ ] Próxima ação explícita.',
     ...(dorStatus ? [`**Status DoR:** ${dorStatus}`] : []),
@@ -1178,7 +1340,7 @@ function sprintDoc({
     '| Claim | Onde foi prometido | Evidência esperada | Evidência real | Status |',
     '|---|---|---|---|---|',
     '| gate passa | sprint | node --test | pendente | pending |',
-    '## 13. PRD e PLAN',
+    '## 13. PLAN',
     '| Campo | Valor |',
     '|---|---|',
     '| Status | pendente |',
@@ -1194,8 +1356,15 @@ function sprintDoc({
     '| Data | Autor | Mudança |',
     '|---|---|---|',
     '| 2026-06-29 | Talos | Criação |',
-    '',
   ].join('\n');
+  if (contratoStatus === 'aprovado' && selo === undefined) {
+    const computed = computeAcceptanceSeal(doc);
+    doc = doc.replace(
+      `| Contrato status | ${contratoStatus} |`,
+      `| Contrato status | ${contratoStatus} |\n| Selo do contrato | ${computed} |`,
+    );
+  }
+  return doc;
 }
 
 const BACKLOG_WITH_SPRINT_FILE = [
@@ -1223,20 +1392,123 @@ test('talos_verify_artifact: ausente → banner de BLOCK não-vazio (T07)', () =
   assert.match(r.banner, /^▸ talos: preflight · BLOCK · /);
 });
 
-test('talos_scan_prd: 0 bloqueantes → banner prd · ok (T07)', () => {
+test('talos_scan_acceptance: 0 bloqueantes na §7 → banner aceite · ok (AC-3.3.1)', () => {
   const root = tmpRoot();
-  fs.writeFileSync(path.join(root, 'PRD.md'), VALID_PRD);
-  const r = scanPrd({ run_id: 'r1', project_root: root, prd_path: 'PRD.md' });
+  fs.writeFileSync(path.join(root, 'SPRINT.md'), sprintDoc({ contratoStatus: 'draft' }));
+  const r = scanAcceptance({ run_id: 'r1', project_root: root, sprint_path: 'SPRINT.md' });
   assert.equal(r.status, 'passed');
-  assert.equal(r.banner, '▸ talos: prd · ok');
+  assert.equal(r.banner, '▸ talos: aceite · ok');
+  assert.equal(r.sprint_path, 'SPRINT.md');
 });
 
-test('talos_scan_prd: PRD vazio → banner prd · {n} lacunas (T07)', () => {
+test('talos_scan_acceptance: sprint vazio → banner aceite · {n} lacunas (AC-3.3.1)', () => {
   const root = tmpRoot();
-  fs.writeFileSync(path.join(root, 'PRD.md'), '   ');
-  const r = scanPrd({ run_id: 'r1', project_root: root, prd_path: 'PRD.md' });
+  fs.writeFileSync(path.join(root, 'SPRINT.md'), '   ');
+  const r = scanAcceptance({ run_id: 'r1', project_root: root, sprint_path: 'SPRINT.md' });
   assert.equal(r.status, 'blocked');
-  assert.match(r.banner, /^▸ talos: prd · \d+ lacunas$/);
+  assert.match(r.banner, /^▸ talos: aceite · \d+ lacunas$/);
+});
+
+test('talos_scan_acceptance: ambiguidade TBD na §7 bloqueia (AC-3.3.1)', () => {
+  const root = tmpRoot();
+  const ambiguous = sprintDoc().replace(
+    '| D1 | Runtime harness entrega gate observável | usuario |',
+    '| D1 | Runtime harness TBD a confirmar | usuario |',
+  );
+  fs.writeFileSync(path.join(root, 'SPRINT.md'), ambiguous);
+  const r = scanAcceptance({ run_id: 'r1', project_root: root, sprint_path: 'SPRINT.md' });
+  assert.equal(r.status, 'blocked');
+  assert.ok(r.blocking_count >= 1);
+  assert.match(r.banner, /^▸ talos: aceite · \d+ lacunas$/);
+});
+
+test('talos_scan_acceptance: behavior de AC com TBD bloqueia (AC-1.2.2)', () => {
+  const root = tmpRoot();
+  const ambiguous = sprintDoc().replace(
+    'behavior: "Gate observável passa quando AC válido"',
+    'behavior: "Gate observável TBD a confirmar"',
+  );
+  fs.writeFileSync(path.join(root, 'SPRINT.md'), ambiguous);
+  const r = scanAcceptance({ run_id: 'r1', project_root: root, sprint_path: 'SPRINT.md' });
+  assert.equal(r.status, 'blocked');
+  assert.ok(r.blocking_count >= 1);
+  assert.ok(r.blocking_matches.some((m) => /behavior ambíguo/.test(m.pattern)));
+});
+
+test('talos_scan_acceptance: AC válido sem TBD passa (AC-1.2.2 contraprova)', () => {
+  const root = tmpRoot();
+  fs.writeFileSync(path.join(root, 'SPRINT.md'), sprintDoc({ contratoStatus: 'draft' }));
+  const r = scanAcceptance({ run_id: 'r1', project_root: root, sprint_path: 'SPRINT.md' });
+  assert.equal(r.status, 'passed');
+  assert.ok(!r.blocking_matches.some((m) => /behavior ambíguo/.test(m.pattern)));
+});
+
+test('talos_scan_acceptance: sprint_markdown escaneia rascunho em memória (AC-02.2.1)', () => {
+  const root = tmpRoot();
+  const ambiguous = sprintDoc().replace(
+    'behavior: "Gate observável passa quando AC válido"',
+    'behavior: "Gate observável TBD a confirmar"',
+  );
+  const r = scanAcceptance({ run_id: 'r1', project_root: root, sprint_markdown: ambiguous });
+  assert.equal(r.status, 'blocked');
+  assert.equal(r.source, 'draft');
+  assert.equal(r.sprint_path, null);
+  assert.ok(r.blocking_count >= 1);
+  assert.ok(r.blocking_matches.some((m) => /behavior ambíguo/.test(m.pattern)));
+  // O rascunho não foi persistido em disco: nenhum sprint file nasce da chamada.
+  assert.ok(!fs.existsSync(path.join(root, 'SPRINT.md')), 'scan de rascunho não deve gravar arquivo');
+  // Contraprova: rascunho sem padrão bloqueante passa, ainda em memória.
+  const clean = scanAcceptance({ run_id: 'r1', project_root: root, sprint_markdown: sprintDoc({ contratoStatus: 'draft' }) });
+  assert.equal(clean.status, 'passed');
+  assert.equal(clean.source, 'draft');
+  assert.equal(clean.sprint_path, null);
+  // Rascunho vazio: mesma pendência de arquivo vazio do caminho por path
+  // (`blocking_count: 1`), com `source: 'draft'` — comportamento declarado na
+  // task 02.2 ("Rascunho vazio") e coberto por este AC.
+  const vazio = scanAcceptance({ run_id: 'r1', project_root: root, sprint_markdown: '' });
+  assert.equal(vazio.status, 'blocked');
+  assert.equal(vazio.blocking_count, 1);
+  assert.equal(vazio.source, 'draft');
+  assert.equal(vazio.blocking_matches[0].pattern, '(empty file)');
+});
+
+test('talos_scan_acceptance: sprint_path continua lendo o arquivo com source file (AC-02.2.2)', () => {
+  const root = tmpRoot();
+  fs.writeFileSync(path.join(root, 'SPRINT.md'), sprintDoc({ contratoStatus: 'draft' }));
+  const r = scanAcceptance({ run_id: 'r1', project_root: root, sprint_path: 'SPRINT.md' });
+  assert.equal(r.status, 'passed');
+  assert.equal(r.source, 'file');
+  assert.equal(r.sprint_path, 'SPRINT.md');
+  // Path com ambiguidade segue bloqueando pelo mesmo payload de hoje + source.
+  const ambiguous = sprintDoc().replace(
+    '| D1 | Runtime harness entrega gate observável | usuario |',
+    '| D1 | Runtime harness TBD a confirmar | usuario |',
+  );
+  fs.writeFileSync(path.join(root, 'SPRINT_AMB.md'), ambiguous);
+  const blocked = scanAcceptance({ run_id: 'r1', project_root: root, sprint_path: 'SPRINT_AMB.md' });
+  assert.equal(blocked.status, 'blocked');
+  assert.equal(blocked.source, 'file');
+  assert.ok(blocked.blocking_count >= 1);
+});
+
+test('talos_scan_acceptance: sprint_path e sprint_markdown juntos → erro de uso (AC-02.2.3)', () => {
+  const root = tmpRoot();
+  const r = scanAcceptance({
+    run_id: 'r1',
+    project_root: root,
+    sprint_path: 'SPRINT.md',
+    sprint_markdown: '# rascunho',
+  });
+  assert.equal(r.status, 'blocked');
+  assert.equal(r.next_action, 'usar_um_dos_dois');
+  assert.match(r.error, /exatamente um/);
+  // Nenhum dos dois conteúdos foi escaneado: o chamador sabe que a chamada é inválida.
+  assert.equal(r.blocking_matches[0].pattern, '(sprint_path e sprint_markdown juntos)');
+  // Nem um nem outro: o erro de argumento obrigatório existente permanece.
+  assert.throws(
+    () => scanAcceptance({ run_id: 'r1', project_root: root }),
+    /sprint_path obrigatório/,
+  );
 });
 
 test('talos_verify_template_conformance: plano conforme → banner plano (T07)', () => {
@@ -1247,26 +1519,27 @@ test('talos_verify_template_conformance: plano conforme → banner plano (T07)',
   assert.equal(r.banner, '▸ talos: plano · validado (TC pass)');
 });
 
-test('talos_verify_template_conformance: modo sprint exige Sprint file/EVAL em PRD e PLAN', () => {
+test('talos_verify_template_conformance: modo sprint exige Sprint file/EVAL no PLAN (AC-3.2.2/3.2.3)', () => {
   const root = tmpRoot();
-  fs.writeFileSync(path.join(root, 'PRD_ok.md'), STRICT_PRD_DOC);
   fs.writeFileSync(path.join(root, 'PLAN_ok.md'), CONFORMANT_PLAN_DOC);
-  assert.equal(verifyTemplateConformance({
-    run_id: 'r1', project_root: root, artifact_path: 'PRD_ok.md', artifact_type: 'prd',
-    required_status: 'Aprovado para implementação', require_sprint_file: true,
-  }).status, 'passed');
   assert.equal(verifyTemplateConformance({
     run_id: 'r1', project_root: root, artifact_path: 'PLAN_ok.md', artifact_type: 'plan',
     require_sprint_file: true,
   }).status, 'passed');
 
-  fs.writeFileSync(path.join(root, 'PRD_sem_sprint.md'), STRICT_PRD_DOC.replace(/\| \*\*Sprint file\*\*.*\n/, '').replace(/EVAL-001/g, ''));
-  const prdBlocked = verifyTemplateConformance({
-    run_id: 'r1', project_root: root, artifact_path: 'PRD_sem_sprint.md', artifact_type: 'prd',
-    required_status: 'Aprovado para implementação', require_sprint_file: true,
+  assert.throws(
+    () => verifyTemplateConformance({
+      run_id: 'r1', project_root: root, artifact_path: 'PLAN_ok.md', artifact_type: 'prd',
+    }),
+    (err) => err?.code === -32602 || /artifact_type inválido/.test(String(err?.message ?? err)),
+  );
+
+  fs.writeFileSync(path.join(root, 'PLAN_sem_sprint.md'), CONFORMANT_PLAN_DOC.replace(/\| \*\*Sprint file\*\*.*\n/, ''));
+  const planNoSprint = verifyTemplateConformance({
+    run_id: 'r1', project_root: root, artifact_path: 'PLAN_sem_sprint.md', artifact_type: 'plan',
   });
-  assert.equal(prdBlocked.status, 'blocked');
-  assert.ok(prdBlocked.pendencies.some((p) => p.category === 'sprint_file'));
+  assert.equal(planNoSprint.status, 'blocked');
+  assert.ok(planNoSprint.pendencies.some((p) => p.category === 'sprint_file'));
 
   fs.writeFileSync(path.join(root, 'PLAN_sem_eval.md'), CONFORMANT_PLAN_DOC.replace(/\| \*\*Sprint file\*\*.*\n/, '').replace(/- \*\*Eval\/Policy:\*\*.*\n/, '').replace(/EVAL-001/g, ''));
   const planBlocked = verifyTemplateConformance({
@@ -1366,6 +1639,457 @@ test('talos_verify_sprint_file: backlog link ausente falha', () => {
   assert.ok(r.pendencies.some((p) => p.category === 'backlog_link'));
 });
 
+test('SPRINT_TEMPLATE: §7 contrato congelado com 7.1/7.2/7.3 e YAML acceptance AC-* (AC-1.1.1)', () => {
+  const template = fs.readFileSync(SPRINT_TEMPLATE_PATH, 'utf8');
+  assert.match(template, /^## 7\. Contrato de produto \(congelado\)\s*$/m);
+  assert.match(template, /^### 7\.1 Decisões de produto \(D\*\)\s*$/m);
+  assert.match(template, /^### 7\.2 Cenários UX\s*$/m);
+  assert.match(template, /^### 7\.3 Aceite binário\s*$/m);
+  assert.match(template, /^```ya?ml\s*$/m);
+  assert.match(template, /acceptance:\s*\n\s*-\s+id:\s+AC-\d+/m);
+  assert.match(template, /evidence:\s*\n\s+required:/m);
+  // LEG1 morto: nenhum dos 4 grupos checkbox como autoridade de aceite.
+  assert.doesNotMatch(template, /\*\*Produto\*\*\s*\n\s*-\s*\[/);
+  assert.doesNotMatch(template, /\*\*UX\*\*\s*\n\s*-\s*\[/);
+  assert.doesNotMatch(template, /\*\*Dados\*\*\s*\n\s*-\s*\[/);
+  assert.doesNotMatch(template, /\*\*Regressão de produto\*\*\s*\n\s*-\s*\[/);
+});
+
+test('SPRINT_TEMPLATE: §1 contém Contrato status (AC-1.1.2)', () => {
+  const template = fs.readFileSync(SPRINT_TEMPLATE_PATH, 'utf8');
+  assert.match(template, /^\|\s*Contrato status\s*\|\s*\[draft \/ aprovado\]\s*\|/m);
+});
+
+test('SPRINT_TEMPLATE: numeração 1–16 preservada; §9/§10/§12/§13/§16 intactas (AC-1.1.3)', () => {
+  const template = fs.readFileSync(SPRINT_TEMPLATE_PATH, 'utf8');
+  for (const heading of [
+    '## 1. Metadados',
+    '## 2. Objetivo e valor',
+    '## 3. Escopo da sprint',
+    '## 4. Contexto e fontes',
+    '## 5. Dependências e bloqueios',
+    '## 6. Decisões da sprint',
+    '## 7. Contrato de produto (congelado)',
+    '## 8. Definition of Ready',
+    '## 9. Eval manifest',
+    '## 10. Policy manifest',
+    '## 11. Guia e sensores',
+    '## 12. Evidence-to-claim',
+    '## 13. PLAN',
+    '## 14. Execução e validação',
+    '## 15. Aprendizados e handoff para próximas sprints',
+    '## 16. Histórico',
+  ]) {
+    assert.match(template, new RegExp(`^${heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`, 'm'));
+  }
+  assert.doesNotMatch(template, /^## 7\. Critérios candidatos para PRD\s*$/m);
+});
+
+test('talos-sprint-interview SKILL: não exige 4 grupos checkbox como aceite §7.3; indexa AC-*/YAML acceptance (AC-1.1.3)', () => {
+  const skill = fs.readFileSync(SPRINT_INTERVIEW_SKILL_PATH, 'utf8');
+  // LEG1 morto: a obrigação dos 4 grupos como critério de aceite não existe mais.
+  assert.ok(
+    !/os 4 grupos \(Produto\/UX\/Dados\/Regressão\) devem existir/.test(skill),
+    'SKILL ainda exige os 4 grupos checkbox como critério de §7.3',
+  );
+  assert.ok(
+    !/§7\.3 Aceite binário.*\(Produto, UX, Dados, Regressão de produto\)/s.test(skill),
+    'SKILL ainda descreve §7.3 como os 4 grupos',
+  );
+  // Critério explícito para AC-*/YAML acceptance presente.
+  assert.match(skill, /AC-\*/);
+  assert.match(skill, /YAML/);
+  assert.match(skill, /acceptance/);
+});
+
+test('validateSprintFileConformance: contrato §7 completo → valid:true (AC-1.2.1)', () => {
+  const r = validateSprintFileConformance(sprintDoc({ contratoStatus: 'draft' }));
+  assert.equal(r.valid, true, `pendências: ${JSON.stringify(r.pendencies)}`);
+  assert.equal(r.pending_count, 0);
+});
+
+test('validateSprintFileConformance: sem D* → pendência decisoes (AC-1.2.2)', () => {
+  const r = validateSprintFileConformance(sprintDoc({ omitDecisions: true }));
+  assert.equal(r.valid, false);
+  assert.ok(r.pendencies.some((p) => p.category === 'contrato_produto' && p.item === 'decisoes'));
+});
+
+test('validateSprintFileConformance: EVAL órfão (sem AC) → pendência hierarquia AC⊃EVAL (AC-1.1.2)', () => {
+  // Adiciona EVAL-999 ao eval_manifest sem nenhum AC o referenciando.
+  const withOrphanEval = sprintDoc().replace(
+    /(\s+must_prove:\n\s+- id: "EVAL-001"[\s\S]*?\n\s+negative_paths:[^\n]*\n)([\s\S]*?)```/,
+    '$1    - id: "EVAL-999"\n      claim: "órfão"\n      source: "Sprint"\n      evidence_required: "teste"\n$2```',
+  );
+  const r = validateSprintFileConformance(withOrphanEval);
+  assert.equal(r.valid, false);
+  assert.ok(
+    r.pendencies.some((p) => p.category === 'contrato_produto' && p.item === 'aceite' && /EVAL-999/.test(p.message)),
+    `esperava pendência EVAL-999 órfão; obtido: ${JSON.stringify(r.pendencies)}`,
+  );
+});
+
+test('validateSprintFileConformance: sem bloco acceptance → pendência aceite (AC-1.2.3)', () => {
+  const r = validateSprintFileConformance(sprintDoc({ omitAceiteBlock: true }));
+  assert.equal(r.valid, false);
+  assert.ok(r.pendencies.some((p) => p.category === 'contrato_produto' && p.item === 'aceite'));
+});
+
+test('validateSprintFileConformance: standalone sem pendência de backlink (AC-1.2.4)', () => {
+  const markdown = sprintDoc({ backlog: 'Não aplicável (standalone)' });
+  const r = validateSprintFileConformance(markdown, {
+    sprintPath: 'SPRINT_S01_standalone.md',
+    sprintId: 'S01',
+    backlogPath: 'BACKLOG.md',
+    backlogMarkdown: BACKLOG_WITH_SPRINT_FILE.replace('S01', 'S99'),
+  });
+  assert.equal(r.valid, true);
+  assert.ok(!r.pendencies.some((p) => p.category === 'backlog_link'));
+  assert.ok(!r.pendencies.some((p) => p.item === 'Backlog mestre'));
+});
+
+test('validateSprintFileConformance: manifests e evidence-to-claim preservados (AC-1.2.5)', () => {
+  const withoutEval = validateSprintFileConformance(sprintDoc({ includeEval: false }));
+  assert.ok(withoutEval.pendencies.some((p) => p.category === 'eval_manifest'));
+
+  const withoutPolicy = validateSprintFileConformance(
+    sprintDoc().replace(/```yaml\npolicy_manifest:[\s\S]*?```/, 'sem policy'),
+  );
+  assert.ok(withoutPolicy.pendencies.some((p) => p.category === 'policy_manifest'));
+
+  const withoutEvidence = validateSprintFileConformance(
+    sprintDoc().replace(
+      '| Claim | Onde foi prometido | Evidência esperada | Evidência real | Status |',
+      '| Claim | Fonte | Esperada | Real | Estado |',
+    ),
+  );
+  assert.ok(withoutEvidence.pendencies.some((p) => p.category === 'evidence_to_claim'));
+});
+
+// ===== Plano 6 — Review crítica via policy_manifest (AC-6.1.* / CN5) =====
+
+// Injeta `critical_review` no fence policy_manifest do sprintDoc().
+function policyWithCriticalReview({ required = 'true', reasons = '[authorization]' } = {}) {
+  return sprintDoc().replace(
+    /```yaml\npolicy_manifest:\n  forbidden_scope:\n    - "hosts"\n  required_gates:\n    - "talos_verify_sprint_file"\n```/,
+    '```yaml\npolicy_manifest:\n  forbidden_scope:\n    - "hosts"\n  required_gates:\n    - "talos_verify_sprint_file"\n'
+      + '  critical_review:\n    required: ' + required + '\n    reasons: ' + reasons + '\n```',
+  );
+}
+
+// Conteúdo do fence policy_manifest (sem os backticks) para parse direto.
+function policyBlockOf(markdown) {
+  const m = /```ya?ml\s*\n(policy_manifest:[\s\S]*?)```/.exec(markdown);
+  return m ? m[1] : null;
+}
+
+test('validateSprintFileConformance: critical_review.reasons fora do enum fixo → pendência (AC-6.1.1)', () => {
+  const r = validateSprintFileConformance(policyWithCriticalReview({ reasons: '[authorization, livre]' }));
+  assert.equal(r.valid, false);
+  assert.ok(
+    r.pendencies.some((p) => p.category === 'policy_manifest' && p.item === 'critical_review.reasons' && /livre/.test(p.message)),
+    `esperava pendência critical_review.reasons nomeando 'livre'; obtido: ${JSON.stringify(r.pendencies)}`,
+  );
+  // Contraprova: reasons dentro do enum → sem pendência de critical_review.
+  const ok = validateSprintFileConformance(
+    policyWithCriticalReview({ required: 'true', reasons: '[authorization, public_contract]' }),
+  );
+  assert.equal(ok.valid, true, `pendências: ${JSON.stringify(ok.pendencies)}`);
+});
+
+test('validateSprintFileConformance: critical_review.required não booleano → pendência (AC-6.1.1)', () => {
+  const r = validateSprintFileConformance(policyWithCriticalReview({ required: 'sim' }));
+  assert.equal(r.valid, false);
+  assert.ok(
+    r.pendencies.some((p) => p.category === 'policy_manifest' && p.item === 'critical_review.required'),
+    `esperava pendência critical_review.required; obtido: ${JSON.stringify(r.pendencies)}`,
+  );
+});
+
+test('validateSprintFileConformance: critical_review.required:true sem reasons → pendência (AC-6.1.1, D09 sem inferência)', () => {
+  const r = validateSprintFileConformance(policyWithCriticalReview({ required: 'true', reasons: '[]' }));
+  assert.equal(r.valid, false);
+  assert.ok(
+    r.pendencies.some((p) => p.category === 'policy_manifest' && p.item === 'critical_review.reasons'),
+    `esperava pendência critical_review.reasons; obtido: ${JSON.stringify(r.pendencies)}`,
+  );
+});
+
+test('requiresCriticalReview/parseCriticalReview: parse determinístico do policy_manifest (AC-6.1.2 helper)', () => {
+  assert.equal(requiresCriticalReview(policyBlockOf(policyWithCriticalReview({ required: 'true' }))), true);
+  assert.equal(requiresCriticalReview(policyBlockOf(policyWithCriticalReview({ required: 'false' }))), false);
+  // policy_manifest sem critical_review → false (review crítica não é default).
+  assert.equal(requiresCriticalReview(policyBlockOf(sprintDoc())), false);
+  const parsed = parseCriticalReview(policyBlockOf(policyWithCriticalReview({ required: 'true', reasons: '[authorization]' })));
+  assert.deepEqual(parsed, { required: true, reasons: ['authorization'] });
+});
+
+test('talos_verify_sprint_file: critical_review.reasons inválido → blocked com pendência (AC-6.1.1 seam S-REV)', () => {
+  const root = tmpRoot();
+  fs.mkdirSync(path.join(root, '.talos/backlog/sprints'), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md'),
+    policyWithCriticalReview({ reasons: '[prosa_livre]' }),
+  );
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), BACKLOG_WITH_SPRINT_FILE);
+  const r = verifySprintFile({
+    run_id: 'r1',
+    project_root: root,
+    sprint_path: '.talos/backlog/sprints/SPRINT_S01_runtime.md',
+    sprint_id: 'S01',
+    backlog_path: 'BACKLOG.md',
+  });
+  assert.equal(r.status, 'blocked');
+  assert.ok(
+    r.pendencies.some((p) => p.category === 'policy_manifest' && p.item === 'critical_review.reasons'),
+    `esperava pendência critical_review.reasons no gate; obtido: ${JSON.stringify(r.pendencies)}`,
+  );
+});
+
+test('orquestrador SKILL G8: critical_review.required:true exige slice-review ANTES de talos_update_sprint_status (AC-6.1.2 / CN5 sink)', () => {
+  // O sink de CN5 é packages/orchestrator/skills/talos/SKILL.md:G8 — o teste lê o
+  // arquivo do disco (não string fabricada) e exige a ordem do contrato.
+  const skill = fs.readFileSync(ORCHESTRATOR_SKILL_PATH, 'utf8');
+  const g8Row = skill.split('\n').find((line) => /^\|\s*G8\s*\|/.test(line));
+  assert.ok(g8Row, 'linha G8 ausente no SKILL do orquestrador');
+  assert.match(g8Row, /critical_review\.required/);
+  const sliceAt = g8Row.indexOf('slice-review');
+  const statusAt = g8Row.indexOf('talos_update_sprint_status');
+  assert.ok(
+    sliceAt >= 0 && statusAt > sliceAt,
+    'G8 não exige slice-review ANTES de talos_update_sprint_status quando critical_review.required:true',
+  );
+  // A review crítica é obrigatória por policy — não pode continuar tratando
+  // review só como opcional via `--review` nesse caso.
+  assert.match(g8Row, /obrigat[óo]ria/);
+  assert.match(g8Row, /não depende de `--review`|sem `--review`/);
+});
+
+test('SPRINT_TEMPLATE §10: policy_manifest inclui critical_review com enum fixo de reasons (Plano 6 template)', () => {
+  const template = fs.readFileSync(SPRINT_TEMPLATE_PATH, 'utf8');
+  const section = template.slice(template.indexOf('## 10. Policy manifest'));
+  assert.match(section, /critical_review:/);
+  for (const reason of CRITICAL_REVIEW_REASONS) {
+    assert.ok(section.includes(reason), `template §10 sem reason '${reason}'`);
+  }
+  assert.match(section, /required:\s*(true|false)/);
+});
+
+test('talos_verify_sprint_file: contrato completo passa no gate público (AC-1.2.1 seam)', () => {
+  const root = tmpRoot();
+  fs.mkdirSync(path.join(root, '.talos/backlog/sprints'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md'), sprintDoc());
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), BACKLOG_WITH_SPRINT_FILE);
+  const r = verifySprintFile({
+    run_id: 'r1',
+    project_root: root,
+    sprint_path: '.talos/backlog/sprints/SPRINT_S01_runtime.md',
+    sprint_id: 'S01',
+    backlog_path: 'BACKLOG.md',
+  });
+  assert.equal(r.status, 'passed');
+  assert.equal(r.pending_count, 0);
+});
+
+test('validateAcceptanceSeal: aprovado + bloco intacto → tampered:false (AC-2.1.1)', () => {
+  const markdown = sprintDoc({ contratoStatus: 'aprovado' });
+  const block = extractAcceptanceBlock(markdown);
+  assert.ok(block && block.startsWith('## 7.'));
+  const seal = validateAcceptanceSeal(markdown);
+  assert.equal(seal.sealed, true);
+  assert.equal(seal.tampered, false);
+  assert.match(computeAcceptanceSeal(markdown), /^sha256:[a-f0-9]{64}$/);
+});
+
+test('validateAcceptanceSeal: aprovado + bloco alterado 1 char → tampered:true (AC-2.1.2)', () => {
+  const intact = sprintDoc({ contratoStatus: 'aprovado' });
+  assert.equal(validateAcceptanceSeal(intact).tampered, false);
+  const adulterated = intact.replace(
+    '| D1 | Runtime harness entrega gate observável | usuario |',
+    '| D1 | Runtime harness entrega gate observávelX | usuario |',
+  );
+  const seal = validateAcceptanceSeal(adulterated);
+  assert.equal(seal.sealed, true);
+  assert.equal(seal.tampered, true);
+});
+
+test('validateAcceptanceSeal: aprovado sem Selo do contrato → tampered:true (AC-2.1.3)', () => {
+  const markdown = sprintDoc({ contratoStatus: 'aprovado', selo: null });
+  const seal = validateAcceptanceSeal(markdown);
+  assert.equal(seal.sealed, false);
+  assert.equal(seal.tampered, true);
+});
+
+test('validateAcceptanceSeal: draft ignora selo → tampered:false (AC-2.1.4)', () => {
+  const markdown = sprintDoc({
+    contratoStatus: 'draft',
+    selo: 'sha256:0000000000000000000000000000000000000000000000000000000000000000',
+  });
+  const seal = validateAcceptanceSeal(markdown);
+  assert.equal(seal.sealed, false);
+  assert.equal(seal.tampered, false);
+});
+
+test('talos_verify_sprint_file: aprovado adulterado → blocked FROZEN_ACCEPTANCE_TAMPERED (AC-2.2.1)', () => {
+  const root = tmpRoot();
+  fs.mkdirSync(path.join(root, '.talos/backlog/sprints'), { recursive: true });
+  const intact = sprintDoc({ contratoStatus: 'aprovado' });
+  const adulterated = intact.replace(
+    '| D1 | Runtime harness entrega gate observável | usuario |',
+    '| D1 | Runtime harness entrega gate observávelX | usuario |',
+  );
+  fs.writeFileSync(path.join(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md'), adulterated);
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), BACKLOG_WITH_SPRINT_FILE);
+  const r = verifySprintFile({
+    run_id: 'r1',
+    project_root: root,
+    sprint_path: '.talos/backlog/sprints/SPRINT_S01_runtime.md',
+    sprint_id: 'S01',
+    backlog_path: 'BACKLOG.md',
+  });
+  assert.equal(r.status, 'blocked');
+  assert.ok(r.pendencies.some((p) =>
+    p.category === 'contrato_congelado' && p.item === 'FROZEN_ACCEPTANCE_TAMPERED'));
+});
+
+test('talos_verify_sprint_file: aprovado intacto → passed (AC-2.2.2)', () => {
+  const root = tmpRoot();
+  fs.mkdirSync(path.join(root, '.talos/backlog/sprints'), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md'),
+    sprintDoc({ contratoStatus: 'aprovado' }),
+  );
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), BACKLOG_WITH_SPRINT_FILE);
+  const r = verifySprintFile({
+    run_id: 'r1',
+    project_root: root,
+    sprint_path: '.talos/backlog/sprints/SPRINT_S01_runtime.md',
+    sprint_id: 'S01',
+    backlog_path: 'BACKLOG.md',
+  });
+  assert.equal(r.status, 'passed');
+  assert.equal(r.pending_count, 0);
+});
+
+test('SPRINT_TEMPLATE: §1 contém Selo do contrato (AC-2.2.3)', () => {
+  const template = fs.readFileSync(SPRINT_TEMPLATE_PATH, 'utf8');
+  assert.match(template, /^\|\s*Selo do contrato\s*\|\s*\[pendente até aprovação\]\s*\|/m);
+});
+
+test('talos_verify_sprint_file: premissa_count numérico em passed e blocked (AC-01.4.2)', () => {
+  const root = tmpRoot();
+  fs.mkdirSync(path.join(root, '.talos/backlog/sprints'), { recursive: true });
+  // passed com zero premissas: campo presente e numérico (falsificador: emitir
+  // só quando > 0 deixaria `premissa_count` ausente aqui e o consumidor não
+  // distinguiria "zero premissas" de "gate antigo").
+  fs.writeFileSync(
+    path.join(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md'),
+    sprintDoc({ moscow: 'Should', prioridade: 'P1' }),
+  );
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), BACKLOG_WITH_SPRINT_FILE);
+  const passed = verifySprintFile({
+    run_id: 'r1',
+    project_root: root,
+    sprint_path: '.talos/backlog/sprints/SPRINT_S01_runtime.md',
+    sprint_id: 'S01',
+    backlog_path: 'BACKLOG.md',
+  });
+  assert.equal(passed.status, 'passed');
+  assert.equal(passed.premissa_count, 0);
+
+  // passed com premissas em sprint não-prioritária: conta linhas §7.1 + itens §7.3.
+  const withPremissas = sprintDoc({ moscow: 'Should', prioridade: 'P1', decisionOrigin: 'premissa', acceptanceOrigin: 'premissa' });
+  fs.writeFileSync(path.join(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md'), withPremissas);
+  const passedPremissas = verifySprintFile({
+    run_id: 'r1',
+    project_root: root,
+    sprint_path: '.talos/backlog/sprints/SPRINT_S01_runtime.md',
+    sprint_id: 'S01',
+    backlog_path: 'BACKLOG.md',
+  });
+  assert.equal(passedPremissas.status, 'passed');
+  assert.equal(passedPremissas.premissa_count, 3, 'D1 da §7.1 + AC-001 + AC-002 da §7.3');
+
+  // blocked com premissa em sprint Must/P0: campo presente e batendo com o fixture.
+  fs.writeFileSync(
+    path.join(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md'),
+    sprintDoc({ decisionOrigin: 'premissa' }),
+  );
+  const blocked = verifySprintFile({
+    run_id: 'r1',
+    project_root: root,
+    sprint_path: '.talos/backlog/sprints/SPRINT_S01_runtime.md',
+    sprint_id: 'S01',
+    backlog_path: 'BACKLOG.md',
+  });
+  assert.equal(blocked.status, 'blocked');
+  assert.equal(blocked.premissa_count, 1);
+  assert.ok(blocked.pendencies.some((p) => p.category === 'procedencia_premissa_em_prioridade'));
+});
+
+test('talos_verify_backlog_index: derivado:<path> inexistente reprova também no gate de backlog (AC-01.4.3)', () => {
+  const root = tmpRoot();
+  fs.mkdirSync(path.join(root, '.talos/backlog/sprints'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | ready | — | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+  // Path inexistente: o mesmo artefato que reprova em verifySprintFile precisa
+  // reprovar aqui — sem `root` em inspectBacklogIndex a resolução fica inerte.
+  fs.writeFileSync(
+    path.join(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md'),
+    sprintDoc({ moscow: 'Should', prioridade: 'P1', decisionOrigin: 'derivado:packages/nao/existe.js' }),
+  );
+  const r = verifyBacklogIndex({ run_id: 'r1', project_root: root, backlog_path: 'BACKLOG.md' });
+  assert.equal(r.status, 'blocked');
+  assert.ok(
+    r.pendencies.some((p) => p.category === 'sprint_file' && /origem_path_inexistente/.test(p.item)),
+    `esperava pendência sprint_file:*:origem_path_inexistente; obtido: ${JSON.stringify(r.pendencies)}`,
+  );
+  assert.equal(r.premissa_count, 0, 'premissa_count sempre presente, inclusive zero');
+
+  // Contraprova com arquivo real: `derivado:packages/existe.js` resolve contra o
+  // root do consumidor e o índice passa.
+  fs.mkdirSync(path.join(root, 'packages'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'packages/existe.js'), 'export const real = true;\n');
+  fs.writeFileSync(
+    path.join(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md'),
+    sprintDoc({ moscow: 'Should', prioridade: 'P1', decisionOrigin: 'derivado:packages/existe.js' }),
+  );
+  const ok = verifyBacklogIndex({ run_id: 'r1', project_root: root, backlog_path: 'BACKLOG.md' });
+  assert.equal(ok.status, 'passed', JSON.stringify(ok.pendencies, null, 1));
+  assert.equal(ok.premissa_count, 0);
+});
+
+test('applyInterviewRound: grava decisão D* na §7 (AC-4.2.1)', () => {
+  const base = sprintDoc({ contratoStatus: 'draft' });
+  const updated = applyInterviewRound(base, [
+    { decision_id: 'D1', value: 'Harness usa gate binário observável' },
+  ], '2026-07-19');
+  assert.match(updated, /^\| D1 \| Harness usa gate binário observável \| usuario \|$/m);
+  assert.ok(closedDecisionIds(updated).has('D1'));
+  const section7 = updated.slice(updated.indexOf('## 7.'));
+  assert.match(section7, /^\| D1 \| Harness usa gate binário observável \| usuario \|$/m);
+});
+
+test('applyInterviewRound: approve sela contrato com validateAcceptanceSeal (AC-4.2.2)', () => {
+  const base = sprintDoc({ contratoStatus: 'draft' });
+  const updated = applyInterviewRound(base, [
+    { decision_id: 'D1', value: 'Harness usa gate binário observável' },
+  ], '2026-07-19', { approve: true });
+  assert.match(updated, /^\|\s*Contrato status\s*\|\s*aprovado\s*\|$/im);
+  assert.match(updated, /^\|\s*Selo do contrato\s*\|\s*sha256:[a-f0-9]{64}\s*\|$/im);
+  const seal = validateAcceptanceSeal(updated);
+  assert.equal(seal.sealed, true);
+  assert.equal(seal.tampered, false);
+  const approvedOnly = approveAcceptanceContract(
+    applyInterviewRound(base, [{ decision_id: 'D1', value: 'Harness usa gate binário observável' }], '2026-07-19'),
+  );
+  assert.equal(validateAcceptanceSeal(approvedOnly).tampered, false);
+  assert.equal(
+    computeAcceptanceSeal(updated),
+    updated.match(/^\|\s*Selo do contrato\s*\|\s*(sha256:[a-f0-9]{64})\s*\|$/im)[1],
+  );
+});
+
 function backlogWithRows(rows) {
   return [
     '## 7. Registro de sprints',
@@ -1376,12 +2100,69 @@ function backlogWithRows(rows) {
   ].join('\n');
 }
 
-function writeSprintFixture(root, id, { status = 'ready', dorStatus = 'verde' } = {}) {
+function writeSprintFixture(root, id, {
+  status = 'ready',
+  dorStatus = 'verde',
+  contratoStatus = 'draft',
+  plan = 'pendente',
+} = {}) {
   fs.mkdirSync(path.join(root, '.talos/backlog/sprints'), { recursive: true });
+  let doc = sprintDoc({ id, backlog: `BACKLOG.md#${id}`, status, dorStatus, contratoStatus });
+  if (plan !== 'pendente') {
+    doc = doc.replace('| PLAN | pendente |', `| PLAN | ${plan} |`);
+  }
   fs.writeFileSync(
     path.join(root, `.talos/backlog/sprints/SPRINT_${id}_runtime.md`),
-    sprintDoc({ id, backlog: `BACKLOG.md#${id}`, status, dorStatus }),
+    doc,
   );
+}
+
+function writeHandoffTemplateFixture(root) {
+  // Fonte versionada no repo (não `.talos/`, gitignored). Runtime do consumidor
+  // continua lendo `.talos/memory/HANDOFF_TEMPLATE.md` no project_root.
+  const templateSrc = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    'fixtures/HANDOFF_TEMPLATE.md',
+  );
+  const destDir = path.join(root, '.talos/memory');
+  fs.mkdirSync(destDir, { recursive: true });
+  fs.copyFileSync(templateSrc, path.join(destDir, 'HANDOFF_TEMPLATE.md'));
+}
+
+// State v3 com acceptance_results (campo emitido pelo validator no complete e
+// persistido no state; consumido pelo gate de status do updateSprintStatus).
+function writeStateWithAcceptance(root, name, acceptanceResults, extra = {}) {
+  const state = {
+    state_schema_version: 3,
+    run_id: 'r-plano3',
+    slice: 'A',
+    base_sha: 'a'.repeat(40),
+    head_sha: 'a'.repeat(40),
+    contract_kind: 'plan',
+    tasks: ['T01'],
+    files_changed: ['src/entrega.js'],
+    diff_stat: '1 file',
+    plan_path: '.talos/plans/PLAN_S01_runtime.md',
+    boundary_refs: ['B1'],
+    obligations: [],
+    invariants: [],
+    scenario_probes: [],
+    risk_probes: [],
+    validation_map: [],
+    task_evidence: [],
+    repair_evidence: [],
+    worktree_baseline: [],
+    worktree_final: [],
+    executed_at: '2026-08-02T00:00:00Z',
+    executor_skill: 'talos-plan-execute',
+    sprint_file_path: '.talos/backlog/sprints/SPRINT_S01_runtime.md',
+    proof_refs: {},
+    ...extra,
+  };
+  if (acceptanceResults !== undefined) state.acceptance_results = acceptanceResults;
+  const dir = path.join(root, '.talos/state');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, name), JSON.stringify(state, null, 2));
 }
 
 test('talos_verify_backlog_index: índice válido passa com sprint file e status espelhado', () => {
@@ -1419,6 +2200,92 @@ test('talos_select_next_sprint: escolhe sprint ready com maior prioridade determ
   assert.equal(r.status, 'passed');
   assert.equal(r.selected.sprint_id, 'S02');
   assert.deepEqual(r.candidates, ['S02', 'S01']);
+  assert.equal(r.next_action, 'sprint_interview');
+  assert.notEqual(r.next_action, 'gerar_prd');
+  assert.equal(r.selected.contrato_status, 'draft');
+  assert.equal(r.selected.contrato_sealed, false);
+});
+
+test('talos_select_next_sprint: §7 draft → sprint_interview (nunca gerar_prd)', () => {
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S13', { status: 'ready', dorStatus: 'verde', contratoStatus: 'draft' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S13 | Contrato draft | F0 | objetivo | Must | Alto | Baixo | P0 | — | — | ready | — | `.talos/backlog/sprints/SPRINT_S13_runtime.md` | pendente | pendente |',
+  ]));
+  const r = selectNextSprint({ run_id: 'r1', project_root: root, backlog_path: 'BACKLOG.md' });
+  assert.equal(r.status, 'passed');
+  assert.equal(r.next_action, 'sprint_interview');
+  assert.equal(r.selected.prd_path, null);
+  assert.ok(!String(r.next_action).includes('prd'));
+});
+
+test('talos_select_next_sprint: §7 aprovado+selo sem PLAN → plan_handoff', () => {
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S01', { status: 'ready', dorStatus: 'verde', contratoStatus: 'aprovado' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | — | — | ready | — | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+  const r = selectNextSprint({ run_id: 'r1', project_root: root, backlog_path: 'BACKLOG.md' });
+  assert.equal(r.status, 'passed');
+  assert.equal(r.selected.contrato_status, 'aprovado');
+  assert.equal(r.selected.contrato_sealed, true);
+  assert.equal(r.next_action, 'plan_handoff');
+});
+
+test('talos_select_next_sprint: PLAN real → plan_execute', () => {
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S01', {
+    status: 'ready',
+    dorStatus: 'verde',
+    contratoStatus: 'aprovado',
+    plan: '.talos/plans/PLAN_S01_runtime.md',
+  });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | — | — | ready | — | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | `.talos/plans/PLAN_S01_runtime.md` | pendente |',
+  ]));
+  const r = selectNextSprint({ run_id: 'r1', project_root: root, backlog_path: 'BACKLOG.md' });
+  assert.equal(r.status, 'passed');
+  assert.equal(r.next_action, 'plan_execute');
+  assert.equal(r.selected.plan_path, '.talos/plans/PLAN_S01_runtime.md');
+});
+
+test('nextActionForSelectedSprint: matriz canônica 0.14 mode-aware', () => {
+  const draft = { contrato_status: 'draft', contrato_sealed: false, plan: null };
+  const sealed = { contrato_status: 'aprovado', contrato_sealed: true, plan: null };
+  const sealedPending = { contrato_status: 'aprovado', contrato_sealed: true, plan: 'pendente' };
+  const sealedWithPlan = { contrato_status: 'aprovado', contrato_sealed: true, plan: 'PLAN_S01.md' };
+  const sealedNoSeal = { contrato_status: 'aprovado', contrato_sealed: false, plan: null };
+
+  assert.equal(nextActionForSelectedSprint(draft), 'sprint_interview');
+  assert.equal(nextActionForSelectedSprint(sealedPending), 'plan_handoff');
+  assert.equal(nextActionForSelectedSprint(sealedWithPlan), 'plan_execute');
+  assert.equal(nextActionForSelectedSprint(sealedNoSeal), 'sprint_interview');
+
+  assert.equal(nextActionForSelectedSprint(sealed, 'direct'), 'plan_execute');
+  assert.equal(nextActionForSelectedSprint(sealedWithPlan, 'direct'), 'plan_execute');
+  assert.equal(nextActionForSelectedSprint(draft, 'direct'), 'sprint_interview');
+
+  assert.equal(nextActionForSelectedSprint(sealed, 'interview-only'), 'sprint_interview');
+  assert.equal(nextActionForSelectedSprint(sealedWithPlan, 'full'), 'plan_execute');
+  assert.equal(nextActionForSelectedSprint(sealed, 'full'), 'plan_handoff');
+});
+
+test('talos_select_next_sprint: mode=direct + §7 selado → plan_execute (não plan_handoff)', () => {
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S01', { status: 'ready', dorStatus: 'verde', contratoStatus: 'aprovado' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | — | — | ready | — | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+  const r = selectNextSprint({
+    run_id: 'r1',
+    project_root: root,
+    backlog_path: 'BACKLOG.md',
+    mode: 'direct',
+  });
+  assert.equal(r.status, 'passed');
+  assert.equal(r.next_action, 'plan_execute');
+  assert.notEqual(r.next_action, 'plan_handoff');
+  assert.notEqual(r.next_action, 'gerar_prd');
 });
 
 test('talos_select_next_sprint: dependência interna não done bloqueia seleção', () => {
@@ -1437,10 +2304,14 @@ test('talos_select_next_sprint: dependência interna não done bloqueia seleçã
 
 test('talos_update_sprint_status: sincroniza done no backlog e sprint file com evidência', () => {
   const root = tmpRoot();
+  writeHandoffTemplateFixture(root);
   writeSprintFixture(root, 'S01', { status: 'ready', dorStatus: 'verde' });
   fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
     '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | ready | ready | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
   ]));
+  writeStateWithAcceptance(root, 'S01.json', [
+    { id: 'AC-001', status: 'proved', proof_types: ['I:present', 'T-outcome:proved'] },
+  ]);
   const r = updateSprintStatus({
     run_id: 'r1',
     project_root: root,
@@ -1448,7 +2319,6 @@ test('talos_update_sprint_status: sincroniza done no backlog e sprint file com e
     sprint_id: 'S01',
     status: 'done',
     validator_verdict: 'pass',
-    prd_path: 'PRD_S01.md',
     plan_path: 'PLAN_S01.md',
     state_path: '.talos/state/S01.json',
     evidence: 'validator pass',
@@ -1460,14 +2330,38 @@ test('talos_update_sprint_status: sincroniza done no backlog e sprint file com e
   const row = parseSprintRows(backlog)[0];
   assert.equal(row.state, 'done');
   assert.equal(row.gate, 'validator:pass');
-  assert.equal(row.prd, 'PRD_S01.md');
+  assert.equal(row.prd, 'pendente');
   assert.equal(row.plan, 'PLAN_S01.md');
   assert.equal(row.state_file, '.talos/state/S01.json');
   const sprint = fs.readFileSync(path.join(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md'), 'utf8');
   assert.match(sprint, /^\| Status \| done \|$/m);
+  assert.doesNotMatch(sprint, /^\|\s*PRD\s*\|\s*PRD_S01\.md\s*\|/m);
   assert.match(sprint, /\| Sprint status update \| validator:pass \| validator pass \|/);
   assert.match(sprint, /\| Talos MCP \| Status -> done; validator=pass; evidence=validator pass \|/);
   assert.equal(verifyBacklogIndex({ run_id: 'r1', project_root: root, backlog_path: 'BACKLOG.md' }).status, 'passed');
+});
+
+test('talos_update_sprint_status: prd_path legado só atualiza coluna do backlog', () => {
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S01', { status: 'ready', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | ready | ready | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+  const r = updateSprintStatus({
+    run_id: 'r1',
+    project_root: root,
+    backlog_path: 'BACKLOG.md',
+    sprint_id: 'S01',
+    status: 'doing',
+    prd_path: 'legado-ignorado-no-sprint.md',
+    plan_path: 'PLAN_S01.md',
+  });
+  assert.equal(r.status, 'passed');
+  const row = parseSprintRows(fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8'))[0];
+  assert.equal(row.prd, 'legado-ignorado-no-sprint.md');
+  assert.equal(row.plan, 'PLAN_S01.md');
+  const sprint = fs.readFileSync(path.join(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md'), 'utf8');
+  assert.doesNotMatch(sprint, /legado-ignorado-no-sprint/);
 });
 
 test('talos_update_sprint_status: done sem validator terminal bloqueia e não muta', () => {
@@ -1507,12 +2401,175 @@ test('talos_update_sprint_status: reabrir done bloqueia por padrão', () => {
   assert.ok(r.pendencies.some((p) => p.category === 'status_transition'));
 });
 
-test('talos_update_sprint_status: falha de FS no sprint file faz rollback do backlog (P2)', () => {
+test('handoff emit: done+pass com template cria HANDOFF e retorna handoff_path', () => {
+  const root = tmpRoot();
+  writeHandoffTemplateFixture(root);
+  writeSprintFixture(root, 'S01', { status: 'ready', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | ready | ready | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+  writeStateWithAcceptance(root, 'S01.json', [
+    { id: 'AC-001', status: 'proved', proof_types: ['I:present', 'T-outcome:proved'] },
+  ]);
+  const r = updateSprintStatus({
+    run_id: 'r1',
+    project_root: root,
+    backlog_path: 'BACKLOG.md',
+    sprint_id: 'S01',
+    status: 'done',
+    validator_verdict: 'pass',
+    plan_path: 'PLAN_S01.md',
+    state_path: '.talos/state/S01.json',
+    evidence: 'validator pass',
+  });
+  assert.equal(r.status, 'passed');
+  assert.ok(r.handoff_path);
+  assert.match(r.handoff_path, /^\.talos\/memory\/HANDOFF_s01_runtime_\d{8}\.md$/);
+  assert.equal(r.next_action, 'promover_handoff');
+  const handoffAbs = path.join(root, r.handoff_path);
+  assert.ok(fs.existsSync(handoffAbs));
+  const handoff = fs.readFileSync(handoffAbs, 'utf8');
+  assert.match(handoff, /^\| sprint_id \| S01 \|$/m);
+  assert.match(handoff, /^\| status_pos_validator \| pass \|$/m);
+  assert.match(handoff, /^\| origem \| talos_update_sprint_status \|$/m);
+  assert.match(handoff, /## Contexto da entrega/);
+  assert.match(handoff, /state_path \| `\.talos\/state\/S01\.json`/);
+  assert.match(handoff, /plan_path \| `PLAN_S01\.md`/);
+  assert.match(handoff, /plan_path \| `PLAN_S01\.md` \|\n\n---\n/);
+  assert.match(handoff, /0 candidatos — nenhum fato durável promovido automaticamente\. Sucesso\./);
+});
+
+test('handoff emit: done+pass_with_observations emite handoff', () => {
+  const root = tmpRoot();
+  writeHandoffTemplateFixture(root);
+  writeSprintFixture(root, 'S01', { status: 'ready', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | ready | ready | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+  writeStateWithAcceptance(root, 'S01.json', [
+    { id: 'AC-001', status: 'proved', proof_types: ['I:present', 'T-outcome:proved'] },
+  ]);
+  const r = updateSprintStatus({
+    run_id: 'r1',
+    project_root: root,
+    backlog_path: 'BACKLOG.md',
+    sprint_id: 'S01',
+    status: 'done',
+    validator_verdict: 'pass_with_observations',
+    state_path: '.talos/state/S01.json',
+  });
+  assert.equal(r.status, 'passed');
+  assert.ok(r.handoff_path);
+  const handoff = fs.readFileSync(path.join(root, r.handoff_path), 'utf8');
+  assert.match(handoff, /^\| status_pos_validator \| pass_with_observations \|$/m);
+});
+
+test('handoff emit: done sem validator terminal bloqueia sem criar HANDOFF', () => {
+  const root = tmpRoot();
+  writeHandoffTemplateFixture(root);
+  writeSprintFixture(root, 'S01', { status: 'ready', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | ready | ready | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+  const memoryDir = path.join(root, '.talos/memory');
+  const r = updateSprintStatus({
+    run_id: 'r1',
+    project_root: root,
+    backlog_path: 'BACKLOG.md',
+    sprint_id: 'S01',
+    status: 'done',
+    validator_verdict: 'fail',
+    state_path: '.talos/state/S01.json',
+  });
+  assert.equal(r.status, 'blocked');
+  assert.equal(r.handoff_path, undefined);
+  const handoffs = fs.existsSync(memoryDir)
+    ? fs.readdirSync(memoryDir).filter((name) => /^HANDOFF_.*_\d{8}\.md$/.test(name))
+    : [];
+  assert.equal(handoffs.length, 0);
+});
+
+test('handoff emit: template ausente bloqueia com pendência handoff_emit', () => {
   const root = tmpRoot();
   writeSprintFixture(root, 'S01', { status: 'ready', dorStatus: 'verde' });
   fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
     '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | ready | ready | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
   ]));
+  writeStateWithAcceptance(root, 'S01.json', [
+    { id: 'AC-001', status: 'proved', proof_types: ['I:present', 'T-outcome:proved'] },
+  ]);
+  const backlogBefore = fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8');
+  const sprintAbs = path.join(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md');
+  const sprintBefore = fs.readFileSync(sprintAbs, 'utf8');
+  const r = updateSprintStatus({
+    run_id: 'r1',
+    project_root: root,
+    backlog_path: 'BACKLOG.md',
+    sprint_id: 'S01',
+    status: 'done',
+    validator_verdict: 'pass',
+    state_path: '.talos/state/S01.json',
+  });
+  assert.equal(r.status, 'blocked');
+  assert.ok(r.pendencies.some((p) => p.category === 'handoff_emit'));
+  assert.equal(r.handoff_path, undefined);
+  // Atomicidade P2: sem write parcial — backlog e sprint permanecem ready.
+  assert.equal(fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8'), backlogBefore);
+  assert.equal(fs.readFileSync(sprintAbs, 'utf8'), sprintBefore);
+  assert.match(backlogBefore, /\|\s*ready\s*\|/);
+  assert.match(fs.readFileSync(sprintAbs, 'utf8'), /^\| Status \| ready \|$/m);
+});
+
+test('handoff emit: falha de FS no write do HANDOFF faz rollback backlog+sprint (P2)', () => {
+  const root = tmpRoot();
+  writeHandoffTemplateFixture(root);
+  writeSprintFixture(root, 'S01', { status: 'ready', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | ready | ready | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+  writeStateWithAcceptance(root, 'S01.json', [
+    { id: 'AC-001', status: 'proved', proof_types: ['I:present', 'T-outcome:proved'] },
+  ]);
+  const backlogBefore = fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8');
+  const sprintAbs = path.resolve(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md');
+  const sprintBefore = fs.readFileSync(sprintAbs, 'utf8');
+  const memoryDir = path.resolve(root, '.talos/memory');
+  const realWrite = fs.writeFileSync;
+  mock.method(fs, 'writeFileSync', (target, data, ...rest) => {
+    const resolved = path.resolve(target);
+    if (resolved.startsWith(memoryDir) && /HANDOFF_.*_\d{8}\.md$/.test(path.basename(resolved))) {
+      throw Object.assign(new Error('ENOSPC: simulated'), { code: 'ENOSPC' });
+    }
+    return realWrite(target, data, ...rest);
+  });
+  try {
+    const r = updateSprintStatus({
+      run_id: 'r1',
+      project_root: root,
+      backlog_path: 'BACKLOG.md',
+      sprint_id: 'S01',
+      status: 'done',
+      validator_verdict: 'pass',
+      state_path: '.talos/state/S01.json',
+    });
+    assert.equal(r.status, 'blocked');
+    assert.equal(fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8'), backlogBefore);
+    assert.equal(fs.readFileSync(sprintAbs, 'utf8'), sprintBefore);
+  } finally {
+    mock.restoreAll();
+  }
+});
+
+test('talos_update_sprint_status: falha de FS no sprint file faz rollback do backlog (P2)', () => {
+  const root = tmpRoot();
+  writeHandoffTemplateFixture(root);
+  writeSprintFixture(root, 'S01', { status: 'ready', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | ready | ready | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+  writeStateWithAcceptance(root, 'S01.json', [
+    { id: 'AC-001', status: 'proved', proof_types: ['I:present', 'T-outcome:proved'] },
+  ]);
   const before = fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8');
   const sprintAbs = path.resolve(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md');
   // Injeta falha de FS determinística só no write do sprint file: o backlog já foi
@@ -1541,6 +2598,848 @@ test('talos_update_sprint_status: falha de FS no sprint file faz rollback do bac
   } finally {
     mock.restoreAll();
   }
+});
+
+// ===== Plano 3 — manual_validation_pending, DEP e handoff (AC-3.*) =====
+
+test('talos_select_next_sprint: dependência manual_validation_pending satisfaz DEP (AC-3.1.1)', () => {
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S01', { status: 'manual_validation_pending', dorStatus: 'verde' });
+  writeSprintFixture(root, 'S02', { status: 'ready', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Base | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | manual_validation_pending | validator:pass;manual_pending | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+    '| S02 | Depende | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | S01 | ready | ready | `.talos/backlog/sprints/SPRINT_S02_runtime.md` | pendente | pendente |',
+  ]));
+  const r = selectNextSprint({ run_id: 'r1', project_root: root, backlog_path: 'BACKLOG.md' });
+  assert.equal(r.status, 'passed');
+  assert.equal(r.selected.sprint_id, 'S02');
+  assert.ok(!r.rejected.some((item) => item.id === 'S02'));
+  assert.ok(!r.rejected.some((item) => item.reasons.some((reason) => /unmet_dependencies=S01/.test(reason))));
+});
+
+test('talos_update_sprint_status: manual_validation_pending com M pendente não emite handoff (AC-3.1.2)', () => {
+  const root = tmpRoot();
+  writeHandoffTemplateFixture(root);
+  writeSprintFixture(root, 'S01', { status: 'review', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | review | validator:pending | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+  writeStateWithAcceptance(root, 'S01.json', [
+    { id: 'AC-001', status: 'proved', proof_types: ['I:present', 'T-outcome:proved'] },
+    { id: 'AC-002', status: 'manual_pending', proof_types: ['I:present', 'M:pending'] },
+  ]);
+  const r = updateSprintStatus({
+    run_id: 'r1',
+    project_root: root,
+    backlog_path: 'BACKLOG.md',
+    sprint_id: 'S01',
+    status: 'manual_validation_pending',
+    validator_verdict: 'pass',
+    state_path: '.talos/state/S01.json',
+    evidence: 'validator pass; M pendente',
+  });
+  assert.equal(r.status, 'passed');
+  assert.equal(r.next_status, 'manual_validation_pending');
+  assert.equal(r.handoff_path, undefined);
+  assert.notEqual(r.next_action, 'promover_handoff');
+  const row = parseSprintRows(fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8'))[0];
+  assert.equal(row.state, 'manual_validation_pending');
+  assert.equal(row.gate, 'validator:pass;manual_pending');
+  const sprint = fs.readFileSync(path.join(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md'), 'utf8');
+  assert.match(sprint, /^\| Status \| manual_validation_pending \|$/m);
+  const handoffs = fs.existsSync(path.join(root, '.talos/memory'))
+    ? fs.readdirSync(path.join(root, '.talos/memory')).filter((name) => /^HANDOFF_.*_\d{8}\.md$/.test(name))
+    : [];
+  assert.equal(handoffs.length, 0);
+});
+
+test('BACKLOG_MESTRE_TEMPLATE: §5.1 e DoR alinhados a manual_validation_pending (AC-3.1.3)', () => {
+  const templatePath = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    '../templates/BACKLOG_MESTRE_TEMPLATE.md',
+  );
+  const template = fs.readFileSync(templatePath, 'utf8');
+  // §5.1: cadeia de estados e tabela de significados incluem manual_validation_pending.
+  assert.match(template, /backlog → ready → doing → review → manual_validation_pending → done/);
+  assert.match(template, /\| manual_validation_pending \|/);
+  // DoR: dependências aceitam done OU manual_validation_pending (não só done).
+  const dorLine = template.split('\n').find((line) => line.includes('Dependências anteriores'));
+  assert.ok(dorLine, 'DoR global com linha de dependências anteriores');
+  assert.match(dorLine, /manual_validation_pending/);
+  assert.doesNotMatch(dorLine, /^\- \[ \] Dependências anteriores `done` ou explicitamente não bloqueantes\.\s*$/);
+});
+
+test('update_sprint_status done emite handoff quando AC proved sem M (AC-3.2.1 / CN1)', () => {
+  const root = tmpRoot();
+  writeHandoffTemplateFixture(root);
+  writeSprintFixture(root, 'S01', { status: 'ready', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | ready | ready | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+  writeStateWithAcceptance(root, 'S01.json', [
+    { id: 'AC-001', status: 'proved', proof_types: ['I:present', 'T-outcome:proved'] },
+    { id: 'AC-002', status: 'proved', proof_types: ['I:present', 'T-outcome:proved'] },
+  ]);
+  const r = updateSprintStatus({
+    run_id: 'r1',
+    project_root: root,
+    backlog_path: 'BACKLOG.md',
+    sprint_id: 'S01',
+    status: 'done',
+    validator_verdict: 'pass',
+    state_path: '.talos/state/S01.json',
+    evidence: 'validator pass',
+  });
+  assert.equal(r.status, 'passed');
+  assert.equal(r.next_status, 'done');
+  assert.ok(r.handoff_path);
+  assert.equal(r.next_action, 'promover_handoff');
+  const row = parseSprintRows(fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8'))[0];
+  assert.equal(row.state, 'done');
+});
+
+test('update_sprint_status: done bloqueado quando acceptance_results tem manual_pending (VC1)', () => {
+  const root = tmpRoot();
+  writeHandoffTemplateFixture(root);
+  writeSprintFixture(root, 'S01', { status: 'review', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | review | validator:pending | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+  writeStateWithAcceptance(root, 'S01.json', [
+    { id: 'AC-001', status: 'manual_pending', proof_types: ['I:present', 'M:pending'] },
+  ]);
+  const before = fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8');
+  const r = updateSprintStatus({
+    run_id: 'r1',
+    project_root: root,
+    backlog_path: 'BACKLOG.md',
+    sprint_id: 'S01',
+    status: 'done',
+    validator_verdict: 'pass',
+    state_path: '.talos/state/S01.json',
+  });
+  assert.equal(r.status, 'blocked');
+  assert.ok(r.pendencies.some((p) => p.category === 'acceptance_results'));
+  // nunca done com M aberto: sem mutação e sem handoff.
+  assert.equal(fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8'), before);
+  const handoffs = fs.existsSync(path.join(root, '.talos/memory'))
+    ? fs.readdirSync(path.join(root, '.talos/memory')).filter((name) => /^HANDOFF_.*_\d{8}\.md$/.test(name))
+    : [];
+  assert.equal(handoffs.length, 0);
+});
+
+// Fechamento Plano F (A6/P1): SKILL SPRINT_STATUS_SYNC exige acceptance_results
+// para done; o escape "quando presentes" do Plano 3 permitia done+handoff sem
+// prova de AC. Sem o campo (ou com state ilegível/v2), done bloqueia.
+test('update_sprint_status: done bloqueado sem acceptance_results no state (A6 / Plano F)', () => {
+  const root = tmpRoot();
+  writeHandoffTemplateFixture(root);
+  writeSprintFixture(root, 'S01', { status: 'ready', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | ready | ready | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+  // state_path apontado mas arquivo ausente → results null → blocked.
+  const before = fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8');
+  const rMissing = updateSprintStatus({
+    run_id: 'r1',
+    project_root: root,
+    backlog_path: 'BACKLOG.md',
+    sprint_id: 'S01',
+    status: 'done',
+    validator_verdict: 'pass',
+    state_path: '.talos/state/S01.json',
+  });
+  assert.equal(rMissing.status, 'blocked');
+  assert.ok(rMissing.pendencies.some((p) => p.category === 'acceptance_results' && /exige acceptance_results/.test(p.message)));
+  assert.equal(rMissing.handoff_path, undefined);
+  assert.equal(fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8'), before);
+
+  // state v3 sem o campo → blocked.
+  writeStateWithAcceptance(root, 'S01.json', undefined);
+  const rNoField = updateSprintStatus({
+    run_id: 'r1',
+    project_root: root,
+    backlog_path: 'BACKLOG.md',
+    sprint_id: 'S01',
+    status: 'done',
+    validator_verdict: 'pass',
+    state_path: '.talos/state/S01.json',
+  });
+  assert.equal(rNoField.status, 'blocked');
+  assert.ok(rNoField.pendencies.some((p) => p.category === 'acceptance_results'));
+  assert.equal(rNoField.handoff_path, undefined);
+
+  // state v2 com acceptance_results forjado → LEG2 side-path: ainda blocked.
+  const forgedV2 = {
+    state_schema_version: 2,
+    acceptance_results: [{ id: 'AC-001', status: 'proved', proof_types: ['I:present'] }],
+  };
+  fs.mkdirSync(path.join(root, '.talos/state'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.talos/state/S01-v2.json'), JSON.stringify(forgedV2));
+  const rV2 = updateSprintStatus({
+    run_id: 'r1',
+    project_root: root,
+    backlog_path: 'BACKLOG.md',
+    sprint_id: 'S01',
+    status: 'done',
+    validator_verdict: 'pass',
+    state_path: '.talos/state/S01-v2.json',
+  });
+  assert.equal(rV2.status, 'blocked');
+  assert.ok(rV2.pendencies.some((p) => p.category === 'acceptance_results'));
+  assert.equal(rV2.handoff_path, undefined);
+});
+
+test('manual_validation_pending satisfaz DEP e não emite handoff (CN2)', () => {
+  const root = tmpRoot();
+  writeHandoffTemplateFixture(root);
+  writeSprintFixture(root, 'S01', { status: 'review', dorStatus: 'verde' });
+  writeSprintFixture(root, 'S02', { status: 'ready', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Base | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | review | validator:pending | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+    '| S02 | Depende | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | S01 | ready | ready | `.talos/backlog/sprints/SPRINT_S02_runtime.md` | pendente | pendente |',
+  ]));
+  writeStateWithAcceptance(root, 'S01.json', [
+    { id: 'AC-001', status: 'proved', proof_types: ['I:present', 'T-outcome:proved'] },
+    { id: 'AC-002', status: 'manual_pending', proof_types: ['I:present', 'M:pending'] },
+  ]);
+  const up = updateSprintStatus({
+    run_id: 'r1',
+    project_root: root,
+    backlog_path: 'BACKLOG.md',
+    sprint_id: 'S01',
+    status: 'manual_validation_pending',
+    validator_verdict: 'pass',
+    state_path: '.talos/state/S01.json',
+  });
+  assert.equal(up.status, 'passed');
+  assert.equal(up.handoff_path, undefined);
+  assert.notEqual(up.next_action, 'promover_handoff');
+  const r = selectNextSprint({ run_id: 'r2', project_root: root, backlog_path: 'BACKLOG.md' });
+  assert.equal(r.status, 'passed');
+  assert.equal(r.selected.sprint_id, 'S02');
+  assert.ok(!r.rejected.some((item) => item.reasons.some((reason) => /unmet_dependencies=S01/.test(reason))));
+  const handoffs = fs.existsSync(path.join(root, '.talos/memory'))
+    ? fs.readdirSync(path.join(root, '.talos/memory')).filter((name) => /^HANDOFF_.*_\d{8}\.md$/.test(name))
+    : [];
+  assert.equal(handoffs.length, 0);
+});
+
+test('talos_update_sprint_status: manual_validation_pending exige validator terminal e acceptance_results', () => {
+  // (a) validator não-terminal bloqueia MVP.
+  const rootA = tmpRoot();
+  writeSprintFixture(rootA, 'S01', { status: 'review', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(rootA, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | review | validator:pending | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+  writeStateWithAcceptance(rootA, 'S01.json', [{ id: 'AC-001', status: 'manual_pending', proof_types: ['M:pending'] }]);
+  const rA = updateSprintStatus({
+    run_id: 'r1', project_root: rootA, backlog_path: 'BACKLOG.md', sprint_id: 'S01',
+    status: 'manual_validation_pending', validator_verdict: 'fail', state_path: '.talos/state/S01.json',
+  });
+  assert.equal(rA.status, 'blocked');
+  assert.ok(rA.pendencies.some((p) => p.category === 'validator_verdict'));
+  // (b) sem acceptance_results no state bloqueia MVP.
+  const rootB = tmpRoot();
+  writeSprintFixture(rootB, 'S01', { status: 'review', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(rootB, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | review | validator:pending | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+  writeStateWithAcceptance(rootB, 'S01.json', undefined);
+  const rB = updateSprintStatus({
+    run_id: 'r1', project_root: rootB, backlog_path: 'BACKLOG.md', sprint_id: 'S01',
+    status: 'manual_validation_pending', validator_verdict: 'pass', state_path: '.talos/state/S01.json',
+  });
+  assert.equal(rB.status, 'blocked');
+  assert.ok(rB.pendencies.some((p) => p.category === 'acceptance_results'));
+  // (c) unproved presente bloqueia MVP.
+  const rootC = tmpRoot();
+  writeSprintFixture(rootC, 'S01', { status: 'review', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(rootC, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | review | validator:pending | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+  writeStateWithAcceptance(rootC, 'S01.json', [{ id: 'AC-001', status: 'unproved', proof_types: ['T-outcome:unproved'] }]);
+  const rC = updateSprintStatus({
+    run_id: 'r1', project_root: rootC, backlog_path: 'BACKLOG.md', sprint_id: 'S01',
+    status: 'manual_validation_pending', validator_verdict: 'pass', state_path: '.talos/state/S01.json',
+  });
+  assert.equal(rC.status, 'blocked');
+  assert.ok(rC.pendencies.some((p) => p.category === 'acceptance_results'));
+  // (d) sem manual_pending (todos proved) → MVP não é o status certo.
+  const rootD = tmpRoot();
+  writeSprintFixture(rootD, 'S01', { status: 'review', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(rootD, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | review | validator:pending | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+  writeStateWithAcceptance(rootD, 'S01.json', [{ id: 'AC-001', status: 'proved', proof_types: ['T-outcome:proved'] }]);
+  const rD = updateSprintStatus({
+    run_id: 'r1', project_root: rootD, backlog_path: 'BACKLOG.md', sprint_id: 'S01',
+    status: 'manual_validation_pending', validator_verdict: 'pass', state_path: '.talos/state/S01.json',
+  });
+  assert.equal(rD.status, 'blocked');
+  assert.ok(rD.pendencies.some((p) => p.category === 'acceptance_results'));
+});
+
+// ===== Plano 4 — relatório de validação manual e sync (AC-4.* / CN3 / D11-D15) =====
+
+// Sprint file com AC-002 (e opcionalmente AC-003) declarando smoke manual `M`
+// (evidence.manual objeto) — base do relatório MV-*.
+function writeSprintWithManual(root, id, {
+  status = 'review',
+  dorStatus = 'verde',
+  extraManualAc = false,
+} = {}) {
+  fs.mkdirSync(path.join(root, '.talos/backlog/sprints'), { recursive: true });
+  let doc = sprintDoc({ id, backlog: `BACKLOG.md#${id}`, status, dorStatus, contratoStatus: 'draft' });
+  doc = doc.replace(
+    '      required: [I, T-outcome]\n      manual: null',
+    '      required: [I, T-outcome, M]\n      manual:\n        severity: alta\n        scenario: "validação manual"\n        expected_evidence: "resultado observável"\n        impact_paths: ["src/initial.js"]',
+  );
+  if (extraManualAc) {
+    doc = doc.replace(
+      '        impact_paths: ["src/initial.js"]\n```',
+      '        impact_paths: ["src/initial.js"]\n  - id: AC-003\n    origin: "usuario"\n    behavior: "Outro smoke manual"\n    decisions: [D1]\n    scenario: "Regressão"\n    evals: [EVAL-001]\n    evidence:\n      required: [I, T-outcome, M]\n      manual:\n        severity: normal\n        scenario: "validação manual 2"\n        expected_evidence: "resultado observável 2"\n        impact_paths: ["src/initial.js"]\n```',
+    );
+  }
+  fs.writeFileSync(path.join(root, `.talos/backlog/sprints/SPRINT_${id}_runtime.md`), doc);
+}
+
+// Relatório canônico `.talos/manual-validation/<slug>.md` (template Plano 4).
+function writeManualValidationReport(root, rows, { slug = 'backlog', backlogPath = 'BACKLOG.md' } = {}) {
+  const dir = path.join(root, '.talos/manual-validation');
+  fs.mkdirSync(dir, { recursive: true });
+  const doc = [
+    `# Validações manuais abertas — ${slug}`,
+    '',
+    '| Campo | Valor |',
+    '|---|---|',
+    `| Backlog | \`${backlogPath}\` |`,
+    '| Atualizado em | 2026-08-02T00:00:00Z |',
+    '',
+    '## Pendências',
+    '',
+    '| ID | Sprint / AC | Severidade | Status | Cenário | Ambiente | Evidência esperada | Resultado / justificativa |',
+    '|---|---|---|---|---|---|---|---|',
+    ...rows,
+    '',
+  ].join('\n');
+  fs.writeFileSync(path.join(dir, `${slug}.md`), doc);
+}
+
+function setupMvpSprint(root, { acceptance, extraManualAc = false } = {}) {
+  writeHandoffTemplateFixture(root);
+  writeSprintWithManual(root, 'S01', { status: 'manual_validation_pending', dorStatus: 'verde', extraManualAc });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | manual_validation_pending | validator:pass;manual_pending | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | `.talos/state/S01.json` |',
+  ]));
+  writeStateWithAcceptance(root, 'S01.json', acceptance);
+}
+
+test('MANUAL_VALIDATION_REPORT_TEMPLATE: estrutura canônica do relatório (Plano 4)', () => {
+  const templatePath = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    '../templates/MANUAL_VALIDATION_REPORT_TEMPLATE.md',
+  );
+  const template = fs.readFileSync(templatePath, 'utf8');
+  assert.match(template, /## Pendências/);
+  assert.match(template, /\| ID \| Sprint \/ AC \| Severidade \| Status \| Cenário \| Ambiente \| Evidência esperada \| Resultado \/ justificativa \|/);
+  assert.match(template, /MV-S01-AC-002/);
+  assert.match(template, /fix_manual_validation_report/);
+});
+
+test('talos_sync_manual_validation: waiver sem justificativa bloqueia (AC-4.1.1)', () => {
+  const root = tmpRoot();
+  setupMvpSprint(root, {
+    acceptance: [
+      { id: 'AC-001', status: 'proved', proof_types: ['I:present', 'T-outcome:proved'] },
+      { id: 'AC-002', status: 'manual_pending', proof_types: ['I:present', 'M:pending'] },
+    ],
+  });
+  writeManualValidationReport(root, [
+    '| MV-S01-AC-002 | S01 / AC-002 | alta | waived | passo a passo | dev | resultado observável | — |',
+  ]);
+  const r = syncManualValidation({ run_id: 'r-waiver', project_root: root, backlog_path: 'BACKLOG.md' });
+  assert.equal(r.status, 'blocked');
+  assert.ok(r.pendencies.some((p) => p.category === 'relatorio_manual' && /justificativa/.test(p.message)));
+  assert.equal(r.next_action, 'fix_manual_validation_report');
+  // sem drift: state e relatório intactos.
+  const state = JSON.parse(fs.readFileSync(path.join(root, '.talos/state/S01.json'), 'utf8'));
+  assert.equal(state.acceptance_results.find((item) => item.id === 'AC-002').status, 'manual_pending');
+  assert.equal(fs.existsSync(path.join(root, '.talos/manual-validation/backlog.md')), true);
+});
+
+test('talos_sync_manual_validation: item fantasma sem AC.manual correspondente bloqueia (AC-4.1.2)', () => {
+  const root = tmpRoot();
+  setupMvpSprint(root, {
+    acceptance: [
+      { id: 'AC-001', status: 'proved', proof_types: ['I:present', 'T-outcome:proved'] },
+      { id: 'AC-002', status: 'manual_pending', proof_types: ['I:present', 'M:pending'] },
+    ],
+  });
+  // AC-001 existe no contrato mas com manual: null — sem AC.manual correspondente.
+  writeManualValidationReport(root, [
+    '| MV-S01-AC-001 | S01 / AC-001 | alta | validated | passo a passo | dev | resultado observável | smoke ok |',
+  ]);
+  const r = syncManualValidation({ run_id: 'r-phantom', project_root: root, backlog_path: 'BACKLOG.md' });
+  assert.equal(r.status, 'blocked');
+  assert.ok(r.pendencies.some((p) => p.category === 'relatorio_manual' && /fantasma/.test(p.message)));
+  assert.equal(r.next_action, 'fix_manual_validation_report');
+});
+
+test('sync manual validated promove done (AC-4.2.1 / CN3)', () => {
+  const root = tmpRoot();
+  setupMvpSprint(root, {
+    acceptance: [
+      { id: 'AC-001', status: 'proved', proof_types: ['I:present', 'T-outcome:proved'] },
+      { id: 'AC-002', status: 'manual_pending', proof_types: ['I:present', 'M:pending'] },
+    ],
+  });
+  writeManualValidationReport(root, [
+    '| MV-S01-AC-002 | S01 / AC-002 | alta | validated | passo a passo | dev | resultado observável | smoke ok na dev |',
+  ]);
+  const r = syncManualValidation({ run_id: 'r-cn3', project_root: root, backlog_path: 'BACKLOG.md' });
+  assert.equal(r.status, 'passed', JSON.stringify(r.pendencies, null, 1));
+  assert.equal(r.sprints[0].sprint_id, 'S01');
+  assert.equal(r.sprints[0].state, 'done');
+  assert.equal(r.sprints[0].promoted, true);
+  assert.ok(r.handoff_path, 'sync validado deve emitir handoff');
+  assert.equal(r.next_action, 'promover_handoff');
+  const row = parseSprintRows(fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8'))[0];
+  assert.equal(row.state, 'done');
+  const sprint = fs.readFileSync(path.join(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md'), 'utf8');
+  assert.match(sprint, /^\| Status \| done \|$/m);
+  // state sincronizado (D24): AC-002 proved com M:validated + ref do relatório.
+  const state = JSON.parse(fs.readFileSync(path.join(root, '.talos/state/S01.json'), 'utf8'));
+  const ac002 = state.acceptance_results.find((item) => item.id === 'AC-002');
+  assert.equal(ac002.status, 'proved');
+  assert.ok(ac002.proof_types.includes('M:validated'));
+  assert.equal(state.manual_validation_report, '.talos/manual-validation/backlog.md');
+  // relatório sem pendências é removido (D12).
+  assert.equal(fs.existsSync(path.join(root, '.talos/manual-validation/backlog.md')), false);
+  // handoff real no disco.
+  const handoffs = fs.readdirSync(path.join(root, '.talos/memory')).filter((name) => /^HANDOFF_.*_\d{8}\.md$/.test(name));
+  assert.equal(handoffs.length, 1);
+});
+
+test('talos_sync_manual_validation: M failed bloqueia a origem sem handoff', () => {
+  const root = tmpRoot();
+  setupMvpSprint(root, {
+    acceptance: [
+      { id: 'AC-001', status: 'proved', proof_types: ['I:present', 'T-outcome:proved'] },
+      { id: 'AC-002', status: 'manual_pending', proof_types: ['I:present', 'M:pending'] },
+    ],
+  });
+  writeManualValidationReport(root, [
+    '| MV-S01-AC-002 | S01 / AC-002 | alta | failed | passo a passo | dev | resultado observável | smoke falhou no fluxo X |',
+  ]);
+  const r = syncManualValidation({ run_id: 'r-fail', project_root: root, backlog_path: 'BACKLOG.md' });
+  assert.equal(r.status, 'passed', JSON.stringify(r.pendencies, null, 1));
+  assert.equal(r.sprints[0].state, 'blocked');
+  assert.equal(r.sprints[0].promoted, true);
+  assert.equal(r.handoff_path, null);
+  assert.equal(r.next_action, 'corrigir_smoke_falho');
+  const row = parseSprintRows(fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8'))[0];
+  assert.equal(row.state, 'blocked');
+  const state = JSON.parse(fs.readFileSync(path.join(root, '.talos/state/S01.json'), 'utf8'));
+  const ac002 = state.acceptance_results.find((item) => item.id === 'AC-002');
+  assert.equal(ac002.status, 'violated');
+  assert.ok(ac002.proof_types.includes('M:failed'));
+  const handoffs = fs.readdirSync(path.join(root, '.talos/memory')).filter((name) => /^HANDOFF_.*_\d{8}\.md$/.test(name));
+  assert.equal(handoffs.length, 0);
+});
+
+test('talos_sync_manual_validation: sync parcial mantém MVP e relatório com pendências abertas (D12)', () => {
+  const root = tmpRoot();
+  setupMvpSprint(root, {
+    extraManualAc: true,
+    acceptance: [
+      { id: 'AC-001', status: 'proved', proof_types: ['I:present', 'T-outcome:proved'] },
+      { id: 'AC-002', status: 'manual_pending', proof_types: ['I:present', 'M:pending'] },
+      { id: 'AC-003', status: 'manual_pending', proof_types: ['I:present', 'M:pending'] },
+    ],
+  });
+  writeManualValidationReport(root, [
+    '| MV-S01-AC-002 | S01 / AC-002 | alta | validated | passo a passo | dev | resultado observável | smoke ok na dev |',
+    '| MV-S01-AC-003 | S01 / AC-003 | normal | pending | passo a passo | staging | resultado observável 2 | — |',
+  ]);
+  const r = syncManualValidation({ run_id: 'r-partial', project_root: root, backlog_path: 'BACKLOG.md' });
+  assert.equal(r.status, 'passed', JSON.stringify(r.pendencies, null, 1));
+  assert.equal(r.sprints[0].state, 'manual_validation_pending');
+  assert.equal(r.sprints[0].promoted, false);
+  assert.equal(r.handoff_path, null);
+  assert.equal(r.next_action, 'aguardar_validacao_manual');
+  const state = JSON.parse(fs.readFileSync(path.join(root, '.talos/state/S01.json'), 'utf8'));
+  assert.equal(state.acceptance_results.find((item) => item.id === 'AC-002').status, 'proved');
+  assert.equal(state.acceptance_results.find((item) => item.id === 'AC-003').status, 'manual_pending');
+  // relatório reescrito: só a pendência aberta AC-003 permanece.
+  const report = fs.readFileSync(path.join(root, '.talos/manual-validation/backlog.md'), 'utf8');
+  assert.match(report, /MV-S01-AC-003/);
+  assert.doesNotMatch(report, /MV-S01-AC-002/);
+  // D24: histórico no sprint (§16) registra o M sincronizado.
+  const sprint = fs.readFileSync(path.join(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md'), 'utf8');
+  assert.match(sprint, /Talos MCP sync manual/);
+  assert.match(sprint, /MV-S01-AC-002:validated/);
+});
+
+test('talos_sync_manual_validation: lock por backlog bloqueia sync concorrente (D15)', () => {
+  const root = tmpRoot();
+  fs.mkdirSync(path.join(root, '.talos/manual-validation'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.talos/manual-validation/backlog.lock'), '{"run_id":"r-outro"}');
+  const r = syncManualValidation({ run_id: 'r-lock', project_root: root, backlog_path: 'BACKLOG.md' });
+  assert.equal(r.status, 'blocked');
+  assert.ok(r.pendencies.some((p) => p.category === 'lock'));
+  assert.equal(r.next_action, 'aguardar_sync_anterior_ou_remover_lock_manual');
+});
+
+test('talos_sync_manual_validation: relatório ausente bloqueia com criar_relatorio_manual', () => {
+  const root = tmpRoot();
+  const r = syncManualValidation({ run_id: 'r-missing', project_root: root, backlog_path: 'BACKLOG.md' });
+  assert.equal(r.status, 'blocked');
+  assert.ok(r.pendencies.some((p) => p.category === 'relatorio_manual' && p.next_action === 'criar_relatorio_manual'));
+  assert.equal(r.next_action, 'criar_relatorio_manual');
+});
+
+test('talos_sync_manual_validation: relatório inválido bloqueia sem drift (fix_manual_validation_report)', () => {
+  // (a) status fora do enum.
+  const rootA = tmpRoot();
+  setupMvpSprint(rootA, {
+    acceptance: [
+      { id: 'AC-001', status: 'proved', proof_types: ['I:present', 'T-outcome:proved'] },
+      { id: 'AC-002', status: 'manual_pending', proof_types: ['I:present', 'M:pending'] },
+    ],
+  });
+  writeManualValidationReport(rootA, [
+    '| MV-S01-AC-002 | S01 / AC-002 | alta | ok | passo a passo | dev | resultado observável | smoke ok |',
+  ]);
+  const rA = syncManualValidation({ run_id: 'r-a', project_root: rootA, backlog_path: 'BACKLOG.md' });
+  assert.equal(rA.status, 'blocked');
+  assert.equal(rA.next_action, 'fix_manual_validation_report');
+  // (b) ID MV malformado.
+  const rootB = tmpRoot();
+  setupMvpSprint(rootB, {
+    acceptance: [
+      { id: 'AC-001', status: 'proved', proof_types: ['I:present', 'T-outcome:proved'] },
+      { id: 'AC-002', status: 'manual_pending', proof_types: ['I:present', 'M:pending'] },
+    ],
+  });
+  writeManualValidationReport(rootB, [
+    '| MV-S01-999 | S01 / 999 | alta | validated | x | y | z | ok |',
+  ]);
+  const rB = syncManualValidation({ run_id: 'r-b', project_root: rootB, backlog_path: 'BACKLOG.md' });
+  assert.equal(rB.status, 'blocked');
+  assert.equal(rB.next_action, 'fix_manual_validation_report');
+  // (c) coluna Sprint/AC divergente do id.
+  const rootC = tmpRoot();
+  setupMvpSprint(rootC, {
+    acceptance: [
+      { id: 'AC-001', status: 'proved', proof_types: ['I:present', 'T-outcome:proved'] },
+      { id: 'AC-002', status: 'manual_pending', proof_types: ['I:present', 'M:pending'] },
+    ],
+  });
+  writeManualValidationReport(rootC, [
+    '| MV-S01-AC-002 | S01 / AC-003 | alta | validated | x | y | z | ok |',
+  ]);
+  const rC = syncManualValidation({ run_id: 'r-c', project_root: rootC, backlog_path: 'BACKLOG.md' });
+  assert.equal(rC.status, 'blocked');
+  assert.equal(rC.next_action, 'fix_manual_validation_report');
+  // (d) MV duplicado.
+  const rootD = tmpRoot();
+  setupMvpSprint(rootD, {
+    acceptance: [
+      { id: 'AC-001', status: 'proved', proof_types: ['I:present', 'T-outcome:proved'] },
+      { id: 'AC-002', status: 'manual_pending', proof_types: ['I:present', 'M:pending'] },
+    ],
+  });
+  writeManualValidationReport(rootD, [
+    '| MV-S01-AC-002 | S01 / AC-002 | alta | validated | x | y | z | ok 1 |',
+    '| MV-S01-AC-002 | S01 / AC-002 | alta | validated | x | y | z | ok 2 |',
+  ]);
+  const rD = syncManualValidation({ run_id: 'r-d', project_root: rootD, backlog_path: 'BACKLOG.md' });
+  assert.equal(rD.status, 'blocked');
+  assert.ok(rD.pendencies.some((p) => p.category === 'relatorio_manual' && /duplicado/.test(p.message)));
+});
+
+test('talos_sync_manual_validation: ledger append-only no run state (D24)', () => {
+  const root = tmpRoot();
+  setupMvpSprint(root, {
+    extraManualAc: true,
+    acceptance: [
+      { id: 'AC-001', status: 'proved', proof_types: ['I:present', 'T-outcome:proved'] },
+      { id: 'AC-002', status: 'manual_pending', proof_types: ['I:present', 'M:pending'] },
+      { id: 'AC-003', status: 'manual_pending', proof_types: ['I:present', 'M:pending'] },
+    ],
+  });
+  writeManualValidationReport(root, [
+    '| MV-S01-AC-002 | S01 / AC-002 | alta | validated | x | dev | y | ok 1 |',
+    '| MV-S01-AC-003 | S01 / AC-003 | normal | pending | x | staging | y | — |',
+  ]);
+  const runId = 'r-ledger';
+  const first = syncManualValidation({ run_id: runId, project_root: root, backlog_path: 'BACKLOG.md' });
+  assert.equal(first.status, 'passed');
+  const state1 = runState({ run_id: runId, project_root: root });
+  assert.ok(Array.isArray(state1.data.manual_validation));
+  const n1 = state1.data.manual_validation.length;
+  assert.ok(n1 >= 1);
+  assert.ok(state1.data.manual_validation.some((e) => e.mv_id === 'MV-S01-AC-002' && e.next_status === 'proved'));
+  // Segunda sync (mesmo run_id): AC-003 validado → append, sem apagar o primeiro.
+  writeManualValidationReport(root, [
+    '| MV-S01-AC-003 | S01 / AC-003 | normal | validated | x | staging | y | ok 2 |',
+  ]);
+  const second = syncManualValidation({ run_id: runId, project_root: root, backlog_path: 'BACKLOG.md' });
+  assert.equal(second.status, 'passed');
+  const state2 = runState({ run_id: runId, project_root: root });
+  assert.ok(state2.data.manual_validation.length > n1, 'ledger deve crescer (append-only)');
+  assert.deepEqual(
+    state2.data.manual_validation.slice(0, n1),
+    state1.data.manual_validation,
+    'eventos anteriores preservados',
+  );
+});
+
+// ===== Plano 5 — flag revalidation_required e cone (AC-5.* / CN4 / D2/D6/D10/D20) =====
+
+test('revalidation_required não pertence a BACKLOG_STATES (AC-5.1.1 / INV4)', () => {
+  // (a) textual: enum canônico do MCP sem a flag (fonte é o código real).
+  const source = fs.readFileSync(new URL('./server.js', import.meta.url), 'utf8');
+  const enumLine = source.split('\n').find((line) => line.includes('const BACKLOG_STATES = new Set'));
+  assert.ok(enumLine, 'BACKLOG_STATES deve existir');
+  assert.doesNotMatch(enumLine, /revalidation_required/i, 'flag não pode entrar no enum de status');
+  // (b) comportamental: status `revalidation_required` é rejeitado como status inválido.
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S01', { status: 'ready', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | ready | ready | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+  const r = updateSprintStatus({
+    run_id: 'r51',
+    project_root: root,
+    backlog_path: 'BACKLOG.md',
+    sprint_id: 'S01',
+    status: 'revalidation_required',
+    validator_verdict: 'pass',
+  });
+  assert.equal(r.status, 'blocked');
+  assert.ok(r.pendencies.some((p) => p.category === 'status' && /inválido/.test(p.message)));
+});
+
+test('update_sprint_status: done bloqueado com revalidation_required ligada (AC-5.1.2)', () => {
+  const root = tmpRoot();
+  writeHandoffTemplateFixture(root);
+  writeSprintFixture(root, 'S01', { status: 'manual_validation_pending', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | manual_validation_pending | validator:pass;manual_pending | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | `.talos/state/S01.json` | true |',
+  ]));
+  // Sem acceptance_results no state: revalidação não observada → fail-closed.
+  writeStateWithAcceptance(root, 'S01.json', undefined);
+  const before = fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8');
+  const r = updateSprintStatus({
+    run_id: 'r52',
+    project_root: root,
+    backlog_path: 'BACKLOG.md',
+    sprint_id: 'S01',
+    status: 'done',
+    validator_verdict: 'pass',
+    state_path: '.talos/state/S01.json',
+  });
+  assert.equal(r.status, 'blocked');
+  assert.ok(r.pendencies.some((p) => p.category === 'revalidation_required'));
+  assert.equal(r.next_action, 'revalidar_aceite_afetado');
+  // zero mutação e zero handoff.
+  assert.equal(fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8'), before);
+  const handoffs = fs.existsSync(path.join(root, '.talos/memory'))
+    ? fs.readdirSync(path.join(root, '.talos/memory')).filter((name) => /^HANDOFF_.*_\d{8}\.md$/.test(name))
+    : [];
+  assert.equal(handoffs.length, 0);
+});
+
+test('update_sprint_status: done com flag ligada exige revalidação (todos proved) e limpa a flag', () => {
+  const root = tmpRoot();
+  writeHandoffTemplateFixture(root);
+  writeSprintFixture(root, 'S01', { status: 'manual_validation_pending', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | manual_validation_pending | validator:pass;manual_pending | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | `.talos/state/S01.json` | true |',
+  ]));
+  // Revalidação observada: state com acceptance_results todos proved (D10).
+  writeStateWithAcceptance(root, 'S01.json', [
+    { id: 'AC-001', status: 'proved', proof_types: ['I:present', 'T-outcome:proved'] },
+    { id: 'AC-002', status: 'proved', proof_types: ['I:present', 'T-outcome:proved', 'M:validated'] },
+  ]);
+  const r = updateSprintStatus({
+    run_id: 'r53',
+    project_root: root,
+    backlog_path: 'BACKLOG.md',
+    sprint_id: 'S01',
+    status: 'done',
+    validator_verdict: 'pass',
+    state_path: '.talos/state/S01.json',
+  });
+  assert.equal(r.status, 'passed', JSON.stringify(r.pendencies, null, 1));
+  assert.equal(r.next_status, 'done');
+  assert.ok(r.handoff_path);
+  const row = parseSprintRows(fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8'))[0];
+  assert.equal(row.state, 'done');
+  assert.equal(row.revalidation_required, false, 'revalidação concluída deve limpar a flag');
+  const sprint = fs.readFileSync(path.join(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md'), 'utf8');
+  assert.match(sprint, /^\| Revalidação \| false \|$/m, 'metadado sync no sprint file (D2)');
+});
+
+test('parseSprintRows: índices estáveis — state row[10], state_file row[14], revalidation row[15] (AC-5.1.3)', () => {
+  const rows = parseSprintRows(backlogWithRows([
+    '| S01 | A | F0 | o | Must | Alto | Baixo | P0 | pendente | — | review | g | a.md | b.md | c.json | true |',
+    '| S02 | B | F0 | o | Must | Alto | Baixo | P0 | pendente | S01 | doing | g | a.md | b.md | c.json | yes |',
+    '| S03 | C | F0 | o | Must | Alto | Baixo | P0 | pendente | — | done | g | a.md | b.md | c.json | 1 |',
+    '| S04 | D | F0 | o | Must | Alto | Baixo | P0 | pendente | — | done | g | a.md | b.md | c.json | FALSE |',
+    '| S05 | E | F0 | o | Must | Alto | Baixo | P0 | pendente | — | done | g | a.md | b.md | c.json | — |',
+    '| S06 | F | F0 | o | Must | Alto | Baixo | P0 | pendente | — | done | g | a.md | b.md | c.json |',
+  ]));
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  // Estado permanece no índice 10; State file no 14; Revalidação derivada do 15.
+  assert.equal(byId.get('S01').state, 'review');
+  assert.equal(byId.get('S01').state_file, 'c.json');
+  assert.equal(byId.get('S01').revalidation_required, true);
+  assert.equal(byId.get('S02').revalidation_required, true, 'yes liga a flag');
+  assert.equal(byId.get('S03').revalidation_required, true, '1 liga a flag');
+  assert.equal(byId.get('S04').revalidation_required, false, 'FALSE não liga');
+  assert.equal(byId.get('S05').revalidation_required, false, '— não liga');
+  // Coluna ausente (artefato 0.15 com 15 células) = vazia/false, sem quebrar.
+  assert.equal(byId.get('S06').state, 'done');
+  assert.equal(byId.get('S06').state_file, 'c.json');
+  assert.equal(byId.get('S06').revalidation_required, false);
+});
+
+test('propagateRevalidation: fecho transitivo de Depende de (AC-5.2.1 unit)', () => {
+  const rows = parseSprintRows(backlogWithRows([
+    '| S01 | Origem | F0 | o | Must | Alto | Baixo | P0 | pendente | — | blocked | g | a.md | b.md | c.json |',
+    '| S02 | Dep1 | F0 | o | Must | Alto | Baixo | P0 | pendente | S01 | review | g | a.md | b.md | c.json |',
+    '| S03 | Dep2 | F0 | o | Must | Alto | Baixo | P0 | pendente | S02 | review | g | a.md | b.md | c.json |',
+    '| S04 | Indep | F0 | o | Must | Alto | Baixo | P0 | pendente | — | review | g | a.md | b.md | c.json |',
+  ]));
+  const flagged = propagateRevalidation(rows, ['S01']);
+  assert.deepEqual([...flagged].sort(), ['S02', 'S03']);
+});
+
+test('M failed liga revalidation_required no cone (CN4 / AC-5.2.1)', () => {
+  const root = tmpRoot();
+  setupMvpSprint(root, {
+    acceptance: [
+      { id: 'AC-001', status: 'proved', proof_types: ['I:present', 'T-outcome:proved'] },
+      { id: 'AC-002', status: 'manual_pending', proof_types: ['I:present', 'M:pending'] },
+    ],
+  });
+  // Grafo S01 ← S02 ← S03; S04 independente.
+  writeSprintFixture(root, 'S02', { status: 'review', dorStatus: 'verde' });
+  writeSprintFixture(root, 'S03', { status: 'review', dorStatus: 'verde' });
+  writeSprintFixture(root, 'S04', { status: 'review', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Origem | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | manual_validation_pending | validator:pass;manual_pending | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | `.talos/state/S01.json` |',
+    '| S02 | Dep1 | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | S01 | review | g | `.talos/backlog/sprints/SPRINT_S02_runtime.md` | pendente | pendente |',
+    '| S03 | Dep2 | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | S02 | review | g | `.talos/backlog/sprints/SPRINT_S03_runtime.md` | pendente | pendente |',
+    '| S04 | Indep | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | review | g | `.talos/backlog/sprints/SPRINT_S04_runtime.md` | pendente | pendente |',
+  ]));
+  writeManualValidationReport(root, [
+    '| MV-S01-AC-002 | S01 / AC-002 | alta | failed | passo a passo | dev | resultado observável | smoke falhou no fluxo X |',
+  ]);
+  const r = syncManualValidation({ run_id: 'r-cone', project_root: root, backlog_path: 'BACKLOG.md' });
+  assert.equal(r.status, 'passed', JSON.stringify(r.pendencies, null, 1));
+  assert.equal(r.sprints[0].sprint_id, 'S01');
+  assert.equal(r.sprints[0].state, 'blocked', 'origem com M falho fica blocked');
+  assert.equal(r.handoff_path, null);
+  const rows = parseSprintRows(fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8'));
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  assert.equal(byId.get('S01').revalidation_required, false, 'origem não recebe a flag');
+  assert.equal(byId.get('S02').revalidation_required, true, 'dependente direto recebe a flag');
+  assert.equal(byId.get('S03').revalidation_required, true, 'fecho transitivo recebe a flag');
+  assert.equal(byId.get('S04').revalidation_required, false, 'independente não recebe a flag');
+  // D2: metadado sync no sprint file dos dependentes flagados; independente intacto.
+  const s02 = fs.readFileSync(path.join(root, '.talos/backlog/sprints/SPRINT_S02_runtime.md'), 'utf8');
+  assert.match(s02, /^\| Revalidação \| true \|$/m);
+  const s03 = fs.readFileSync(path.join(root, '.talos/backlog/sprints/SPRINT_S03_runtime.md'), 'utf8');
+  assert.match(s03, /^\| Revalidação \| true \|$/m);
+  const s04 = fs.readFileSync(path.join(root, '.talos/backlog/sprints/SPRINT_S04_runtime.md'), 'utf8');
+  assert.match(s04, /^\| Revalidação \| false \|$/m);
+});
+
+test('sync com M failed na origem e M validated no dependente: dependente done limpa a flag no mesmo sync (CN3 x CN4)', () => {
+  // Revalidação observada no MESMO sync que ligou o cone: o dependente direto
+  // (S02) é revalidado (M validated → state todos proved) e promovido a done
+  // com a flag limpa — CN3 preservado para dependentes flagados; S03 (fecho
+  // transitivo, sem linha no relatório) permanece com a flag.
+  const root = tmpRoot();
+  setupMvpSprint(root, {
+    acceptance: [
+      { id: 'AC-001', status: 'proved', proof_types: ['I:present', 'T-outcome:proved'] },
+      { id: 'AC-002', status: 'manual_pending', proof_types: ['I:present', 'M:pending'] },
+    ],
+  });
+  writeSprintWithManual(root, 'S02', { status: 'manual_validation_pending', dorStatus: 'verde' });
+  writeSprintFixture(root, 'S03', { status: 'review', dorStatus: 'verde' });
+  writeSprintFixture(root, 'S04', { status: 'review', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Origem | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | manual_validation_pending | validator:pass;manual_pending | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | `.talos/state/S01.json` |',
+    '| S02 | Dep1 | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | S01 | manual_validation_pending | validator:pass;manual_pending | `.talos/backlog/sprints/SPRINT_S02_runtime.md` | pendente | `.talos/state/S02.json` |',
+    '| S03 | Dep2 | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | S02 | review | g | `.talos/backlog/sprints/SPRINT_S03_runtime.md` | pendente | pendente |',
+    '| S04 | Indep | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | review | g | `.talos/backlog/sprints/SPRINT_S04_runtime.md` | pendente | pendente |',
+  ]));
+  writeStateWithAcceptance(root, 'S02.json', [
+    { id: 'AC-001', status: 'proved', proof_types: ['I:present', 'T-outcome:proved'] },
+    { id: 'AC-002', status: 'manual_pending', proof_types: ['I:present', 'M:pending'] },
+  ]);
+  writeManualValidationReport(root, [
+    '| MV-S01-AC-002 | S01 / AC-002 | alta | failed | passo a passo | dev | resultado observável | smoke falhou no fluxo X |',
+    '| MV-S02-AC-002 | S02 / AC-002 | alta | validated | passo a passo | dev | resultado observável | revalidado com sucesso |',
+  ]);
+  const r = syncManualValidation({ run_id: 'r-cone-clear', project_root: root, backlog_path: 'BACKLOG.md' });
+  assert.equal(r.status, 'passed', JSON.stringify(r.pendencies, null, 1));
+  const rows = parseSprintRows(fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8'));
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  assert.equal(byId.get('S01').state, 'blocked', 'origem com M falho fica blocked');
+  assert.equal(byId.get('S01').revalidation_required, false, 'origem não recebe a flag');
+  assert.equal(byId.get('S02').state, 'done', 'dependente revalidado no mesmo sync promove done');
+  assert.equal(byId.get('S02').revalidation_required, false, 'revalidação concluída limpa a flag na promoção');
+  assert.equal(byId.get('S03').revalidation_required, true, 'fecho transitivo preservado (sem linha no relatório)');
+  assert.equal(byId.get('S04').revalidation_required, false, 'independente intacto');
+  assert.ok(r.handoff_path, 'done do dependente emite handoff (CN3 preservado)');
+  const s02 = fs.readFileSync(path.join(root, '.talos/backlog/sprints/SPRINT_S02_runtime.md'), 'utf8');
+  assert.match(s02, /^\| Revalidação \| false \|$/m, 'metadado sprint limpo (D2)');
+});
+
+test('talos_select_next_sprint: flag revalidation_required não exclui candidata (AC-5.2.2)', () => {
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S01', { status: 'done', dorStatus: 'verde' });
+  writeSprintFixture(root, 'S02', { status: 'ready', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Base | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | done | validator:pass | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+    '| S02 | Depende | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | S01 | ready | ready | `.talos/backlog/sprints/SPRINT_S02_runtime.md` | pendente | pendente | true |',
+  ]));
+  const r = selectNextSprint({ run_id: 'r522', project_root: root, backlog_path: 'BACKLOG.md' });
+  assert.equal(r.status, 'passed');
+  assert.equal(r.selected.sprint_id, 'S02', 'flag não filtra candidata pronta com deps ok');
+  assert.ok(!r.rejected.some((item) => item.id === 'S02'));
+});
+
+test('BACKLOG_MESTRE_TEMPLATE: coluna Revalidação após State no fim do índice (Plano 5)', () => {
+  const templatePath = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    '../templates/BACKLOG_MESTRE_TEMPLATE.md',
+  );
+  const template = fs.readFileSync(templatePath, 'utf8');
+  const headerLine = template.split('\n').find((line) => /^\| ID \| Sprint \|/.test(line));
+  assert.ok(headerLine, 'header do registro de sprints');
+  assert.match(headerLine, /\| State \| Revalidação \|\s*$/, 'Revalidação é a última coluna (índice 15)');
+  assert.match(template, /Revalidação \(flag, não status\)/);
+  // flag não vira status na cadeia §5.1.
+  assert.doesNotMatch(template, /→ revalidation_required →/);
+  assert.doesNotMatch(template, /manual_validation_pending → revalidation_required/);
+});
+
+test('SPRINT_TEMPLATE: metadado Revalidação no §1 (D2)', () => {
+  const templatePath = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    '../templates/SPRINT_TEMPLATE.md',
+  );
+  const template = fs.readFileSync(templatePath, 'utf8');
+  assert.match(template, /^\| Revalidação \|/m);
+  assert.match(template, /cone de revalidação, D2\/D20/);
 });
 
 test('talos_classify_input: plano → banner roteia com modo=execute (T07)', () => {
@@ -1774,11 +3673,7 @@ test('talos_lock_validator: G12 bloqueia start sem state_path_created correspond
   lockDispatch({ run_id: 'g12validator', project_root: root, action: 'start', phase: 'plan_execute' });
 
   const stateRel = '.talos/state/g12validator/slice.json';
-  const abs = path.join(root, stateRel);
-  fs.mkdirSync(path.dirname(abs), { recursive: true });
-  fs.writeFileSync(abs, JSON.stringify({
-    ...fixtureState('state-legacy-plan.json'), run_id: 'g12validator',
-  }, null, 2));
+  ensureValidatorStateFixture(root, 'g12validator', stateRel);
 
   const beforeCheckpoint = lockValidatorCore({
     run_id: 'g12validator',
@@ -1791,10 +3686,7 @@ test('talos_lock_validator: G12 bloqueia start sem state_path_created correspond
   assert.equal(beforeCheckpoint.next_action, 'aguardar_state_path_created_antes_do_validator');
 
   const otherRel = '.talos/state/g12validator/other.json';
-  const otherAbs = path.join(root, otherRel);
-  fs.writeFileSync(otherAbs, JSON.stringify({
-    ...fixtureState('state-legacy-plan.json'), run_id: 'g12validator',
-  }, null, 2));
+  ensureValidatorStateFixture(root, 'g12validator', otherRel);
   const checkpoint = lockDispatch({
     run_id: 'g12validator',
     project_root: root,
@@ -3572,14 +5464,14 @@ test('version-conflict: run antigo inativo de versão anterior não bloqueia run
   assert.equal(r.status, 'passed', 'run novo passa apesar do resíduo 0.6.2 inativo');
 });
 
-// Banner cosmético: verificar um PRD não pode ecoar "plano · validado".
-test('banner: verify_artifact com artifact_kind=prd ecoa banner de PRD; default mantém plano', () => {
+// Banner cosmético: verificar um sprint/contrato não pode ecoar "plano · validado".
+test('banner: verify_artifact com artifact_kind=sprint ecoa banner de aceite; default mantém plano', () => {
   const root = tmpRoot();
-  fs.writeFileSync(path.join(root, 'PRD_x.md'), VALID_PRD);
+  fs.writeFileSync(path.join(root, 'SPRINT_x.md'), sprintDoc());
   fs.writeFileSync(path.join(root, 'PLAN_x.md'), CONFORMANT_PLAN_DOC);
-  const prd = verifyArtifact({ run_id: 'bk', project_root: root, artifact_path: 'PRD_x.md', artifact_kind: 'prd' });
-  assert.equal(prd.status, 'passed');
-  assert.equal(prd.banner, '▸ talos: prd · ok');
+  const sprint = verifyArtifact({ run_id: 'bk', project_root: root, artifact_path: 'SPRINT_x.md', artifact_kind: 'sprint' });
+  assert.equal(sprint.status, 'passed');
+  assert.equal(sprint.banner, '▸ talos: aceite · ok');
   const plan = verifyArtifact({ run_id: 'bk', project_root: root, artifact_path: 'PLAN_x.md' });
   assert.equal(plan.banner, '▸ talos: plano · validado (TC pass)', 'default (sem kind) preserva banner de plano');
 });
@@ -3614,25 +5506,34 @@ test('verify_artifact: artifact_kind=json bloqueia JSON inválido e aprova JSON 
 // P1.1 — proof-of-work do validador irmão. Setup: run com plan_execute ativo, um
 // state_path real apontando para files_changed com arquivo real no boundary.
 function setupValidatorRun(runId, files = {}) {
-  const root = tmpRoot();
+  const { root, head } = initGitFixture();
   preflight({
     run_id: runId, project_root: root, mode: 'execute',
     host: 'claude', host_capabilities: { subagent_available: true, mcp_available: true },
   });
   lockDispatch({ run_id: runId, project_root: root, action: 'start', phase: 'plan_execute' });
   const filesChanged = Object.keys(files);
+  const baseline = captureWorktreeSnapshot(root);
   for (const [rel, content] of Object.entries(files)) {
     const abs = path.join(root, rel);
     fs.mkdirSync(path.dirname(abs), { recursive: true });
     fs.writeFileSync(abs, content);
   }
+  const finalSnapshot = captureWorktreeSnapshot(root);
   const sliceRel = `.talos/state/${runId}/slice.json`;
   const sliceAbs = path.join(root, sliceRel);
   fs.mkdirSync(path.dirname(sliceAbs), { recursive: true });
   fs.writeFileSync(sliceAbs, JSON.stringify({
-    run_id: runId, slice: 'A', tasks: ['T01'], files_changed: filesChanged,
-    diff_stat: '1 files, +1 -0', plan_path: '.talos/plans/x.plan.md',
-    boundary_refs: ['§2.I1'], executed_at: '2026-06-15T00:00:00Z', executor_skill: 'talos-plan-execute',
+    state_schema_version: 3,
+    run_id: runId, slice: 'A', base_sha: head, head_sha: head, contract_kind: 'plan',
+    tasks: ['T01'], files_changed: filesChanged,
+    diff_stat: `${filesChanged.length} files`, plan_path: '.talos/plans/x.plan.md',
+    boundary_refs: ['§2.I1'], obligations: [], invariants: [], scenario_probes: [],
+    risk_probes: [], validation_map: [],
+    task_evidence: filesChanged.map((file) => ({ task: 'T01', files: [file], checks: [], result: 'passed' })),
+    repair_evidence: [],
+    worktree_baseline: baseline, worktree_final: finalSnapshot,
+    executed_at: '2026-06-15T00:00:00Z', executor_skill: 'talos-plan-execute',
   }, null, 2));
   return { root, sliceRel };
 }
@@ -3769,9 +5670,13 @@ test('proof-of-work: contador bounded não depende de history persistido', () =>
 test('proof-of-work: challenge emitido exige challenge_response (ausência bloqueia)', () => {
   const { root, sliceRel } = setupValidatorRun('pow4', { 'src/foo.js': 'export const x = 1;\n' });
   const start = lockValidator({ run_id: 'pow4', project_root: root, action: 'start', state_path: sliceRel });
-  const noResp = lockValidator({
+  // Usa lockValidatorCore diretamente para testar a ausência real de
+  // challenge_response — o wrapper lockValidator injeta o hash automaticamente
+  // para testes do ciclo que não focam em proof-of-work.
+  const noResp = lockValidatorCore({
     run_id: 'pow4', project_root: root, action: 'complete', state_path: sliceRel,
     validator_run_id: start.validator_run_id, dispatch_token: start.dispatch_token, verdict: 'pass',
+    data: { findings: [] },
   });
   assert.equal(noResp.status, 'blocked');
   assert.equal(noResp.validator_status, 'challenge_failed');
@@ -3860,7 +5765,7 @@ function writeSliceState(root, runId, state) {
   return sliceRel;
 }
 
-function compactStateV2(state) {
+function compactStateV3(state) {
   const files = state.files_changed ?? [];
   const checkTable = [...new Set([
     ...(state.validation_map ?? []).flatMap((item) => item.checks ?? []),
@@ -3871,7 +5776,7 @@ function compactStateV2(state) {
   const fileIndexes = (items = []) => items.map((item) => files.indexOf(item)).filter((index) => index >= 0);
   const checkIndexes = (items = []) => items.map((item) => checkTable.indexOf(item)).filter((index) => index >= 0);
   const out = {
-    state_schema_version: 2,
+    state_schema_version: 3,
     run_id: state.run_id,
     slice: state.slice,
     base_sha: state.base_sha,
@@ -3928,13 +5833,25 @@ function compactStateV2(state) {
   return out;
 }
 
-test('Etapa 2: state legado mínimo de plan continua aceito', () => {
+// AC-2.1.1: state v2 é hard-fail em 0.15 (LEG2 morto). v1 implícito também.
+// Antes (0.14): v1/v2 eram aceitos/normalizados. Agora só state_schema_version:3.
+test('AC-2.1.1: state com state_schema_version:2 é rejeitado (hard-fail legado)', () => {
+  const root = tmpRoot();
+  const state = fixtureState('state-legacy-plan.json');
+  state.state_schema_version = 2;
+  const statePath = writeSliceState(root, state.run_id, state);
+  const result = validateStateBoundary(statePath, { project_root: root });
+  assert.equal(result.ok, false);
+  assert.match(result.violations.join(' '), /state_schema_version deve ser 3.*recebido 2/);
+});
+
+test('AC-2.1.1: state v1 implícito (sem state_schema_version) é rejeitado', () => {
   const root = tmpRoot();
   const state = fixtureState('state-legacy-plan.json');
   const statePath = writeSliceState(root, state.run_id, state);
   const result = validateStateBoundary(statePath, { project_root: root });
-  assert.equal(result.ok, true);
-  assert.equal(result.legacy, true);
+  assert.equal(result.ok, false);
+  assert.match(result.violations.join(' '), /state_schema_version deve ser 3.*recebido 1/);
 });
 
 test('Etapa 2: direct sem obligations bloqueia', () => {
@@ -3949,14 +5866,14 @@ test('Etapa 2: direct sem obligations bloqueia', () => {
   assert.ok(result.violations.includes('direct exige obligations não vazio'));
 });
 
-test('Etapa 2: direct aceita schema v2 compacto com obligations por ID', () => {
+test('Etapa 2: direct aceita schema v3 compacto com obligations por ID', () => {
   const { root, head } = initGitFixture();
   fs.mkdirSync(path.join(root, 'src'), { recursive: true });
   fs.writeFileSync(path.join(root, 'src/direct.js'), 'export const direct = true;\n');
   const state = fixtureState('state-direct.json', { __BASE_SHA__: head, __HEAD_SHA__: head });
   withSnapshot(state, root);
-  const compact = compactStateV2(state);
-  const statePath = writeSliceState(root, 'direct-v2', compact);
+  const compact = compactStateV3(state);
+  const statePath = writeSliceState(root, 'direct-v3', compact);
   const result = validateStateBoundary(statePath, { project_root: root });
   assert.equal(result.ok, true);
   assert.deepEqual(result.state.obligations, [{ id: 'O1' }]);
@@ -4032,22 +5949,22 @@ test('state boundary: sprint/eval/policy completos passam', () => {
   assert.equal(validateStateBoundary(statePath, { project_root: root }).ok, true);
 });
 
-test('state boundary: schema v2 compacto passa sem evidence_to_claim persistido', () => {
-  const { root, statePath, state } = setupSprintEvidenceBoundary('sprint-state-v2');
-  const compact = compactStateV2(state);
+test('state boundary: schema v3 compacto passa sem evidence_to_claim persistido', () => {
+  const { root, statePath, state } = setupSprintEvidenceBoundary('sprint-state-v3');
+  const compact = compactStateV3(state);
   assert.equal(compact.evidence_to_claim, undefined);
   fs.writeFileSync(path.join(root, statePath), JSON.stringify(compact));
   const result = validateStateBoundary(statePath, { project_root: root });
   assert.equal(result.ok, true);
-  assert.equal(result.state.state_schema_version, 2);
+  assert.equal(result.state.state_schema_version, 3);
   assert.deepEqual(result.state.task_evidence[0].files, ['src/initial.js']);
   assert.ok(result.state.worktree_final.some((item) => item.path === 'src/initial.js'));
   assert.deepEqual(result.state.evidence_to_claim.map((item) => item.claim_id), ['EVAL-001']);
 });
 
-test('state boundary: schema v2 bloqueia índice compacto inválido', () => {
-  const { root, statePath, state } = setupSprintEvidenceBoundary('sprint-state-v2-invalid-index');
-  const compact = compactStateV2(state);
+test('state boundary: schema v3 bloqueia índice compacto inválido', () => {
+  const { root, statePath, state } = setupSprintEvidenceBoundary('sprint-state-v3-invalid-index');
+  const compact = compactStateV3(state);
   compact.task_evidence[0].files = [99];
   fs.writeFileSync(path.join(root, statePath), JSON.stringify(compact));
   const result = validateStateBoundary(statePath, { project_root: root });
@@ -4055,9 +5972,9 @@ test('state boundary: schema v2 bloqueia índice compacto inválido', () => {
   assert.match(result.violations.join(' '), /task_evidence\[0\]\.files\[0\] índice inválido/);
 });
 
-test('state boundary: schema v2 com EVAL ausente não exige evidence_to_claim legado', () => {
-  const { root, statePath, state } = setupSprintEvidenceBoundary('sprint-state-v2-missing-eval');
-  const compact = compactStateV2(state);
+test('state boundary: schema v3 com EVAL ausente não exige evidence_to_claim legado', () => {
+  const { root, statePath, state } = setupSprintEvidenceBoundary('sprint-state-v3-missing-eval');
+  const compact = compactStateV3(state);
   compact.eval_results = [];
   fs.writeFileSync(path.join(root, statePath), JSON.stringify(compact));
   const result = validateStateBoundary(statePath, { project_root: root });
@@ -4118,6 +6035,328 @@ test('state boundary: allowed_scope legado inválido falha como shape, não como
   const result = validateStateBoundary(boundary.statePath, { project_root: boundary.root });
   assert.equal(result.ok, false);
   assert.match(result.violations.join(' '), /allowed_scope deve ser array/);
+});
+
+// AC-2.2.1: proof_ref a teste sem assert de outcome → unproved (D22 oráculo).
+// Fixture: arquivo de teste que só chama o caminho (sem assert) vs comando
+// `node --test <arquivo>` sem palavra "assert" na string — o oráculo lê o arquivo.
+test('AC-2.2.1: proof_ref a teste sem assert de outcome → AC status unproved', () => {
+  const acContract = [
+    { id: 'AC-001', behavior: 'efeito X', evidence: { required: ['I', 'T-outcome'], manual: null } },
+  ];
+  const state = {
+    check_table: ['node --test tests/exercise-only.test.js'],
+    proof_refs: { 'AC-001': { checks: [0], files: [0] } },
+    files_changed: ['tests/exercise-only.test.js'],
+  };
+  const files = {
+    'tests/exercise-only.test.js': "import { run } from '../src/runner.js';\nrun();\n",
+  };
+  const { results, violations } = classifyAcceptanceResults(state, acContract, {
+    readText: (rel) => {
+      if (!(rel in files)) throw new Error(`missing ${rel}`);
+      return files[rel];
+    },
+  });
+  assert.equal(violations.length, 0);
+  assert.equal(results.length, 1);
+  assert.equal(results[0].id, 'AC-001');
+  assert.equal(results[0].status, 'unproved', 'check sem assert deve ser unproved');
+  assert.ok(results[0].proof_types.some((p) => p === 'T-outcome:unproved'));
+});
+
+// AC-2.2.2: proof_ref a teste com assert de retorno/efeito → elegível a proved.
+// O comando é `node --test <arquivo>` (sem "assert" na string); o assert mora no arquivo.
+test('AC-2.2.2: proof_ref a teste com assert de retorno/efeito → proved', () => {
+  const acContract = [
+    { id: 'AC-001', behavior: 'efeito X', evidence: { required: ['I', 'T-outcome'], manual: null } },
+  ];
+  const state = {
+    check_table: ['node --test tests/outcome.test.js'],
+    proof_refs: { 'AC-001': { checks: [0], files: [0] } },
+    files_changed: ['tests/outcome.test.js'],
+  };
+  const files = {
+    'tests/outcome.test.js':
+      "import assert from 'node:assert/strict';\nimport { run } from '../src/runner.js';\nassert.equal(run(), 42);\n",
+  };
+  const { results, violations } = classifyAcceptanceResults(state, acContract, {
+    readText: (rel) => {
+      if (!(rel in files)) throw new Error(`missing ${rel}`);
+      return files[rel];
+    },
+  });
+  assert.equal(violations.length, 0);
+  assert.equal(results.length, 1);
+  assert.equal(results[0].id, 'AC-001');
+  assert.equal(results[0].status, 'proved', 'check com assert no arquivo deve ser proved');
+  assert.ok(results[0].proof_types.some((p) => p === 'T-outcome:proved'));
+});
+
+// AC-2.2.1 complementar: AC com M aberto e provas auto verdes → manual_pending.
+test('AC-2.2.1 complementar: provas auto verdes + M aberto → manual_pending', () => {
+  const acContract = [
+    { id: 'AC-001', behavior: 'efeito X', evidence: { required: ['I', 'T-outcome'], manual: { severity: 'alta' } } },
+  ];
+  const state = {
+    check_table: ['node --test tests/outcome.test.js'],
+    proof_refs: { 'AC-001': { checks: [0], files: [0] } },
+    files_changed: ['tests/outcome.test.js'],
+  };
+  const files = {
+    'tests/outcome.test.js':
+      "import assert from 'node:assert/strict';\nassert.ok(true);\n",
+  };
+  const { results, violations } = classifyAcceptanceResults(state, acContract, {
+    readText: (rel) => files[rel],
+  });
+  assert.equal(violations.length, 0);
+  assert.equal(results[0].status, 'manual_pending');
+});
+
+// S-PROOF (sink do VC5): validatorComplete exige acceptance_results quando o
+// state declara sprint_file_path, e confronta o packet com o oráculo mecânico.
+test('talos_lock_validator complete: sprint_file_path exige acceptance_results (VC5 sink)', () => {
+  const runId = 'sprint-acceptance-complete';
+  const { root, head } = initGitFixture();
+  preflight({
+    run_id: runId, project_root: root, mode: 'execute',
+    host: 'codex', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: runId, project_root: root, action: 'start', phase: 'plan_execute' });
+  const stateRel = `.talos/state/${runId}/slice.json`;
+  const abs = path.join(root, stateRel);
+  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  fs.mkdirSync(path.join(root, '.talos/backlog/sprints'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md'), sprintDoc());
+  const baseline = captureWorktreeSnapshot(root);
+  fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'tests'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'src/initial.js'), 'export const initial = true;\n');
+  fs.writeFileSync(
+    path.join(root, 'tests/outcome.test.js'),
+    "import assert from 'node:assert/strict';\nimport { initial } from '../src/initial.js';\nassert.equal(initial, true);\n",
+  );
+  const state = attachSprintEvidence(planStateForBoundary(root, head, baseline, [
+    'src/initial.js',
+    'tests/outcome.test.js',
+  ]));
+  state.state_schema_version = 3;
+  state.check_table = ['node --test tests/outcome.test.js'];
+  state.proof_refs = {
+    'AC-001': { checks: [0], files: [0, 1] },
+    'AC-002': { checks: [0], files: [0] },
+  };
+  fs.writeFileSync(abs, JSON.stringify({ ...state, run_id: runId }, null, 2));
+  lockDispatch({
+    run_id: runId, project_root: root, action: 'checkpoint', phase: 'plan_execute',
+    event: 'state_path_created', state_path: stateRel,
+  });
+
+  const start = lockValidatorCore({ run_id: runId, project_root: root, action: 'start', state_path: stateRel });
+  assert.equal(start.status, 'passed');
+  assert.ok(start.challenge, 'boundary com arquivo emite challenge');
+
+  // Sem acceptance_results → fail estrutural.
+  const missing = lockValidatorCore({
+    run_id: runId, project_root: root, action: 'complete', state_path: stateRel,
+    validator_run_id: start.validator_run_id, dispatch_token: start.dispatch_token,
+    challenge_response: sha256File(root, start.challenge.file), verdict: 'pass',
+    data: { findings: [] },
+  });
+  assert.equal(missing.status, 'blocked');
+  assert.equal(missing.validator_status, 'missing_acceptance_results');
+  assert.match(missing.error, /acceptance_results cobrindo AC-001, AC-002/);
+
+  // Packet mentindo proved quando oráculo não bate → acceptance_oracle_mismatch.
+  // (State sem proof_refs seria unproved; aqui removemos proof_refs temporariamente
+  // via second run — em vez disso, emitimos statuses errados contra state com prova.)
+  const lied = lockValidatorCore({
+    run_id: runId, project_root: root, action: 'complete', state_path: stateRel,
+    validator_run_id: start.validator_run_id, dispatch_token: start.dispatch_token,
+    challenge_response: sha256File(root, start.challenge.file), verdict: 'pass',
+    data: {
+      findings: [],
+      acceptance_results: [
+        { id: 'AC-001', status: 'unproved', proof_types: ['T-outcome:unproved'] },
+        { id: 'AC-002', status: 'unproved', proof_types: ['T-outcome:unproved'] },
+      ],
+    },
+  });
+  assert.equal(lied.status, 'blocked');
+  assert.equal(lied.validator_status, 'acceptance_oracle_mismatch');
+  assert.match(lied.error, /oracle=proved/);
+
+  // Com acceptance_results ecoando o oráculo → passa.
+  const done = lockValidatorCore({
+    run_id: runId, project_root: root, action: 'complete', state_path: stateRel,
+    validator_run_id: start.validator_run_id, dispatch_token: start.dispatch_token,
+    challenge_response: sha256File(root, start.challenge.file), verdict: 'pass',
+    data: {
+      findings: [],
+      acceptance_results: [
+        { id: 'AC-001', status: 'proved', proof_types: ['T-outcome:proved', 'I:present', 'W:present'] },
+        { id: 'AC-002', status: 'proved', proof_types: ['T-outcome:proved', 'I:present'] },
+      ],
+    },
+  });
+  assert.equal(done.status, 'passed');
+  assert.equal(done.validator_status, 'passed');
+});
+
+// D22: shape estrito de acceptance_results. Status fora do enum, id fora de
+// AC-NNN e cobertura incompleta (AC do §7.3 ausente) → fail estrutural
+// (invalid_acceptance_shape), mesmo com verdict pass.
+test('talos_lock_validator complete: acceptance_results com shape inválido → invalid_acceptance_shape', () => {
+  const runId = 'sprint-acceptance-shape-invalid';
+  const { root, head } = initGitFixture();
+  preflight({
+    run_id: runId, project_root: root, mode: 'execute',
+    host: 'codex', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: runId, project_root: root, action: 'start', phase: 'plan_execute' });
+  const stateRel = `.talos/state/${runId}/slice.json`;
+  const abs = path.join(root, stateRel);
+  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  fs.mkdirSync(path.join(root, '.talos/backlog/sprints'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md'), sprintDoc());
+  const baseline = captureWorktreeSnapshot(root);
+  fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'src/initial.js'), 'export const initial = true;\n');
+  const state = attachSprintEvidence(planStateForBoundary(root, head, baseline, ['src/initial.js']));
+  state.state_schema_version = 3;
+  state.proof_refs = {
+    'AC-001': { checks: [0], files: [0] },
+    'AC-002': { checks: [0], files: [0] },
+  };
+  fs.writeFileSync(abs, JSON.stringify({ ...state, run_id: runId }, null, 2));
+  lockDispatch({
+    run_id: runId, project_root: root, action: 'checkpoint', phase: 'plan_execute',
+    event: 'state_path_created', state_path: stateRel,
+  });
+
+  const start = lockValidatorCore({ run_id: runId, project_root: root, action: 'start', state_path: stateRel });
+  assert.equal(start.status, 'passed');
+
+  // Shape inválido composto: status fora do enum + id fora de AC-NNN + AC-002 ausente.
+  const invalid = lockValidatorCore({
+    run_id: runId, project_root: root, action: 'complete', state_path: stateRel,
+    validator_run_id: start.validator_run_id, dispatch_token: start.dispatch_token,
+    challenge_response: sha256File(root, start.challenge.file), verdict: 'pass',
+    data: {
+      findings: [],
+      acceptance_results: [
+        { id: 'AC-001', status: 'weird' },
+        { id: 'EVAL-1', status: 'proved', proof_types: ['T-outcome:proved'] },
+      ],
+    },
+  });
+  assert.equal(invalid.status, 'blocked');
+  assert.equal(invalid.validator_status, 'invalid_acceptance_shape');
+  assert.match(invalid.error, /status deve ser proved\|unproved\|violated\|manual_pending/);
+  assert.match(invalid.error, /id deve ser AC-NNN/);
+  assert.match(invalid.error, /acceptance_results sem AC: AC-002/);
+});
+
+// CN2/VC1 (Plano 3): a cadeia completa do fluxo real. O executor escreve o state
+// com proof_refs e SEM acceptance_results (skill: "emitido pelo validator no
+// complete — não pelo executor"); o complete valida o eco contra o oráculo e
+// PERSISTE acceptance_results no state em disco; o update_sprint_status lê
+// desse state. Sem a persistência, MVP é inalcançável (emitir_acceptance_results
+// no_state) e done com M aberto emitiria handoff — gate morto no fluxo real.
+test('cadeia real: complete persiste acceptance_results no state; update_sprint_status consome (CN2/VC1)', () => {
+  const runId = 'sprint-acceptance-chain';
+  const { root, head } = initGitFixture();
+  preflight({
+    run_id: runId, project_root: root, mode: 'execute',
+    host: 'codex', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: runId, project_root: root, action: 'start', phase: 'plan_execute' });
+  const stateRel = `.talos/state/${runId}/slice.json`;
+  const abs = path.join(root, stateRel);
+  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  fs.mkdirSync(path.join(root, '.talos/backlog/sprints'), { recursive: true });
+  // Sprint com AC-002 carregando smoke manual (M) — gera manual_pending no oráculo.
+  const sprintWithManual = sprintDoc({ status: 'review' }).replace(
+    '      required: [I, T-outcome]\n      manual: null',
+    '      required: [I, T-outcome, M]\n      manual:\n        severity: alta\n        scenario: "validação manual"\n        expected_evidence: "resultado observável"\n        impact_paths: ["src/initial.js"]',
+  );
+  fs.writeFileSync(path.join(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md'), sprintWithManual);
+  const baseline = captureWorktreeSnapshot(root);
+  fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'tests'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'src/initial.js'), 'export const initial = true;\n');
+  fs.writeFileSync(
+    path.join(root, 'tests/outcome.test.js'),
+    "import assert from 'node:assert/strict';\nimport { initial } from '../src/initial.js';\nassert.equal(initial, true);\n",
+  );
+  const state = attachSprintEvidence(planStateForBoundary(root, head, baseline, [
+    'src/initial.js',
+    'tests/outcome.test.js',
+  ]));
+  state.state_schema_version = 3;
+  state.check_table = ['node --test tests/outcome.test.js'];
+  state.proof_refs = {
+    'AC-001': { checks: [0], files: [0, 1] },
+    'AC-002': { checks: [0], files: [0] },
+  };
+  fs.writeFileSync(abs, JSON.stringify({ ...state, run_id: runId }, null, 2));
+  lockDispatch({
+    run_id: runId, project_root: root, action: 'checkpoint', phase: 'plan_execute',
+    event: 'state_path_created', state_path: stateRel,
+  });
+
+  const start = lockValidatorCore({ run_id: runId, project_root: root, action: 'start', state_path: stateRel });
+  assert.equal(start.status, 'passed');
+
+  // Eco do oráculo: AC-001 proved; AC-002 manual_pending (M aberto).
+  const done = lockValidatorCore({
+    run_id: runId, project_root: root, action: 'complete', state_path: stateRel,
+    validator_run_id: start.validator_run_id, dispatch_token: start.dispatch_token,
+    challenge_response: sha256File(root, start.challenge.file), verdict: 'pass',
+    data: {
+      findings: [],
+      acceptance_results: [
+        { id: 'AC-001', status: 'proved', proof_types: ['T-outcome:proved', 'I:present', 'W:present'] },
+        { id: 'AC-002', status: 'manual_pending', proof_types: ['T-outcome:proved', 'I:present', 'M:pending'] },
+      ],
+    },
+  });
+  assert.equal(done.status, 'passed');
+
+  // A persistência: o state em disco agora carrega acceptance_results (fonte do gate).
+  const persisted = JSON.parse(fs.readFileSync(abs, 'utf8'));
+  assert.ok(Array.isArray(persisted.acceptance_results), 'complete deve persistir acceptance_results no state');
+  assert.equal(persisted.acceptance_results.length, 2);
+  assert.equal(persisted.acceptance_results.find((item) => item.id === 'AC-002').status, 'manual_pending');
+
+  // Backlog com S01 (review) e S02 dependendo de S01.
+  writeSprintFixture(root, 'S02', { status: 'ready', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Base | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | review | validator:pending | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+    '| S02 | Depende | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | S01 | ready | ready | `.talos/backlog/sprints/SPRINT_S02_runtime.md` | pendente | pendente |',
+  ]));
+
+  // CN2 (cadeia): MVP com M aberto passa e S02 avança via DEP.
+  const mv = updateSprintStatus({
+    run_id: 'r-chain', project_root: root, backlog_path: 'BACKLOG.md', sprint_id: 'S01',
+    status: 'manual_validation_pending', validator_verdict: 'pass', state_path: stateRel,
+  });
+  assert.equal(mv.status, 'passed', JSON.stringify(mv.pendencies, null, 1));
+  assert.equal(mv.next_status, 'manual_validation_pending');
+  assert.equal(mv.handoff_path, undefined);
+  const sel = selectNextSprint({ run_id: 'r-chain2', project_root: root, backlog_path: 'BACKLOG.md' });
+  assert.equal(sel.status, 'passed');
+  assert.equal(sel.selected.sprint_id, 'S02');
+
+  // VC1 (cadeia): done com M aberto continua bloqueado lendo o MESMO state persistido.
+  const dv = updateSprintStatus({
+    run_id: 'r-chain3', project_root: root, backlog_path: 'BACKLOG.md', sprint_id: 'S01',
+    status: 'done', validator_verdict: 'pass', state_path: stateRel,
+  });
+  assert.equal(dv.status, 'blocked');
+  assert.ok(dv.pendencies.some((p) => p.category === 'acceptance_results'));
+  assert.match(dv.pendencies.find((p) => p.category === 'acceptance_results').message, /AC-002:manual_pending/);
 });
 
 test('F-003: dirty preexistente intacto não contamina; mutação posterior entra no boundary', () => {
