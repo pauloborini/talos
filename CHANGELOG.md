@@ -1,5 +1,64 @@
 # Changelog
 
+## 0.17.2 - 2026-08-17
+
+Tipo: **packaging**. **Sem breaking**. Schema MCP: v5 (inalterado).
+
+Resumo: corrige a instalação do plugin no host ZCode de verdade, migrando o `talos-init zcode` do caminho `zcode-plugins-official` (que não registra MCP de plugin — `mcpServerCount:0` em todas as sessões) para o **fluxo de marketplace** (`talos@talos`), reproduzindo exatamente o que o usuário fez manualmente na UI ("Add Marketplace + Install") e que funciona. O 0.17.1 materializava o data-dir no path `zcode-plugins-official`, o que não mudava o paradigma de instalação e o plugin continuava invisível. Agora `init zcode` instala via marketplace `talos` (git `pauloborini/talos`) e `uninstall zcode` reverte tudo + limpa o legado do caminho quebrado. Sem mudança de runtime MCP, schema v5, gates ou topologia sibling. Os outros 7 hosts não passam pelo problema (Claude/Cursor/Codex usam marketplace nativo do host; opencode/pi/antigravity/vscode escrevem em paths nativos).
+
+Mudanças:
+- **`build/cli/talos-init.mjs`** — reescrito o fluxo zcode:
+  - **`installZcode` (marketplace-based)** — registra marketplace `talos` em `known_marketplaces.json` (`source:{source:"git",url:"https://github.com/pauloborini/talos.git"}`), copia o catálogo de `ROOT` para `~/.zcode/cli/plugins/marketplaces/talos/` (com `marketplace.json` na raiz gerado de `.claude-plugin/marketplace.json`), copia o plugin para `~/.zcode/cli/plugins/cache/talos/talos/<versão>/` (manifest `.claude-plugin/plugin.json`), grava o registro `talos@talos` em `installed_plugins.json`, cria `data/talos@talos/` vazio (como a UI) e habilita `enabledPlugins["talos@talos"]` no `config.json`.
+  - **`uninstallZcode`** — reverte os registros/cache/catálogo/data-dir/enabledPlugins, e limpa o legado `zcode-plugins-official` (data-dir, cache, config entry, marketplace cache entry).
+  - **Helpers novos** — `upsertZcodeMarketplace`, `upsertZcodeInstalledPlugin`, `copyZcodeMarketplaceDir`, `copyZcodePluginToCache`, `ensureZcodeRootMarketplaceJson`, `enableZcodePlugin`, `removeZcodeMarketplaceRecords`, `removeZcodeLegacyOfficial`. Sem referências inertes a `mcpServers` no `plugin.json` do zcode host.
+- **`build/smoke-install.mjs`** — bloco zcode migrado para o fluxo marketplace: assere `cache/talos/talos/<v>/server.js`, `.claude-plugin/plugin.json`, `marketplaces/talos/marketplace.json`, marketplace `talos` em `known_marketplaces.json`, registro `talos@talos` em `installed_plugins.json`, `enabledPlugins["talos@talos"]`, idempotência (não duplica marketplace/registro) e uninstall + limpeza de legado.
+- **`packages/orchestrator/README.md`** — seção "Novidades v0.17.2" documentando o novo fluxo marketplace; propagada aos catálogos `hosts/{opencode,pi,vscode,zcode}/`.
+
+Impacto:
+- `npx github:pauloborini/talos init zcode` instala o plugin de forma que o host realmente descobre skills + MCP (id `talos@talos`), como confirmado em instalação real no host zcode.
+- `npx github:pauloborini/talos uninstall zcode` remove também o legado do caminho antigo `zcode-plugins-official`, não deixando estado órfão.
+- A instalação **sempre** vem do GitHub via `npx` (o comando roda no checkout baixado; o checkout local só serve para dev/validação).
+
+Arquivos/artefatos:
+- `VERSION` → `0.17.2`; `package.json`; `.claude-plugin/plugin.json`; `packages/mcp-server/package.json`; manifests/READMEs concretos; `CHANGELOG.md`; `packages/orchestrator/README.md`; `build/cli/talos-init.mjs`; `build/smoke-install.mjs`; `dist/talos-{claude,codex,opencode,pi,zcode,vscode}.plugin` + `SHA256SUMS`; catálogos `hosts/{opencode,pi,zcode,vscode}/` e `plugins/talos/`.
+
+Validação:
+- `node build/bump-version.mjs 0.17.2` + `bash build/build-plugins.sh` — ok.
+- `node build/check-consistency.mjs` — ok.
+- `node build/smoke-install.mjs` — ok (asserções zcode migradas p/ marketplace; idempotência; uninstall + legado).
+- Validação de fim a fim em HOME sandbox (`init zcode` produz estado `talos@talos`; `uninstall zcode` limpa tudo + legado `zcode-plugins-official`).
+
+## 0.17.1 - 2026-08-17
+
+Tipo: **packaging**. **Sem breaking**. Schema MCP: v5 (inalterado).
+
+Resumo: instalador zcode agora materializa o data-dir em `init` e o remove em `uninstall`. Corrige o caso em que o host zcode pula a materialização do data-dir (vê a pasta vazia órfã de instalação anterior abortada e considera "já materializado"), deixando o plugin invisível — skills Talos não carregam, MCP `mcp__talos__*` não sobe. O sintoma persistia mesmo após `uninstall zcode` + `init zcode`, porque o uninstall não tocava o data-dir e o install subsequente pulava a cópia. Sem mudança de runtime MCP, schema v5, gates ou topologia sibling. Os outros 7 hosts não passam pelo problema (Claude/Cursor/Codex usam marketplace nativo do host; opencode/pi/antigravity/vscode escrevem em paths nativos sem data-dir separado).
+
+Mudanças:
+- **`build/cli/talos-init.mjs` — `materializeZcodeDataDir`** — função nova chamada em `installZcode` após popular o cache. Copia `cache/.../0.17.1/` → `~/.zcode/cli/plugins/data/talos@zcode-plugins-official/` via `fs.cpSync`. Idempotente: pula se o `plugin.json` canônico já existe no data-dir (caso de `init zcode` rodando 2 vezes sem uninstall). Defesa contra tampering: se o data-dir é symlink, resolve o alvo e exige que seja descendente de `~/.zcode/cli/plugins/data/` — fora disso, aborta com mensagem clara.
+- **`build/cli/talos-init.mjs` — `removeZcodeDataDir`** — função nova chamada em `uninstallZcode` antes de remover o cache. Espelha a defesa contra symlink. Idempotente (no-op se data-dir ausente).
+- **`build/cli/talos-init.mjs` — `zcodeDataDir`** — constante única do path do data-dir (`~/.zcode/cli/plugins/data/talos@zcode-plugins-official/`), compartilhada pelas duas funções acima.
+- **`build/smoke-install.mjs`** — 3 asserts novos no bloco "zcode regressão crítica": data-dir populado após init (com `.zcode-plugin/plugin.json` e `packages/mcp-server/server.js`), data-dir populado após 2ª init (idempotência não destrói), data-dir removido após uninstall.
+
+Impacto:
+- `npx github:pauloborini/talos init zcode` (e `init all` que detecta zcode) deixa de deixar o plugin invisível em hosts cujo data-dir ficou órfão vazio. Em hosts "limpos" o comportamento é idêntico ao anterior (cache populado, data-dir criado e preenchido, enabledPlugins OK).
+- `npx github:pauloborini/talos uninstall zcode` agora remove também o data-dir — uninstall + init subsequente garante estado limpo.
+- Defesa contra tampering: symlinks para fora do escopo `~/.zcode/cli/plugins/data/` são rejeitados (não sobrescreve paths arbitrários do usuário).
+
+Arquivos/artefatos:
+- `VERSION` → `0.17.1`; `package.json`; `.claude-plugin/plugin.json`; `packages/mcp-server/package.json`; manifests/READMEs concretos regenerados em 26 arquivos; `CHANGELOG.md`; `packages/orchestrator/README.md` (Novidades + Last updated); `dist/talos-{claude,codex,opencode,pi,zcode,vscode}.plugin` + `SHA256SUMS`; catálogos `hosts/{opencode,pi,zcode,vscode}/` e `plugins/talos/` sincronizados.
+
+Validação:
+- `node build/bump-version.mjs 0.17.1` + `bash build/build-plugins.sh` — ok.
+- `node build/check-consistency.mjs` — ok.
+- `node --test packages/mcp-server/server.test.js` — ok.
+- `node --test build/tests/classify-findings.test.mjs build/tests/etapa3.test.mjs` — ok.
+- `node build/smoke-install.mjs` — ok (inclui os 3 asserts novos do data-dir zcode).
+- `node build/smoke-hosts.mjs` — ok.
+- `node build/conformance-matrix.mjs` — ok.
+- `shasum -a 256 -c SHA256SUMS` em `dist/` — ok.
+- `unzip -t dist/talos-{claude,codex,opencode,pi}.plugin` — ok.
+
 ## 0.17.0 - 2026-08-08
 
 Tipo: **release** (marco). **Sem breaking** no contrato do plugin (schema MCP v5, topologia sibling, gates PREREQ/DISPATCH/JOIN inalterados). **Breaking no histórico do Git**: reescrita via `git filter-repo` mudou todos os hashes de commits e tags. Clones existentes precisam refazer `git clone`.

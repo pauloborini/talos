@@ -249,9 +249,24 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `talos-*` para o
 
 ---
 
-**Plugin version:** 0.17.0
+**Plugin version:** 0.17.2
 **Author:** Paulo Borini
-**Last updated:** 2026-08-08
+**Last updated:** 2026-08-17
+
+### Novidades v0.17.2 — instalador zcode via marketplace (substitui o caminho do data-dir)
+
+- **`talos-init zcode` instala via marketplace `talos` (id `talos@talos`)** — reproduz o fluxo "Add Marketplace + Install" da UI do ZCode, que é o que realmente funciona no host (o caminho `zcode-plugins-official` de 0.17.1 não registra NENHUM MCP de plugin — `mcpServerCount:0` em todas as sessões). Agora o install registra o marketplace (git `pauloborini/talos`) em `known_marketplaces.json`, copia o catálogo para `marketplaces/talos/` e o plugin para `cache/talos/talos/<versão>/`, grava `talos@talos` em `installed_plugins.json`, cria `data/talos@talos/` e habilita no `config.json`.
+- **`uninstall zcode`** reverte tudo E limpa o legado do caminho quebrado `zcode-plugins-official` (data-dir, cache, config entry, marketplace cache entry).
+- **`smoke-install.mjs`** — asserções de zcode migradas para o fluxo marketplace: cache `cache/talos/talos/<v>`, marketplace `known_marketplaces.json`, registro `installed_plugins.json`, `enabledPlugins["talos@talos"]`, idempotência e uninstall + limpeza de legado.
+- Supersede a abordagem de 0.17.1 (que só materializava o data-dir no path `zcode-plugins-official`, sem mudar o paradigma de instalação). Sem mudança de runtime MCP, schema v5, gates ou topologia sibling.
+
+### Novidades v0.17.1 — instalador zcode materializa e remove o data-dir
+
+- **`talos-init` zcode preenche o data-dir** — `materializeZcodeDataDir` é chamado após popular o cache; copia `cache/.../0.17.1/` → `~/.zcode/cli/plugins/data/talos@zcode-plugins-official/`. Cobre o caso em que o host pula a materialização porque vê a pasta vazia órfã de instalação anterior abortada (skills/MCP ficavam invisíveis).
+- **`talos-init` zcode remove o data-dir no uninstall** — `removeZcodeDataDir` espelha a operação (simétrico ao install; sem isso, `uninstall` deixava o data-dir órfão). Defesa contra symlink: ambos falham-fechado se `dataDir` aponta para fora de `~/.zcode/cli/plugins/data/`.
+- **Idempotência** — 2ª execução de `init zcode` (sem uninstall no meio) detecta o plugin.json canônico no data-dir e pula a cópia, sem duplicar nem destruir conteúdo.
+- **`smoke-install.mjs`** — 3 asserts novos: data-dir populado após init, populado após idempotência, removido após uninstall. Sem eles a regressão passava silenciosa.
+- Sem mudança de runtime MCP, schema v5, gates ou topologia sibling. Os outros 7 hosts não passam pelo problema (Claude/Cursor/Codex usam marketplace nativo do host; opencode/pi/antigravity/vscode escrevem em paths nativos do host sem data-dir separado).
 
 ### Novidades v0.16.1 — docs de adapters (VS Code + `question_prompt`)
 

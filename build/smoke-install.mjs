@@ -209,15 +209,22 @@ esac
   assert(!exists(path.join(agentDir, 'agents/talos-plan-execute.md')), 'pi global uninstall manteve agente executor');
 }
 
-// zcode: regressão crítica (rebrand v0.12.0). O `init zcode` DEVE migrar
-// enabledPlugins em ~/.zcode/cli/config.json — removendo a entry órfã do nome
-// pré-rebrand (atlas-workflow-orchestrator) e habilitando talos. Sem isso, o
-// host habilita um nome inexistente e o plugin nunca carrega (skills/MCP invisíveis).
+// zcode: o `init zcode` DEVE usar o fluxo de marketplace (id `talos@talos`), não o
+// cache `zcode-plugins-official` (que não funciona no host — nenhum MCP de plugin
+// nasce). Verifica: catálogo + plugin copiados, marketplace registrado, ledger
+// installed_plugins.json, enabledPlugins migrado (órfão pré-rebrand preservando
+// plugins do usuário), data-dir criado, idempotência, uninstall + limpeza do legado.
 {
   const home = path.join(TMP, 'zcode-home');
   fs.mkdirSync(path.join(home, '.zcode/cli'), { recursive: true });
+  const MK = path.join(home, '.zcode/cli/plugins/marketplaces/talos');
+  const CACHE = path.join(home, `.zcode/cli/plugins/cache/talos/talos/${VERSION}`);
+  const DATA = path.join(home, '.zcode/cli/plugins/data/talos@talos');
+  const KNOWN = path.join(home, '.zcode/cli/plugins/known_marketplaces.json');
+  const INSTALLED = path.join(home, '.zcode/cli/plugins/installed_plugins.json');
+  const CFG = path.join(home, '.zcode/cli/config.json');
   // Cenário exato de regressão: config com nome órfão + plugins do usuário preservados.
-  fs.writeFileSync(path.join(home, '.zcode/cli/config.json'), JSON.stringify({
+  fs.writeFileSync(CFG, JSON.stringify({
     plugins: { enabledPlugins: {
       'atlas-workflow-orchestrator@zcode-plugins-official': true,
       'atlas-cortex@user': true,
@@ -226,33 +233,46 @@ esac
   }));
   const r = run(['init', 'zcode'], { HOME: home });
   assert(r.status === 0, `zcode init falhou: ${r.stderr || r.stdout}`);
-  // Cache instalado e funcional (server.js responde).
-  const server = path.join(home, `.zcode/cli/plugins/cache/zcode-plugins-official/talos/${VERSION}/packages/mcp-server/server.js`);
-  assert(exists(server), 'zcode não copiou server.js para o cache na versão correta');
-  const seed = json(path.join(home, `.zcode/cli/plugins/cache/zcode-plugins-official/talos/${VERSION}/.zcode-plugin-seed.json`));
-  assert(seed.plugin === 'talos' && seed.pluginVersion === VERSION, 'zcode seed incorreto');
-  // marketplace.json registra talos.
-  const mp = json(path.join(home, '.zcode/cli/plugins/marketplaces/zcode-plugins-official/marketplace.json'));
-  assert(mp.plugins.some((p) => p.name === 'talos' && p.version === VERSION), 'zcode marketplace.json não registrou talos');
-  // enabledPlugins migrado: órfão removido, talos habilitado, resto preservado.
-  const cfg = json(path.join(home, '.zcode/cli/config.json'));
+  // Plugin instalado no cache do marketplace (server.js presente na versão correta).
+  assert(exists(path.join(CACHE, 'packages/mcp-server/server.js')), 'zcode não copiou server.js para o cache do marketplace');
+  // Manifest do plugin (a UI usa .claude-plugin/plugin.json; não há .zcode-plugin na raiz).
+  assert(exists(path.join(CACHE, '.claude-plugin/plugin.json')), 'zcode não copiou .claude-plugin/plugin.json');
+  // Catálogo do marketplace materializado com marketplace.json na raiz (o ZCode lê da raiz).
+  assert(exists(path.join(MK, 'marketplace.json')), 'zcode não criou marketplace.json no catálogo do marketplace');
+  assert(exists(path.join(MK, '.claude-plugin/plugin.json')), 'zcode não copiou .claude-plugin/plugin.json para o catálogo');
+  // Marketplace registrado no known_marketplaces.json.
+  const known = json(KNOWN);
+  const mp = known.marketplaces.find((m) => m.id === 'talos');
+  assert(mp && mp.source.url.includes('pauloborini/talos.git'), 'zcode não registrou marketplace talos (source git) em known_marketplaces.json');
+  // Plugin registrado no installed_plugins.json como talos@talos.
+  const installed = json(INSTALLED);
+  const rec = installed.plugins.find((p) => p.id === 'talos@talos');
+  assert(rec && rec.marketplace === 'talos' && rec.version === VERSION, 'zcode não registrou talos@talos em installed_plugins.json');
+  // enabledPlugins migrado: órfão removido, talos@talos habilitado, resto preservado.
+  const cfg = json(CFG);
   const ep = cfg.plugins.enabledPlugins;
   assert(!('atlas-workflow-orchestrator@zcode-plugins-official' in ep), 'zcode manteve entry órfã atlas-workflow-orchestrator (regressão do rebrand)');
-  assert(ep['talos@zcode-plugins-official'] === true, 'zcode não habilitou talos@zcode-plugins-official');
+  assert(ep['talos@talos'] === true, 'zcode não habilitou talos@talos');
   assert(ep['atlas-cortex@user'] === true, 'zcode removeu plugin do usuário');
   assert(cfg.skills['/some/skill/SKILL.md'].enable === false, 'zcode alterou config de skills do usuário');
-  // Idempotência: 2ª execução não quebra nem altera o estado já migrado.
+  // Data-dir criado (a UI cria vazio; o host preenche no runtime).
+  assert(exists(DATA), 'zcode init não criou data-dir talos@talos');
+  // Idempotência: 2ª execução não duplica registros nem quebra o estado.
   const r2 = run(['init', 'zcode'], { HOME: home });
   assert(r2.status === 0, `zcode init 2ª vez (idempotência) falhou: ${r2.stderr || r2.stdout}`);
-  const cfg2 = json(path.join(home, '.zcode/cli/config.json'));
-  assert(cfg2.plugins.enabledPlugins['talos@zcode-plugins-official'] === true, 'zcode idempotência quebrou talos');
+  const cfg2 = json(CFG);
+  assert(cfg2.plugins.enabledPlugins['talos@talos'] === true, 'zcode idempotência quebrou talos');
+  assert(json(KNOWN).marketplaces.filter((m) => m.id === 'talos').length === 1, 'zcode idempotência duplicou marketplace');
+  assert(json(INSTALLED).plugins.filter((p) => p.id === 'talos@talos').length === 1, 'zcode idempotência duplicou registro');
   assert(!('atlas-workflow-orchestrator@zcode-plugins-official' in cfg2.plugins.enabledPlugins), 'zcode idempotência recriou órfão');
-  // Uninstall limpo: remove entry talos, preserva demais.
+  // Uninstall limpo: remove plugin, catálogo, data-dir, registros e enabledPlugins.
   const u = run(['uninstall', 'zcode'], { HOME: home });
   assert(u.status === 0, `zcode uninstall falhou: ${u.stderr || u.stdout}`);
-  assert(!exists(path.join(home, '.zcode/cli/plugins/cache/zcode-plugins-official/talos')), 'zcode uninstall manteve cache');
-  const cfgU = json(path.join(home, '.zcode/cli/config.json'));
-  assert(!('talos@zcode-plugins-official' in cfgU.plugins.enabledPlugins), 'zcode uninstall manteve entry talos');
+  assert(!exists(CACHE) && !exists(MK) && !exists(DATA), 'zcode uninstall manteve cache/catálogo/data-dir');
+  assert(!json(KNOWN).marketplaces.some((m) => m.id === 'talos'), 'zcode uninstall manteve marketplace em known_marketplaces.json');
+  assert(!json(INSTALLED).plugins.some((p) => p.id === 'talos@talos'), 'zcode uninstall manteve registro em installed_plugins.json');
+  const cfgU = json(CFG);
+  assert(!('talos@talos' in cfgU.plugins.enabledPlugins), 'zcode uninstall manteve entry talos');
   assert(cfgU.plugins.enabledPlugins['atlas-cortex@user'] === true, 'zcode uninstall removeu plugin do usuário');
 }
 
@@ -267,13 +287,13 @@ esac
   assert(fs.readFileSync(path.join(home, '.zcode/cli/config.json'), 'utf8') === broken, 'zcode sobrescreveu config inválido do usuário');
 }
 
-// zcode: fresh install (sem config.json prévio) cria config com talos habilitado.
+// zcode: fresh install (sem config.json prévio) cria config com talos@talos habilitado.
 {
   const home = path.join(TMP, 'zcode-fresh');
   const r = run(['init', 'zcode'], { HOME: home });
   assert(r.status === 0, `zcode fresh init falhou: ${r.stderr || r.stdout}`);
   const cfg = json(path.join(home, '.zcode/cli/config.json'));
-  assert(cfg.plugins.enabledPlugins['talos@zcode-plugins-official'] === true, 'zcode fresh não habilitou talos');
+  assert(cfg.plugins.enabledPlugins['talos@talos'] === true, 'zcode fresh não habilitou talos@talos');
 }
 
 // antigravity: install copia skills + mcp-server, mescla mcp_config.json
