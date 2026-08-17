@@ -666,8 +666,76 @@ function zcodeCacheDir() {
   return path.join(homedir(), '.zcode', 'cli', 'plugins', 'cache', ZCODE_MARKETPLACE, ZCODE_PLUGIN_NAME, VERSION);
 }
 
+// Onde o host zcode lê skills + spawna MCP server em runtime. Diferente do
+// cache (que é artefato de "source") e do `marketplace.json` (que é índice),
+// o data-dir é o "install" real do ponto de vista do host. v0.17.1 passa a
+// sincronizá-lo para corrigir o caso em que o host pula a materialização
+// porque vê "data-dir existe mas está vazio".
+function zcodeDataDir() {
+  return path.join(homedir(), '.zcode', 'cli', 'plugins', 'data', `${ZCODE_PLUGIN_NAME}@${ZCODE_MARKETPLACE}`);
+}
+
 function zcodeConfigFile() {
   return path.join(homedir(), '.zcode', 'cli', 'config.json');
+}
+
+// Copia o cache recém-populado para o data-dir. Idempotente: se o data-dir
+// já tem conteúdo da mesma versão (presets legítimos), mantém o conteúdo
+// existente — só copia quando o data-dir está ausente ou vazio. Skip quando
+// o cache é da mesma versão que o data-dir já tem (caso do `init zcode`
+// rodando 2 vezes seguidas sem uninstall no meio).
+// Falha-cedo se dataDir é symlink apontando para fora do escopo esperado:
+// defesa contra tampering manual (usuário aponta dataDir para um diretório
+// controlado e o installer sobrescreve).
+function materializeZcodeDataDir(cacheDir, opts) {
+  const dataDir = zcodeDataDir();
+  if (opts.dryRun) {
+    log(`  [dry-run] copiaria ${cacheDir} → ${dataDir}`);
+    return dataDir;
+  }
+  // Defesa contra symlink malicioso: se dataDir existe e é symlink, resolve
+  // e exige que o alvo seja descendente de ~/.zcode/cli/plugins/data/ —
+  // impede que o installer sobrescreva paths arbitrários do usuário.
+  if (fs.existsSync(dataDir)) {
+    let lst;
+    try { lst = fs.lstatSync(dataDir); } catch { lst = null; }
+    if (lst && lst.isSymbolicLink()) {
+      const target = path.resolve(path.dirname(dataDir), fs.readlinkSync(dataDir));
+      const allowed = path.resolve(path.join(homedir(), '.zcode', 'cli', 'plugins', 'data')) + path.sep;
+      if (!target.startsWith(allowed)) {
+        fail(`${dataDir} é symlink para fora de ~/.zcode/cli/plugins/data/ (${target}) — remova manualmente e rode de novo.`);
+      }
+    }
+    // Idempotência: se já existe e tem o plugin.json canônico da versão atual,
+    // pula (2ª init sem uninstall no meio). Caso contrário (data-dir vazio ou
+    // herdado de versão antiga), sobrescreve.
+    const marker = path.join(dataDir, '.zcode-plugin', 'plugin.json');
+    if (fs.existsSync(marker)) {
+      log(`  ${dataDir} já materializado (${marker}) — mantendo (idempotente)`);
+      return dataDir;
+    }
+    log(`  ${dataDir} existe mas está vazio/stale — sobrescrevendo do cache`);
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+  fs.mkdirSync(dataDir, { recursive: true });
+  fs.cpSync(cacheDir, dataDir, { recursive: true });
+  log(`  ${dataDir} materializado a partir de ${cacheDir}`);
+  return dataDir;
+}
+
+// Espelho de `rmIfExists` com a mesma defesa contra symlink malicioso. Idempotente.
+function removeZcodeDataDir(opts) {
+  const dataDir = zcodeDataDir();
+  if (!fs.existsSync(dataDir)) return;
+  const lst = fs.lstatSync(dataDir);
+  if (lst.isSymbolicLink()) {
+    const target = path.resolve(path.dirname(dataDir), fs.readlinkSync(dataDir));
+    const allowed = path.resolve(path.join(homedir(), '.zcode', 'cli', 'plugins', 'data')) + path.sep;
+    if (!target.startsWith(allowed)) {
+      fail(`${dataDir} é symlink para fora de ~/.zcode/cli/plugins/data/ (${target}) — remova manualmente e rode de novo.`);
+    }
+  }
+  rmIfExists(dataDir, opts);
 }
 
 function zcodeMarketplaceCacheFile() {
@@ -771,6 +839,10 @@ function installZcode(opts) {
   if (fs.existsSync(parentDir)) fs.rmSync(parentDir, { recursive: true, force: true });
   fs.mkdirSync(cacheDir, { recursive: true });
   fs.cpSync(catalogSrc, cacheDir, { recursive: true });
+  // Materializa o data-dir a partir do cache recém-populado. Cobre o caso
+  // "host pula materialização porque vê data-dir vazio órfão de instalação
+  // anterior abortada". Idempotente.
+  materializeZcodeDataDir(cacheDir, opts);
   // Gera o seed file no formato que o ZCode espera
   const seed = {
     hash: '',
@@ -797,10 +869,13 @@ function installZcode(opts) {
 function uninstallZcode(opts) {
   const cacheParent = path.join(homedir(), '.zcode', 'cli', 'plugins', 'cache', ZCODE_MARKETPLACE, ZCODE_PLUGIN_NAME);
   log(`removendo Talos (zcode) GLOBAL de ${cacheParent}`);
+  // Data-dir primeiro: simétrico ao install (que materializa do cache). Sem
+  // isso, um uninstall deixa o data-dir órfão para sempre.
+  removeZcodeDataDir(opts);
   rmIfExists(cacheParent, opts);
   removeZcodeMarketplaceCacheEntry();
   removeZcodeEnabledPluginEntry(opts);
-  log('ok — ZCode: cache, registry e enabledPlugins removidos.');
+  log('ok — ZCode: data-dir, cache, registry e enabledPlugins removidos.');
 }
 
 // --- VS Code (Copilot Chat) ---------------------------------------------------
