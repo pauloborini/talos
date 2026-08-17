@@ -14,6 +14,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { homedir } from 'node:os';
+import { randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
@@ -647,151 +648,248 @@ function uninstallAntigravity(opts) {
   log('ok — artefatos globais do Talos para Antigravity removidos.');
 }
 
-// --- ZCode (cache-based install) ----------------------------------------------
-// ZCode só descobre plugins no escopo `zcode-plugins-official` (verificado
-// empiricamente no bundle zcode.cjs: `G2="zcode-plugins-official"` é hardcoded e o
-// scan de cache é restrito a `cache/zcode-plugins-official/<plugin>/<version>/`).
-// Por isso o installer copia para esse path — não para um marketplace custom.
-// O ZCode também regenera `marketplaces/zcode-plugins-official/marketplace.json` no
-// boot a partir do scan; mantemos essa entry sincronizada para visualização imediata.
+// --- ZCode (marketplace install) ----------------------------------------------
+// O host ZCode NÃO tem CLI headless para marketplace (`zcode plugins les|enable|
+// disable|uninstall <id>` só, sem por-URL). O fluxo "Add Marketplace + Install"
+// que funciona é o de marketplace: o usuário adiciona o repo GitHub e instala —
+// isso produz o id `talos@talos`, skills e MCP ok. Para automatizar (npx init
+// zcode), reproduzimos em arquivos exatamente o estado que a UI grava:
+//   - known_marketplaces.json    → marketplace `talos` (source git → repo)
+//   - marketplaces/talos/        → clone do catálogo (manifest marketplace.json raiz)
+//   - cache/talos/talos/<VERSÃO> → plugin instalado (manifest .claude-plugin/plugin.json)
+//   - installed_plugins.json     → registro `talos@talos`
+//   - data/talos@talos/          → data-dir (vazio, como a UI cria)
+//   - config.json                → enabledPlugins["talos@talos"]=true
+// Além disso, o uninstall limpa o legado do caminho quebrado `zcode-plugins-official`
+// (data-dir, cache, config entry, marketplace cache entry) para não deixar rastro.
 
-const ZCODE_MARKETPLACE = 'zcode-plugins-official';
+const ZCODE_MARKETPLACE = 'talos';                       // id do marketplace no ZCode
 const ZCODE_PLUGIN_NAME = 'talos';
-// Nome do plugin pré-rebrand (v0.12.0). Mantido para que upgrades de instalações
-// antigas removam a entry órfã em enabledPlugins — caso contrário o host habilita
-// um nome que não existe mais e o plugin fica invisível (skills/MCP não carregam).
+const ZCODE_PLUGIN_ID = `${ZCODE_PLUGIN_NAME}@${ZCODE_MARKETPLACE}`;  // talos@talos
+const ZCODE_PLUGIN_ID_LEGACY = 'talos@zcode-plugins-official';
+// Nomes pré-rebrand (v0.12.0). Mantidos para remover entry órfã em enabledPlugins.
 const ZCODE_LEGACY_PLUGIN_NAMES = ['atlas-workflow-orchestrator', 'atlas-workflow'];
 
-function zcodeCacheDir() {
-  return path.join(homedir(), '.zcode', 'cli', 'plugins', 'cache', ZCODE_MARKETPLACE, ZCODE_PLUGIN_NAME, VERSION);
+// URL git do repo — a instalação SEMPRE vem do GitHub (npx); o checkout local só
+// serve para dev/validação. O host usa esta URL quando o usuário abre o marketplace.
+const ZCODE_MARKETPLACE_URL = `https://github.com/${REPO_SLUG}.git`;
+
+function zcodePluginPath(...rest) {
+  return path.join(homedir(), '.zcode', 'cli', 'plugins', ...rest);
 }
 
-// Onde o host zcode lê skills + spawna MCP server em runtime. Diferente do
-// cache (que é artefato de "source") e do `marketplace.json` (que é índice),
-// o data-dir é o "install" real do ponto de vista do host. v0.17.1 passa a
-// sincronizá-lo para corrigir o caso em que o host pula a materialização
-// porque vê "data-dir existe mas está vazio".
+// cache/talos/talos/<VERSION>/ — onde o plugin instalado fica.
+function zcodeCacheDir() {
+  return zcodePluginPath('cache', ZCODE_MARKETPLACE, ZCODE_PLUGIN_NAME, VERSION);
+}
+
+// marketplaces/talos/ — clone do catálogo do marketplace.
+function zcodeMarketplaceDir() {
+  return zcodePluginPath('marketplaces', ZCODE_MARKETPLACE);
+}
+
+// data/talos@talos/ — data-dir do plugin (rede no runtime; a UI cria vazio).
 function zcodeDataDir() {
-  return path.join(homedir(), '.zcode', 'cli', 'plugins', 'data', `${ZCODE_PLUGIN_NAME}@${ZCODE_MARKETPLACE}`);
+  return zcodePluginPath('data', ZCODE_PLUGIN_ID);
 }
 
 function zcodeConfigFile() {
-  return path.join(homedir(), '.zcode', 'cli', 'config.json');
+  return zcodePluginPath('..', 'config.json');
 }
 
-// Copia o cache recém-populado para o data-dir. Idempotente: se o data-dir
-// já tem conteúdo da mesma versão (presets legítimos), mantém o conteúdo
-// existente — só copia quando o data-dir está ausente ou vazio. Skip quando
-// o cache é da mesma versão que o data-dir já tem (caso do `init zcode`
-// rodando 2 vezes seguidas sem uninstall no meio).
-// Falha-cedo se dataDir é symlink apontando para fora do escopo esperado:
-// defesa contra tampering manual (usuário aponta dataDir para um diretório
-// controlado e o installer sobrescreve).
-function materializeZcodeDataDir(cacheDir, opts) {
+function zcodeKnownMarketplacesFile() {
+  return zcodePluginPath('known_marketplaces.json');
+}
+
+function zcodeInstalledPluginsFile() {
+  return zcodePluginPath('installed_plugins.json');
+}
+
+// Cria o data-dir vazio (como a UI faz). Idempotente; defesa contra symlink malicioso.
+function materializeZcodeDataDir(opts) {
   const dataDir = zcodeDataDir();
   if (opts.dryRun) {
-    log(`  [dry-run] copiaria ${cacheDir} → ${dataDir}`);
+    log(`  [dry-run] criaria ${dataDir}/ (vazio)`);
     return dataDir;
   }
-  // Defesa contra symlink malicioso: se dataDir existe e é symlink, resolve
-  // e exige que o alvo seja descendente de ~/.zcode/cli/plugins/data/ —
-  // impede que o installer sobrescreva paths arbitrários do usuário.
   if (fs.existsSync(dataDir)) {
-    let lst;
-    try { lst = fs.lstatSync(dataDir); } catch { lst = null; }
-    if (lst && lst.isSymbolicLink()) {
+    const lst = fs.lstatSync(dataDir);
+    if (lst.isSymbolicLink()) {
       const target = path.resolve(path.dirname(dataDir), fs.readlinkSync(dataDir));
-      const allowed = path.resolve(path.join(homedir(), '.zcode', 'cli', 'plugins', 'data')) + path.sep;
+      const allowed = path.resolve(zcodePluginPath('data')) + path.sep;
       if (!target.startsWith(allowed)) {
         fail(`${dataDir} é symlink para fora de ~/.zcode/cli/plugins/data/ (${target}) — remova manualmente e rode de novo.`);
       }
     }
-    // Idempotência: se já existe e tem o plugin.json canônico da versão atual,
-    // pula (2ª init sem uninstall no meio). Caso contrário (data-dir vazio ou
-    // herdado de versão antiga), sobrescreve.
-    const marker = path.join(dataDir, '.zcode-plugin', 'plugin.json');
-    if (fs.existsSync(marker)) {
-      log(`  ${dataDir} já materializado (${marker}) — mantendo (idempotente)`);
-      return dataDir;
-    }
-    log(`  ${dataDir} existe mas está vazio/stale — sobrescrevendo do cache`);
-    fs.rmSync(dataDir, { recursive: true, force: true });
+    if (fs.readdirSync(dataDir).length === 0) { log(`  ${dataDir} já existe (vazio) — mantendo`); return dataDir; }
+    log(`  ${dataDir} já existe com conteúdo — mantendo (não sobrescrevo presets)`);
+    return dataDir;
   }
   fs.mkdirSync(dataDir, { recursive: true });
-  fs.cpSync(cacheDir, dataDir, { recursive: true });
-  log(`  ${dataDir} materializado a partir de ${cacheDir}`);
+  log(`  ${dataDir} criado`);
   return dataDir;
 }
 
-// Espelho de `rmIfExists` com a mesma defesa contra symlink malicioso. Idempotente.
-function removeZcodeDataDir(opts) {
-  const dataDir = zcodeDataDir();
-  if (!fs.existsSync(dataDir)) return;
-  const lst = fs.lstatSync(dataDir);
+// Remove o data-dir com a mesma defesa contra symlink malicioso. Idempotente.
+function removeZcodeDataDir(allowedParent, dir, opts) {
+  if (!fs.existsSync(dir)) return;
+  const lst = fs.lstatSync(dir);
   if (lst.isSymbolicLink()) {
-    const target = path.resolve(path.dirname(dataDir), fs.readlinkSync(dataDir));
-    const allowed = path.resolve(path.join(homedir(), '.zcode', 'cli', 'plugins', 'data')) + path.sep;
+    const target = path.resolve(path.dirname(dir), fs.readlinkSync(dir));
+    const allowed = path.resolve(allowedParent) + path.sep;
     if (!target.startsWith(allowed)) {
-      fail(`${dataDir} é symlink para fora de ~/.zcode/cli/plugins/data/ (${target}) — remova manualmente e rode de novo.`);
+      fail(`${dir} é symlink para fora de ${allowedParent} (${target}) — remova manualmente e rode de novo.`);
     }
   }
-  rmIfExists(dataDir, opts);
+  rmIfExists(dir, opts);
 }
 
-function zcodeMarketplaceCacheFile() {
-  return path.join(homedir(), '.zcode', 'cli', 'plugins', 'marketplaces', ZCODE_MARKETPLACE, 'marketplace.json');
+
+// marketplace.json no destino do clone — o ZCode lê o da raiz do marketplace. O repo
+// não commita marketplace.json na raiz (só .claude-plugin/marketplace.json); a UI gera
+// a cópia raiz no add. Facamos o mesmo: garante dest/marketplace.json a partir de ROOT.
+// É chamado SEMPRE (dry-run guarda fora): só copia ROOT→dest; nunca escreve no ROOT.
+function ensureZcodeRootMarketplaceJson(dest) {
+  const rootManifest = path.join(dest, 'marketplace.json');
+  if (fs.existsSync(rootManifest)) return rootManifest;
+  const src = path.join(ROOT, '.claude-plugin', 'marketplace.json');
+  if (!fs.existsSync(src)) return null;
+  fs.copyFileSync(src, rootManifest);
+  log(`  ${path.relative(ROOT, rootManifest)} gerado a partir de .claude-plugin/marketplace.json`);
+  return rootManifest;
 }
 
-function updateZcodeMarketplaceCacheEntry(cacheDir) {
-  const file = zcodeMarketplaceCacheFile();
-  let cfg = { name: ZCODE_MARKETPLACE, plugins: [], version: 1 };
-  if (fs.existsSync(file)) {
-    try { cfg = JSON.parse(fs.readFileSync(file, 'utf8')); }
-    catch { log(`  aviso: ${path.basename(file)} é JSON inválido — reescrevendo do zero`); }
+// Abre conhecido `known_marketplaces.json` (ou schema default). Falha-cedo em JSON inválido.
+function loadZcodeKnownMarketplaces() {
+  const file = zcodeKnownMarketplacesFile();
+  if (!fs.existsSync(file)) return { version: 1, marketplaces: [] };
+  assertConfigParseable(file);
+  return parseJsonFile(file);
+}
+
+// Merge idempotente do marketplace `talos` em known_marketplaces.json. Preserva demais.
+function upsertZcodeMarketplace(opts) {
+  const file = zcodeKnownMarketplacesFile();
+  if (opts.dryRun) { log(`  [dry-run] adicionaria marketplace ${ZCODE_PLUGIN_ID} em ${path.basename(file)}`); return; }
+  const cfg = loadZcodeKnownMarketplaces();
+  const now = new Date().toISOString();
+  let entry = (cfg.marketplaces ?? []).find((m) => m.id === ZCODE_MARKETPLACE);
+  const base = {
+    id: ZCODE_MARKETPLACE,
+    source: { source: 'git', url: ZCODE_MARKETPLACE_URL },
+    name: ZCODE_MARKETPLACE,
+    description: 'Marketplace do Talos: plugin único de orquestração de pipeline determinístico (sprint §7 → plano → execução → validação) para Claude Code, Cursor, Codex, Antigravity, ZCode, opencode e pi cli.',
+  };
+  if (entry) {
+    Object.assign(entry, base, { lastUpdated: now });
+    if (!entry.addedAt) entry.addedAt = now;
+    if (!entry.pluginCount) entry.pluginCount = 1;
+    log(`  marketplace ${ZCODE_MARKETPLACE} já registrado — atualizado`);
+  } else {
+    cfg.marketplaces ??= [];
+    cfg.marketplaces.push({ ...base, addedAt: now, lastUpdated: now, pluginCount: 1 });
+    log(`  marketplace ${ZCODE_MARKETPLACE} registrado em ${path.basename(file)}`);
   }
-  cfg.name = ZCODE_MARKETPLACE;
-  cfg.plugins = (cfg.plugins ?? []).filter((p) => p.name !== ZCODE_PLUGIN_NAME);
-  cfg.plugins.push({ cachePath: cacheDir, name: ZCODE_PLUGIN_NAME, source: 'filesystem', version: VERSION });
-  cfg.version = 1;
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify(cfg, null, 2) + '\n');
 }
 
-function removeZcodeMarketplaceCacheEntry() {
-  const file = zcodeMarketplaceCacheFile();
-  if (!fs.existsSync(file)) return;
-  try {
-    const cfg = JSON.parse(fs.readFileSync(file, 'utf8'));
-    cfg.plugins = (cfg.plugins ?? []).filter((p) => p.name !== ZCODE_PLUGIN_NAME);
-    fs.writeFileSync(file, JSON.stringify(cfg, null, 2) + '\n');
-  } catch { log(`  aviso: ${path.basename(file)} é JSON inválido — não mexi`); }
+// Abre o registro `installed_plugins.json` (ou schema default). Falha-cedo em JSON inválido.
+function loadZcodeInstalledPlugins() {
+  const file = zcodeInstalledPluginsFile();
+  if (!fs.existsSync(file)) return { version: 1, plugins: [] };
+  assertConfigParseable(file);
+  return parseJsonFile(file);
 }
 
-// Migra enabledPlugins em ~/.zcode/cli/config.json: remove entradas órfãs do nome
-// pré-rebrand e garante que talos@<marketplace> esteja habilitado. Idempotente.
-// Falha-cedo em JSON inválido (não sobrescreve config do usuário — padrão assertConfigParseable).
-// Retorna a lista de changes human-readable (para log).
-function migrateZcodeEnabledPlugins(opts) {
+// Grava/atualiza o registro `talos@talos` em installed_plugins.json. Preserva demais.
+function upsertZcodeInstalledPlugin(cacheDir, opts) {
+  const file = zcodeInstalledPluginsFile();
+  if (opts.dryRun) { log(`  [dry-run] registraria ${ZCODE_PLUGIN_ID} em ${path.basename(file)}`); return; }
+  const cfg = loadZcodeInstalledPlugins();
+  const now = new Date().toISOString();
+  const id = ZCODE_PLUGIN_ID;
+  let rec = (cfg.plugins ?? []).find((p) => p.id === id);
+  if (rec) {
+    Object.assign(rec, {
+      name: ZCODE_PLUGIN_NAME, marketplace: ZCODE_MARKETPLACE, version: VERSION,
+      installPath: cacheDir, updatedAt: now, scope: rec.scope ?? 'user', source: rec.source ?? './',
+    });
+    log(`  registro ${id} já existe — atualizado`);
+  } else {
+    cfg.plugins ??= [];
+    cfg.plugins.push({
+      id, name: ZCODE_PLUGIN_NAME, marketplace: ZCODE_MARKETPLACE, version: VERSION,
+      installPath: cacheDir, installedAt: now, updatedAt: now, scope: 'user', source: './',
+      cacheTransactionId: randomUUID(),
+    });
+    log(`  ${id} registrado em ${path.basename(file)}`);
+  }
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(cfg, null, 2) + '\n');
+}
+
+// Copia o catálogo (conteúdo de ROOT, sem .git) para marketplaces/<marketplace>/.
+// Este é o "clone" que a UI faz no add-marketplace.
+function copyZcodeMarketplaceDir(opts) {
+  const dest = zcodeMarketplaceDir();
+  const parent = path.dirname(dest);
+  if (opts.dryRun) { log(`  [dry-run] copiaria ${ROOT} → ${dest}`); return; }
+  if (fs.existsSync(dest)) {
+    const lst = fs.lstatSync(dest);
+    if (lst.isSymbolicLink()) {
+      const allowed = path.resolve(zcodePluginPath('marketplaces')) + path.sep;
+      const target = path.resolve(path.dirname(dest), fs.readlinkSync(dest));
+      if (!target.startsWith(allowed)) fail(`${dest} é symlink para fora de ~/.zcode/cli/plugins/marketplaces/ — remova manualmente`);
+    }
+    fs.rmSync(dest, { recursive: true, force: true });
+  }
+  fs.mkdirSync(parent, { recursive: true });
+  fs.cpSync(ROOT, dest, { recursive: true, filter: (s) => !s.includes(`${path.sep}.git${path.sep}`) && !s.endsWith(`${path.sep}.git`) });
+  log(`  ${dest} materializado (catálogo do marketplace)`);
+}
+
+// Copia o plugin instalado para cache/<marketplace>/<plugin>/<VERSION>/. É o que a UI
+// faz no "Install": copia o repo para o cache e lê o manifest .claude-plugin/plugin.json.
+function copyZcodePluginToCache(opts) {
+  const cacheDir = zcodeCacheDir();
+  const parent = path.dirname(cacheDir);
+  if (opts.dryRun) { log(`  [dry-run] copiaria ${ROOT} → ${cacheDir}`); return; }
+  if (fs.existsSync(parent)) {
+    const lst = fs.lstatSync(parent);
+    if (lst.isSymbolicLink()) {
+      const allowed = path.resolve(zcodePluginPath('cache')) + path.sep;
+      const target = path.resolve(path.dirname(parent), fs.readlinkSync(parent));
+      if (!target.startsWith(allowed)) fail(`${parent} é symlink para fora de ~/.zcode/cli/plugins/cache/ — remova manualmente`);
+    }
+    fs.rmSync(parent, { recursive: true, force: true });
+  }
+  fs.mkdirSync(cacheDir, { recursive: true });
+  fs.cpSync(ROOT, cacheDir, { recursive: true, filter: (s) => !s.includes(`${path.sep}.git${path.sep}`) && !s.endsWith(`${path.sep}.git`) });
+  log(`  ${cacheDir} materializado (plugin instalado)`);
+}
+
+// Habilita talos@talos e remove órfãos em enabledPlugins. Preserva demais. Fail-closed.
+function enableZcodePlugin(opts) {
   const file = zcodeConfigFile();
-  const newKey = `${ZCODE_PLUGIN_NAME}@${ZCODE_MARKETPLACE}`;
-  // Falha-cedo: se o config do usuário existe mas é JSON inválido, aborta ANTES de
-  // copiar qualquer arquivo (não deixa instalação parcial nem sobrescreve config).
   assertConfigParseable(file);
-  const changes = [];
-  const legacyKeys = ZCODE_LEGACY_PLUGIN_NAMES.flatMap((n) => [`${n}@${ZCODE_MARKETPLACE}`, `${n}@user`]);
   const cfg = fs.existsSync(file) ? parseJsonFile(file) : {};
   cfg.plugins ??= {};
   cfg.plugins.enabledPlugins ??= {};
   const enabled = cfg.plugins.enabledPlugins;
+  const changes = [];
+  const legacyKeys = ZCODE_LEGACY_PLUGIN_NAMES.flatMap((n) => [`${n}@zcode-plugins-official`, `${n}@user`]);
   for (const key of legacyKeys) {
-    if (enabled[key] !== undefined) {
-      changes.push(`- removida entry órfã pré-rebrand: ${key}`);
-      delete enabled[key];
-    }
+    if (enabled[key] !== undefined) { changes.push(`- entry órfã pré-rebrand ${key}`); delete enabled[key]; }
   }
-  if (enabled[newKey] !== true) {
-    changes.push(`+ habilitado: ${newKey}`);
-    enabled[newKey] = true;
+  // Limpeza do legado do caminho antigo (talos@zcode-plugins-official) que não tem mais root.
+  if (enabled[ZCODE_PLUGIN_ID_LEGACY] !== undefined) {
+    changes.push(`- entry órfã do caminho antigo ${ZCODE_PLUGIN_ID_LEGACY}`);
+    delete enabled[ZCODE_PLUGIN_ID_LEGACY];
+  }
+  if (enabled[ZCODE_PLUGIN_ID] !== true) {
+    changes.push(`+ habilitado ${ZCODE_PLUGIN_ID}`);
+    enabled[ZCODE_PLUGIN_ID] = true;
   }
   if (!changes.length) return changes;
   if (opts.dryRun) {
@@ -806,76 +904,114 @@ function migrateZcodeEnabledPlugins(opts) {
   return changes;
 }
 
-// Remove a entry talos de enabledPlugins (desinstalação limpa). Preserva demais
-// plugins habilitados pelo usuário. Falha-cedo em JSON inválido.
-function removeZcodeEnabledPluginEntry(opts) {
+// O invérso do install para os quatro registros + cache + data. Preserva demais plugins.
+function removeZcodeMarketplaceRecords(opts) {
+  // known_marketplaces.json — remove o marketplace talos
+  const knownFile = zcodeKnownMarketplacesFile();
+  if (fs.existsSync(knownFile)) {
+    assertConfigParseable(knownFile);
+    const cfg = parseJsonFile(knownFile);
+    const before = cfg.marketplaces?.length ?? 0;
+    cfg.marketplaces = (cfg.marketplaces ?? []).filter((m) => m.id !== ZCODE_MARKETPLACE);
+    if (cfg.marketplaces.length !== before) {
+      // evita gravar um arquivo totalmente esvaziado caso fosse só do talos
+      if (cfg.marketplaces.length === 0) {
+        log(`  marketplace ${ZCODE_MARKETPLACE} removido — arquivo ficaria vazio; ${opts.dryRun ? 'removeria' : 'removido'}`);
+      } else {
+        log(`  marketplace ${ZCODE_MARKETPLACE} removido de ${path.basename(knownFile)}`);
+      }
+      if (!opts.dryRun) fs.writeFileSync(knownFile, JSON.stringify(cfg, null, 2) + '\n');
+    }
+  }
+
+  // installed_plugins.json — remove o registro talos@talos
+  const instFile = zcodeInstalledPluginsFile();
+  if (fs.existsSync(instFile)) {
+    assertConfigParseable(instFile);
+    const cfg = parseJsonFile(instFile);
+    const before = cfg.plugins?.length ?? 0;
+    cfg.plugins = (cfg.plugins ?? []).filter((p) => p.id !== ZCODE_PLUGIN_ID);
+    if (cfg.plugins.length !== before) {
+      log(`  registro ${ZCODE_PLUGIN_ID} removido de ${path.basename(instFile)}`);
+      if (!opts.dryRun) fs.writeFileSync(instFile, JSON.stringify(cfg, null, 2) + '\n');
+    }
+  }
+}
+
+// Remove a entry talos@talos (e o legado talos@zcode-plugins-official) de enabledPlugins.
+function removeZcodeEnabledPluginEntries(opts) {
   const file = zcodeConfigFile();
   if (!fs.existsSync(file)) return;
   assertConfigParseable(file);
   const cfg = parseJsonFile(file);
   const enabled = cfg?.plugins?.enabledPlugins;
   if (!enabled) return;
-  const key = `${ZCODE_PLUGIN_NAME}@${ZCODE_MARKETPLACE}`;
-  if (enabled[key] === undefined) return;
-  if (opts.dryRun) { log(`  [dry-run] removeria ${key} de ${path.basename(file)}`); return; }
-  delete enabled[key];
-  fs.writeFileSync(file, JSON.stringify(cfg, null, 2) + '\n');
-  log(`  ${key} removido de ${path.basename(file)}`);
+  let changed = false;
+  for (const key of [ZCODE_PLUGIN_ID, ZCODE_PLUGIN_ID_LEGACY]) {
+    if (enabled[key] !== undefined) {
+      changed = true;
+      log(`  ${key} ${opts.dryRun ? 'seria removido' : 'removido'} de ${path.basename(file)}`);
+      if (!opts.dryRun) delete enabled[key];
+    }
+  }
+  if (changed && !opts.dryRun) fs.writeFileSync(file, JSON.stringify(cfg, null, 2) + '\n');
+}
+
+// Limpa o legado do caminho quebrado `zcode-plugins-official` (de instalações 0.15-0.17.1):
+// data-dir, cache, config entry e entry no marketplace cache oficial.
+function removeZcodeLegacyOfficial(opts) {
+  const data = zcodePluginPath('data', 'talos@zcode-plugins-official');
+  const cache = zcodePluginPath('cache', 'zcode-plugins-official', 'talos');
+  removeZcodeDataDir(zcodePluginPath('data'), data, opts);
+  rmIfExists(cache, opts);
+  // entry no marketplaces/zcode-plugins-official/marketplace.json (cache de visualização)
+  const mktCache = zcodePluginPath('marketplaces', 'zcode-plugins-official', 'marketplace.json');
+  if (fs.existsSync(mktCache)) {
+    try {
+      const cfg = JSON.parse(fs.readFileSync(mktCache, 'utf8'));
+      const before = cfg.plugins?.length ?? 0;
+      cfg.plugins = (cfg.plugins ?? []).filter((p) => p.name !== ZCODE_PLUGIN_NAME);
+      if (cfg.plugins.length !== before) {
+        log(`  entry ${ZCODE_PLUGIN_NAME} removida de ${path.relative(zcodePluginPath('marketplaces'), mktCache)}`);
+        if (!opts.dryRun) fs.writeFileSync(mktCache, JSON.stringify(cfg, null, 2) + '\n');
+      }
+    } catch { log(`  aviso: ${path.basename(mktCache)} é JSON inválido — não mexi`); }
+  }
 }
 
 function installZcode(opts) {
-  const cacheDir = zcodeCacheDir();
-  const catalogSrc = path.join(ROOT, 'hosts/zcode');
-  log(`instalando Talos (zcode v${VERSION}) GLOBAL em ${cacheDir}`);
-  if (!fs.existsSync(catalogSrc)) fail(`catálogo zcode ausente: hosts/zcode/ (rode build/build-plugins.sh)`);
+  log(`instalando Talos (zcode v${VERSION}) GLOBAL via marketplace ${ZCODE_MARKETPLACE}`);
+  // A instalação SEMPRE vem do GitHub (npx). Em dev, ROOT é o checkout local; sob
+  // npx, ROOT é o conteúdo publicado. Garantimos marketplace.json na raiz (fonte do manifest).
   if (opts.dryRun) {
-    log(`  [dry-run] copiaria hosts/zcode/ → ${cacheDir}`);
-    log(`  [dry-run] atualizaria ${zcodeMarketplaceCacheFile()}`);
-    migrateZcodeEnabledPlugins(opts);
+    log(`  [dry-run] copiaria ${ROOT} → ${zcodeMarketplaceDir()} e ${zcodeCacheDir()}`);
+    log(`  [dry-run] registraria marketplace + plugin, habilitaria ${ZCODE_PLUGIN_ID}`);
+    enableZcodePlugin(opts);
     return;
   }
-  // Limpa instalação anterior (pode haver versão stale)
-  const parentDir = path.dirname(cacheDir);
-  if (fs.existsSync(parentDir)) fs.rmSync(parentDir, { recursive: true, force: true });
-  fs.mkdirSync(cacheDir, { recursive: true });
-  fs.cpSync(catalogSrc, cacheDir, { recursive: true });
-  // Materializa o data-dir a partir do cache recém-populado. Cobre o caso
-  // "host pula materialização porque vê data-dir vazio órfão de instalação
-  // anterior abortada". Idempotente.
-  materializeZcodeDataDir(cacheDir, opts);
-  // Gera o seed file no formato que o ZCode espera
-  const seed = {
-    hash: '',
-    marketplace: ZCODE_MARKETPLACE,
-    plugin: ZCODE_PLUGIN_NAME,
-    pluginVersion: VERSION,
-    source: 'filesystem',
-    version: 1,
-  };
-  fs.writeFileSync(path.join(cacheDir, '.zcode-plugin-seed.json'), JSON.stringify(seed, null, 2) + '\n');
-  // Sincroniza a entry do marketplace cache (o ZCode regenera no boot, mas
-  // mantemos sincronizado para visualização imediata no `/plugins`).
-  updateZcodeMarketplaceCacheEntry(cacheDir);
-  // Migra enabledPlugins: remove nome órfão pré-rebrand e habilita talos.
-  // Antes era manual ("/plugins enable"), o que quebrava upgrades do rebrand
-  // (atlas-workflow-orchestrator → talos): o host ficava com entry órfã e o
-  // plugin nunca carregava. Agora o installer habilita determinísticamente.
-  migrateZcodeEnabledPlugins(opts);
-  log('ok — ZCode instalado no cache oficial e habilitado.');
+  copyZcodeMarketplaceDir(opts);
+  ensureZcodeRootMarketplaceJson(zcodeMarketplaceDir());
+  copyZcodePluginToCache(opts);
+  materializeZcodeDataDir(opts);
+  upsertZcodeMarketplace(opts);
+  upsertZcodeInstalledPlugin(zcodeCacheDir(), opts);
+  enableZcodePlugin(opts);
+  log('ok — ZCode instalado via marketplace (talos@talos) e habilitado.');
   log('reinicie o ZCode para carregar skills + MCP; confirme com a tool');
   log('  talos_ping (deve retornar host=zcode, status=alive).');
 }
 
 function uninstallZcode(opts) {
-  const cacheParent = path.join(homedir(), '.zcode', 'cli', 'plugins', 'cache', ZCODE_MARKETPLACE, ZCODE_PLUGIN_NAME);
-  log(`removendo Talos (zcode) GLOBAL de ${cacheParent}`);
-  // Data-dir primeiro: simétrico ao install (que materializa do cache). Sem
-  // isso, um uninstall deixa o data-dir órfão para sempre.
-  removeZcodeDataDir(opts);
-  rmIfExists(cacheParent, opts);
-  removeZcodeMarketplaceCacheEntry();
-  removeZcodeEnabledPluginEntry(opts);
-  log('ok — ZCode: data-dir, cache, registry e enabledPlugins removidos.');
+  log(`removendo Talos (zcode) GLOBAL (marketplace ${ZCODE_MARKETPLACE})`);
+  // Reverte o install: registros, cache, data-dir, enabledPlugins.
+  rmIfExists(zcodeCacheDir(), opts);
+  rmIfExists(zcodeMarketplaceDir(), opts);
+  removeZcodeDataDir(zcodePluginPath('data'), zcodeDataDir(), opts);
+  removeZcodeMarketplaceRecords(opts);
+  removeZcodeEnabledPluginEntries(opts);
+  // Limpa o legado do caminho quebrado `zcode-plugins-official`.
+  removeZcodeLegacyOfficial(opts);
+  log('ok — ZCode: marketplace, cache, data-dir, registros e enabledPlugins removidos.');
 }
 
 // --- VS Code (Copilot Chat) ---------------------------------------------------
