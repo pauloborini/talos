@@ -249,9 +249,17 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `talos-*` para o
 
 ---
 
-**Plugin version:** 0.17.0
+**Plugin version:** 0.17.1
 **Author:** Paulo Borini
-**Last updated:** 2026-08-08
+**Last updated:** 2026-08-17
+
+### Novidades v0.17.1 — instalador zcode materializa e remove o data-dir
+
+- **`talos-init` zcode preenche o data-dir** — `materializeZcodeDataDir` é chamado após popular o cache; copia `cache/.../0.17.1/` → `~/.zcode/cli/plugins/data/talos@zcode-plugins-official/`. Cobre o caso em que o host pula a materialização porque vê a pasta vazia órfã de instalação anterior abortada (skills/MCP ficavam invisíveis).
+- **`talos-init` zcode remove o data-dir no uninstall** — `removeZcodeDataDir` espelha a operação (simétrico ao install; sem isso, `uninstall` deixava o data-dir órfão). Defesa contra symlink: ambos falham-fechado se `dataDir` aponta para fora de `~/.zcode/cli/plugins/data/`.
+- **Idempotência** — 2ª execução de `init zcode` (sem uninstall no meio) detecta o plugin.json canônico no data-dir e pula a cópia, sem duplicar nem destruir conteúdo.
+- **`smoke-install.mjs`** — 3 asserts novos: data-dir populado após init, populado após idempotência, removido após uninstall. Sem eles a regressão passava silenciosa.
+- Sem mudança de runtime MCP, schema v5, gates ou topologia sibling. Os outros 7 hosts não passam pelo problema (Claude/Cursor/Codex usam marketplace nativo do host; opencode/pi/antigravity/vscode escrevem em paths nativos do host sem data-dir separado).
 
 ### Novidades v0.16.1 — docs de adapters (VS Code + `question_prompt`)
 
