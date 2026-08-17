@@ -20,7 +20,7 @@ npx github:pauloborini/talos init pi --global --yes
 npx github:pauloborini/talos init vscode --global
 ```
 
-After an update, call `talos_ping` and `talos_capabilities` in the host. `talos_ping` should report `version: 0.17.0`.
+After an update, call `talos_ping` and `talos_capabilities` in the host. `talos_ping` should report `version: 0.17.2`.
 
 ## Install
 
