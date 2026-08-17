@@ -241,16 +241,25 @@ esac
   assert(ep['talos@zcode-plugins-official'] === true, 'zcode não habilitou talos@zcode-plugins-official');
   assert(ep['atlas-cortex@user'] === true, 'zcode removeu plugin do usuário');
   assert(cfg.skills['/some/skill/SKILL.md'].enable === false, 'zcode alterou config de skills do usuário');
+  // Data-dir materializado (regressão v0.17.1: host pula materialização se
+  // data-dir vazio já existe — installer precisa preencher).
+  const dataDir = path.join(home, '.zcode/cli/plugins/data/talos@zcode-plugins-official');
+  assert(exists(dataDir), 'zcode init não materializou data-dir');
+  assert(exists(path.join(dataDir, '.zcode-plugin/plugin.json')), 'zcode init não copiou .zcode-plugin/plugin.json para data-dir');
+  assert(exists(path.join(dataDir, 'packages/mcp-server/server.js')), 'zcode init não copiou server.js para data-dir');
   // Idempotência: 2ª execução não quebra nem altera o estado já migrado.
   const r2 = run(['init', 'zcode'], { HOME: home });
   assert(r2.status === 0, `zcode init 2ª vez (idempotência) falhou: ${r2.stderr || r2.stdout}`);
   const cfg2 = json(path.join(home, '.zcode/cli/config.json'));
   assert(cfg2.plugins.enabledPlugins['talos@zcode-plugins-official'] === true, 'zcode idempotência quebrou talos');
   assert(!('atlas-workflow-orchestrator@zcode-plugins-official' in cfg2.plugins.enabledPlugins), 'zcode idempotência recriou órfão');
+  // Data-dir segue populado após 2ª init (não duplica, não destrói).
+  assert(exists(path.join(dataDir, '.zcode-plugin/plugin.json')), 'zcode idempotência destruiu data-dir');
   // Uninstall limpo: remove entry talos, preserva demais.
   const u = run(['uninstall', 'zcode'], { HOME: home });
   assert(u.status === 0, `zcode uninstall falhou: ${u.stderr || u.stdout}`);
   assert(!exists(path.join(home, '.zcode/cli/plugins/cache/zcode-plugins-official/talos')), 'zcode uninstall manteve cache');
+  assert(!exists(dataDir), 'zcode uninstall não removeu data-dir');
   const cfgU = json(path.join(home, '.zcode/cli/config.json'));
   assert(!('talos@zcode-plugins-official' in cfgU.plugins.enabledPlugins), 'zcode uninstall manteve entry talos');
   assert(cfgU.plugins.enabledPlugins['atlas-cortex@user'] === true, 'zcode uninstall removeu plugin do usuário');
