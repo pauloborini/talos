@@ -1,6 +1,6 @@
 <!-- Language: **English** · [Português](README.pt-BR.md) -->
 <p align="center">
-  <img src="docs/assets/talos-logo.png" alt="Talos" width="96" height="96">
+  <img src="docs/assets/talos-logo.png" alt="Talos" width="200" height="200">
 </p>
 
 # Talos v0.17.2
