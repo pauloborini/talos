@@ -1,246 +1,373 @@
 # Brainstorm — Enxugar colo da LLM e absorver o Guide no Talos
 
-- **Status:** rascunho de design (ainda não é `DEC-*`)
-- **Data:** 2026-08-19
-- **Repo:** Talos (`0.17.2`)
-- **Não faz parte deste doc:** scriptar receipts do Guide (fica no repo do Guide)
+- **Status:** desenho fechado para implementação (ondas 1–3). Ainda não é `DEC-*`.
+- **Data:** 2026-08-19 · revisão de contrato 2026-08-21
+- **Repo:** Talos (`0.17.2` → bump `0.18.x` na onda 1)
+- **Não faz parte:** scriptar receipts do Guide (repo do Guide)
 
-Fontes desta sessão:
+Fontes:
 
 - [guide-pack-talos-absorcao.canvas.tsx](/Users/pauloborini/.cursor/projects/Users-pauloborini-Documents-projetos-talos/canvases/guide-pack-talos-absorcao.canvas.tsx)
 - [talos-boilerplate-state.canvas.tsx](/Users/pauloborini/.cursor/projects/Users-pauloborini-Documents-projetos-talos/canvases/talos-boilerplate-state.canvas.tsx)
 
-Este arquivo unifica os dois boards num único programa. Enxugar o colo da LLM e absorver o Guide são o mesmo movimento: **a LLM julga em slots curtos; o MCP grava forma, git e índices.**
+Enxugar o colo da LLM e absorver o Guide são o mesmo movimento: **a LLM julga em slots curtos; o MCP grava forma, git e índices.**
 
 ---
 
 ## 1. Problema
 
-O state v3 no disco já é compacto (IDs, paths, hashes, índices). O custo de token e de erro está no **procedimento**:
+O state v3 no disco já é compacto. O custo está no procedimento:
 
-1. `talos-plan-execute` / `talos-direct-execute` colam o JSON inteiro do schema — inclusive `acceptance_results`, que o executor **não** escreve.
-2. A LLM monta à mão `base_sha`, `head_sha`, `files_changed`, `diff_stat` e tuplas `worktree_*`. O MCP **já tem** `captureWorktreeSnapshot()`.
+1. Executors colam o JSON do schema — inclusive `acceptance_results`, que o executor não escreve.
+2. A LLM monta SHA, `files_changed` e `worktree_*`. O MCP já tem `captureWorktreeSnapshot()`.
 3. Quatro mapas repetem o mesmo fato: `task_evidence`, `validation_map`, `proof_refs`, `eval_results`.
-4. Gate G12 exige **sete** events (`executor_started` … `state_path_created`). Só `state_path_created` trava o isolamento do validator (G12/G4). O resto é heartbeat.
-5. `talos_run_state` é merge/upsert. A LLM ainda é writer do arquivo de slice. O padrão que funcionou no Guide (journal-append: LLM seta 2–3 campos; script preenche eid/de/data) **não existe** no Talos.
+4. G12 exige sete events. Só o equivalente a `state_path_created` trava o validator.
+5. `talos_run_state` é upsert. A LLM ainda é writer do arquivo de slice.
 
-Absorver Guide “como pack” (GUIDE.md, JOURNAL.md, receipts.md, packguide Python) **aumentaria** o colo. O que vale é o padrão de escrita, o manifesto de transições, desvio tipado, drift de skill, e a topologia loop→subagente→pref→F (já quase espelhada em G4/G9).
+Absorver o Guide como pack (GUIDE.md, JOURNAL.md, receipts, packguide Python) aumentaria o colo. Vale o padrão de escrita, desvio tipado, drift de skill, re-selo e a topologia orquestrador→subagente (já G4/G9).
 
 ---
 
-## 2. Princípio (única regra de produto a promover depois)
+## 2. Princípio
 
 > LLM envia julgamento referenciável. MCP deriva o resto. Skill cita ID de gate/verbo, não ensina a montar artefato.
 
-Invariantes que **não** se negociam neste programa (já são `DEC-*`): sibling-only (DEC-012), PREREQ/DISPATCH fail-closed (DEC-004/008), contrato §7 + aceite atômico (DEC-013/014), plugin instalável (DEC-002/010/011). Cortar validator, oráculo T-outcome ou `state_path` único para poupar token é regressão, não enxugue.
+Intocável: DEC-012 sibling, DEC-004/008 fail-closed, DEC-013/014 §7+aceite, DEC-002/010/011 instalável. Cortar validator, oráculo T-outcome ou `state_path` único não é enxugue.
 
 ---
 
-## 3. Abordagens consideradas
+## 3. Abordagem
 
-| | Abordagem | Prós | Contras |
-|---|-----------|------|---------|
-| **A (escolhida)** | Verbo MCP `talos_commit_state` + `proofs[]` curto; state v3 vira **projeção** escrita pelo MCP; skills perdem o blob JSON; G12 cai para 2 pulsos; eventos de desvio e view de slice entram como fatias seguintes no mesmo MCP | Sem breaking de reader se o MCP ainda emitir v3 canônico; reusa snapshot git já existente; um contrato para enxugue **e** absorção | Precisa de writer único no MCP; skills e hosts/ copiados precisam deixar de ensinar Write no path do state |
-| B | Trocar state por log de eventos estilo JOURNAL (append-only) e o validator lê o log | Mais “Guide”; auditoria temporal | Breaking de schema; validator e `talos_update_sprint_status` hoje leem objeto único; custo alto para o mesmo ganho |
-| C | Só enxugar prosa das skills; LLM continua Write no JSON | Patch pequeno | Não mata SHA/índice/exemplo errado; o blob volta a crescer |
+| | | |
+|---|---|---|
+| **A (fechada)** | `talos_commit_state` + `proofs[]`; disco continua v3 projetado | |
+| B rejeitada | State vira log Journal | Breaking de reader/status |
+| C rejeitada | Só enxugar prosa; LLM Write JSON | Blob volta |
 
-**Decisão deste brainstorm:** A. Schema v3 **permanece** o formato em disco e o contrato do validator. Quem muda é o **writer** (MCP, não LLM). Readers legado de v3 não precisam de v4 se o shape canônico for o mesmo.
-
-Não há v4 neste programa, a menos que `proofs[]` no arquivo se mostre mais barato que projetar os quatro mapas. Default: MCP recebe `proofs[]` e **grava** os mapas v3 atuais, para `talos_lock_validator` / oráculo / status não mudarem de contrato.
+Sem schema v4. MCP recebe julgamento e **grava** os mapas v3 para `talos_lock_validator` / oráculo / `talos_update_sprint_status` não mudarem de contrato.
 
 ---
 
-## 4. Contrato fino — o que a LLM ainda envia
+## 4. Verbo `talos_commit_state`
 
-### 4.1 `talos_commit_state` (P0)
+Tool MCP nova. `additionalProperties: false`. Único writer do arquivo `.talos/state/<run_id>/<slice>.json`.
 
-Entrada (julgamento):
+### 4.1 Quem pode chamar
+
+O MCP infere `role` pelo lock ativo. A LLM **não** envia `role`.
+
+| `role` | Condição | Senão |
+|--------|----------|--------|
+| `execute` | `dispatch.active.phase === plan_execute` e liveness ≠ `handoff_ready` | blocked |
+| `repair` | slot `talos_lock_validator` em `repair_start` aberto para este `state_path` | blocked |
+| `pref` | (onda 3) dispatch `phase === sprint_pref` ativo | blocked |
+
+Repair **não** é fase `plan_execute`. Commit de repair **não** emite checkpoint de executor. Emite registro no ledger do slot de repair (`state_hash` do arquivo).
+
+### 4.2 Payload (LLM)
 
 ```json
 {
-  "run_id": "<já no lock>",
-  "slice": "<id>",
+  "run_id": "string",
+  "slice": "string",
+  "plan_path": "string (obrigatório se routing.mode é full|execute e existe plano)",
+  "sprint_file_path": "string opcional",
+  "obligation_ids": ["O1"],
   "proofs": [
-    { "id": "AC-001", "kind": "AC", "check": "node --test tests/foo.test.js" },
-    { "id": "EVAL-001", "kind": "EVAL", "check": "node --test tests/foo.test.js" },
-    { "id": "T01", "kind": "T", "check": "node --test tests/foo.test.js" }
+    {
+      "id": "AC-001",
+      "kind": "AC",
+      "check": "node --test tests/foo.test.js",
+      "files": ["packages/foo.js"],
+      "covers": ["O1"]
+    }
   ],
-  "eval_na": [{ "id": "EVAL-002", "reason": "not_in_slice" }]
+  "eval_na": [{ "id": "EVAL-002", "reason": "not_in_slice" }],
+  "repair": [{ "finding_id": "F-001", "check": "node --test tests/foo.test.js" }]
 }
 ```
 
-Regras:
+Enums fechados:
 
-- `check` é a **string do comando já executado** nesta slice. MCP deduplica em `check_table` e preenche índices.
-- `kind` fechado: `AC` | `EVAL` | `T`. Um AC sem `kind: AC` e sem `eval_na` correspondente, quando o sprint file está no run, falha fechado (mesmo espírito de `proof_refs` ausente → `unproved`).
-- `direct` (sem plano): o run lock já tem obligations; se não tiver, o commit falha. LLM **não** recola texto de invariante.
-- MCP preenche: `state_schema_version`, `run_id`, `executed_at`, `executor_skill` (fase ativa), `plan_path` / `sprint_*` do run, `contract_ids` parseados do PLAN/§7, `policy_scope` do `policy_manifest`, `base_sha`/`head_sha`/`files_changed`/`diff_stat` via git, `worktree_final` agora, `worktree_baseline` do snapshot gravado no `first_write` (ou no `lock_dispatch(start)` se ainda não houve write — ver §5).
-- MCP **não** aceita `acceptance_results` neste verbo. Continua eco do validator + persist no `complete`.
-- Após gravar o arquivo, o MCP emite internamente o equivalente a `state_path_created` (o executor **não** manda o sétimo checkpoint à mão). Retorno: `{ state_path, gate: G12, ... }`.
+- `kind`: `AC` | `EVAL` | `T`
+- `eval_na.reason`: `not_in_slice` | `not_applicable` | `blocked_external`
 
-Baseline: no **primeiro** `first_write` (ou num `talos_snapshot_worktree` único chamado pelo executor **antes** da primeira mutação, se `first_write` for implícito demais), o MCP grava `worktree_baseline` no run ledger. `commit_state` recaptura `worktree_final` e deriva `files_changed` = `base_sha...head_sha` + delta baseline→final, dirty pré-existente idêntico fora — **a mesma regra que o schema já documenta**, só que executada em Node.
+Campos proibidos no input (presente → `-32602`): `acceptance_results`, `worktree_baseline`, `worktree_final`, `files_changed`, `base_sha`, `head_sha`, `check_table`, `proof_refs`, `eval_results`, `task_evidence`, `validation_map`, `policy_scope`, `executed_at`, `state_schema_version`, `role`.
 
-### 4.2 Projeção dos quatro mapas
+### 4.3 Obrigatórios por role / modo
 
-MCP deriva do `proofs[]`:
+**`execute` + `contract_kind=plan`** (routing `full`/`execute` com plano):
 
-- `proof_refs[AC]` ← proofs `kind=AC`
-- `eval_results` ← proofs `kind=EVAL` (`status: passed` se o caller não mandou `eval_na`; `eval_na` vira evidência tipada, não `passed` forjado)
-- `task_evidence` ← proofs `kind=T`
-- `validation_map` ← cruzamento obligations do plano × checks dos proofs da slice (IDs do PLAN, não narrativa)
+- `proofs` não vazio.
+- `plan_path` existente no consumer_root.
+- Todo `AC-*` do §7.3 do sprint ligado ao plano (se `sprint_file_path` resolvido) tem proof `kind=AC` **ou** o AC é só `M` (manual) — ACs só-M não exigem proof T; ACs com `T-outcome` exigem proof.
+- Todo `EVAL-*` do `eval_manifest` tem proof `kind=EVAL` ou linha `eval_na`.
+- Todo `T0N` da slice no PLAN §5 tem proof `kind=T`.
+- `obligation_ids` omitido; MCP parseia do plano (§2/§6 IDs `\b[OISR]\d+\b` + ACs).
 
-Se o parse do plano não achar uma obligation citada, commit falha com erro estrutural — não completa com array vazio silencioso.
+**`execute` + `contract_kind=direct`:**
 
-### 4.3 Evento curto (absorção journal-append) — mesmo espírito, fatia seguinte
+- `plan_path` omitido ou `null`.
+- `obligation_ids` não vazio (IDs curtos, sem prosa).
+- `proofs` não vazio; pelo menos um `kind=T` ou `kind=AC`.
+- Se `sprint_file_path` presente, mesmas regras de AC/EVAL acima.
 
-`talos_run_event` (verbo novo; **não** reusar `upsert` de `talos_run_state`, que já misturou merge parcial com replace):
+**`repair`:**
+
+- `repair` não vazio.
+- Cada `finding_id` existe no packet do `repair_start`.
+- `proofs` opcional (só se o reparo mudar prova de AC/EVAL/T).
+- Não envia `first_write`. Baseline do execute é preservada.
+
+**`pref` (onda 3):** como `execute` mas `proofs` cobre só o que o pref tocou; baseline = `worktree_final` anterior (MCP copia, não recaptura baseline).
+
+### 4.4 O que o MCP grava (v3)
+
+Na ordem do `STATE_FILE_SCHEMA.md`:
+
+| Campo | Fonte |
+|-------|--------|
+| `state_schema_version` | `3` |
+| `run_id`, `slice` | args |
+| `base_sha` | `git rev-parse HEAD` gravado em `lock_dispatch(start)` (nunca nome de branch) |
+| `head_sha` | `git rev-parse HEAD` agora |
+| `contract_kind` | `plan` se `plan_path`; senão `direct` |
+| `tasks` | ids `kind=T` nos proofs (repair: união com tasks já no arquivo) |
+| `files_changed` / `diff_stat` | `base_sha...HEAD` + delta `worktree_baseline→worktree_final`; dirty pré-existente idêntico fora |
+| `plan_path` / `sprint_*` | args + parse |
+| `prd_path` | omitido ou `null` |
+| `boundary_refs` | IDs parseados (invariantes, tasks, EVAL, AC) — não prosa |
+| `contract_ids` | parse plano/§7 + `obligation_ids` no direct |
+| `eval_results` | proofs `EVAL` → `status: passed`; `eval_na` → `status` não-`passed` com `evidence: [reason]` — **nunca** `passed` forjado |
+| `proof_refs` | proofs `AC`: `{checks, files}` índices. Sem `files` no proof → `files: []` (não espalhar o diff) |
+| `policy_scope` | `policy_manifest` do sprint; arquivo em `forbidden_scope` que apareça no diff → commit blocked |
+| `check_table` | dedup das strings `check` |
+| `validation_map` | ver §4.5 |
+| `task_evidence` | proofs `T` |
+| `repair_evidence` | só `role=repair`: append `{finding_id, files, checks, status: "resolved"}` |
+| `worktree_baseline` | ledger do `first_write`; repair/pref **não** sobrescreve |
+| `worktree_final` | `captureWorktreeSnapshot()` agora |
+| `executed_at` | clock MCP |
+| `executor_skill` | fase: `talos-plan-execute` \| `talos-direct-execute` \| `talos-findings-repair` \| `talos-sprint-pref` |
+| `acceptance_results` | **não** neste verbo |
+
+Extensão de ledger (não precisa ir no JSON se o G12 já guardar): `slice_commit_sha256` do arquivo. `lock_validator(start)` exige que o sha do disco == último commit MCP daquele `state_path` (B7). Arquivo JSON válido escrito pela LLM sem commit → blocked.
+
+Git falhou / fora do consumer_root → commit blocked, **nenhum** JSON parcial no disco (write atômico: tmp + rename).
+
+### 4.5 `validation_map`
+
+1. Se algum proof tem `covers`, cada id em `covers` tem de existir em `contract_ids`. Cada obligation recebe os checks dos proofs que a cobrem. Obligation parseada sem nenhum `covers` → commit blocked (não completar com linha vazia).
+2. Se **nenhum** proof tem `covers`, uma linha por obligation parseada, `checks` = todos os índices de `check_table` (equivalente grosso ao executor atual “a slice cobriu o plano”).
+3. Direct: `covers` opcional; default = todas as `obligation_ids` × todos os checks.
+
+### 4.6 Retorno
 
 ```json
-{ "kind": "descoberta|lacuna|renegociacao|note", "subject": "T01|AC-001|§7", "facts": "≤200 chars" }
+{
+  "gate": "G12",
+  "role": "execute|repair|pref",
+  "status": "passed",
+  "state_path": ".talos/state/<run_id>/<slice>.json",
+  "state_sha256": "<hex>"
+}
 ```
 
-MCP infere: ator (fase do lock), `at`, id monotônico, hash. Proibido: LLM setar `de`, `at`, `eid`. `lacuna` e `renegociacao` bloqueiam promoção de sprint até token de re-selo consumido (absorção CONTRACT.lock uso único). `descoberta` só registra.
+`role=execute`: liveness → `handoff_ready`, `last_checkpoint: state_path_created` (interno, executor não chama checkpoint).
 
-Isto **não** substitui o state de slice. É ledger da run, como o journal do Guide.
-
----
-
-## 5. G12 — dois pulsos
-
-Set atual (7): `executor_started`, `skill_loaded`, `plan_loaded`, `handoff_accepted`, `task_started`, `first_write`, `state_path_created`.
-
-Set alvo (2 + implícitos):
-
-| Pulso | Quem emite | Função |
-|-------|------------|--------|
-| `lock_dispatch(start)` | orquestrador (já existe) | prova que o executor foi despachado; substitui `executor_started` / `skill_loaded` / `plan_loaded` / `handoff_accepted` / `task_started` como teatro |
-| `first_write` | executor, **uma vez**, imediatamente antes da primeira mutação **ou** MCP detecta via snapshot vazio→não-vazio se quisermos zero calls — **decisão: executor chama uma vez**. Motivo: detecção por git no MCP sem chamada ainda não existe e misturaria liveness com side-effect | grava `worktree_baseline`; prova mutação iminente |
-| `talos_commit_state` | executor no fim | grava state + equivale a `state_path_created` |
-
-Timeouts G12 (`bootstrap` / `progress`) **permanecem**. Ausência de `first_write` até o bootstrap deadline com fase execute ativa continua `stalled`. Não reintroduzir os cinco events removidos nas skills (ver §7 drift).
+`check` é honor system (exit 0 não é gravado). Oráculo/validator relê o teste. Sem `talos_capture_cmd` neste programa.
 
 ---
 
-## 6. Skills e hosts — menos blob, mesmo gate
+## 5. G12 fechado
 
-Depois do verbo existir:
+Set de events que o **executor** ainda pode mandar via `talos_lock_dispatch(checkpoint)`:
 
-- `talos-plan-execute` e `talos-direct-execute` **deletam** o exemplo JSON de 30 linhas e a ordem de campos do schema. Citam: `first_write` → implementar → `talos_commit_state(proofs)` → `validator_handoff_required` com o `state_path` do retorno.
-- Proibido nas skills (e em `hosts/**` copiados): “crie `.talos/state/...` com Write”; “preencha worktree_baseline”; listar `acceptance_results` no bloco do executor.
-- `STATE_FILE_SCHEMA.md` vira contrato **do MCP/validator**, não material de executor. Executor não é instruído a abrir esse arquivo.
-- Orquestrador: o handoff continua só `state_path`. Sem colar proofs na mensagem do validator.
+- `first_write` — único event público restante.
 
-Isso é a absorção de `drift_forbidden` do Guide: `build/check-consistency.mjs` ganha regras DR* contra strings âncora nas skills (equivalente a DR08 do journal: skill não ensina heading de tabela / Write de state).
+Events removidos das skills e do set aceito: `executor_started`, `skill_loaded`, `plan_loaded`, `handoff_accepted`, `task_started`, `state_path_created`. Mandar um deles → G12 blocked `checkpoint_desconhecido` (o set encolhe de verdade).
+
+### 5.1 Bootstrap / progress
+
+`lock_dispatch(start)` **não** conta como checkpoint de executor (continua orquestrador).
+
+- **Bootstrap (120s):** `stalled` se o executor não chamou **nem** `first_write` **nem** `talos_commit_state` até o deadline. Slice sem mutação: só `commit_state` dentro de 120s basta.
+- **Progress (300s):** após o primeiro desses dois, o relógio de progress vale até `handoff_ready`.
+- Contradizer “sem `first_write` até bootstrap = stalled **sempre**” está **revogado**. A regra é a frase anterior.
+
+### 5.2 `first_write`
+
+Uma vez, **imediatamente antes** da primeira mutação. Grava `worktree_baseline` no ledger da run. Segunda chamada → blocked.
+
+Commit `execute` com diff não vazio e sem `first_write` no ledger → blocked.
+
+Commit `execute` com diff vazio e sem `first_write` → passed (nada a fotografar).
+
+Repair/pref: **proibido** `first_write`.
+
+### 5.3 B7
+
+`lock_validator(start)` (ciclo 1) exige último `slice_commit_sha256` == sha do arquivo. Não há `state_path_created` manual.
+
+Mesma release que o verbo: skills + MCP + hosts copiados + DR*. Sem dual-writer.
 
 ---
 
-## 7. O que absorver do Guide (depois do writer MCP)
+## 6. Skills (onda 1)
 
-Ordem **depois** de `commit_state` estável — senão cada fatia nova ensina a LLM a preencher mais um artefato.
+`talos-plan-execute`, `talos-direct-execute`, `talos-findings-repair`:
 
-| # | Fatia | Origem Guide | Contrato mínimo no Talos |
-|---|--------|--------------|---------------------------|
-| 1 | `talos_commit_state` + snapshot git | journal-append / `--git-boundary` | §4.1 |
-| 2 | Mapas v3 projetados de `proofs[]` | LEDGER como projeção | §4.2 |
-| 3 | G12 7→2 + skills sem blob | menos procedimento | §5–6 |
-| 4 | DR* em `check-consistency` | `canon.drift_forbidden` | skill/host que ensinar Write de state ou checkpoint morto falha o guard |
-| 5 | `talos_run_event` + classes de desvio | J07 descoberta/lacuna/renegociação | §4.3 |
-| 6 | Token de re-selo uso único | CONTRACT.lock | reabrir §7 `aprovado` exige evento `renegociacao` aprovado e token não gasto; segundo uso falha |
-| 7 | View compilada da slice | compile/view do plano | MCP devolve `{tasks, AC, EVAL, forbidden_scope, gates}` para o executor **não** reler o sprint inteiro |
-| 8 | `falseia_se` no YAML do AC | AC do Guide | campo opcional no §7.3; validator confronta se o check nomeado no proof **mencionaria** a mutação (julgamento LLM no validator, não regex no MCP) |
-| 9 | Fase C1 sibling no **fim da sprint** | pref-guide | 1 subagente mutável, modelo herdado, **não** por slice, **não** é validator, **não** é F. Orquestrador despacha. Skills não se chamam. |
-| 10 | Fechamento F = sessão nova | audit-guide-plan | `talos-slice-review` / fechamento humano com modelo à escolha. Fora do loop de execute. Já quase é G8; documentar o mapeamento, não criar skill-in-skill |
+1. Fluxo: (`first_write` se for mutar) → implementar/gates locais → `talos_commit_state` → `validator_handoff_required` / `repair_complete` com `state_path` do retorno.
+2. Apagar blob JSON, ordem de campos, “siga STATE_FILE_SCHEMA”, “preencha worktree_*”.
+3. Repair: não Write no JSON; mesmo `state_path`; `repair[]` obrigatório.
+4. Direct: `obligation_ids` no commit; contrato compacto continua na resposta de trabalho (não vai para o disco além dos IDs).
+5. Validator: inalterado no output; lê v3; ganha a checagem de sha via MCP no lock (não na skill).
+6. Orquestrador: handoff continua só `state_path`. Sem colar `proofs`. Deixa de ensinar os 7 events.
 
-**Não absorver:** GUIDE.md como input de execute; packguide Python; JOURNAL.md / receipts.md como SSoT; executor promover sprint a `done`; pref ou F inline.
+`STATE_FILE_SCHEMA.md` = contrato MCP/validator. Executor não é instruído a abrir.
+
+### 6.1 DR* (`build/check-consistency.mjs`) — onda 1
+
+Falham o guard se aparecerem nestes glob: `packages/skills/talos-plan-execute/**`, `talos-direct-execute/**`, `talos-findings-repair/**` (e cópias `hosts/**`, `plugins/**` equivalentes):
+
+| ID | Âncora |
+|----|--------|
+| DR01 | `STATE_FILE_SCHEMA.md` |
+| DR02 | `worktree_baseline` ou `worktree_final` |
+| DR03 | `executor_started` / `skill_loaded` / `plan_loaded` / `handoff_accepted` / `task_started` / `state_path_created` |
+| DR04 | `"acceptance_results"` |
+
+Allowlist: `packages/templates/STATE_FILE_SCHEMA.md`, `packages/mcp-server/**`, `packages/skills/talos-task-validator/**`, testes. Mensagem do guard cita o DR*.
+
+Onda 3 acrescenta `talos-sprint-pref` nas mesmas âncoras.
 
 ---
 
-## 8. Fluxo alvo (uma slice)
+## 7. Ondas
+
+Uma onda = um PR revisável. Ordem rígida: 1 antes de 2 antes de 3.
+
+### Onda 1 — writer (P0)
+
+Fatias 1–4 + furos B1/B7: `talos_commit_state`, projeção dos mapas, G12 §5, skills §6, DR*, repair/direct no mesmo verbo. Bump `0.18.x`.
+
+Pronto: slice real no host sem Write no state; `first_write`+`commit_state` ou só `commit_state`; validator sibling; `check-consistency` + `claude plugin validate ./ --strict`.
+
+### Onda 2 — ledger de desvio + view + falseia
+
+**Fatia 5 — `talos_run_event`.** Verbo novo (não `upsert`).
+
+```json
+{ "run_id": "...", "kind": "descoberta|lacuna|renegociacao|note|lacuna_resolvida", "subject": "T01|AC-001|§7", "facts": "max 200 chars" }
+```
+
+MCP infere ator (fase do lock), `at`, `eid` monotônico, hash. Proibido no input: `at`, `eid`, `actor`.
+
+- `descoberta` / `note`: só ledger.
+- `lacuna`: append em `run.data.blockers`. `talos_update_sprint_status` → `done` / `manual_validation_pending` blocked enquanto houver blocker aberto.
+- `lacuna_resolvida`: fecha blocker do mesmo `subject`. Sem subject aberto → blocked.
+- `renegociacao`: **não** destampa o §7. Retorna `{ token, status: "pending_user" }`. Token uso único, TTL 24h, preso ao `sprint_file_path` do run.
+
+**Fatia 6 — `talos_consume_reseal`.** Args: `token`, `sprint_file_path`. Efeito: `Contrato status` → `draft`, `Selo` → pendente (mesmo procedimento que o interview já usa para reeditar). Segundo consume / token expirado / sprint errado → fail. Destampar **sem** token gasto → fail (fecha o “reabrir frouxo”). Interview continua sendo quem re-aprova e sela.
+
+**Fatia 7 — `talos_slice_view`.** Args: `plan_path` e/ou `sprint_file_path`, `slice` opcional. Retorno JSON: `{ tasks, ac, evals, forbidden_scope, required_gates, invariants }`. Parser do disco; cache por mtime. **Validator não lê a view** — lê sprint/PLAN. Executor onda 2 passa a citar este verbo em vez de reler o sprint inteiro.
+
+**Fatia 8 — `falseia_se`.** Campo YAML opcional string ≤200 em cada `AC-*` do §7.3. `talos_verify_sprint_file` aceita ausência; se presente, tem de ser string não vazia. Skill do validator: se o campo existe, julgar se o check citado no `proof_refs` falharia com aquela mutação; senão finding P2. **Zero regex no MCP.**
+
+### Onda 3 — C1 e F
+
+**Fatia 9 — `talos-sprint-pref`.** Skill nova, só orquestrador. Uma vez por sprint, **depois** da última slice em `pass`/`pass_with_observations` e **antes** de `talos_update_sprint_status`. Modelo herdado. Mandato = caça C1 do Guide (verde-mas-falso: teste sem red, legado no caminho). Não é validator, não é G8, não é por slice.
+
+Fluxo: `lock_dispatch(start, phase=sprint_pref)` → subagente → mutação + `commit_state` (`role=pref`) → `lock_validator` (ciclo próprio, teto 1 repair, **não** conta no teto de 2 da slice) → então status sync. `policy_manifest.pref_required: true` obriga; ausente = skip. Default do template de sprint: `false` (opt-in) para não mudar comportamento dos packs atuais (DEC-009).
+
+**Fatia 10 — F.** Sem skill nova. G8 `talos-slice-review` **é** o F. Orquestrador documenta: G8 não sai de execute/validator/pref inline; sessão nova e modelo à escolha quando `critical_review.required`. Código: não despachar review a partir das skills de execute/repair/pref (já proibido). Só texto do orquestrador + um DR05 (onda 3): essas skills não contêm `talos-slice-review` como alvo de dispatch.
+
+---
+
+## 8. Fluxo alvo
 
 ```text
-orquestrador  lock_dispatch(start, phase=plan_execute)
+orquestrador    lock_dispatch(start, phase=plan_execute)
+                [grava base_sha = HEAD]
        │
        ▼
-executor      (lê view MCP da slice, quando fatia 7 existir; senão PLAN path)
-              first_write  → MCP snapshot baseline
-              implementa + gates locais (lint/test) — inalterado
-              talos_commit_state(proofs) → arquivo v3 + G12 committed
-              return validator_handoff_required { state_path }
+executor        first_write?  → baseline   (se for mutar)
+                implementa + gates locais
+                talos_commit_state(proofs, …)
+                return { validator_handoff_required, state_path }
        │
        ▼
-orquestrador  lock_validator(start) → sibling talos-task-validator
-              (lê state_path; ecoa acceptance_results; challenge inalterado)
+orquestrador    lock_validator(start)  [sha == commit MCP]
+                sibling talos-task-validator
        │
-       ├── fail → findings-repair (mesmo state_path) → 2º validator (teto atual)
+       ├── fail → repair_start → findings-repair
+       │          talos_commit_state (role=repair, repair[])
+       │          repair_complete → 2º validator (teto da slice)
        └── pass|pass_with_observations → fecha slice
+
+(sprint-bound, última slice, pref_required)
+orquestrador    sprint_pref → commit_state role=pref → validator (teto 1)
+                [sessão nova] G8 se critical_review
+                talos_update_sprint_status
 ```
 
-Fim de **sprint** (não de slice), se 9–10 estiverem no backlog da release: C1 uma vez; F sessão nova. Não misturar C1 no executor da slice.
+---
+
+## 9. Compatibilidade
+
+- Disco: v3 canônico. Consumidores que só lêem o JSON não quebram.
+- Procedimento: breaking na onda 1 (0.18.x). Skills velhas que Write + `state_path_created` falham G12 e DR*.
+- `talos_run_state` upsert segue só para ledger da run. Commit de slice não passa por upsert.
+- `prd_path` legado `null`.
 
 ---
 
-## 9. Compatibilidade e breaking
+## 10. Testes de contrato
 
-- **Não breaking de artefato de consumidor** se o arquivo em `.talos/state/...` continuar v3 canônico. Executores velhos que ainda dão Write no JSON: durante uma janela, o MCP **aceita** o arquivo existente no `state_path_created` **ou** rejeita Write detectando que o conteúdo não passou por `commit_state`?
-- **Decisão:** a partir da versão que introduzir o verbo, `state_path_created` **sem** commit MCP (arquivo órfão escrito pela LLM) é **hard-fail** G12. Não há reader v3 paralelo. Isso é breaking de **procedimento de skill**, não de schema. Bump menor (0.18.x) se só skills+MCP; bump consciente se hosts documentados ensinarem o fluxo velho — o guard DR* deve falhar o pack **antes** do release.
-- `talos_run_state` upsert permanece para ledger da run. Não misturar upsert cego com commit de slice (já houve bug de replace apagar `data`).
-- `prd_path` continua legado `null`; writers novos não o enviam.
+Onda 1: commit projeta mapas; AC T-outcome sem proof → blocked; `eval_na` não vira `passed`; payload com `acceptance_results` → `-32602`; diff sujo sem `first_write` → blocked; diff vazio sem `first_write` → passed; repair sem slot → blocked; repair preserva baseline; SHA órfão → `lock_validator` blocked; DR01–04 no guard; fixtures de status/oráculo inalteradas contra JSON gerado pelo writer.
 
----
+Onda 2: lacuna bloqueia `done`; reseal 2× → fail; view omite prosa; `falseia_se` ausente é válido.
 
-## 10. Testes (contrato, não lista de arquivos)
-
-- Commit com `proofs` → disco tem `proof_refs` / `eval_results` / `task_evidence` coerentes com `check_table` indexado.
-- Commit sem proof de AC obrigatório do §7.3 → erro; validator nem abre.
-- Snapshot: dirty pré-existente idêntico não entra em `files_changed`; mutação depois do baseline entra.
-- Executor payload com `acceptance_results` → rejeitado.
-- G12: `lock_validator(start)` só abre depois de `commit_state` para aquele `state_path`.
-- Skill `talos-plan-execute` contendo a string âncora `worktree_baseline` como instrução de Write → `check-consistency` falha (depois da fatia DR*).
-- Re-selo: segundo consume do mesmo token → fail.
-- Regressão: `talos_update_sprint_status` / oráculo T-outcome inalterados contra fixtures v3 geradas pelo novo writer.
+Onda 3: sem `pref_required` o orquestrador não despacha pref; com flag, status sync antes do pref → blocked.
 
 ---
 
-## 11. Critério de pronto (desta iniciativa, não de uma fatia)
+## 11. Fora de escopo (permanente neste programa)
 
-Uma slice real no host: executor **não** abre `STATE_FILE_SCHEMA.md`, **não** escreve o JSON com editor, chama `first_write` + `commit_state`, validator sibling passa, `claude plugin validate ./ --strict` + `check-consistency` verdes. Contagem de checkpoints G12 por execute = 1 (`first_write`) + 1 verbo de commit. Skills de execute sem blob JSON.
-
-Fatias 5–10 podem ficar no backlog/sprint seguinte; **não** entram no mesmo plano de implementação que 1–4 se o plano passar de um PR revisável.
-
----
-
-## 12. Fora de escopo
-
-- Qualquer mudança no repo do Guide (receipts JSON, `--render-receipt`).
-- C1/F no mesmo PR que `commit_state`.
-- Substituir `talos-task-validator` por script puro.
-- Markdown de relatório humano no state.
-- Alterar branch / hosts packaging além do necessário para o verbo MCP e o texto das skills canônicas (`packages/` + guard que replica).
+- Repo do Guide.
+- `talos_capture_cmd` / receipts.md / JOURNAL.md / GUIDE.md / packguide Python.
+- Validator virar script puro.
+- Relatório humano no state.
+- Dual-writer.
+- Schema v4.
+- Pref default-on (quebraria sprints atuais).
 
 ---
 
-## 13. Riscos
+## 12. Riscos (mitigação já no contrato)
 
-- **MCP como writer único** vira SPOF de boundary. Mitigação: testes de snapshot já existentes + fixtures de commit; falha de git no consumer_root = commit blocked, não JSON parcial.
-- **View da slice (fatia 7)** pode omitir invariante. Mitigação: view é cache; validator continua lendo sprint/PLAN do disco, não da view.
-- **`falseia_se` (fatia 8)** se virar regex no MCP → falso positivo. Mitigação: campo documental + julgamento no validator, nunca gate de string no MCP.
-- **C1 mutável no fim da sprint** se despachado por slice → custo e reescrita. Mitigação: uma vez por sprint, orquestrador only.
+- MCP writer único → write atômico + testes de snapshot existentes.
+- View incompleta → validator ignora view.
+- `falseia_se` regex → proibido; só validator LLM.
+- Pref por slice → contrato diz uma vez por sprint + opt-in.
 
 ---
 
-## 14. Decisões já tomadas nesta sessão (Origem: conversa)
+## 13. Decisões
 
 | ID | Decisão |
 |----|---------|
-| B1 | Writer do state = MCP; LLM só `proofs[]` (+ `eval_na` / `first_write`) |
-| B2 | Disco permanece schema v3 projetado; sem v4 neste programa |
-| B3 | Não importar receipts/JOURNAL/GUIDE.md para o Talos |
-| B4 | G12 efetivo = `first_write` + `commit_state`; lock start cobre entrada |
-| B5 | Pref/C1 e F são topologia de sprint/sessão, não de slice, e não são P0 |
-| B6 | Orquestrador despacha; skill nunca puxa skill |
+| B1 | Writer = MCP. LLM: `proofs[]`, `eval_na`, `first_write`, `repair[]`, `obligation_ids` (direct) |
+| B2 | Disco v3 projetado; sem v4 |
+| B3 | Não importar receipts/JOURNAL/GUIDE.md |
+| B4 | G12 executor = `first_write` + `commit_state`; lock start não é heartbeat de executor |
+| B5 | C1/F = onda 3; C1 opt-in `pref_required`; F = G8 em sessão nova |
+| B6 | Só orquestrador despacha; skill nunca puxa skill |
+| B7 | Onda 1: hard-fail de Write órfão. Sem dual-writer |
+| B8 | Repair/pref usam o mesmo `talos_commit_state`; role inferida pelo lock |
+| B9 | `covers` opcional; `files` opcional; sem files → `proof_refs.files = []` |
+| B10 | Bootstrap: `first_write` **ou** `commit_state` em 120s |
+| B11 | Honor system do `check` aceito; sem capture-cmd |
+| B12 | Re-selo = evento + `talos_consume_reseal` (token 1×); interview re-aprova |
 
-Pergunta em aberto **única** que o plano de implementação ainda precisa do usuário (o resto está fechado neste brainstorm):
-
-> O hard-fail de “LLM Write no state” entra na **mesma** release que `talos_commit_state`, ou há uma versão de transição em que os dois writers coexistam?
-
-Recomendação: **mesma release**, fail-closed, skills atualizadas no mesmo bump. Transição dupla-writer reensina o blob.
+Nada em aberto para implementar as três ondas. Próximo passo: plano de implementação da **onda 1** (ondas 2–3 têm contrato aqui, plano próprio na hora).
