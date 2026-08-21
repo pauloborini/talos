@@ -89,3 +89,36 @@ test('server.js responde initialize via symlink do entrypoint', () => {
 
   assert.match(out, /"protocolVersion":"2024-11-05"/);
 });
+
+const PLUGIN_JSON = path.join(PLUGIN_ROOT, '.claude-plugin/plugin.json');
+const MANIFEST_JSON = path.join(PLUGIN_ROOT, 'plugin-manifests/claude/plugin.json');
+
+function mcpFrom(file) {
+  return JSON.parse(fs.readFileSync(file, 'utf8')).mcpServers.talos;
+}
+
+test('plugin.json Claude/Cursor não usa path literal de CLAUDE_PLUGIN_ROOT como argv', () => {
+  for (const file of [PLUGIN_JSON, MANIFEST_JSON]) {
+    const mcp = mcpFrom(file);
+    assert.equal(mcp.command, '/bin/bash');
+    assert.equal(mcp.args[0], '-c');
+    assert.equal(mcp.args[2], 'talos-mcp');
+    assert.equal(mcp.args.includes('${CLAUDE_PLUGIN_ROOT}/packages/mcp-server/run.sh'), false);
+    assert.match(mcp.args[1], /PLUGIN_ROOT/);
+  }
+});
+
+test('plugin.json -c acha run.sh via CLAUDE_PLUGIN_ROOT com cwd fora do plugin', () => {
+  const mcp = mcpFrom(PLUGIN_JSON);
+  const out = execFileSync(mcp.command, [mcp.args[0], mcp.args[1], mcp.args[2], '--resolve-node'], {
+    cwd: os.tmpdir(),
+    env: {
+      HOME: process.env.HOME ?? '/tmp',
+      PATH: process.env.PATH ?? '/usr/bin:/bin',
+      CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT,
+    },
+    encoding: 'utf8',
+  }).trim();
+  assert.ok(out.length > 0);
+  assert.ok(fs.existsSync(out), `binário inexistente: ${out}`);
+});
