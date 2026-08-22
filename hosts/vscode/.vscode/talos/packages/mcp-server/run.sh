@@ -3,9 +3,11 @@
 # Resolve Node quando o spawn GUI tem PATH capado (ex.: Parall com HOME isolado).
 #
 # Importante (Parall / paths com espaço):
-# o host deve spawnar com command="/bin/bash" e o path deste script em args[],
-# nunca com command="${CLAUDE_PLUGIN_ROOT}/.../run.sh" — path com espaço no
-# campo command quebra o spawn (ENOENT em "/Users/.../Library/Application").
+# o host deve spawnar com command="/bin/bash" e um script -c em args[],
+# nunca com command="<path>/run.sh" — path com espaço no campo command
+# quebra o spawn (ENOENT em "/Users/.../Library/Application").
+# Grok/Cursor nem sempre expandem ${CLAUDE_PLUGIN_ROOT} no JSON; o plugin.json
+# usa bash -c para expandir env (CLAUDE_PLUGIN_ROOT/PLUGIN_ROOT) ou achar o cache.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"

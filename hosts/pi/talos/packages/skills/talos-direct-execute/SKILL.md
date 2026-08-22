@@ -11,28 +11,21 @@ Execute directly from a sprint-file contract/spec/task while preserving executio
 
 This is not planless execution. Replace the visible markdown plan with a compact operational contract held in the current turn and passed to validation.
 
-## Executor liveness checkpoints
+## Executor liveness (G12)
 
-Depois de carregar esta skill e antes de qualquer discovery longo, emita um checkpoint MCP:
+O checkpoint público do executor é **apenas** `first_write`, emitido **imediatamente antes** da primeira mutação de workspace. Não emita outros checkpoints de executor: o MCP bloqueia qualquer event fora do conjunto público (G12 enxuto). A liveness do executor é comprovada pelo próprio commit — no-op sem mutação só chama `talos_commit_state` dentro de 120s e não é stalled; slice com mutação precisa de `first_write` antes do `talos_commit_state`.
 
 ```json
 talos_lock_dispatch({
   "action": "checkpoint",
   "phase": "plan_execute",
-  "event": "executor_started"
+  "event": "first_write"
 })
 ```
 
-Em seguida, emita checkpoints materiais conforme avança:
+Se não conseguir emitir checkpoint por MCP, retorne `blocked`: liveness não é comprovável. Sem `talos_commit_state` com `state_path` no retorno, `talos_lock_validator(start)` bloqueia e o orquestrador não pode despachar o validador frio.
 
-- `skill_loaded` — skill carregada e contrato reconhecido.
-- `plan_loaded` — sprint file/spec/task de entrada lido.
-- `handoff_accepted` — boundary, obligations, `state_path` alvo e contrato direto aceitos.
-- `task_started` — primeira task começou.
-- `first_write` — primeira mutação de workspace feita.
-- `state_path_created` — state file escrito antes de devolver `validator_handoff_required`.
-
-Se não conseguir emitir checkpoint por MCP, retorne `blocked`: liveness não é comprovável. Sem `state_path_created` com o mesmo `state_path`, `talos_lock_validator(start)` bloqueia em G12 e o orquestrador não pode despachar o validador frio.
+O JSON de slice (`.talos/state/<run_id>/<slice>.json`) **nunca** é montado nem escrito por este executor: o único writer é o MCP, via `talos_commit_state`. Não use editor no path do state: campos projetados pelo MCP (denylist do contrato — GUIDE §2.5) são recusados no payload com `-32602`.
 
 ## Use Criteria
 
@@ -63,8 +56,6 @@ Ask at most 1-3 blocking questions only when a reasonable assumption could chang
 
 ### 1. Load inputs
 
-First, emit `executor_started`, then `skill_loaded`, before doing any long scan.
-
 Read the user-provided sprint file/spec/task and any directly referenced files needed to resolve scope. If the input names repo artifacts, verify those artifacts exist before editing.
 
 When the input is or references a sprint file, call `talos_verify_sprint_file` before implementation. Extract `sprint_id`, `sprint_file_path`, contrato §7 (aceite §7.3), `eval_manifest` (`EVAL-*`) and `policy_manifest`; these become mandatory state evidence. Prefer `Contrato status: aprovado` with intact seal. If the sprint file is absent, invalid, or policy forbids the required change, return `blocked`.
@@ -84,8 +75,6 @@ Extract only execution-relevant items:
 - likely files/modules
 
 If the input references another code contract as dependency, inspect enough to confirm the dependency shape and required bridge. Do not satisfy a dependency by creating parallel synthetic contracts unless the sprint contract explicitly allows it.
-
-After the input is loaded, emit `plan_loaded`. After validating the execution boundary, obligations, and `state_path` target, emit `handoff_accepted`.
 
 ### 2. Build Compact Execution Contract
 
@@ -110,7 +99,7 @@ Direct Execute Contract
 - Stop conditions:
 ```
 
-Do not expand this into a separate planning artifact. The goal is execution guardrails, not transfer documentation. The contract may be terse in the user-visible response, but it must be concrete enough to materialize into `.talos/state/<run_id>/<slice>.json` and referenced evidence for `talos-task-validator`.
+Do not expand this into a separate planning artifact. The goal is execution guardrails, not transfer documentation. The contract may be terse in the user-visible response, but it must be concrete enough to commit via `talos_commit_state` and referenced evidence for `talos-task-validator`.
 
 Obligations are mandatory (**acceptance obligation tracking**). Convert every Sprint §7.3 acceptance criterion and explicit deliverable into one compact row:
 
@@ -154,7 +143,7 @@ Do not widen scope for opportunistic cleanup.
 
 **Minimalism rung (per task, before writing):** prefer the minimal viable implementation that satisfies the obligation — reuse existing repo code/symbol before introducing a new abstraction; use a stdlib/native platform feature before a new dependency; avoid indirection, factory, wrapper, extra layer, config option, or extra file not required by an obligation or invariant. This rung constrains only new abstraction/indirection/file/dependency. It never reduces trust-boundary validation, error handling, data-loss handling, invariants, scenario/test coverage, or negative paths. When minimal and safe conflict, choose safe.
 
-Before the first concrete task, emit `task_started`. After the first workspace mutation, emit `first_write`.
+If this slice mutates the workspace, emit `first_write` **imediatamente antes** da primeira mutação — uma única vez, via `talos_lock_dispatch(checkpoint, phase=plan_execute, event=first_write)`. A segunda chamada é bloqueada pelo MCP. Slice no-op (sem mutação) não emite `first_write` e segue direto para o commit.
 
 ### 4. Gate each task
 
@@ -176,25 +165,42 @@ Repair only current-diff failures. Stop after repeated failure or budget exhaust
 
 ### 5. Mandatory cold validation
 
-After tasks and local gates pass, write `.talos/state/<run_id>/<slice>.json` following `packages/templates/STATE_FILE_SCHEMA.md`.
+After tasks and local gates pass, call `talos_commit_state` — the MCP projects the complete v3 state file, writes it atomically, records the sha in the run ledger and returns `state_path` + `state_sha256`. The state file is still the only validator input.
 
-State file = deterministic context layer, not a human report. Keep it compact: IDs, paths, checks, hashes, short status. Do not paste plan/sprint-contract text, diffs, logs, reasoning, prose summaries, or transcripts. Prefer one-line compact JSON on disk; JSON parsing, not formatting, is the contract.
+#### Calling `talos_commit_state`
 
-For direct execution, the state file is still the only validator input. Use the user-provided sprint file/spec path as `plan_path` when no handoff plan exists, and include direct-contract anchors in `boundary_refs` such as `direct.O1`, `Sprint §7.3`, `direct.invariant.permissions`, or `direct.risk.partial_failure`.
+Send only your short judgment — every projected field is denied by the MCP:
 
-Persist the full direct contract using schema v3: `state_schema_version:3`, `base_sha`, `head_sha`, `contract_kind:"direct"`, non-empty `contract_ids.obligations`, `contract_ids.invariants`, `contract_ids.scenarios`, `contract_ids.risks`, `check_table`, `validation_map`, `task_evidence`, empty `repair_evidence`, `worktree_baseline` and `worktree_final`. v1/v2 são hard-fail em 0.15 (D19). Capture baseline before the first mutation and final immediately before handoff; `files_changed`/evidence must equal `base_sha...head_sha` + snapshot delta. Capture base from an explicit task/spec anchor or execution-start `HEAD`; never infer it from branch name. Recompute `head_sha` and `diff_stat` immediately before handoff. A direct state without obligations is invalid and must block.
+```json
+talos_commit_state({
+  "run_id": "<run_id>",
+  "slice": "<slice id>",
+  "sprint_file_path": ".talos/backlog/sprints/SPRINT_S<NN>_<slug>.md",
+  "obligation_ids": ["§7.3.O1"],
+  "proofs": [
+    {"kind": "AC", "id": "AC-001", "check": "<comando com assert de outcome>", "files": ["relative/path.ext"], "covers": ["§7.3.O1"]},
+    {"kind": "EVAL", "id": "EVAL-001", "check": "<comando>", "files": []},
+    {"kind": "T", "id": "T01", "check": "<comando>", "files": ["relative/path.ext"]}
+  ],
+  "eval_na": []
+})
+```
 
-In v3, `contract_ids` stores only IDs, `check_table` deduplicates commands, `task_evidence.files` indexes `files_changed`, and snapshots use `[path,status,sha256]` tuples. Do not copy contract prose, diffs, logs, sprint §7 text, or plan text into the state.
+Para execução direta, use o path do sprint file/spec fornecido pelo usuário quando não houver handoff plan; os IDs de obrigações do contrato direto (`direct.O1`, `Sprint §7.3`, `direct.invariant.permissions`, `direct.risk.partial_failure`) entram em `obligation_ids`/`proofs[].covers` — o MCP os projeta no state. Um commit direto sem `obligation_ids` é inválido e bloqueia.
 
-When a sprint file is in scope, also persist `sprint_id`, `sprint_file_path`, `eval_results` and `policy_scope`. Do not persist `evidence_to_claim` in v3. Every `EVAL-*` in the sprint file must have `eval_results.status="passed"` plus evidence; missing/failed/blocked claims make the state invalid for cold validation. Register `proof_refs` per `AC-NNN` from §7.3 pointing to the checks (with assert of outcome) and files that prove each acceptance criterion; the validator sibling will emit `acceptance_results` based on these refs and the MCP oráculo classifies `proved`/`unproved`/`violated`/`manual_pending` (D22).
+Regras do payload (D10/D9):
 
-The state file is the only validator input. Validation is always **sibling**, on every host: this executor **never** dispatches `talos-task-validator` itself and never validates its own work in the same context. After tasks and local gates pass and the state file is written, this executor **stops mutation** and returns `validator_handoff_required` with the `state_path`. The orchestrator then dispatches `talos-task-validator` as the next isolated sibling phase, locks it via `talos_lock_validator`, and — if the verdict is `fail` — dispatches `talos-findings-repair` (not this executor) before the **2nd and last** validator.
+- `proofs[].kind` ∈ `{AC, EVAL, T}`; `id` e `check` obrigatórios; `check` é a string do comando — o MCP grava a string, **não** executa nem exige sidecar/exit 0 (honor, D11).
+- `files` e `covers` são opcionais; sem `files` o MCP projeta lista vazia.
+- `eval_na` marca EVAL não aplicável (nunca vira aprovado). Cada `EVAL-*` do sprint file precisa de proof `EVAL` (ou `eval_na`); sem isso o state é inválido para validação fria.
+- Campos projetados pelo MCP (denylist do GUIDE §2.5) são recusados com `-32602` — não os envie; o MCP projeta mapas de evidência, hashes e snapshots de worktree a partir de proofs + git + ledger.
+- O veredito de aceite por AC é emitido pelo validator sibling no `complete` e persistido pelo MCP no state em disco (oráculo mecânico, D22) — nunca entra no payload do executor.
 
-After writing the state file and before returning, emit `state_path_created` with the same `state_path`.
+The state file is the only validator input. Validation is always **sibling**, on every host: this executor **never** dispatches `talos-task-validator` itself and never validates its own work in the same context. After tasks and local gates pass and `talos_commit_state` returns, this executor **stops mutation** and returns `validator_handoff_required` with the `state_path` **do retorno do commit**. The orchestrator then dispatches `talos-task-validator` as the next isolated sibling phase, locks it via `talos_lock_validator`, and — if the verdict is `fail` — dispatches `talos-findings-repair` (not this executor) before the **2nd and last** validator.
 
-Do not paste the compact contract, diff, obligation ledger, local checks, or closure analysis packet into the state file's handoff. Those belong in the state file and referenced artifacts.
+Do not paste the compact contract, diff, obligation ledger, local checks, or closure analysis packet into the handoff. Those belong in the state file and referenced artifacts.
 
-**Finish all local work before the handoff — then stop idle.** Finish every local gate (lint, analyze, tests, `git diff --check`, diff-stat) and write the state file **before** returning the handoff. After returning `validator_handoff_required`, do nothing: no diff hygiene checks, no extra reads, no opportunistic edits, no parallel work. The orchestrator now owns the slice; any mutation here would change what the sibling validator reads and breaks determinism (same failure class as the orchestrator's G9).
+**Finish all local work before the handoff — then stop idle.** Finish every local gate (lint, analyze, tests, `git diff --check`, diff-stat) and call `talos_commit_state` **before** returning the handoff. After returning `validator_handoff_required`, do nothing: no diff hygiene checks, no extra reads, no opportunistic edits, no parallel work. The orchestrator now owns the slice; any mutation here would change what the sibling validator reads and breaks determinism (same failure class as the orchestrator's G9).
 
 The verdict is consumed by the **orchestrator**, not by this executor:
 
@@ -214,7 +220,7 @@ Stop and report instead of improvising when:
 - implementing would violate explicit out-of-scope
 - deterministic checks cannot run and no equivalent evidence exists
 - repair loops repeat the same failure twice
-- validator cannot receive a valid `.talos/state/<run_id>/<slice>.json` state path
+- validator cannot receive a valid `.talos/state/<run_id>/<slice>.json` state path from the commit return
 - any §7.3 acceptance obligation lacks code/test/check evidence after implementation
 
 ## Final Report

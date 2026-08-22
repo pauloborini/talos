@@ -76,14 +76,11 @@ const VALIDATOR_CHALLENGE_MAX_FAILURES = 2;
 const VALIDATOR_PASSED_STATUSES = new Set(['passed', 'passed_with_observations']);
 const EXECUTOR_BOOTSTRAP_TIMEOUT_MS = 120_000;
 const EXECUTOR_PROGRESS_TIMEOUT_MS = 300_000;
+// G12 (D4): checkpoint público do executor é SÓ `first_write`. Events antigos
+// (executor_started, skill_loaded, plan_loaded, handoff_accepted, task_started,
+// state_path_created) são bloqueados — dual-writer morre aqui (LEG1).
 const EXECUTOR_CHECKPOINT_EVENTS = new Set([
-  'executor_started',
-  'skill_loaded',
-  'plan_loaded',
-  'handoff_accepted',
-  'task_started',
   'first_write',
-  'state_path_created',
 ]);
 
 function validatorRunId(runId, attempt, timestamp) {
@@ -3765,7 +3762,7 @@ function initialExecutorLiveness(timestamp) {
     progress_timeout_ms: EXECUTOR_PROGRESS_TIMEOUT_MS,
     bootstrap_deadline_at: isoPlusMs(timestamp, EXECUTOR_BOOTSTRAP_TIMEOUT_MS),
     next_progress_deadline_at: null,
-    required_first_checkpoint: 'executor_started',
+    required_first_checkpoint: null,
     last_checkpoint: null,
     last_progress_at: null,
     checkpoints: [],
@@ -3773,9 +3770,7 @@ function initialExecutorLiveness(timestamp) {
 }
 
 function checkpointStatus(event) {
-  if (event === 'state_path_created') return 'handoff_ready';
-  if (event === 'task_started' || event === 'first_write') return 'executing';
-  if (event === 'plan_loaded' || event === 'handoff_accepted') return 'ready';
+  if (event === 'first_write') return 'executing';
   return 'booting';
 }
 
@@ -3785,6 +3780,17 @@ function startDispatch(args, context) {
     throw rpcError(-32602, `unknown_property: ${LEGACY_ROUTE_KEY}`);
   }
   const timestamp = nowIso();
+  let baseSha = null;
+  if (phase === 'plan_execute') {
+    // AC-1.2.1 / P2: âncora de base da slice gravada no ledger no start. O
+    // commit NÃO infere branch nem omite base_sha (VC2). Best-effort: repo sem
+    // commit inicial ainda pode iniciar; commit depois valida o boundary real.
+    try {
+      baseSha = gitOutput(consumerRoot(args), ['rev-parse', 'HEAD']).trim();
+    } catch {
+      baseSha = null;
+    }
+  }
 
   if (context.dispatch.active) {
     return {
@@ -3841,7 +3847,7 @@ function startDispatch(args, context) {
       active: {
         phase,
         started_at: timestamp,
-        ...(phase === 'plan_execute' ? { liveness: initialExecutorLiveness(timestamp) } : {}),
+        ...(phase === 'plan_execute' ? { base_sha: baseSha, liveness: initialExecutorLiveness(timestamp) } : {}),
       },
       previous_phase: context.dispatch.previous_phase ?? null,
       next_phase: null,
@@ -3893,51 +3899,52 @@ function checkpointDispatch(args, context) {
       event,
       status: 'blocked',
       timestamp,
-      error: `Checkpoint desconhecido: ${event}`,
+      error: `Checkpoint desconhecido: ${event} (G12 público é só first_write; events antigos morreram)`,
       current_phase: phase,
       expected_phase: phase,
-      next_action: 'emitir_checkpoint_executor_valido',
+      next_action: 'emitir_first_write_ou_commitar_via_talos_commit_state',
     };
   }
 
-  const planPath = optionalString(args, 'plan_path');
-  const statePathValue = optionalString(args, 'state_path');
-  const detail = optionalString(args, 'detail');
-  if (event === 'state_path_created') {
-    if (!statePathValue || statePathValue.trim() === '') {
-      return {
-        gate: 'G12',
-        action: 'checkpoint',
-        phase,
-        event,
-        status: 'blocked',
-        timestamp,
-        error: 'state_path obrigatório para checkpoint state_path_created',
-        current_phase: phase,
-        expected_phase: phase,
-        next_action: 'emitir_state_path_created_com_state_path',
-      };
-    }
-    try {
-      JSON.parse(fs.readFileSync(resolveConsumerPath(statePathValue, args), 'utf8'));
-    } catch (error) {
-      return {
-        gate: 'G12',
-        action: 'checkpoint',
-        phase,
-        event,
-        status: 'blocked',
-        timestamp,
-        error: `state_path inválido ou ilegível para checkpoint state_path_created: ${error.message}`,
-        current_phase: phase,
-        expected_phase: phase,
-        next_action: 'corrigir_state_path_antes_do_handoff',
-      };
-    }
+  // AC-1.2.2: repair nunca emite checkpoint de executor (D9: role pelo lock).
+  // O slot de repair aberto é do ciclo do validator; o executor/repair NÃO
+  // pode escrever liveness nesse estado.
+  const cycle = normalizeValidatorCycle(context.state.data?.validator_cycle ?? {});
+  if (cycle.status === 'repair_required' || cycle.status === 'repair_running' || cycle.repair.active) {
+    return {
+      gate: 'G12',
+      action: 'checkpoint',
+      phase,
+      event,
+      status: 'blocked',
+      timestamp,
+      error: 'Checkpoint bloqueado: repair ativo não emite first_write (role repair não escreve liveness)',
+      current_phase: phase,
+      expected_phase: phase,
+      next_action: 'reparar_via_talos_commit_state_repair',
+    };
   }
+
   const liveness = active.liveness && typeof active.liveness === 'object'
     ? active.liveness
     : initialExecutorLiveness(active.started_at ?? timestamp);
+  if (event === 'first_write' && Array.isArray(liveness.checkpoints) && liveness.checkpoints.some((entry) => entry?.event === 'first_write')) {
+    return {
+      gate: 'G12',
+      action: 'checkpoint',
+      phase,
+      event,
+      status: 'blocked',
+      timestamp,
+      error: 'first_write já emitido: baseline do worktree já está no ledger (G12 só uma vez)',
+      current_phase: phase,
+      expected_phase: phase,
+      next_action: 'prosseguir_para_commit_state',
+    };
+  }
+  const planPath = optionalString(args, 'plan_path');
+  const statePathValue = optionalString(args, 'state_path');
+  const detail = optionalString(args, 'detail');
   const checkpoint = {
     event,
     timestamp,
@@ -3945,6 +3952,7 @@ function checkpointDispatch(args, context) {
     ...(statePathValue ? { state_path: statePathValue } : {}),
     ...(detail ? { detail } : {}),
   };
+  const baseline = event === 'first_write' ? captureWorktreeSnapshot(consumerRoot(args)) : null;
   const nextLiveness = {
     ...liveness,
     status: checkpointStatus(event),
@@ -3955,6 +3963,7 @@ function checkpointDispatch(args, context) {
       ...(Array.isArray(liveness.checkpoints) ? liveness.checkpoints : []),
       checkpoint,
     ],
+    ...(baseline ? { worktree_baseline: baseline } : {}),
   };
 
   return {
@@ -4002,10 +4011,17 @@ function statusDispatch(args, context) {
     ? active.liveness
     : (phase === 'plan_execute' ? initialExecutorLiveness(active.started_at ?? timestamp) : null);
   const checkpoints = Array.isArray(liveness?.checkpoints) ? liveness.checkpoints : [];
+  // D12 (bootstrap 120s): stalled só se o deadline passou e NÃO houve primeiro
+  // gesto — nem `first_write` nem commit (`handoff_ready`/sha no ledger). No-op
+  // que commita em 120s não stalled; `checkpoints.length === 0` sozinho não é
+  // critério (no-op slice só commita, sem primeiro checkpoint público).
+  const hasFirstWrite = checkpoints.some((entry) => entry?.event === 'first_write');
+  const hasCommit = liveness?.status === 'handoff_ready' || typeof liveness?.slice_commit_sha256 === 'string';
   const deadline = Date.parse(liveness?.bootstrap_deadline_at ?? '');
   const now = Date.parse(timestamp);
   const bootstrapExpired = phase === 'plan_execute'
-    && checkpoints.length === 0
+    && !hasFirstWrite
+    && !hasCommit
     && Number.isFinite(deadline)
     && Number.isFinite(now)
     && now > deadline;
@@ -4307,6 +4323,13 @@ function stateEvidenceFiles(state) {
       if (Array.isArray(item[key])) result.push(...item[key]);
     }
     if (typeof item.file === 'string') result.push(item.file);
+  }
+  // proof_refs[AC].files são índices em files_changed (compacto v3): a evidência
+  // de um AC cobre os arquivos que ele prova, mesmo sem task/repair associada.
+  for (const ref of Object.values(state.proof_refs ?? {})) {
+    if (ref && Array.isArray(ref.files)) {
+      result.push(...ref.files.map((index) => (state.files_changed ?? [])[index]).filter((file) => typeof file === 'string'));
+    }
   }
   return [...new Set(result.filter((item) => typeof item === 'string' && item.trim()))].sort();
 }
@@ -4636,11 +4659,13 @@ function pathMatchesScope(rel, scope) {
 
 function validateSprintEvidenceState(state, args, violations) {
   const compactSchema = isCompactStateSchema(state);
-  const hasSprintContract = state.sprint_file_path !== undefined
-    || state.sprint_id !== undefined
-    || state.eval_results !== undefined
-    || state.evidence_to_claim !== undefined
-    || state.policy_scope !== undefined;
+  // Declara sprint apenas quando o state aponta explicitamente para um sprint
+  // (sprint_file_path/sprint_id). eval_results/policy_scope/evidence_to_claim
+  // são campos do v3 base (sempre presentes no compacto, podendo ter conteúdo
+  // de proofs EVAL mesmo sem sprint) e NÃO acionam o contrato de sprint — um
+  // commit sem sprint_file_path não vira "state que declara sprint" por arrasto.
+  const hasSprintContract = state.sprint_file_path !== undefined && state.sprint_file_path !== null
+    || state.sprint_id !== undefined && state.sprint_id !== null;
   if (!hasSprintContract) return;
 
   if (typeof state.sprint_id !== 'string' || !SPRINT_ID_PATTERN.test(state.sprint_id)) {
@@ -4768,11 +4793,13 @@ function captureWorktreeSnapshot(root) {
     if (status === 'R' || status === 'C') {
       const previous = normalizeSnapshotPath(records[index + 1]);
       index += 1;
-      if (!previous.startsWith('.talos/state/')) {
+      // .talos/ é território do pipeline (ledger, slices, plans, sprint files);
+      // o executor não deve vê-lo como sujeira do worktree de código.
+      if (!previous.startsWith('.talos/')) {
         snapshot.push({ path: previous, status: 'D', sha256: null });
       }
     }
-    if (!rel.startsWith('.talos/state/')) {
+    if (!rel.startsWith('.talos/')) {
       snapshot.push({ path: rel, status, sha256: status === 'D' ? null : snapshotHash(root, rel) });
     }
   }
@@ -4958,27 +4985,48 @@ function validatorStart(args, context) {
   const liveness = context.dispatch.active.liveness && typeof context.dispatch.active.liveness === 'object'
     ? context.dispatch.active.liveness
     : null;
-  const checkpoints = Array.isArray(liveness?.checkpoints) ? liveness.checkpoints : [];
-  const lastCheckpoint = checkpoints.at(-1);
+
+  // INV1 / AC-1.3.2 (D5): o frio só abre por commit MCP com sha no ledger.
+  // Exigimos handoff_ready (commitState marcou) E sha256(disco) ==
+  // liveness.slice_commit_sha256 E o path é o do último commit. JSON parseável
+  // escrito à mão (sem sha no ledger) ou com sha divergente → blocked órfão.
+  // Não cai só em validateStateBoundary: o boundary pode estar ok e o arquivo
+  // ainda assim ser órfão (dual-writer).
+  const sliceAbs = resolveConsumerPath(statePathValue, args);
+  let diskSha = null;
+  try {
+    if (fs.existsSync(sliceAbs)) diskSha = sha256HexFile(sliceAbs);
+  } catch {
+    diskSha = null;
+  }
+  const commitSha = liveness?.slice_commit_sha256 ?? null;
+  const commitPath = liveness?.last_commit_state_path ?? null;
   if (
     liveness?.status !== 'handoff_ready'
-    || liveness.last_checkpoint !== 'state_path_created'
-    || lastCheckpoint?.event !== 'state_path_created'
-    || lastCheckpoint?.state_path !== statePathValue
+    || typeof commitSha !== 'string'
+    || diskSha === null
+    || diskSha !== commitSha
+    || commitPath !== statePathValue
   ) {
+    const orphan = liveness?.status === 'handoff_ready' && typeof commitSha === 'string'
+      && diskSha !== null && diskSha !== commitSha;
     return {
       gate: 'G12',
       action: 'start',
       status: 'blocked',
       timestamp,
-      error: 'Validator bloqueado: executor não comprovou state_path_created para este state_path',
+      error: orphan
+        ? 'Validator bloqueado: sha do disco diverge do último commit MCP (órfão/dual-writer)'
+        : 'Validator bloqueado: slice sem commit MCP com sha no ledger (JSON à mão não abre o frio)',
       current_phase: 'plan_execute',
       executor_liveness: liveness?.status ?? 'not_tracked',
-      expected_checkpoint: 'state_path_created',
+      expected_commit: 'talos_commit_state',
       state_path: statePathValue,
-      last_checkpoint: liveness?.last_checkpoint ?? null,
-      last_state_path: lastCheckpoint?.state_path ?? null,
-      next_action: 'aguardar_state_path_created_antes_do_validator',
+      last_commit_state_path: commitPath,
+      slice_commit_sha256: commitSha,
+      next_action: orphan
+        ? 'remover_ou_recommitar_slice_orfã'
+        : 'commitar_via_talos_commit_state_antes_do_validator',
     };
   }
 
@@ -5950,6 +5998,426 @@ function lockValidator(args = {}) {
   return result;
 }
 
+// ── G12/D1 (onda 1): `talos_commit_state` — writer MCP do JSON de slice ───────
+// O executor/repair NUNCA monta nem escreve o state: envia julgamento curto e o
+// MCP projeta o objeto v3 COMPLETO (escrita absoluta tmp+rename). O retorno
+// carrega `state_path` + `state_sha256`; o ledger da run ganha
+// `liveness.slice_commit_sha256` e `liveness.last_commit_state_path`, e o
+// liveness passa a `handoff_ready` — SEM checkpoint público `state_path_created`
+// (D4). Os campos projetados do payload são denylisted → `-32602` (D10/D9).
+
+// Campos que o executor/repair não pode enviar: são projetados pelo MCP.
+const COMMIT_STATE_DENYLIST = new Set([
+  'acceptance_results', 'worktree_baseline', 'worktree_final', 'files_changed',
+  'base_sha', 'head_sha', 'check_table', 'proof_refs', 'eval_results',
+  'task_evidence', 'validation_map', 'policy_scope', 'executed_at',
+  'state_schema_version', 'role',
+]);
+
+// Classe de escrita do mutador (GUIDE §0): commitState é ABSOLUTA no arquivo de
+// slice — o objeto v3 projetado é gravado inteiro; nada do JSON antigo sobrevive.
+
+function readSliceJsonForCommit(statePathValue, args = {}) {
+  return JSON.parse(fs.readFileSync(resolveConsumerPath(statePathValue, args), 'utf8'));
+}
+
+function commitProofKind(kind) {
+  if (kind === 'T') return 'task';
+  return 'ac';
+}
+
+function collectCommitRepairEvidence(repairs) {
+  const evidence = [];
+  for (const item of repairs) {
+    if (!item || typeof item !== 'object') continue;
+    const findingId = typeof item.finding_id === 'string' ? item.finding_id.trim() : '';
+    if (!findingId) continue;
+    const files = Array.isArray(item.files) ? item.files.filter((f) => typeof f === 'string' && f.trim()) : [];
+    const checks = Array.isArray(item.checks) ? item.checks.filter((c) => typeof c === 'string' && c.trim()) : [];
+    const status = typeof item.status === 'string' && item.status.trim() ? item.status.trim() : 'resolved';
+    evidence.push({ finding_id: findingId, files: [...new Set(files)].sort(), checks: [...new Set(checks)].sort(), status });
+  }
+  return evidence;
+}
+
+// Projeção v3 completa (ordem canônica de STATE_FILE_SCHEMA.md). Sink de VC1/VC2/
+// VC3/VC4 e da invariante INV2: disco sempre state_schema_version 3.
+function projectCommitStateV3(args, context) {
+  const runId = validateRunId(args.run_id);
+  const timestamp = nowIso();
+  const root = consumerRoot(args);
+  const baseSha = gitOutput(root, ['rev-parse', 'HEAD']).trim();
+  const liveness = context.dispatch.active?.liveness && typeof context.dispatch.active.liveness === 'object'
+    ? context.dispatch.active.liveness
+    : null;
+  const baseline = Array.isArray(liveness?.worktree_baseline)
+    ? liveness.worktree_baseline
+    : [];
+  const hasMutated = snapshotDeltaFiles(baseline, captureWorktreeSnapshot(root)).length > 0;
+
+  const planPath = optionalString(args, 'plan_path');
+  const sprintFilePath = optionalString(args, 'sprint_file_path');
+  const obligationIds = Array.isArray(args.obligation_ids)
+    ? args.obligation_ids.filter((id) => typeof id === 'string' && id.trim())
+    : [];
+  const proofs = Array.isArray(args.proofs) ? args.proofs : [];
+  const evalNa = Array.isArray(args.eval_na) ? args.eval_na.filter((id) => typeof id === 'string' && id.trim()) : [];
+
+  const checkTable = [];
+  const checkIndexFor = new Map();
+  const checkIndexOf = (check) => {
+    const trimmed = String(check ?? '').trim();
+    if (!trimmed) return -1;
+    if (!checkIndexFor.has(trimmed)) {
+      checkIndexFor.set(trimmed, checkTable.length);
+      checkTable.push(trimmed);
+    }
+    return checkIndexFor.get(trimmed);
+  };
+
+  const proofRefs = {};
+  const evalResults = [];
+  const taskEvidence = [];
+  const taskOrder = [];
+  for (const proof of proofs) {
+    if (!proof || typeof proof !== 'object') continue;
+    const kind = proof.kind;
+    const id = typeof proof.id === 'string' ? proof.id.trim() : '';
+    if (!id) continue;
+    const check = String(proof.check ?? '').trim();
+    if (!check) continue;
+    const files = Array.isArray(proof.files)
+      ? proof.files.filter((f) => typeof f === 'string' && f.trim())
+      : [];
+    const covers = Array.isArray(proof.covers)
+      ? proof.covers.filter((c) => typeof c === 'string' && c.trim())
+      : [];
+    const checkIndex = checkIndexOf(check);
+    if (kind === 'AC') {
+      proofRefs[id] = {
+        checks: [checkIndex],
+        files: files.map((f) => f),
+      };
+    } else if (kind === 'EVAL') {
+      evalResults.push({ id, status: evalNa.includes(id) ? 'not_applicable' : 'passed', evidence: [check], checks: [checkIndex] });
+    } else if (kind === 'T') {
+      taskOrder.push(id);
+      taskEvidence.push({ task: id, files, checks: [checkIndex], result: 'passed' });
+    }
+  }
+
+  const worktreeFinal = captureWorktreeSnapshot(root);
+  const committed = gitLines(root, ['diff', '--name-only', `${baseSha}...HEAD`]);
+  const worktreeDelta = snapshotDeltaFiles(baseline, worktreeFinal);
+  const expectedFiles = [...new Set([...committed, ...worktreeDelta])].sort();
+  const filesChanged = hasMutated
+    ? [...new Set([...expectedFiles, ...taskEvidence.flatMap((item) => item.files), ...proofRefsFiles(proofRefs)])].sort()
+    : [];
+  const indexOfFile = (rel) => filesChanged.indexOf(rel);
+  const proofRefsIndexed = Object.fromEntries(
+    Object.entries(proofRefs).map(([id, ref]) => [
+      id,
+      { checks: ref.checks, files: ref.files.map(indexOfFile).filter((i) => i >= 0) },
+    ]),
+  );
+
+  const policyScope = {
+    forbidden_scope: [],
+    required_gates: ['talos_verify_sprint_file', 'talos-task-validator'],
+  };
+  const repairEvidence = collectCommitRepairEvidence(args.repair ?? []);
+  const state = {
+    state_schema_version: STATE_COMPACT_SCHEMA_VERSION,
+    run_id: runId,
+    slice: args.slice,
+    base_sha: baseSha,
+    head_sha: baseSha,
+    contract_kind: planPath ? 'plan' : 'direct',
+    tasks: [...new Set(taskOrder)],
+    files_changed: filesChanged,
+    diff_stat: `${filesChanged.length} files, +${filesChanged.length} -0`,
+    plan_path: planPath ?? '.talos/plans/direct.md',
+    boundary_refs: [],
+    sprint_id: sprintFilePath ? (optionalString(args, 'sprint_file_path') ? inferSprintId(sprintFilePath) : null) : null,
+    sprint_file_path: sprintFilePath ?? null,
+    prd_path: null,
+    contract_ids: {
+      obligations: [...new Set(obligationIds)],
+      invariants: [],
+      scenarios: [],
+      risks: [],
+    },
+    eval_results: evalResults,
+    proof_refs: proofRefsIndexed,
+    policy_scope: policyScope,
+    check_table: checkTable,
+    validation_map: [],
+    task_evidence: taskEvidence.map((item) => ({
+      task: item.task,
+      files: item.files.map(indexOfFile).filter((i) => i >= 0),
+      checks: item.checks,
+      result: item.result,
+    })),
+    repair_evidence: repairEvidence.map((item) => ({
+      finding_id: item.finding_id,
+      files: item.files.map(indexOfFile).filter((i) => i >= 0),
+      checks: item.checks.map(checkIndexOf).filter((i) => i >= 0),
+      status: item.status,
+    })),
+    worktree_baseline: baseline,
+    worktree_final: worktreeFinal,
+    executed_at: timestamp,
+    executor_skill: context.routing.mode === 'direct'
+      ? WORKFLOW_CONFIG.skills.direct_execute
+      : WORKFLOW_CONFIG.skills.plan_execute,
+  };
+  return { state, worktreeDelta, filesChanged, hasMutated };
+}
+
+function proofRefsFiles(proofRefs) {
+  const out = [];
+  for (const ref of Object.values(proofRefs)) {
+    if (ref && Array.isArray(ref.files)) out.push(...ref.files);
+  }
+  return out;
+}
+
+function inferSprintId(sprintFilePath) {
+  const match = /SPRINT_(S\d{2}(?:[a-z]|\.\d+)?)_/i.exec(String(sprintFilePath));
+  return match ? match[1] : null;
+}
+
+function inferCommitRole(args, context) {
+  const dispatch = context.dispatch;
+  const active = dispatch.active;
+  const runId = validateRunId(args.run_id);
+  const cycle = normalizeValidatorCycle(context.state.data?.validator_cycle ?? {});
+
+  if (context.routing.mode === 'sprint_pref') {
+    return { status: 'blocked', code: 'onda3_pref_fora_de_escopo', error: 'Commit bloqueado: fase sprint_pref é onda 3 (D8); fora do escopo desta release', next_action: 'nao_commitar_em_pref' };
+  }
+  if (active && active.phase === 'plan_execute') {
+    if (cycle.active) {
+      return { status: 'blocked', code: 'validator_ativo', error: 'Commit bloqueado: validator ativo para esta slice; complete o ciclo antes de novo commit', next_action: 'completar_ciclo_validator_antes_de_commit' };
+    }
+    if (active.liveness?.last_commit_state_path && active.liveness.last_commit_state_path !== slicePathForCommit(args)) {
+      return { status: 'blocked', code: 'outro_path_commitado', error: `Commit bloqueado: último commit foi para ${active.liveness.last_commit_state_path}`, next_action: 'commit_apenas_no_path_da_slice_atual' };
+    }
+    const sliceRel = slicePathForCommit(args);
+    const sliceAbs = resolveConsumerPath(sliceRel, args);
+    const sliceExists = fs.existsSync(sliceAbs);
+    const sliceSha = sliceExists ? sha256HexFile(sliceAbs) : null;
+    if (cycle.status === 'repair_required' || cycle.status === 'repair_running') {
+      // Commit repair é a continuação do ciclo: handoff_ready anterior não
+      // bloqueia — o repair_start reabriu a slice para correção.
+      if (cycle.last_state_path && cycle.last_state_path !== sliceRel) {
+        return { status: 'blocked', code: 'repair_em_outro_path', error: `Commit repair bloqueado: repair ativo para ${cycle.last_state_path}`, next_action: 'reparar_o_path_original' };
+      }
+      if (!Array.isArray(args.repair) || args.repair.length === 0) {
+        return { status: 'blocked', code: 'repair_sem_repairs', error: 'Commit repair exige repair[] não vazio', next_action: 'enviar_repair_com_findings' };
+      }
+      const lastCommitSha = active.liveness?.slice_commit_sha256 ?? null;
+      if (!lastCommitSha || sliceSha === null || sliceSha !== lastCommitSha) {
+        return { status: 'blocked', code: 'repair_sha_divergente', error: 'Commit repair bloqueado: sha do disco diverge do último commit MCP (repair deve partir do state commitado)', next_action: 'recommit_do_state_atual_antes_do_repair' };
+      }
+      return { role: 'repair', baseline: active.liveness?.worktree_baseline ?? [], baseSha: active.liveness?.base_sha ?? null, sliceSha };
+    }
+    if (active.liveness?.status === 'handoff_ready') {
+      return { status: 'blocked', code: 'handoff_ja_pronto', error: 'Commit bloqueado: liveness já handoff_ready para este path', next_action: 'abrir_validator_ou_novo_dispatch' };
+    }
+    if (Array.isArray(args.repair) && args.repair.length > 0) {
+      // AC-1.1.3 (D9): repair[] só é aceito com slot repair_start aberto.
+      // Ciclo idle + repair[] no input = repair sem slot → blocked, sem escrita.
+      return { status: 'blocked', code: 'repair_sem_slot', error: 'Commit bloqueado: repair[] sem slot repair_start aberto (role pelo lock)', next_action: 'abrir_slot_repair_antes_do_commit_repair' };
+    }
+    const hasBaseline = Array.isArray(active.liveness?.worktree_baseline) && active.liveness.worktree_baseline.length >= 0;
+    if (active.liveness && active.liveness.worktree_baseline === undefined) {
+      // AC-1.2.3: sem first_write, o commit só é válido se o worktree está limpo
+      // (no-op slice). Diff real vs HEAD decide — não bloquear incondicionalmente.
+      const rootNow = consumerRoot(args);
+      const baseShaNow = active.liveness?.base_sha ?? gitOutput(rootNow, ['rev-parse', 'HEAD']).trim();
+      const committedNow = gitLines(rootNow, ['diff', '--name-only', `${baseShaNow}...HEAD`]);
+      const worktreeNow = snapshotDeltaFiles([], captureWorktreeSnapshot(rootNow));
+      if (committedNow.length > 0 || worktreeNow.length > 0) {
+        return { status: 'blocked', code: 'sem_first_write_dirty', error: 'Commit bloqueado: worktree sujo sem first_write (baseline ausente no ledger)', next_action: 'emitir_first_write_antes_do_commit' };
+      }
+      // No-op (worktree limpo, sem commits desde base_sha): passa sem baseline.
+      return { role: 'execute', baseline: [], baseSha: active.liveness?.base_sha ?? null, sliceSha: null };
+    }
+    if (!sliceExists) {
+      return { role: 'execute', baseline: active.liveness?.worktree_baseline ?? [], baseSha: active.liveness?.base_sha ?? null, sliceSha: null };
+    }
+    const diskSha = sha256HexFile(sliceAbs);
+    const ledgerSha = active.liveness?.slice_commit_sha256 ?? null;
+    if (ledgerSha !== null && diskSha === ledgerSha) {
+      return { role: 'execute', baseline: active.liveness?.worktree_baseline ?? [], baseSha: active.liveness?.base_sha ?? null, sliceSha: diskSha };
+    }
+    return { status: 'blocked', code: 'slice_orfã', error: 'Commit bloqueado: state_path já existe em disco com sha divergente do ledger (órfão/dual-writer); commit é absoluto e não sobrescreve estado alheio', next_action: 'remover_ou_renomear_slice_orfã_antes_do_commit' };
+  }
+  return { status: 'blocked', code: 'sem_plan_execute', error: 'Commit só se aplica com plan_execute ativo (D9: role pelo lock)', next_action: 'dispatch_plan_execute_antes_do_commit' };
+}
+
+function slicePathForCommit(args) {
+  return `.talos/state/${validateRunId(args.run_id)}/${args.slice}.json`;
+}
+
+function sha256HexFile(absPath) {
+  return crypto.createHash('sha256').update(fs.readFileSync(absPath)).digest('hex');
+}
+
+function markCommitHandoff(runId, args, result, statePathValue, stateSha256) {
+  const previous = readState(runId, args);
+  const currentDispatch = previous.data?.dispatch ?? {};
+  const history = appendLedgerHistory(currentDispatch.history, {
+    timestamp: result.timestamp,
+    phase: 'plan_execute',
+    action: 'commit_state',
+    event: 'commit_state',
+    status: result.status,
+    next_action: result.next_action ?? null,
+    error: result.error ?? null,
+  });
+  const liveness = currentDispatch.active?.liveness && typeof currentDispatch.active.liveness === 'object'
+    ? currentDispatch.active.liveness
+    : null;
+  const nextLiveness = liveness ? {
+    ...liveness,
+    status: 'handoff_ready',
+    last_checkpoint: 'commit_state',
+    last_progress_at: result.timestamp,
+    slice_commit_sha256: stateSha256,
+    last_commit_state_path: statePathValue,
+    next_progress_deadline_at: null,
+  } : null;
+  const data = {
+    ...(previous.data ?? {}),
+    dispatch: {
+      ...currentDispatch,
+      ...(nextLiveness ? { active: { ...currentDispatch.active, liveness: nextLiveness } } : {}),
+      history,
+    },
+    gates: {
+      ...(previous.data?.gates ?? {}),
+      G12: compactLedgerEvent(result),
+    },
+  };
+  return upsertState({
+    run_id: runId,
+    project_root: args.project_root,
+    phase: previous.phase ?? 'dispatch',
+    status: 'dispatch_ok',
+    summary: 'G12: commit_state',
+    data,
+  });
+}
+
+function commitState(args = {}) {
+  const runId = validateRunId(args.run_id);
+  if (Object.prototype.hasOwnProperty.call(args, LEGACY_ROUTE_KEY)) {
+    throw rpcError(-32602, `unknown_property: ${LEGACY_ROUTE_KEY}`);
+  }
+  const denied = Object.keys(args).filter((key) => COMMIT_STATE_DENYLIST.has(key));
+  if (denied.length > 0) {
+    throw rpcError(-32602, `unknown_property: ${denied[0]} (campo projetado pelo MCP — executor não envia)`);
+  }
+  if (typeof args.slice !== 'string' || !args.slice.trim()) throw rpcError(-32602, 'slice obrigatório');
+  if (!Array.isArray(args.proofs) || args.proofs.length === 0) {
+    throw rpcError(-32602, 'proofs obrigatório (AC/EVAL/T)');
+  }
+  for (const [index, proof] of args.proofs.entries()) {
+    if (!proof || typeof proof !== 'object') throw rpcError(-32602, `proofs[${index}] deve ser objeto`);
+    if (!['AC', 'EVAL', 'T'].includes(proof.kind)) throw rpcError(-32602, `proofs[${index}].kind deve ser AC|EVAL|T`);
+    if (typeof proof.id !== 'string' || !proof.id.trim()) throw rpcError(-32602, `proofs[${index}].id obrigatório`);
+    if (typeof proof.check !== 'string' || !proof.check.trim()) throw rpcError(-32602, `proofs[${index}].check obrigatório`);
+  }
+  if (args.repair !== undefined && !Array.isArray(args.repair)) throw rpcError(-32602, 'repair deve ser array');
+
+  const context = getDispatchState(runId, args);
+  const inferred = inferCommitRole(args, context);
+  if (inferred.status === 'blocked') {
+    const timestamp = nowIso();
+    return {
+      gate: 'G12', action: 'commit_state', phase: 'plan_execute', status: 'blocked', timestamp,
+      state_path: slicePathForCommit(args),
+      error: inferred.error, code: inferred.code, next_action: inferred.next_action,
+    };
+  }
+  const timestamp = nowIso();
+  const statePathValue = slicePathForCommit(args);
+  const stateAbs = resolveConsumerPath(statePathValue, args);
+
+  let projected;
+  try {
+    projected = projectCommitStateV3(args, context);
+  } catch (error) {
+    return {
+      gate: 'G12', action: 'commit_state', phase: 'plan_execute', status: 'blocked', timestamp,
+      state_path: statePathValue, error: `Commit bloqueado: falha ao projetar state: ${error.message}`,
+      next_action: 'corrigir_boundary_antes_do_commit',
+    };
+  }
+  const { state, filesChanged } = projected;
+  const liveness = context.dispatch.active?.liveness ?? {};
+  const baseline = Array.isArray(liveness.worktree_baseline) ? liveness.worktree_baseline : [];
+  const hasBaseline = liveness.worktree_baseline !== undefined;
+  if (inferred.role === 'repair') {
+    state.worktree_baseline = inferred.baseline;
+    state.worktree_final = captureWorktreeSnapshot(consumerRoot(args));
+  } else if (inferred.role === 'execute' && !hasBaseline && filesChanged.length > 0) {
+    return {
+      gate: 'G12', action: 'commit_state', phase: 'plan_execute', status: 'blocked', timestamp,
+      state_path: statePathValue, error: 'Commit bloqueado: worktree sujo sem first_write (AC-1.2.3)',
+      next_action: 'emitir_first_write_antes_do_commit',
+    };
+  }
+
+  if (state.worktree_final === undefined) state.worktree_final = captureWorktreeSnapshot(consumerRoot(args));
+  if (state.worktree_baseline === undefined) state.worktree_baseline = [];
+  if (state.base_sha === undefined) state.base_sha = gitOutput(consumerRoot(args), ['rev-parse', 'HEAD']).trim();
+  if (state.head_sha === undefined) state.head_sha = state.base_sha;
+
+  const dir = path.dirname(stateAbs);
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const tmp = `${stateAbs}.${process.pid}.tmp`;
+  let writtenSha = null;
+  try {
+    fs.writeFileSync(tmp, `${JSON.stringify(state)}\n`, { mode: 0o600 });
+    fs.renameSync(tmp, stateAbs);
+    writtenSha = sha256HexFile(stateAbs);
+  } catch (error) {
+    try { fs.rmSync(tmp, { force: true }); } catch { /* best-effort */ }
+    return {
+      gate: 'G12', action: 'commit_state', phase: 'plan_execute', status: 'blocked', timestamp,
+      state_path: statePathValue, error: `Commit bloqueado: falha ao gravar slice: ${error.message}`,
+      next_action: 'corrigir_gravacao_e_recommitar',
+    };
+  }
+
+  const commitResult = {
+    gate: 'G12',
+    action: 'commit_state',
+    phase: 'plan_execute',
+    status: 'passed',
+    timestamp,
+    role: inferred.role,
+    state_path: statePathValue,
+    state_sha256: writtenSha,
+    diff_stat: state.diff_stat,
+    next_action: 'open_validator',
+  };
+  try {
+    markCommitHandoff(runId, args, commitResult, statePathValue, writtenSha);
+  } catch (error) {
+    return {
+      gate: 'G12', action: 'commit_state', phase: 'plan_execute', status: 'blocked', timestamp,
+      state_path: statePathValue, state_sha256: writtenSha,
+      error: `Commit gravou a slice mas falhou ao atualizar o ledger: ${error.message}`,
+      next_action: 'corrigir_ledger_e_reemitir_status',
+    };
+  }
+  return commitResult;
+}
+
 // Banner canônico do lock_dispatch (T07): mapeia (fase, status) ao evento do
 // banco. Fase de execução → `exec`/`validação`; review → `review`; conclusão de
 // plano → `plano`; bloqueio → `preflight_fail` (BLOCK genérico com motivo).
@@ -6355,6 +6823,53 @@ function toolsList() {
           },
         },
       },
+      {
+        name: 'talos_commit_state',
+        description: 'G12/D1: writer do JSON de slice. Recebe julgamento curto do executor/repair e projeta o state v3 completo no disco (escrita absoluta via commitState); retorna state_path + state_sha256 e marca handoff_ready no ledger.',
+        inputSchema: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['run_id', 'slice', 'proofs'],
+          properties: {
+            run_id: { type: 'string', minLength: 1 },
+            project_root: { type: 'string', minLength: 1 },
+            slice: { type: 'string', minLength: 1 },
+            plan_path: { type: 'string', minLength: 1 },
+            sprint_file_path: { type: 'string', minLength: 1 },
+            obligation_ids: { type: 'array', items: { type: 'string', minLength: 1 } },
+            proofs: {
+              type: 'array',
+              items: {
+                type: 'object',
+                additionalProperties: false,
+                required: ['kind', 'id', 'check'],
+                properties: {
+                  kind: { type: 'string', enum: ['AC', 'EVAL', 'T'] },
+                  id: { type: 'string', minLength: 1 },
+                  check: { type: 'string', minLength: 1 },
+                  files: { type: 'array', items: { type: 'string', minLength: 1 } },
+                  covers: { type: 'array', items: { type: 'string', minLength: 1 } },
+                },
+              },
+            },
+            eval_na: { type: 'array', items: { type: 'string', minLength: 1 } },
+            repair: {
+              type: 'array',
+              items: {
+                type: 'object',
+                additionalProperties: false,
+                required: ['finding_id', 'files', 'checks', 'status'],
+                properties: {
+                  finding_id: { type: 'string', minLength: 1 },
+                  files: { type: 'array', items: { type: 'string', minLength: 1 } },
+                  checks: { type: 'array', items: { type: 'string', minLength: 1 } },
+                  status: { type: 'string', minLength: 1 },
+                },
+              },
+            },
+          },
+        },
+      },
     ],
   };
 }
@@ -6393,7 +6908,8 @@ function handleRequest(message) {
                                 name === 'talos_lock_dispatch' ? lockDispatch(args) :
                                   name === 'talos_lock_validator' ? lockValidator(args) :
                                     name === 'talos_assert_after_plan' ? assertAfterPlan(args) :
-                                      (() => { throw rpcError(-32601, `Tool desconhecida: ${name}`); })();
+                                      name === 'talos_commit_state' ? commitState(args) :
+                                        (() => { throw rpcError(-32601, `Tool desconhecida: ${name}`); })();
       logCall({ tool: name, run: args.run_id ?? null, status: 'ok' }, args);
       return { id, result: toolResult(value) };
     } catch (error) {
@@ -6533,4 +7049,5 @@ export {
   runState,
   ping,
   toolsList,
+  commitState,
 };

@@ -249,9 +249,19 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `talos-*` para o
 
 ---
 
-**Plugin version:** 0.17.2
+**Plugin version:** 0.18.0
 **Author:** Paulo Borini
-**Last updated:** 2026-08-17
+**Last updated:** 2026-08-21
+
+### Novidades v0.18.0 — onda 1 completa: writer MCP + guards DR01–04 + release 0.18
+
+- **Writer do JSON de slice virou o MCP.** O executor/repair **não** monta nem escreve `.talos/state/<run_id>/<slice>.json` — chama `talos_commit_state` com julgamento curto (`proofs[]`, `obligation_ids`, `plan_path`, `sprint_file_path`, `eval_na`, `repair[]`) e recebe `state_path` + `state_sha256`. O MCP projeta o state v3 completo (escrita absoluta tmp+rename) e registra `liveness.slice_commit_sha256` no ledger.
+- **G12 público é só `first_write`.** O checkpoint do executor é emitido uma única vez, imediatamente antes da primeira mutação; o MCP bloqueia qualquer outro event de executor (conjunto público enxuto). Slice no-op só commita (120s sem stalled).
+- **`talos_lock_validator(start)` por sha, não por checkpoint.** O slot só abre se o sha do disco for o do último commit MCP daquele path (`liveness.slice_commit_sha256`); JSON de slice escrito à mão (órfão/dual-writer) é bloqueado.
+- **Repair pelo mesmo verbo.** `talos-findings-repair` corrige e commita via `talos_commit_state` com `repair[]` no mesmo `state_path`, sem editor no JSON.
+- Skills `talos-plan-execute`, `talos-direct-execute`, `talos-findings-repair` e o G12 deste SKILL reescritos para o fluxo onda 1.
+- **Guards DR01–04 no `check-consistency`.** Skills de execução (canônicas e espelhos `hosts/`/`plugins/`) que reensinaram `STATE_FILE_SCHEMA.md`, escrita de `worktree_baseline`/`worktree_final`, checkpoints mortos ou `"acceptance_results"` no payload falham o guard citando o DR* (allowlist: schema, MCP, task-validator, testes).
+- **Release `0.18.0`** sincroniza `packages/` + `hosts/` + `plugins/talos/` no mesmo bump (`node build/bump-version.mjs 0.18.0`); espelhos regenerados, nunca editados à mão. Breaking de procedimento (writer do slice = MCP), disco permanece v3.
 
 ### Novidades v0.17.2 — instalador zcode via marketplace (substitui o caminho do data-dir)
 
@@ -389,10 +399,10 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `talos-*` para o
 ### Novidades v0.8.4 — liveness do executor (Gate G12)
 
 - `plan_execute` agora tem liveness explícito: `talos_lock_dispatch(start)` cria deadline de bootstrap e o executor precisa emitir checkpoints materiais.
-- `talos-plan-execute` deve reportar `executor_started`, `skill_loaded`, `plan_loaded`, `handoff_accepted`, `task_started`, `first_write` e `state_path_created` conforme avança.
+- O executor reporta `first_write` (checkpoint público G12, uma única vez, imediatamente antes da primeira mutação) e comprova o handoff via `talos_commit_state` — os demais events de executor foram removidos no G12 enxuto da onda 1 (v0.17.3; ver seção de novidades acima).
 - Se o sub-agent não retornar/progredir antes do handoff, o orquestrador consulta `talos_lock_dispatch(status)`; bootstrap vencido vira `executor_bootstrap_timeout`, checkpoint antigo sem avanço vira `executor_progress_timeout`; ambos persistem `stalled`, liberam retry e não podem ser tratados como execução em andamento.
-- Depois de `state_path_created`, o liveness fica `handoff_ready` e não expira por timeout de progresso enquanto aguarda o orquestrador abrir `talos_lock_validator(start)`.
-- `talos_lock_validator(start)` só abre o validator depois de `state_path_created` para o mesmo `state_path`; checkpoint final sem arquivo legível é bloqueado.
+- Depois de `talos_commit_state`, o liveness fica `handoff_ready` (com `slice_commit_sha256` no ledger) e não expira por timeout de progresso enquanto aguarda o orquestrador abrir `talos_lock_validator(start)`.
+- `talos_lock_validator(start)` só abre o validator quando o sha do disco for o do último commit MCP daquele `state_path`; JSON de slice escrito à mão (órfão/dual-writer) é bloqueado.
 
 ### Novidades v0.8.2 — release/npm e procedimento de bump
 
