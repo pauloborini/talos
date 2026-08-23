@@ -7,6 +7,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { collectExecuteSkillDirs, scanDirDr } from './dr-guard.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const errors = [];
@@ -489,6 +490,19 @@ for (const [english, portuguese] of [['README.md', 'README.pt-BR.md'], ['COMMAND
     if (!header.includes(marker) || !header.includes(`](${peer})`)) {
       errors.push(`documentação bilíngue: ${file} deve referenciar ${peer} no cabeçalho`);
     }
+  }
+}
+
+// DR01–04 (onda 1 enxugar-state, design spec 2026-08-19 §6.1): skills de execução
+// (plan-execute / direct-execute / findings-repair) — canônicas e espelhos
+// hosts/**/plugins/** — não podem reensinar o blob (schema de state, snapshots de
+// worktree como instrução de escrita, checkpoints mortos, `acceptance_results` no
+// payload do executor). Allowlist: STATE_FILE_SCHEMA.md, packages/mcp-server/**,
+// talos-task-validator/** e testes ficam fora dos globs varridos. A mensagem cita
+// o DR* (CN7 / AC-3.1.1).
+for (const dir of collectExecuteSkillDirs(ROOT)) {
+  for (const { rel, dr } of scanDirDr(ROOT, dir)) {
+    errors.push(`${dr} drift: ${rel} reensina âncora morta do blob (onda 1 enxugar-state — execute/repair não ensinam Write/schema/events/acceptance_results)`);
   }
 }
 

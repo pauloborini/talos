@@ -13,6 +13,9 @@
 # Config local do Claude Code
 .claude/settings.local.json
 
+# Preferências locais do Command Code (não versionar)
+.commandcode/
+
 # Build artifacts (gerados por build/build-plugins.sh em S02)
 dist/
 .build-stage/

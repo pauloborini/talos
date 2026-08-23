@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.18.0 - 2026-08-21
+
+Tipo: **runtime**. **Com breaking de procedimento** (writer do JSON de slice deixa de ser a LLM). Schema MCP: v5 (inalterado). Disco do state: v3 (inalterado).
+
+Resumo: onda 1 da trilha enxugar-state. O executor/repair deixa de montar e escrever `.talos/state/<run_id>/<slice>.json` — o único writer do slice vira o MCP via `talos_commit_state` (julgamento curto `proofs[]`/`repair[]`, projeção dos mapas v3, escrita atômica tmp+rename, sha no ledger). G12 público encolhe para `first_write` + commit (7 checkpoints mortos bloqueados). `talos_lock_validator(start)` passa a comparar o sha do disco com o último commit MCP daquele path — JSON de slice escrito à mão (órfão/dual-writer) é bloqueado. Skills `talos-plan-execute`/`talos-direct-execute`/`talos-findings-repair` e o orquestrador G12 reescritos para o fluxo onda 1. `build/check-consistency.mjs` ganha os guards DR01–04 (fail se skill de execução, canônica ou espelho `hosts/`/`plugins/`, reensinar schema/Write/checkpoints mortos/`acceptance_results`). Release `0.18.0` sincroniza `packages/` + `hosts/` + `plugins/talos/` no mesmo bump.
+
+Mudanças:
+- **`packages/mcp-server/server.js`** — tool nova `talos_commit_state` (G12/D1): valida payload (`additionalProperties: false`; campos projetados como `acceptance_results`, `worktree_*`, `role` → `-32602`), infere role pelo lock (execute/repair; pref = onda 3 bloqueado), projeta o state v3 completo a partir de proofs+git+ledger (`proof_refs`/`eval_results`/`task_evidence`/`check_table`/`validation_map`/`repair_evidence`, `files: []` sem `files`), escreve atômico e devolve `state_path` + `state_sha256`; `startDispatch` grava `base_sha = git rev-parse HEAD`; `checkpointDispatch` só aceita `first_write` (demais events → `checkpoint_desconhecido`); `statusDispatch` deixa de usar `checkpoints.length === 0` como único critério de stalled (bootstrap 120s: stalled só se nem `first_write` nem commit); `validatorStart` recusa órfão por sha.
+- **`packages/mcp-server/server.test.js`** — suíte 308 testes (inclui commits, G12, órfão, DR*, superfície de tools); helper `lockValidator` deixa de forjar `state_path_created`.
+- **`packages/skills/talos-plan-execute/SKILL.md`, `talos-direct-execute/SKILL.md`, `talos-findings-repair/SKILL.md`, `packages/orchestrator/skills/talos/SKILL.md`** — procedimento onda 1: `first_write` (se mutar) → trabalho → `talos_commit_state` → handoff com `state_path` do retorno; sem blob/7 events; repair/direct no mesmo verbo.
+- **`build/check-consistency.mjs` + `build/dr-guard.mjs` (novo)** — guards DR01–04 (CN7) com allowlist do design spec §6.1; mensagem cita o DR*.
+- **`build/check-consistency.guard.test.mjs` (novo)** — prova do guard com fixtures em temp + skills canônicas/espelhos reais (AC-3.1.1).
+- **`build/bump-version.mjs` + `build/build-plugins.sh`** — bump `0.17.2 → 0.18.0` regenera `dist/` + `plugins/talos/` + `hosts/{opencode,pi,vscode,zcode}/` no mesmo comando; espelhos nunca editados à mão (D14).
+- **`CHANGELOG.md`, `packages/orchestrator/README.md`** — entrada 0.18.0 e Novidades v0.18.0.
+
+Impacto:
+- Executor/repair em slice real: chamar `talos_commit_state` e usar `state_path` do retorno; sem Write/editor no JSON de slice; JSON escrito à mão não abre o validator frio.
+- Guard `check-consistency` passa a falhar se qualquer skill de execução (ou espelho) reensinar âncoras mortas.
+- Instalação 0.18 não serve skill 0.17 de Write+teatro; disco permanece v3 (sem v4).
+
+Arquivos/artefatos:
+- `VERSION` → `0.18.0`; `package.json`; `packages/mcp-server/package.json`; `.claude-plugin/plugin.json`; manifests/READMEs concretos; `CHANGELOG.md`; `packages/orchestrator/README.md`; `dist/talos-{claude,codex,opencode,pi,zcode,vscode}.plugin` + `SHA256SUMS`; catálogos `hosts/{opencode,pi,zcode,vscode}/` e `plugins/talos/`.
+
+Validação:
+- `node --test build/check-consistency.guard.test.mjs` — ok (6/6; red observado com glob não varrido).
+- `node --test packages/mcp-server/server.test.js` — ok (308/308; red observado em AC-3.2.2 com pref no G12).
+- `node build/check-consistency.mjs` — ok (falhava nos espelhos 0.17.2 antes do bump; verde pós-bump).
+- `git diff --check` — ok.
+- `claude plugin validate ./ --strict` — ok.
+
 ## 0.17.2 - 2026-08-17
 
 Tipo: **packaging**. **Sem breaking**. Schema MCP: v5 (inalterado).
