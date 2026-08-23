@@ -1,6 +1,6 @@
 {
   "name": "talos",
-  "version": "0.17.2",
+  "version": "0.18.0",
   "description": "Orquestra pipelines de desenvolvimento de features no Talos (sprint file com contrato de produto, entrevista, plano, execução, repair, review), auditoria universal e geração explícita de backlog mestre. Bundle único: skills talos-* + orquestrador + templates canônicos + validator subagente. Pipeline orientado a artefato com gates G1–G11.",
   "author": {
     "name": "Paulo Borini"
@@ -23,7 +23,9 @@
     "talos": {
       "command": "/bin/bash",
       "args": [
-        "${CLAUDE_PLUGIN_ROOT}/packages/mcp-server/run.sh"
+        "-c",
+        "for r in \"${CLAUDE_PLUGIN_ROOT:-}\" \"${PLUGIN_ROOT:-}\" \"${CURSOR_PLUGIN_ROOT:-}\" \"$PWD\"; do [ -n \"$r\" ] && [ -f \"$r/packages/mcp-server/run.sh\" ] && exec /bin/bash \"$r/packages/mcp-server/run.sh\" \"$@\"; done; for s in /home/box/agent-data/plugins/cache/talos/talos/*/packages/mcp-server/run.sh /home/box/sand-data/plugins/cache/talos/talos/*/packages/mcp-server/run.sh; do [ -f \"$s\" ] && exec /bin/bash \"$s\" \"$@\"; done; echo \"talos-mcp: run.sh não encontrado\" >&2; exit 1",
+        "talos-mcp"
       ],
       "transport": "stdio"
     }

@@ -50,6 +50,7 @@ import {
   runState,
   ping,
   toolsList,
+  commitState,
 } from './server.js';
 import {
   parseSprintRows,
@@ -77,6 +78,22 @@ const SPRINT_INTERVIEW_SKILL_PATH = path.resolve(
 const ORCHESTRATOR_SKILL_PATH = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   '../orchestrator/skills/talos/SKILL.md',
+);
+const PLAN_EXECUTE_SKILL_PATH = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '../skills/talos-plan-execute/SKILL.md',
+);
+const DIRECT_EXECUTE_SKILL_PATH = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '../skills/talos-direct-execute/SKILL.md',
+);
+const FINDINGS_REPAIR_SKILL_PATH = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '../skills/talos-findings-repair/SKILL.md',
+);
+const SLICE_REVIEW_SKILL_PATH = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '../skills/talos-slice-review/SKILL.md',
 );
 
 function ensureValidatorStateFixture(root, runId, statePath) {
@@ -112,17 +129,36 @@ function ensureValidatorStateFixture(root, runId, statePath) {
 }
 
 function lockValidator(args) {
+  // AC-1.3.3 (LEG4): o wrapper NUNCA emite checkpoint público `state_path_created`
+  // (event morto desde o Plano 01). Testes de ciclo que precisam de slice em
+  // disco: fixture de READER (ensureValidatorStateFixture) e, na sequência, o
+  // sha do arquivo é registrado no ledger via upsert — caminho de harness
+  // documentado, NÃO o caminho execute (o execute real é commitState). Sem sha
+  // no ledger o start bloquearia por órfão; registrar o sha isola o comportamento
+  // sob prova (FSM, token, teto, proof-of-work) do gate de dual-writer.
   if (args.action === 'start' && args.state_path) {
     try {
       ensureValidatorStateFixture(args.project_root, args.run_id, args.state_path);
-      lockDispatch({
-        run_id: args.run_id,
-        project_root: args.project_root,
-        action: 'checkpoint',
-        phase: 'plan_execute',
-        event: 'state_path_created',
-        state_path: args.state_path,
-      });
+      const abs = path.resolve(args.project_root, args.state_path);
+      const sha = crypto.createHash('sha256').update(fs.readFileSync(abs)).digest('hex');
+      const current = runState({ action: 'get', run_id: args.run_id, project_root: args.project_root });
+      const data = current.data ?? {};
+      const liveness = data.dispatch?.active?.liveness ?? {};
+      data.dispatch = {
+        ...(data.dispatch ?? {}),
+        active: {
+          ...(data.dispatch?.active ?? {}),
+          liveness: {
+            ...liveness,
+            status: 'handoff_ready',
+            last_checkpoint: 'commit_state',
+            last_progress_at: new Date().toISOString(),
+            slice_commit_sha256: sha,
+            last_commit_state_path: args.state_path,
+          },
+        },
+      };
+      runState({ action: 'upsert', run_id: args.run_id, project_root: args.project_root, data });
     } catch {
       // Testes de hard-fail devem alcançar o runtime original.
     }
@@ -220,6 +256,7 @@ test('tools: conjunto registrado é exatamente a lista canônica, sem adição (
     'talos_assert_after_plan',
     'talos_capabilities',
     'talos_classify_input',
+    'talos_commit_state',
     'talos_lock_dispatch',
     'talos_lock_validator',
     'talos_ping',
@@ -2852,20 +2889,33 @@ test('talos_update_sprint_status: manual_validation_pending exige validator term
   });
   assert.equal(rB.status, 'blocked');
   assert.ok(rB.pendencies.some((p) => p.category === 'acceptance_results'));
-  // (c) unproved presente bloqueia MVP.
-  const rootC = tmpRoot();
-  writeSprintFixture(rootC, 'S01', { status: 'review', dorStatus: 'verde' });
-  fs.writeFileSync(path.join(rootC, 'BACKLOG.md'), backlogWithRows([
+  // (c1) violated presente bloqueia MVP.
+  const rootC1 = tmpRoot();
+  writeSprintFixture(rootC1, 'S01', { status: 'review', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(rootC1, 'BACKLOG.md'), backlogWithRows([
     '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | review | validator:pending | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
   ]));
-  writeStateWithAcceptance(rootC, 'S01.json', [{ id: 'AC-001', status: 'unproved', proof_types: ['T-outcome:unproved'] }]);
-  const rC = updateSprintStatus({
-    run_id: 'r1', project_root: rootC, backlog_path: 'BACKLOG.md', sprint_id: 'S01',
+  writeStateWithAcceptance(rootC1, 'S01.json', [{ id: 'AC-001', status: 'violated', proof_types: ['T-outcome:unproved'] }]);
+  const rC1 = updateSprintStatus({
+    run_id: 'r1', project_root: rootC1, backlog_path: 'BACKLOG.md', sprint_id: 'S01',
     status: 'manual_validation_pending', validator_verdict: 'pass', state_path: '.talos/state/S01.json',
   });
-  assert.equal(rC.status, 'blocked');
-  assert.ok(rC.pendencies.some((p) => p.category === 'acceptance_results'));
-  // (d) sem manual_pending (todos proved) → MVP não é o status certo.
+  assert.equal(rC1.status, 'blocked');
+  assert.ok(rC1.pendencies.some((p) => p.category === 'acceptance_results' && /violated/.test(p.message)));
+  // (c2) unproved presente com validator pass avança para MVP.
+  const rootC2 = tmpRoot();
+  writeSprintFixture(rootC2, 'S01', { status: 'review', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(rootC2, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | review | validator:pass | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+  writeStateWithAcceptance(rootC2, 'S01.json', [{ id: 'AC-001', status: 'unproved', proof_types: ['T-outcome:unproved'] }]);
+  const rC2 = updateSprintStatus({
+    run_id: 'r1', project_root: rootC2, backlog_path: 'BACKLOG.md', sprint_id: 'S01',
+    status: 'manual_validation_pending', validator_verdict: 'pass', state_path: '.talos/state/S01.json',
+  });
+  assert.equal(rC2.status, 'passed');
+  assert.equal(rC2.next_status, 'manual_validation_pending');
+  // (d) sem nenhum AC não-provado (todos proved) → MVP bloqueia (deve usar done).
   const rootD = tmpRoot();
   writeSprintFixture(rootD, 'S01', { status: 'review', dorStatus: 'verde' });
   fs.writeFileSync(path.join(rootD, 'BACKLOG.md'), backlogWithRows([
@@ -2968,7 +3018,7 @@ test('talos_sync_manual_validation: waiver sem justificativa bloqueia (AC-4.1.1)
   assert.equal(fs.existsSync(path.join(root, '.talos/manual-validation/backlog.md')), true);
 });
 
-test('talos_sync_manual_validation: item fantasma sem AC.manual correspondente bloqueia (AC-4.1.2)', () => {
+test('talos_sync_manual_validation: item fantasma sem AC correspondente no §7.3 bloqueia (AC-4.1.2)', () => {
   const root = tmpRoot();
   setupMvpSprint(root, {
     acceptance: [
@@ -2976,14 +3026,75 @@ test('talos_sync_manual_validation: item fantasma sem AC.manual correspondente b
       { id: 'AC-002', status: 'manual_pending', proof_types: ['I:present', 'M:pending'] },
     ],
   });
-  // AC-001 existe no contrato mas com manual: null — sem AC.manual correspondente.
+  // AC-999 não existe no contrato §7.3.
   writeManualValidationReport(root, [
-    '| MV-S01-AC-001 | S01 / AC-001 | alta | validated | passo a passo | dev | resultado observável | smoke ok |',
+    '| MV-S01-AC-999 | S01 / AC-999 | alta | validated | passo a passo | dev | resultado observável | smoke ok |',
   ]);
   const r = syncManualValidation({ run_id: 'r-phantom', project_root: root, backlog_path: 'BACKLOG.md' });
   assert.equal(r.status, 'blocked');
   assert.ok(r.pendencies.some((p) => p.category === 'relatorio_manual' && /fantasma/.test(p.message)));
   assert.equal(r.next_action, 'fix_manual_validation_report');
+});
+
+test('talos_sync_manual_validation: cenário S06-like — AC unproved (sem manual prévio) com waiver válido promove a done com handoff', () => {
+  const root = tmpRoot();
+  setupMvpSprint(root, {
+    acceptance: [
+      { id: 'AC-001', status: 'unproved', proof_types: ['I:present', 'T-outcome:unproved'] },
+    ],
+  });
+  // AC-001 existe no §7.3 (com manual: null) e ficou unproved pela proibição de testes.
+  writeManualValidationReport(root, [
+    '| MV-S01-AC-001 | S01 / AC-001 | alta | waived | fluxo x | prod | evidência | dispensado pelo usuário conforme operational_rules |',
+  ]);
+  const r = syncManualValidation({ run_id: 'r-s06', project_root: root, backlog_path: 'BACKLOG.md' });
+  assert.equal(r.status, 'passed', JSON.stringify(r.pendencies, null, 1));
+  assert.equal(r.sprints[0].sprint_id, 'S01');
+  assert.equal(r.sprints[0].state, 'done');
+  assert.equal(r.sprints[0].promoted, true);
+  assert.ok(r.handoff_path, 'deve emitir handoff');
+  const state = JSON.parse(fs.readFileSync(path.join(root, '.talos/state/S01.json'), 'utf8'));
+  const ac001 = state.acceptance_results.find((item) => item.id === 'AC-001');
+  assert.equal(ac001.status, 'proved');
+  assert.ok(ac001.proof_types.includes('M:waived'));
+});
+
+test('talos_sync_manual_validation: cenário S07-like — misto unproved + manual_pending promove a done quando ambos cobertos', () => {
+  const root = tmpRoot();
+  setupMvpSprint(root, {
+    acceptance: [
+      { id: 'AC-001', status: 'unproved', proof_types: ['I:present', 'T-outcome:unproved'] },
+      { id: 'AC-002', status: 'manual_pending', proof_types: ['I:present', 'M:pending'] },
+    ],
+  });
+  writeManualValidationReport(root, [
+    '| MV-S01-AC-001 | S01 / AC-001 | média | waived | cenário 1 | dev | evidência 1 | dispensado: teste de UI manual realizado |',
+    '| MV-S01-AC-002 | S01 / AC-002 | alta | validated | cenário 2 | dev | evidência 2 | smoke ok validado |',
+  ]);
+  const r = syncManualValidation({ run_id: 'r-s07', project_root: root, backlog_path: 'BACKLOG.md' });
+  assert.equal(r.status, 'passed', JSON.stringify(r.pendencies, null, 1));
+  assert.equal(r.sprints[0].state, 'done');
+  assert.equal(r.sprints[0].promoted, true);
+  assert.ok(r.handoff_path);
+});
+
+test('talos_sync_manual_validation: fail-closed — AC unproved esquecido fora do relatório impede promoção a done', () => {
+  const root = tmpRoot();
+  setupMvpSprint(root, {
+    acceptance: [
+      { id: 'AC-001', status: 'unproved', proof_types: ['I:present', 'T-outcome:unproved'] },
+      { id: 'AC-002', status: 'manual_pending', proof_types: ['I:present', 'M:pending'] },
+    ],
+  });
+  // Apenas AC-002 é coberto no relatório; AC-001 permanece unproved.
+  writeManualValidationReport(root, [
+    '| MV-S01-AC-002 | S01 / AC-002 | alta | validated | cenário 2 | dev | evidência 2 | smoke ok |',
+  ]);
+  const r = syncManualValidation({ run_id: 'r-unclosed', project_root: root, backlog_path: 'BACKLOG.md' });
+  assert.equal(r.status, 'passed');
+  // Não promoveu para done pois AC-001 continua unproved.
+  assert.equal(r.sprints[0].promoted, false);
+  assert.equal(r.sprints[0].state, 'manual_validation_pending');
 });
 
 test('sync manual validated promove done (AC-4.2.1 / CN3)', () => {
@@ -3512,7 +3623,7 @@ test('talos_lock_dispatch: start plan_execute em execute → banner exec não-va
 });
 
 test('talos_lock_dispatch: plan_execute cria liveness G12 no start e aceita checkpoint', () => {
-  const root = tmpRoot();
+  const { root } = initGitFixture();
   preflight({
     run_id: 'g12live', project_root: root, mode: 'execute',
     host: 'codex', host_capabilities: { subagent_available: true, mcp_available: true },
@@ -3524,23 +3635,36 @@ test('talos_lock_dispatch: plan_execute cria liveness G12 no start e aceita chec
   let state = readRunJson(root, 'g12live');
   assert.equal(state.data.dispatch.active.phase, 'plan_execute');
   assert.equal(state.data.dispatch.active.liveness.status, 'spawned');
-  assert.equal(state.data.dispatch.active.liveness.required_first_checkpoint, 'executor_started');
+  assert.equal(state.data.dispatch.active.liveness.required_first_checkpoint, null);
+  assert.equal(state.data.dispatch.active.base_sha, start.dispatch.active.base_sha);
+
+  // G12 (D4): só first_write é checkpoint público; eventos antigos morreram.
+  const dead = lockDispatch({
+    run_id: 'g12live',
+    project_root: root,
+    action: 'checkpoint',
+    phase: 'plan_execute',
+    event: 'executor_started',
+  });
+  assert.equal(dead.status, 'blocked');
+  assert.match(dead.error, /Checkpoint desconhecido/);
 
   const checkpoint = lockDispatch({
     run_id: 'g12live',
     project_root: root,
     action: 'checkpoint',
     phase: 'plan_execute',
-    event: 'executor_started',
+    event: 'first_write',
     plan_path: '.talos/plans/PLAN_S41.md',
   });
   assert.equal(checkpoint.status, 'passed');
-  assert.equal(checkpoint.executor_liveness, 'booting');
+  assert.equal(checkpoint.executor_liveness, 'executing');
 
   state = readRunJson(root, 'g12live');
-  assert.equal(state.data.dispatch.active.liveness.last_checkpoint, 'executor_started');
+  assert.equal(state.data.dispatch.active.liveness.last_checkpoint, 'first_write');
   assert.equal(state.data.dispatch.active.liveness.checkpoints[0].plan_path, '.talos/plans/PLAN_S41.md');
-  assert.equal(state.data.dispatch.history.at(-1).event, 'executor_started');
+  assert.ok(Array.isArray(state.data.dispatch.active.liveness.worktree_baseline));
+  assert.equal(state.data.dispatch.history.at(-1).event, 'first_write');
 });
 
 test('talos_lock_dispatch: status marca bootstrap sem checkpoint como stalled e libera retry', () => {
@@ -3573,7 +3697,7 @@ test('talos_lock_dispatch: status marca bootstrap sem checkpoint como stalled e 
 });
 
 test('talos_lock_dispatch: status marca checkpoint antigo sem progresso como stalled', () => {
-  const root = tmpRoot();
+  const { root } = initGitFixture();
   preflight({
     run_id: 'g12progress', project_root: root, mode: 'execute',
     host: 'codex', host_capabilities: { subagent_available: true, mcp_available: true },
@@ -3584,7 +3708,7 @@ test('talos_lock_dispatch: status marca checkpoint antigo sem progresso como sta
     project_root: root,
     action: 'checkpoint',
     phase: 'plan_execute',
-    event: 'plan_loaded',
+    event: 'first_write',
   });
 
   const runFile = path.join(root, '.talos', 'state', 'g12progress', 'run.json');
@@ -3601,26 +3725,27 @@ test('talos_lock_dispatch: status marca checkpoint antigo sem progresso como sta
 });
 
 test('talos_lock_dispatch: handoff_ready não expira enquanto aguarda validator', () => {
-  const root = tmpRoot();
+  const { root } = initGitFixture();
   preflight({
     run_id: 'g12handoff', project_root: root, mode: 'execute',
     host: 'codex', host_capabilities: { subagent_available: true, mcp_available: true },
   });
   lockDispatch({ run_id: 'g12handoff', project_root: root, action: 'start', phase: 'plan_execute' });
-  const stateRel = '.talos/state/g12handoff/slice.json';
-  const abs = path.join(root, stateRel);
-  fs.mkdirSync(path.dirname(abs), { recursive: true });
-  fs.writeFileSync(abs, JSON.stringify({
-    ...fixtureState('state-legacy-plan.json'), run_id: 'g12handoff',
-  }, null, 2));
-  lockDispatch({
+  // Caminho execute real (AC-1.3.1): commitState projeta v3, grava e marca
+  // handoff_ready com sha no ledger — sem checkpoint público state_path_created.
+  const commit = commitState({
     run_id: 'g12handoff',
     project_root: root,
-    action: 'checkpoint',
-    phase: 'plan_execute',
-    event: 'state_path_created',
-    state_path: stateRel,
+    slice: 'A',
+    proofs: [
+      { kind: 'T', id: 'T01', check: 'node --test packages/mcp-server/server.test.js' },
+      { kind: 'AC', id: 'AC-001', check: 'node --test packages/mcp-server/server.test.js' },
+    ],
   });
+  assert.equal(commit.status, 'passed');
+  const stateRel = commit.state_path;
+  const abs = path.join(root, stateRel);
+  fs.mkdirSync(path.dirname(abs), { recursive: true });
 
   const runFile = path.join(root, '.talos', 'state', 'g12handoff', 'run.json');
   const raw = JSON.parse(fs.readFileSync(runFile, 'utf8'));
@@ -3634,38 +3759,57 @@ test('talos_lock_dispatch: handoff_ready não expira enquanto aguarda validator'
   assert.equal(readRunJson(root, 'g12handoff').data.dispatch.active.phase, 'plan_execute');
 });
 
-test('talos_lock_dispatch: state_path_created exige state_path legível', () => {
-  const root = tmpRoot();
+test('talos_lock_dispatch: events antigos de checkpoint são bloqueados (AC-1.2.5)', () => {
+  const { root } = initGitFixture();
+  preflight({
+    run_id: 'g12dead', project_root: root, mode: 'execute',
+    host: 'codex', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: 'g12dead', project_root: root, action: 'start', phase: 'plan_execute' });
+  for (const event of ['executor_started', 'skill_loaded', 'plan_loaded', 'handoff_accepted', 'task_started', 'state_path_created']) {
+    const result = lockDispatch({
+      run_id: 'g12dead', project_root: root, action: 'checkpoint', phase: 'plan_execute', event,
+    });
+    assert.equal(result.status, 'blocked', event);
+    assert.equal(result.gate, 'G12');
+    assert.match(result.error, /Checkpoint desconhecido/);
+  }
+});
+
+test('talos_lock_dispatch: first_write exige plan_execute ativo e é one-shot', () => {
+  const { root } = initGitFixture();
   preflight({
     run_id: 'g12path', project_root: root, mode: 'execute',
     host: 'codex', host_capabilities: { subagent_available: true, mcp_available: true },
   });
   lockDispatch({ run_id: 'g12path', project_root: root, action: 'start', phase: 'plan_execute' });
 
-  const missing = lockDispatch({
+  const first = lockDispatch({
     run_id: 'g12path',
     project_root: root,
     action: 'checkpoint',
     phase: 'plan_execute',
-    event: 'state_path_created',
+    event: 'first_write',
   });
-  assert.equal(missing.status, 'blocked');
-  assert.equal(missing.next_action, 'emitir_state_path_created_com_state_path');
+  assert.equal(first.status, 'passed');
 
-  const unreadable = lockDispatch({
+  const second = lockDispatch({
     run_id: 'g12path',
     project_root: root,
     action: 'checkpoint',
     phase: 'plan_execute',
-    event: 'state_path_created',
-    state_path: '.talos/state/g12path/slice.json',
+    event: 'first_write',
   });
-  assert.equal(unreadable.status, 'blocked');
-  assert.equal(unreadable.next_action, 'corrigir_state_path_antes_do_handoff');
+  assert.equal(second.status, 'blocked');
+  assert.equal(second.next_action, 'prosseguir_para_commit_state');
+
+  const state = readRunJson(root, 'g12path');
+  assert.ok(Array.isArray(state.data.dispatch.active.liveness.worktree_baseline));
+  assert.equal(state.data.dispatch.active.liveness.checkpoints.filter((entry) => entry.event === 'first_write').length, 1);
 });
 
-test('talos_lock_validator: G12 bloqueia start sem state_path_created correspondente', () => {
-  const root = tmpRoot();
+test('talos_lock_validator: G12 bloqueia start sem commit MCP com sha (AC-1.3.1/1.3.2)', () => {
+  const { root } = initGitFixture();
   preflight({
     run_id: 'g12validator', project_root: root, mode: 'execute',
     host: 'codex', host_capabilities: { subagent_available: true, mcp_available: true },
@@ -3673,45 +3817,51 @@ test('talos_lock_validator: G12 bloqueia start sem state_path_created correspond
   lockDispatch({ run_id: 'g12validator', project_root: root, action: 'start', phase: 'plan_execute' });
 
   const stateRel = '.talos/state/g12validator/slice.json';
-  ensureValidatorStateFixture(root, 'g12validator', stateRel);
+  // JSON v3 válido escrito à mão, SEM commitState → ledger sem sha → órfão.
+  const abs = path.join(root, stateRel);
+  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  const head = execFileSync('git', ['-C', root, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  const baseline = captureWorktreeSnapshot(root);
+  fs.writeFileSync(abs, JSON.stringify({
+    state_schema_version: 3,
+    run_id: 'g12validator', slice: 'A', base_sha: head, head_sha: head, contract_kind: 'plan',
+    tasks: [], files_changed: [],
+    diff_stat: '0 files', plan_path: '.talos/plans/x.md',
+    boundary_refs: [], obligations: [], invariants: [], scenario_probes: [],
+    risk_probes: [], validation_map: [], task_evidence: [], repair_evidence: [],
+    worktree_baseline: baseline, worktree_final: baseline,
+    executed_at: new Date().toISOString(), executor_skill: 'talos-plan-execute',
+  }, null, 2));
 
-  const beforeCheckpoint = lockValidatorCore({
+  const beforeCommit = lockValidatorCore({
     run_id: 'g12validator',
     project_root: root,
     action: 'start',
     state_path: stateRel,
   });
-  assert.equal(beforeCheckpoint.status, 'blocked');
-  assert.equal(beforeCheckpoint.gate, 'G12');
-  assert.equal(beforeCheckpoint.next_action, 'aguardar_state_path_created_antes_do_validator');
+  assert.equal(beforeCommit.status, 'blocked');
+  assert.equal(beforeCommit.gate, 'G12');
+  assert.equal(beforeCommit.next_action, 'commitar_via_talos_commit_state_antes_do_validator');
 
-  const otherRel = '.talos/state/g12validator/other.json';
-  ensureValidatorStateFixture(root, 'g12validator', otherRel);
-  const checkpoint = lockDispatch({
+  // O JSON à mão (órfão) não pode ser sobrescrito pelo commit absoluto: remover
+  // antes do commit legítimo — o commit é o writer único do path da slice.
+  fs.rmSync(abs, { force: true });
+
+  // Commit legítimo do path da slice (slice.json): handoff_ready + sha batem →
+  // start passed (AC-1.3.1).
+  const sliceCommit = commitState({
     run_id: 'g12validator',
     project_root: root,
-    action: 'checkpoint',
-    phase: 'plan_execute',
-    event: 'state_path_created',
-    state_path: otherRel,
+    slice: 'slice',
+    plan_path: '.talos/plans/x.md',
+    proofs: [{ kind: 'T', id: 'T01', check: 'node --test packages/mcp-server/server.test.js' }],
   });
-  assert.equal(checkpoint.status, 'passed');
-
-  const mismatch = lockValidatorCore({
-    run_id: 'g12validator',
-    project_root: root,
-    action: 'start',
-    state_path: stateRel,
-  });
-  assert.equal(mismatch.status, 'blocked');
-  assert.equal(mismatch.gate, 'G12');
-  assert.equal(mismatch.last_state_path, otherRel);
-
+  assert.equal(sliceCommit.status, 'passed');
   const ok = lockValidatorCore({
     run_id: 'g12validator',
     project_root: root,
     action: 'start',
-    state_path: otherRel,
+    state_path: stateRel,
   });
   assert.equal(ok.status, 'passed');
   assert.equal(ok.validator_status, 'running');
@@ -6118,18 +6268,21 @@ test('AC-2.2.1 complementar: provas auto verdes + M aberto → manual_pending', 
 // state declara sprint_file_path, e confronta o packet com o oráculo mecânico.
 test('talos_lock_validator complete: sprint_file_path exige acceptance_results (VC5 sink)', () => {
   const runId = 'sprint-acceptance-complete';
-  const { root, head } = initGitFixture();
+  const { root } = initGitFixture();
   preflight({
     run_id: runId, project_root: root, mode: 'execute',
     host: 'codex', host_capabilities: { subagent_available: true, mcp_available: true },
   });
   lockDispatch({ run_id: runId, project_root: root, action: 'start', phase: 'plan_execute' });
+  // Worktree será mutado (src/ + tests/) → first_write imediatamente antes (AC-1.2.2).
+  const firstWrite = lockDispatch({
+    run_id: runId, project_root: root, action: 'checkpoint', phase: 'plan_execute', event: 'first_write',
+  });
+  assert.equal(firstWrite.status, 'passed');
   const stateRel = `.talos/state/${runId}/slice.json`;
-  const abs = path.join(root, stateRel);
-  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  fs.mkdirSync(path.dirname(path.join(root, stateRel)), { recursive: true });
   fs.mkdirSync(path.join(root, '.talos/backlog/sprints'), { recursive: true });
   fs.writeFileSync(path.join(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md'), sprintDoc());
-  const baseline = captureWorktreeSnapshot(root);
   fs.mkdirSync(path.join(root, 'src'), { recursive: true });
   fs.mkdirSync(path.join(root, 'tests'), { recursive: true });
   fs.writeFileSync(path.join(root, 'src/initial.js'), 'export const initial = true;\n');
@@ -6137,21 +6290,24 @@ test('talos_lock_validator complete: sprint_file_path exige acceptance_results (
     path.join(root, 'tests/outcome.test.js'),
     "import assert from 'node:assert/strict';\nimport { initial } from '../src/initial.js';\nassert.equal(initial, true);\n",
   );
-  const state = attachSprintEvidence(planStateForBoundary(root, head, baseline, [
-    'src/initial.js',
-    'tests/outcome.test.js',
-  ]));
-  state.state_schema_version = 3;
-  state.check_table = ['node --test tests/outcome.test.js'];
-  state.proof_refs = {
-    'AC-001': { checks: [0], files: [0, 1] },
-    'AC-002': { checks: [0], files: [0] },
-  };
-  fs.writeFileSync(abs, JSON.stringify({ ...state, run_id: runId }, null, 2));
-  lockDispatch({
-    run_id: runId, project_root: root, action: 'checkpoint', phase: 'plan_execute',
-    event: 'state_path_created', state_path: stateRel,
+  // Handoff execute real: commitState grava v3 (absoluto) e marca handoff_ready
+  // com sha no ledger. O state em disco foi re-projetado pelo commit — o
+  // boundary revalida em cima do objeto commitado.
+  const commit = commitState({
+    run_id: runId,
+    project_root: root,
+    slice: 'slice',
+    plan_path: '.talos/plans/PLAN_S01_runtime.md',
+    sprint_file_path: '.talos/backlog/sprints/SPRINT_S01_runtime.md',
+    proofs: [
+      { kind: 'AC', id: 'AC-001', check: 'node --test tests/outcome.test.js', files: ['src/initial.js', 'tests/outcome.test.js'] },
+      { kind: 'AC', id: 'AC-002', check: 'node --test tests/outcome.test.js', files: ['src/initial.js'] },
+      { kind: 'EVAL', id: 'EVAL-001', check: 'node --test tests/outcome.test.js' },
+      { kind: 'T', id: 'T01', check: 'node --test tests/outcome.test.js', files: ['src/initial.js'] },
+    ],
   });
+  assert.equal(commit.status, 'passed');
+  assert.equal(commit.state_path, stateRel, 'commitState grava no path canônico da slice');
 
   const start = lockValidatorCore({ run_id: runId, project_root: root, action: 'start', state_path: stateRel });
   assert.equal(start.status, 'passed');
@@ -6209,31 +6365,37 @@ test('talos_lock_validator complete: sprint_file_path exige acceptance_results (
 // (invalid_acceptance_shape), mesmo com verdict pass.
 test('talos_lock_validator complete: acceptance_results com shape inválido → invalid_acceptance_shape', () => {
   const runId = 'sprint-acceptance-shape-invalid';
-  const { root, head } = initGitFixture();
+  const { root } = initGitFixture();
   preflight({
     run_id: runId, project_root: root, mode: 'execute',
     host: 'codex', host_capabilities: { subagent_available: true, mcp_available: true },
   });
   lockDispatch({ run_id: runId, project_root: root, action: 'start', phase: 'plan_execute' });
+  // Worktree será mutado (src/) → first_write imediatamente antes (AC-1.2.2).
+  const firstWrite = lockDispatch({
+    run_id: runId, project_root: root, action: 'checkpoint', phase: 'plan_execute', event: 'first_write',
+  });
+  assert.equal(firstWrite.status, 'passed');
   const stateRel = `.talos/state/${runId}/slice.json`;
-  const abs = path.join(root, stateRel);
-  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  fs.mkdirSync(path.dirname(path.join(root, stateRel)), { recursive: true });
   fs.mkdirSync(path.join(root, '.talos/backlog/sprints'), { recursive: true });
   fs.writeFileSync(path.join(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md'), sprintDoc());
-  const baseline = captureWorktreeSnapshot(root);
   fs.mkdirSync(path.join(root, 'src'), { recursive: true });
   fs.writeFileSync(path.join(root, 'src/initial.js'), 'export const initial = true;\n');
-  const state = attachSprintEvidence(planStateForBoundary(root, head, baseline, ['src/initial.js']));
-  state.state_schema_version = 3;
-  state.proof_refs = {
-    'AC-001': { checks: [0], files: [0] },
-    'AC-002': { checks: [0], files: [0] },
-  };
-  fs.writeFileSync(abs, JSON.stringify({ ...state, run_id: runId }, null, 2));
-  lockDispatch({
-    run_id: runId, project_root: root, action: 'checkpoint', phase: 'plan_execute',
-    event: 'state_path_created', state_path: stateRel,
+  const commit = commitState({
+    run_id: runId,
+    project_root: root,
+    slice: 'slice',
+    plan_path: '.talos/plans/PLAN_S01_runtime.md',
+    sprint_file_path: '.talos/backlog/sprints/SPRINT_S01_runtime.md',
+    proofs: [
+      { kind: 'AC', id: 'AC-001', check: 'node --test tests/outcome.test.js', files: ['src/initial.js'] },
+      { kind: 'AC', id: 'AC-002', check: 'node --test tests/outcome.test.js', files: ['src/initial.js'] },
+      { kind: 'EVAL', id: 'EVAL-001', check: 'node --test tests/outcome.test.js' },
+    ],
   });
+  assert.equal(commit.status, 'passed');
+  assert.equal(commit.state_path, `.talos/state/${runId}/slice.json`);
 
   const start = lockValidatorCore({ run_id: runId, project_root: root, action: 'start', state_path: stateRel });
   assert.equal(start.status, 'passed');
@@ -6266,15 +6428,19 @@ test('talos_lock_validator complete: acceptance_results com shape inválido → 
 // no_state) e done com M aberto emitiria handoff — gate morto no fluxo real.
 test('cadeia real: complete persiste acceptance_results no state; update_sprint_status consome (CN2/VC1)', () => {
   const runId = 'sprint-acceptance-chain';
-  const { root, head } = initGitFixture();
+  const { root } = initGitFixture();
   preflight({
     run_id: runId, project_root: root, mode: 'execute',
     host: 'codex', host_capabilities: { subagent_available: true, mcp_available: true },
   });
   lockDispatch({ run_id: runId, project_root: root, action: 'start', phase: 'plan_execute' });
+  // Worktree será mutado (src/ + tests/) → first_write imediatamente antes (AC-1.2.2).
+  const firstWrite = lockDispatch({
+    run_id: runId, project_root: root, action: 'checkpoint', phase: 'plan_execute', event: 'first_write',
+  });
+  assert.equal(firstWrite.status, 'passed');
   const stateRel = `.talos/state/${runId}/slice.json`;
-  const abs = path.join(root, stateRel);
-  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  fs.mkdirSync(path.dirname(path.join(root, stateRel)), { recursive: true });
   fs.mkdirSync(path.join(root, '.talos/backlog/sprints'), { recursive: true });
   // Sprint com AC-002 carregando smoke manual (M) — gera manual_pending no oráculo.
   const sprintWithManual = sprintDoc({ status: 'review' }).replace(
@@ -6282,7 +6448,6 @@ test('cadeia real: complete persiste acceptance_results no state; update_sprint_
     '      required: [I, T-outcome, M]\n      manual:\n        severity: alta\n        scenario: "validação manual"\n        expected_evidence: "resultado observável"\n        impact_paths: ["src/initial.js"]',
   );
   fs.writeFileSync(path.join(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md'), sprintWithManual);
-  const baseline = captureWorktreeSnapshot(root);
   fs.mkdirSync(path.join(root, 'src'), { recursive: true });
   fs.mkdirSync(path.join(root, 'tests'), { recursive: true });
   fs.writeFileSync(path.join(root, 'src/initial.js'), 'export const initial = true;\n');
@@ -6290,21 +6455,20 @@ test('cadeia real: complete persiste acceptance_results no state; update_sprint_
     path.join(root, 'tests/outcome.test.js'),
     "import assert from 'node:assert/strict';\nimport { initial } from '../src/initial.js';\nassert.equal(initial, true);\n",
   );
-  const state = attachSprintEvidence(planStateForBoundary(root, head, baseline, [
-    'src/initial.js',
-    'tests/outcome.test.js',
-  ]));
-  state.state_schema_version = 3;
-  state.check_table = ['node --test tests/outcome.test.js'];
-  state.proof_refs = {
-    'AC-001': { checks: [0], files: [0, 1] },
-    'AC-002': { checks: [0], files: [0] },
-  };
-  fs.writeFileSync(abs, JSON.stringify({ ...state, run_id: runId }, null, 2));
-  lockDispatch({
-    run_id: runId, project_root: root, action: 'checkpoint', phase: 'plan_execute',
-    event: 'state_path_created', state_path: stateRel,
+  const commit = commitState({
+    run_id: runId,
+    project_root: root,
+    slice: 'slice',
+    plan_path: '.talos/plans/PLAN_S01_runtime.md',
+    sprint_file_path: '.talos/backlog/sprints/SPRINT_S01_runtime.md',
+    proofs: [
+      { kind: 'AC', id: 'AC-001', check: 'node --test tests/outcome.test.js', files: ['src/initial.js', 'tests/outcome.test.js'] },
+      { kind: 'AC', id: 'AC-002', check: 'node --test tests/outcome.test.js', files: ['src/initial.js'] },
+      { kind: 'EVAL', id: 'EVAL-001', check: 'node --test tests/outcome.test.js' },
+    ],
   });
+  assert.equal(commit.status, 'passed');
+  assert.equal(commit.state_path, `.talos/state/${runId}/slice.json`);
 
   const start = lockValidatorCore({ run_id: runId, project_root: root, action: 'start', state_path: stateRel });
   assert.equal(start.status, 'passed');
@@ -6325,7 +6489,7 @@ test('cadeia real: complete persiste acceptance_results no state; update_sprint_
   assert.equal(done.status, 'passed');
 
   // A persistência: o state em disco agora carrega acceptance_results (fonte do gate).
-  const persisted = JSON.parse(fs.readFileSync(abs, 'utf8'));
+  const persisted = JSON.parse(fs.readFileSync(path.join(root, commit.state_path), 'utf8'));
   assert.ok(Array.isArray(persisted.acceptance_results), 'complete deve persistir acceptance_results no state');
   assert.equal(persisted.acceptance_results.length, 2);
   assert.equal(persisted.acceptance_results.find((item) => item.id === 'AC-002').status, 'manual_pending');
@@ -6357,6 +6521,497 @@ test('cadeia real: complete persiste acceptance_results no state; update_sprint_
   assert.equal(dv.status, 'blocked');
   assert.ok(dv.pendencies.some((p) => p.category === 'acceptance_results'));
   assert.match(dv.pendencies.find((p) => p.category === 'acceptance_results').message, /AC-002:manual_pending/);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Plano 01 — `talos_commit_state` / G12 `first_write` / órfão
+// (CN1/CN2/CN3/CN5/CN9/CN10; VC1–VC4; LEG1/LEG3/LEG4; INV1/INV2/INV5/INV6/INV7)
+// ═══════════════════════════════════════════════════════════════════════════
+
+function planCommitSetup(runId, { mutar = false } = {}) {
+  // Plano 01: o fluxo execute exige repo git real (base_sha no start + snapshot
+  // no first_write). tmpRoot() puro não é repo — usar initGitFixture().
+  const { root, head } = initGitFixture();
+  preflight({
+    run_id: runId, project_root: root, mode: 'execute',
+    host: 'claude', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  const start = lockDispatch({ run_id: runId, project_root: root, action: 'start', phase: 'plan_execute' });
+  assert.equal(start.status, 'passed');
+  assert.equal(start.dispatch.active.base_sha, head);
+  if (mutar) {
+    // AC-1.2.2: first_write imediatamente ANTES da 1ª mutação (baseline limpa).
+    const firstWrite = lockDispatch({
+      run_id: runId, project_root: root, action: 'checkpoint', phase: 'plan_execute', event: 'first_write',
+    });
+    assert.equal(firstWrite.status, 'passed');
+    fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'src/a.js'), 'export const a = 1;\n');
+  }
+  return { root };
+}
+
+// AC-1.1.1 (CN1/VC1/VC4/INV2): commit projeta v3 completo no disco e retorna
+// state_path + state_sha256 iguais ao sha do arquivo.
+test('Plano 01: talos_commit_state projeta v3 completo e retorna sha do arquivo (AC-1.1.1)', () => {
+  const { root } = planCommitSetup('commit-v3', { mutar: true });
+  const commit = commitState({
+    run_id: 'commit-v3',
+    project_root: root,
+    slice: 'A',
+    plan_path: '.talos/plans/PLAN_S41.md',
+    proofs: [
+      { kind: 'AC', id: 'AC-001', check: 'node --test packages/mcp-server/server.test.js', files: ['src/a.js'] },
+      { kind: 'EVAL', id: 'EVAL-001', check: 'node --test packages/mcp-server/server.test.js' },
+      { kind: 'T', id: 'T01', check: 'node --test packages/mcp-server/server.test.js', files: ['src/a.js'] },
+    ],
+  });
+  assert.equal(commit.status, 'passed');
+  assert.equal(commit.gate, 'G12');
+  assert.equal(commit.role, 'execute');
+  const stateRel = commit.state_path;
+  const abs = path.join(root, stateRel);
+  assert.equal(fs.existsSync(abs), true);
+  const disk = JSON.parse(fs.readFileSync(abs, 'utf8'));
+  assert.equal(disk.state_schema_version, 3, 'INV2: disco sempre v3');
+  // AC-1.2.2: baseline capturada ANTES da 1ª mutação — worktree limpo → [].
+  assert.ok(Array.isArray(disk.worktree_baseline), 'baseline é array (pode ser [] no caso limpo)');
+  assert.ok(Array.isArray(disk.worktree_final) && disk.worktree_final.length > 0, 'final carrega a mutação');
+  assert.equal(disk.files_changed.includes('src/a.js'), true);
+  // proof sem `files` → proof_refs[AC].files = [] (falsificador AC-1.1.1).
+  const acRef = disk.proof_refs['AC-001'];
+  assert.deepEqual(acRef.files, [0], 'files do proof viraram índices em files_changed');
+  assert.ok(Array.isArray(disk.check_table) && disk.check_table.length >= 1);
+  const diskSha = crypto.createHash('sha256').update(fs.readFileSync(abs)).digest('hex');
+  assert.equal(commit.state_sha256, diskSha, 'retorno carrega o sha do arquivo');
+  // Ledger da run ganha sha + handoff_ready (sink VC1).
+  const ledger = readRunJson(root, 'commit-v3');
+  assert.equal(ledger.data.dispatch.active.liveness.status, 'handoff_ready');
+  assert.equal(ledger.data.dispatch.active.liveness.slice_commit_sha256, diskSha);
+  assert.equal(ledger.data.dispatch.active.liveness.last_commit_state_path, stateRel);
+  assert.notEqual(ledger.data.dispatch.active.liveness.last_checkpoint, 'state_path_created');
+  // Boundary aceita o objeto commitado (INV2/CN5).
+  const boundary = validateStateBoundary(stateRel, { project_root: root });
+  assert.equal(boundary.ok, true, boundary.violations.join('; '));
+});
+
+// AC-1.1.2 (CN9/INV5): acceptance_results no input → -32602, disco intacto.
+test('Plano 01: commit rejeita acceptance_results no input (AC-1.1.2)', () => {
+  const { root } = planCommitSetup('commit-denied', { mutar: true });
+  const stateRel = '.talos/state/commit-denied/A.json';
+  const abs = path.join(root, stateRel);
+  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  fs.writeFileSync(abs, 'ORIGINAL');
+  assert.throws(
+    () => commitState({
+      run_id: 'commit-denied', project_root: root, slice: 'A',
+      proofs: [{ kind: 'AC', id: 'AC-001', check: 'node --test' }],
+      acceptance_results: [{ id: 'AC-001', status: 'proved' }],
+    }),
+    (error) => error.code === -32602 && /acceptance_results/.test(error.message),
+  );
+  assert.equal(fs.readFileSync(abs, 'utf8'), 'ORIGINAL', 'disco intacto após -32602');
+});
+
+// AC-1.1.3 (VC3/INV6): role no input → -32602; repair sem slot → blocked sem escrita.
+test('Plano 01: role pelo lock — role no input é -32602; repair sem slot bloqueia (AC-1.1.3)', () => {
+  const { root } = planCommitSetup('commit-role', { mutar: true });
+  assert.throws(
+    () => commitState({
+      run_id: 'commit-role', project_root: root, slice: 'A',
+      proofs: [{ kind: 'AC', id: 'AC-001', check: 'node --test' }],
+      role: 'execute',
+    }),
+    (error) => error.code === -32602 && /role/.test(error.message),
+  );
+  const stateRel = '.talos/state/commit-role/A.json';
+  const abs = path.join(root, stateRel);
+  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  fs.writeFileSync(abs, 'ORIGINAL');
+  // Sem slot repair_start (ciclo idle): repair[] sem slot → blocked, sem escrita.
+  const repair = commitState({
+    run_id: 'commit-role', project_root: root, slice: 'A',
+    proofs: [{ kind: 'AC', id: 'AC-001', check: 'node --test' }],
+    repair: [{ finding_id: 'F-001', files: ['src/a.js'], checks: ['node --test'], status: 'resolved' }],
+  });
+  assert.equal(repair.status, 'blocked');
+  assert.equal(repair.code, 'repair_sem_slot');
+  assert.match(repair.error, /repair\[\] sem slot repair_start/);
+  assert.equal(fs.readFileSync(abs, 'utf8'), 'ORIGINAL', 'repair sem slot não escreve');
+});
+
+// AC-1.1.4 (CN10/INV7): check é string honor — commit não spawna o comando.
+test('Plano 01: commit honra check string sem executar (AC-1.1.4)', () => {
+  const { root } = planCommitSetup('commit-honor', { mutar: true });
+  const commit = commitState({
+    run_id: 'commit-honor',
+    project_root: root,
+    slice: 'A',
+    proofs: [
+      { kind: 'AC', id: 'AC-001', check: 'comando-inexistente-que-nao-roda --exit 7' },
+    ],
+  });
+  assert.equal(commit.status, 'passed', 'check não é spawnado; honor da string');
+  const disk = JSON.parse(fs.readFileSync(path.join(root, commit.state_path), 'utf8'));
+  assert.ok(disk.check_table.includes('comando-inexistente-que-nao-roda --exit 7'));
+});
+
+// AC-1.1.5 (CN1/VC2): repair com slot aberto append repair_evidence e preserva baseline.
+test('Plano 01: commit repair preserva worktree_baseline do execute (AC-1.1.5)', () => {
+  const { root } = planCommitSetup('commit-repair', { mutar: true });
+  const first = commitState({
+    run_id: 'commit-repair', project_root: root, slice: 'A',
+    plan_path: '.talos/plans/PLAN_S41.md',
+    proofs: [{ kind: 'AC', id: 'AC-001', check: 'node --test', files: ['src/a.js'] }],
+  });
+  assert.equal(first.status, 'passed');
+  const baselineAfterExecute = readRunJson(root, 'commit-repair').data.dispatch.active.liveness.worktree_baseline;
+
+  // fail do validator → repair_required abre slot repair.
+  const stateRel = first.state_path;
+  const start = lockValidator({ run_id: 'commit-repair', project_root: root, action: 'start', state_path: stateRel });
+  assert.equal(start.status, 'passed');
+  lockValidator({
+    run_id: 'commit-repair', project_root: root, action: 'complete', state_path: stateRel,
+    validator_run_id: start.validator_run_id, dispatch_token: start.dispatch_token,
+    challenge_response: sha256File(root, start.challenge.file), verdict: 'fail',
+    data: { findings: [finding({ file: 'src/a.js' })] },
+  });
+  const repairStart = lockValidator({ run_id: 'commit-repair', project_root: root, action: 'repair_start', state_path: stateRel });
+  assert.equal(repairStart.status, 'passed');
+
+  // Mutação do repair no worktree; commit repair preserva a baseline do execute.
+  fs.writeFileSync(path.join(root, 'src/a.js'), 'export const a = 2;\n');
+  const repairCommit = commitState({
+    run_id: 'commit-repair', project_root: root, slice: 'A',
+    plan_path: '.talos/plans/PLAN_S41.md',
+    proofs: [{ kind: 'AC', id: 'AC-001', check: 'node --test', files: ['src/a.js'] }],
+    repair: [{ finding_id: 'F-001', files: ['src/a.js'], checks: ['node --test'], status: 'resolved' }],
+  });
+  assert.equal(repairCommit.status, 'passed');
+  assert.equal(repairCommit.role, 'repair');
+  const disk = JSON.parse(fs.readFileSync(path.join(root, stateRel), 'utf8'));
+  assert.deepEqual(disk.worktree_baseline, baselineAfterExecute, 'repair NÃO sobrescreve baseline do execute');
+  assert.equal(disk.repair_evidence.length, 1);
+  assert.equal(disk.repair_evidence[0].finding_id, 'F-001');
+});
+
+// AC-1.2.1 (CN2/VC2): start grava base_sha = HEAD no ledger.
+test('Plano 01: lock_dispatch start grava base_sha=HEAD (AC-1.2.1)', () => {
+  const { root } = planCommitSetup('commit-basesha', {});
+  const head = execFileSync('git', ['-C', root, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  const ledger = readRunJson(root, 'commit-basesha');
+  assert.equal(ledger.data.dispatch.active.base_sha, head);
+  assert.match(ledger.data.dispatch.active.base_sha, /^[a-f0-9]{40}$/);
+});
+
+// AC-1.2.2 (CN2/VC2): first_write uma vez; segunda bloqueada; repair não emite.
+test('Plano 01: first_write one-shot e repair não emite (AC-1.2.2)', () => {
+  const { root } = planCommitSetup('commit-fw', {});
+  const first = lockDispatch({
+    run_id: 'commit-fw', project_root: root, action: 'checkpoint', phase: 'plan_execute', event: 'first_write',
+  });
+  assert.equal(first.status, 'passed');
+  const second = lockDispatch({
+    run_id: 'commit-fw', project_root: root, action: 'checkpoint', phase: 'plan_execute', event: 'first_write',
+  });
+  assert.equal(second.status, 'blocked');
+  assert.match(second.error, /first_write já emitido/);
+
+  // repair ativo → first_write blocked (D9: role pelo lock).
+  const { root: root2 } = planCommitSetup('commit-fw2', { mutar: true });
+  const commit = commitState({
+    run_id: 'commit-fw2', project_root: root2, slice: 'A',
+    plan_path: '.talos/plans/PLAN_S41.md',
+    proofs: [{ kind: 'AC', id: 'AC-001', check: 'node --test', files: ['src/a.js'] }],
+  });
+  const start = lockValidator({ run_id: 'commit-fw2', project_root: root2, action: 'start', state_path: commit.state_path });
+  lockValidator({
+    run_id: 'commit-fw2', project_root: root2, action: 'complete', state_path: commit.state_path,
+    validator_run_id: start.validator_run_id, dispatch_token: start.dispatch_token,
+    challenge_response: sha256File(root2, start.challenge.file), verdict: 'fail',
+    data: { findings: [finding({ file: 'src/a.js' })] },
+  });
+  lockValidator({ run_id: 'commit-fw2', project_root: root2, action: 'repair_start', state_path: commit.state_path });
+  const repairFirstWrite = lockDispatch({
+    run_id: 'commit-fw2', project_root: root2, action: 'checkpoint', phase: 'plan_execute', event: 'first_write',
+  });
+  assert.equal(repairFirstWrite.status, 'blocked');
+  assert.match(repairFirstWrite.error, /repair ativo não emite first_write/);
+});
+
+// AC-1.2.3 (CN2): worktree sujo sem first_write → commit blocked; limpo sem first_write → passed.
+test('Plano 01: commit exige first_write se worktree sujo; no-op passa (AC-1.2.3)', () => {
+  const { root } = planCommitSetup('commit-dirty', {});
+  fs.writeFileSync(path.join(root, 'src-dirty.js'), 'x\n');
+  const blocked = commitState({
+    run_id: 'commit-dirty', project_root: root, slice: 'A',
+    proofs: [{ kind: 'AC', id: 'AC-001', check: 'node --test' }],
+  });
+  assert.equal(blocked.status, 'blocked');
+  assert.equal(blocked.code, 'sem_first_write_dirty');
+  assert.equal(blocked.next_action, 'emitir_first_write_antes_do_commit');
+
+  // No-op slice (worktree limpo) sem first_write → passed.
+  const { root: root2 } = planCommitSetup('commit-clean', {});
+  const clean = commitState({
+    run_id: 'commit-clean', project_root: root2, slice: 'A',
+    proofs: [{ kind: 'AC', id: 'AC-001', check: 'node --test' }],
+  });
+  assert.equal(clean.status, 'passed');
+  const disk = JSON.parse(fs.readFileSync(path.join(root2, clean.state_path), 'utf8'));
+  assert.deepEqual(disk.files_changed, []);
+});
+
+// AC-1.2.4 (CN2/D12): bootstrap expirado sem gesto stalled; com commit em 120s não stalled.
+test('Plano 01: g12 bootstrap D12 — no-op commit em 120s não stalled (AC-1.2.4)', () => {
+  const { root } = planCommitSetup('commit-boot', {});
+  const commit = commitState({
+    run_id: 'commit-boot', project_root: root, slice: 'A',
+    proofs: [{ kind: 'AC', id: 'AC-001', check: 'node --test' }],
+  });
+  assert.equal(commit.status, 'passed');
+  const runFile = path.join(root, '.talos', 'state', 'commit-boot', 'run.json');
+  const raw = JSON.parse(fs.readFileSync(runFile, 'utf8'));
+  raw.data.dispatch.active.started_at = '2000-01-01T00:00:00.000Z';
+  raw.data.dispatch.active.liveness.bootstrap_deadline_at = '2000-01-01T00:02:00.000Z';
+  fs.writeFileSync(runFile, JSON.stringify(raw, null, 2));
+  const status = lockDispatch({ run_id: 'commit-boot', project_root: root, action: 'status', phase: 'plan_execute' });
+  assert.equal(status.status, 'passed', 'commit em 120s (mesmo sem first_write) não stalled');
+
+  // Sem nenhum gesto, deadline passado → stalled (bootstrap).
+  const { root: root2 } = planCommitSetup('commit-boot2', {});
+  const runFile2 = path.join(root2, '.talos', 'state', 'commit-boot2', 'run.json');
+  const raw2 = JSON.parse(fs.readFileSync(runFile2, 'utf8'));
+  raw2.data.dispatch.active.started_at = '2000-01-01T00:00:00.000Z';
+  raw2.data.dispatch.active.liveness.bootstrap_deadline_at = '2000-01-01T00:02:00.000Z';
+  fs.writeFileSync(runFile2, JSON.stringify(raw2, null, 2));
+  const status2 = lockDispatch({ run_id: 'commit-boot2', project_root: root2, action: 'status', phase: 'plan_execute' });
+  assert.equal(status2.status, 'blocked');
+  assert.equal(status2.cause, 'executor_bootstrap_timeout');
+});
+
+// AC-1.2.5 (LEG1): events antigos → checkpoint desconhecido.
+test('Plano 01: g12 checkpoint desconhecido para events antigos (AC-1.2.5)', () => {
+  const { root } = planCommitSetup('commit-dead', {});
+  for (const event of ['executor_started', 'skill_loaded', 'plan_loaded', 'handoff_accepted', 'task_started', 'state_path_created']) {
+    const result = lockDispatch({
+      run_id: 'commit-dead', project_root: root, action: 'checkpoint', phase: 'plan_execute', event,
+    });
+    assert.equal(result.status, 'blocked', event);
+    assert.match(result.error, /Checkpoint desconhecido/);
+  }
+});
+
+// AC-1.3.1 (CN5/VC1/INV2): commit → lock_validator(start) passa e boundary aceita.
+test('Plano 01: commit alimenta validateStateBoundary e start passed (AC-1.3.1)', () => {
+  const { root } = planCommitSetup('commit-start', { mutar: true });
+  const commit = commitState({
+    run_id: 'commit-start', project_root: root, slice: 'A',
+    plan_path: '.talos/plans/PLAN_S41.md',
+    proofs: [
+      { kind: 'AC', id: 'AC-001', check: 'node --test packages/mcp-server/server.test.js', files: ['src/a.js'] },
+      { kind: 'EVAL', id: 'EVAL-001', check: 'node --test packages/mcp-server/server.test.js' },
+      { kind: 'T', id: 'T01', check: 'node --test packages/mcp-server/server.test.js', files: ['src/a.js'] },
+    ],
+  });
+  assert.equal(commit.status, 'passed');
+  const start = lockValidator({ run_id: 'commit-start', project_root: root, action: 'start', state_path: commit.state_path });
+  assert.equal(start.status, 'passed');
+  assert.equal(start.validator_status, 'running');
+});
+
+// AC-1.3.2 (CN3/INV1/VC1): órfão A (JSON à mão, sem sha) e órfão B (sha divergente) blocked.
+test('Plano 01: órfão bloqueia validatorStart (AC-1.3.2)', () => {
+  const { root } = planCommitSetup('commit-orphan', { mutar: true });
+  const stateRel = '.talos/state/commit-orphan/A.json';
+  const abs = path.join(root, stateRel);
+  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  const head = execFileSync('git', ['-C', root, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  const baseline = captureWorktreeSnapshot(root);
+  const validV3 = {
+    state_schema_version: 3,
+    run_id: 'commit-orphan', slice: 'A', base_sha: head, head_sha: head, contract_kind: 'plan',
+    tasks: ['T01'], files_changed: ['src/a.js'],
+    diff_stat: '1 file', plan_path: '.talos/plans/x.md',
+    boundary_refs: [], obligations: [], invariants: [], scenario_probes: [],
+    risk_probes: [], validation_map: [],
+    task_evidence: [{ task: 'T01', files: ['src/a.js'], checks: ['node --test'], result: 'passed' }],
+    repair_evidence: [],
+    worktree_baseline: baseline, worktree_final: captureWorktreeSnapshot(root),
+    executed_at: new Date().toISOString(), executor_skill: 'talos-plan-execute',
+  };
+
+  // (i) Write à mão sem commitState → ledger sem sha → blocked.
+  fs.writeFileSync(abs, JSON.stringify(validV3, null, 2));
+  const startA = lockValidatorCore({ run_id: 'commit-orphan', project_root: root, action: 'start', state_path: stateRel });
+  assert.equal(startA.status, 'blocked');
+  assert.equal(startA.gate, 'G12');
+  assert.equal(startA.next_action, 'commitar_via_talos_commit_state_antes_do_validator');
+  assert.equal(startA.slice_commit_sha256, null);
+
+  // O JSON à mão (órfão) não pode ser sobrescrito pelo commit absoluto: remover
+  // antes do commit legítimo — o commit é o writer único do path da slice.
+  fs.rmSync(abs, { force: true });
+
+  // Commit legítimo do MESMO path; depois o teste sobrescreve o arquivo à mão
+  // com v3 diferente → sha do disco diverge do ledger → blocked (órfão B).
+  const commit = commitState({
+    run_id: 'commit-orphan', project_root: root, slice: 'A',
+    plan_path: '.talos/plans/x.md',
+    proofs: [{ kind: 'AC', id: 'AC-001', check: 'node --test', files: ['src/a.js'] }],
+  });
+  assert.equal(commit.status, 'passed');
+  const good = lockValidatorCore({ run_id: 'commit-orphan', project_root: root, action: 'start', state_path: stateRel });
+  assert.equal(good.status, 'passed');
+  // Novo ciclo: complete pass para liberar o ciclo.
+  lockValidatorCore({
+    run_id: 'commit-orphan', project_root: root, action: 'complete', state_path: stateRel,
+    validator_run_id: good.validator_run_id, dispatch_token: good.dispatch_token,
+    challenge_response: sha256File(root, good.challenge.file), verdict: 'pass',
+    data: { findings: [], acceptance_results: [{ id: 'AC-001', status: 'proved', proof_types: ['T-outcome:proved'] }] },
+  });
+  fs.writeFileSync(abs, JSON.stringify({ ...validV3, files_changed: ['src/outro.js'], diff_stat: '1 file' }, null, 2));
+  const startB = lockValidatorCore({ run_id: 'commit-orphan', project_root: root, action: 'start', state_path: stateRel });
+  assert.equal(startB.status, 'blocked');
+  assert.equal(startB.gate, 'G12');
+  assert.match(startB.error, /órfão|diverge/);
+});
+
+// AC-1.3.3 (LEG4): wrapper lockValidator não emite state_path_created.
+test('Plano 01: wrapper lockValidator não emite event morto (AC-1.3.3)', () => {
+  const source = fs.readFileSync(new URL('./server.test.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(source, /event:\s*['"]state_path_created['"]/);
+  assert.doesNotMatch(source, /['"]state_path_created['"]\s*,\s*state_path/);
+});
+
+// VC3: direct route → commit direto (contract_kind direct, executor_skill direct).
+test('Plano 01: commit em rota direct projeta contract_kind=direct (VC3)', () => {
+  const { root } = initGitFixture();
+  preflight({
+    run_id: 'commit-direct', project_root: root, mode: 'direct',
+    host: 'claude', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  const start = lockDispatch({ run_id: 'commit-direct', project_root: root, action: 'start', phase: 'plan_execute' });
+  assert.equal(start.status, 'passed');
+  fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'src/d.js'), 'export const d = 1;\n');
+  lockDispatch({ run_id: 'commit-direct', project_root: root, action: 'checkpoint', phase: 'plan_execute', event: 'first_write' });
+  const commit = commitState({
+    run_id: 'commit-direct', project_root: root, slice: 'A', plan_path: undefined,
+    obligation_ids: ['O1'],
+    proofs: [{ kind: 'AC', id: 'AC-001', check: 'node --test', files: ['src/d.js'] }],
+  });
+  assert.equal(commit.status, 'passed');
+  const disk = JSON.parse(fs.readFileSync(path.join(root, commit.state_path), 'utf8'));
+  assert.equal(disk.contract_kind, 'direct');
+  assert.equal(disk.executor_skill, 'talos-direct-execute');
+  assert.deepEqual(disk.contract_ids.obligations, ['O1']);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Plano 02 — skills + orquestrador sem blob (CN4/CN6; LEG2; INV3)
+// ═══════════════════════════════════════════════════════════════════════════
+
+// AC-2.1.1 (CN4/LEG2): execute/direct citam talos_commit_state + first_write e
+// não ensinam blob/7 events/STATE_FILE_SCHEMA nem despacham validator/review.
+test('Plano 02: skills execute/direct onda 1 sem blob (AC-2.1.1)', () => {
+  const deadAnchors = [
+    'STATE_FILE_SCHEMA.md',
+    'worktree_baseline',
+    'worktree_final',
+    'state_path_created',
+    'executor_started',
+    'skill_loaded',
+    'plan_loaded',
+    'handoff_accepted',
+    'task_started',
+    '"acceptance_results"',
+  ];
+  for (const [name, skillPath] of [
+    ['talos-plan-execute', PLAN_EXECUTE_SKILL_PATH],
+    ['talos-direct-execute', DIRECT_EXECUTE_SKILL_PATH],
+  ]) {
+    const skill = fs.readFileSync(skillPath, 'utf8');
+    assert.match(skill, /talos_commit_state/, `${name} cita o verbo de commit`);
+    assert.match(skill, /first_write/, `${name} cita first_write`);
+    for (const anchor of deadAnchors) {
+      assert.doesNotMatch(skill, new RegExp(anchor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), `${name} não ensina âncora morta ${anchor}`);
+    }
+    // D6: a skill pode CITAR o validator como destinatário do handoff, mas nunca
+    // instruir o executor a despachá-lo (dispatch de subagente = orquestrador).
+    assert.doesNotMatch(skill, /Agent\s*\([^)]*subagent_type\s*:\s*talos-task-validator/, `${name} não despacha validator`);
+    assert.doesNotMatch(skill, /subagent_type\s*:\s*talos-task-validator/, `${name} não usa subagent_type validator`);
+    assert.doesNotMatch(skill, /Agent\s*\([^)]*subagent_type\s*:\s*talos-slice-review/, `${name} não despacha review`);
+  }
+});
+
+// AC-2.1.2 (CN4/LEG2): repair manda talos_commit_state com repair[], mesmo
+// state_path, sem instruir Write/recompute de worktree_* à mão.
+test('Plano 02: skill repair usa commit com repair[] e sem Write (AC-2.1.2)', () => {
+  const skill = fs.readFileSync(FINDINGS_REPAIR_SKILL_PATH, 'utf8');
+  assert.match(skill, /talos_commit_state/, 'repair cita o verbo de commit');
+  assert.match(skill, /repair/, 'repair cita repair[]');
+  assert.match(skill, /state_path/, 'repair usa o mesmo state_path');
+  // A skill pode citar JSON.stringify/Write/worktree_* PARA LER ou PROIBIR; o
+  // que não pode é instruir o executor a montar/editar o JSON de slice ou
+  // recomputar campos projetados.
+  assert.doesNotMatch(skill, /Write the state file|Crie o state file|writeFileSync/, 'repair não instrui Write do JSON');
+  assert.doesNotMatch(skill, /atualize (os )?worktree_|recompute (o )?worktree_|preencha (os )?worktree_/i, 'repair não instrui recompute de worktree_*');
+  assert.doesNotMatch(skill, /state_path_created/, 'repair não emite event morto');
+});
+
+// AC-2.1.3 (CN4/LEG2): orquestrador G12 descreve first_write + commit e não
+// lista os 7 events como obrigação do executor.
+test('Plano 02: orquestrador G12 onda 1 (AC-2.1.3)', () => {
+  const skill = fs.readFileSync(ORCHESTRATOR_SKILL_PATH, 'utf8');
+  assert.match(skill, /first_write/, 'G12 cita first_write');
+  assert.match(skill, /talos_commit_state/, 'G12 cita talos_commit_state');
+  for (const dead of ['executor_started', 'skill_loaded', 'plan_loaded', 'handoff_accepted', 'task_started', 'state_path_created']) {
+    assert.doesNotMatch(skill, new RegExp(dead), `G12 não exige event morto ${dead}`);
+  }
+});
+
+// AC-2.2.1 (CN6/INV3): G8 permanece skill+subagente; execute/repair não
+// despacham slice-review nem task-validator.
+test('Plano 02: slice-review não citado como dispatch nas skills de execução (AC-2.2.1)', () => {
+  const review = fs.readFileSync(SLICE_REVIEW_SKILL_PATH, 'utf8');
+  // G8 não virou fechamento F nem inline no executor.
+  assert.doesNotMatch(review, /Plano F|fechamento F|pack-close/, 'G8 não vira fechamento F');
+  // G8 segue skill+subagente: dispatch é condição de orquestrador (G8), não
+  // inline no executor.
+  assert.match(review, /orchestrator|orquestrador/i, 'G8 descreve dispatch pelo orquestrador');
+  for (const skillPath of [PLAN_EXECUTE_SKILL_PATH, DIRECT_EXECUTE_SKILL_PATH, FINDINGS_REPAIR_SKILL_PATH]) {
+    const skill = fs.readFileSync(skillPath, 'utf8');
+    assert.doesNotMatch(skill, /subagent_type\s*:\s*talos-slice-review/, 'execute/repair não despacham slice-review');
+    assert.doesNotMatch(skill, /subagent_type\s*:\s*talos-task-validator/, 'execute/repair não despacham validator');
+  }
+});
+
+// D2 (sem AC: motivo): output JSON do validator intocado nesta trilha.
+test('Plano 02: output do talos-task-validator não mudou de papel', () => {
+  const validator = fs.readFileSync(path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    '../skills/talos-task-validator/SKILL.md',
+  ), 'utf8');
+  assert.match(validator, /verdict/i, 'validator segue emitindo veredito');
+});
+
+// AC-3.2.2 (INV4, plano 03): a lista canônica de tools não contém tools de onda
+// 2/3 (capture, evento, reseal, slice_view, pref) e o G12 do orquestrador não
+// exige `sprint_pref`/`talos-sprint-pref` como etapa desta release. Falsificador
+// declarado: "alguma dessas tools aparecer na lista canônica, ou o G12/orquestrador
+// exigir sprint_pref antes do fechamento da slice".
+test('Plano 03: tools lista sem onda 2/3 e G12 sem pref obrigatório (AC-3.2.2)', () => {
+  const toolNames = toolsList().tools.map((tool) => tool.name);
+  for (const forbidden of ['talos_capture_cmd', 'talos_run_event', 'talos_consume_reseal', 'talos_slice_view', 'talos_sprint_pref']) {
+    assert.ok(!toolNames.includes(forbidden), `tool de onda 2/3 fora da lista: ${forbidden}`);
+  }
+  const orchestrator = fs.readFileSync(ORCHESTRATOR_SKILL_PATH, 'utf8');
+  assert.doesNotMatch(orchestrator, /sprint_pref/, 'orquestrador não exige sprint_pref');
+  assert.doesNotMatch(orchestrator, /talos-sprint-pref/, 'orquestrador não exige talos-sprint-pref');
+  const g12 = orchestrator.split('\n').find((line) => /^\|\s*G12\s*\|/.test(line)) ?? '';
+  assert.doesNotMatch(g12, /pref/, 'G12 não menciona pref');
 });
 
 test('F-003: dirty preexistente intacto não contamina; mutação posterior entra no boundary', () => {
