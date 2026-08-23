@@ -2674,27 +2674,27 @@ function updateSprintStatus(args = {}) {
             'acceptance_results',
             sprintId,
             null,
-            'Status manual_validation_pending exige acceptance_results no state (≥1 AC manual_pending, sem unproved/violated).',
+            'Status manual_validation_pending exige acceptance_results no state (≥1 AC não provado, sem violated).',
             'emitir_acceptance_results_no_state',
           ));
         } else {
-          const blocked = acceptance.results.filter((item) => item?.status === 'unproved' || item?.status === 'violated');
-          if (blocked.length > 0) {
+          const violated = acceptance.results.filter((item) => item?.status === 'violated');
+          if (violated.length > 0) {
             pendencies.push(conformancePending(
               'acceptance_results',
               sprintId,
               null,
-              `manual_validation_pending exige sem unproved/violated; bloqueado por: ${blocked.map((b) => `${b.id}:${b.status}`).join(', ')}.`,
-              'resolver_provas_automaticas',
+              `manual_validation_pending exige sem violated; bloqueado por: ${violated.map((b) => `${b.id}:${b.status}`).join(', ')}.`,
+              'resolver_violacoes_de_aceite',
             ));
           }
-          const manualPending = acceptance.results.filter((item) => item?.status === 'manual_pending');
-          if (manualPending.length === 0) {
+          const pendingAcs = acceptance.results.filter((item) => item?.status === 'manual_pending' || item?.status === 'unproved');
+          if (pendingAcs.length === 0) {
             pendencies.push(conformancePending(
               'acceptance_results',
               sprintId,
               null,
-              'manual_validation_pending exige pelo menos 1 AC manual_pending (M aberto).',
+              'manual_validation_pending exige pelo menos 1 AC não-provado (manual_pending ou unproved).',
               'usar_done_quando_sem_validacao_manual',
             ));
           }
@@ -3055,17 +3055,17 @@ function planManualValidationSprint(sprintId, mvList, byId, args, pendencies) {
     return null;
   }
   const contract = parseAcceptanceContract(sprintMarkdown);
-  const manualAcs = new Map();
+  const contractAcs = new Map();
   if (Array.isArray(contract)) {
     for (const item of contract) {
-      if (item?.id && item?.evidence?.manual && typeof item.evidence.manual === 'object') {
-        manualAcs.set(item.id, item);
+      if (item?.id) {
+        contractAcs.set(item.id, item);
       }
     }
   }
   for (const mv of mvList) {
-    if (!manualAcs.has(mv.ac_id)) {
-      pendencies.push(conformancePending('relatorio_manual', mv.mv_id, null, `Item fantasma: ${mv.mv_id} sem AC.manual correspondente no §7.3 de ${sprintId}.`, 'fix_manual_validation_report'));
+    if (!contractAcs.has(mv.ac_id)) {
+      pendencies.push(conformancePending('relatorio_manual', mv.mv_id, null, `Item fantasma: ${mv.mv_id} sem AC correspondente no §7.3 de ${sprintId}.`, 'fix_manual_validation_report'));
     }
   }
   const stateRel = backlogRow.state_file ? cleanBacklogPathToken(backlogRow.state_file) : '';
@@ -3306,12 +3306,12 @@ function syncManualValidation(args = {}) {
           .filter((mv) => mv.status === 'validated' || mv.status === 'waived')
           .map((mv) => mv.ac_id);
         const closedSet = new Set(closedByReport);
-        // M que permanecem abertos após esta sync (manual_pending sem linha fechada).
-        const openAfter = plan.state.acceptance_results.filter((item) => (
-          item.status === 'manual_pending' && !closedSet.has(item.id)
+        // ACs que permanecem não provados após esta sync (status != 'proved' sem linha fechada no relatório).
+        const nonProvedAfter = plan.state.acceptance_results.filter((item) => (
+          item.status !== 'proved' && !closedSet.has(item.id)
         )).length;
         const sprintFailed = plan.mvList.some((mv) => mv.status === 'failed');
-        const wantsPromotion = sprintFailed || (openAfter === 0 && closedByReport.length > 0);
+        const wantsPromotion = sprintFailed || (nonProvedAfter === 0 && closedByReport.length > 0);
         if (plan.backlogRow.state === 'manual_validation_pending' && wantsPromotion && !plan.gateVerdict) {
           pendencies.push(conformancePending('veredito', plan.sprintId, null, `Gate da linha ${plan.sprintId} sem veredito validator legível para promover (${plan.backlogRow.gate}).`, 'corrigir_gate_no_backlog'));
           throw new Error('manual_validation_sync_promotion_failed');
@@ -3332,7 +3332,7 @@ function syncManualValidation(args = {}) {
             state_path: plan.stateRel,
             evidence: `M failed: ${plan.mvList.filter((mv) => mv.status === 'failed').map((mv) => mv.mv_id).join(', ')}`,
           });
-        } else if (canPromote && openAfter === 0 && closedByReport.length > 0) {
+        } else if (canPromote && nonProvedAfter === 0 && closedByReport.length > 0) {
           promotedTo = 'done';
           up = updateSprintStatus({
             run_id: runId,
