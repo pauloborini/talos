@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.18.1 - 2026-08-24
+
+Tipo: **packaging**. **Sem breaking**. Schema MCP: v5 (inalterado).
+
+Resumo: corrige dois modos de instalação que ficavam com o plugin "instalado" e morto. (1) **zcode via npx**: `talos init zcode` copiava o pacote npm inteiro para `~/.zcode/cli/plugins/cache/talos/talos/<versão>/` e contava com `.claude-plugin/plugin.json` na raiz — mas o tarball npm exclui `.claude-plugin/` (`.npmignore`); o cache ficava sem NENHUM manifest e a descoberta do host não resolvia skill, agente ou MCP nenhum. Agora o cache é materializado do catálogo `hosts/zcode/` — mesmo layout de `dist/talos-zcode.plugin`: `.zcode-plugin/plugin.json` NA RAIZ + `agents/` + `skills/` + `packages/`, MCP via `${ZCODE_PLUGIN_ROOT}`. (2) **Cursor/Grok (manifesto Claude compartilhado)**: o bootstrap do MCP introduzido na 0.18.0 dependia de `CLAUDE_PLUGIN_ROOT` no ENV do spawn, que esses hosts não injetam (e nem expandem o placeholder no argv) — `talos-mcp: run.sh não encontrado` + `Connection closed` no log. O bootstrap agora varre os caches conhecidos do Talos (`~/.cursor`, `~/.zcode`, `~/.claude` — marketplace e cache — e os legados `/home/box`), escolhendo a instalação mais recente (`-nt`), e falha com mensagem acionável quando nada é encontrado. Sem mudança de runtime MCP, schema v5, gates ou topologia sibling.
+
+Mudanças:
+- **`build/cli/talos-init.mjs`** — `copyZcodePluginToCache` copia `hosts/zcode/` para o cache (fail-cedo se o catálogo não existe; assert pós-cópia exige `.zcode-plugin/plugin.json` na raiz) em vez de copiar ROOT inteiro; `ensureZcodeRootMarketplaceJson` loga aviso quando `.claude-plugin/marketplace.json` não está presente (modo npx — o host regenera o `marketplace.json` raiz no refresh do catálogo, source git).
+- **`.claude-plugin/plugin.json` + `plugin-manifests/claude/plugin.json`** — bootstrap `-c` do MCP ganha varredura newest-wins pelos caches conhecidos (`$HOME/.cursor|zcode|claude/...`) após as sondas de env/PWD; mensagem de falha final diz o que fazer ("atualize/reinstale o Talos neste host").
+- **`build/smoke-install.mjs`** — asserções zcode migradas para o contrato novo: manifest `.zcode-plugin/plugin.json` na raiz do cache, `skills === './skills/'`, args MCP referenciando `${ZCODE_PLUGIN_ROOT}`, e presença de `packages/mcp-server/server.js`, `skills/talos/SKILL.md` e `agents/talos-task-validator.md`.
+- **`packages/mcp-server/run.test.mjs`** — 4 testes novos: bootstrap resolve `run.sh` do cache mais recente sem nenhuma env de plugin (para `.claude-plugin` e template) e falha com status 1 + mensagem acionável em HOME vazio.
+
+Impacto:
+- **zcode**: quem instalou/atualizou para a 0.18.0 via `npx ... init zcode` ficou com registros ok e componentes ausentes — reinstalar com `npx github:pauloborini/talos init zcode` (0.18.1) e reiniciar o host resolve; install por UI não exige ação além do upgrade.
+- **Cursor/Grok**: com o plugin apontando para o repositório atualizado, recarregar o host sobe o MCP via cache existente; sem cache nenhum, a nova mensagem indica reinstall.
+- Sem migração de disco/pipeline; state v3 e contrato das tools inalterados; demais hosts (claude, codex, antigravity, opencode, pi, vscode) sem mudança de comportamento.
+
+Arquivos/artefatos:
+- `VERSION` → `0.18.1`; `package.json`; `packages/mcp-server/package.json`; `.claude-plugin/plugin.json`; manifests/READMEs concretos; `CHANGELOG.md`; `packages/orchestrator/README.md`; `dist/talos-{claude,codex,opencode,pi,zcode,vscode}.plugin` + `SHA256SUMS`; catálogos `hosts/{opencode,pi,zcode,vscode}/` e `plugins/talos/`.
+
+Validação:
+- `node --test packages/mcp-server/server.test.js` — ok (311/311); `node --test packages/mcp-server/run.test.mjs` — ok (11/11, inclui os 4 novos).
+- `node --test build/tests/classify-findings.test.mjs build/tests/etapa3.test.mjs` — ok (29/29); `node --test build/check-consistency.guard.test.mjs` — ok (6/6).
+- `node build/smoke-install.mjs` — ok (contrato novo do cache zcode coberto); `node build/smoke-hosts.mjs` — ok; `node build/conformance-matrix.mjs` — ok (6 hosts × 10 cenários).
+- `shasum -a 256 -c dist/SHA256SUMS` — ok (6 artefatos); `unzip -t` dos 6 `.plugin` — ok.
+- `claude plugin validate ./ --strict` — ok.
+- Simulação do spawn Cursor (cwd neutro + env sem `*PLUGIN_ROOT*`) contra os caches reais da máquina: server responde `initialize` via varredura de cache.
+- §8 reforçado: `npm pack` + `init zcode` executado a partir do tarball extraído com HOME sandbox — cache com manifest na raiz.
+
 ## 0.18.0 - 2026-08-21
 
 Tipo: **runtime**. **Com breaking de procedimento** (writer do JSON de slice deixa de ser a LLM). Schema MCP: v5 (inalterado). Disco do state: v3 (inalterado).
