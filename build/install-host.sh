@@ -205,13 +205,12 @@ EOF
   fi
 
   # 4) Custom agents Mavis — 1 por agents/<talos-*.md> do Talos.
-  # system_prompt = corpo do .md (sem frontmatter YAML).
-  # Tool name do MCP no Mavis = mcp__<server>__<tool>. Server name = "talos"
-  # (do servers.mcp.json), então o MCP do Talos chega como mcp__talos__<tool>.
-  # O frontmatter dos .md canônicos declara mcp__plugin_talos_talos (padrão
-  # Claude) só no `tools:` — não é texto que o subagente vê no system_prompt.
-  # O Mavis injeta as tools MCP via runtime; o system_prompt continua sendo
-  # o corpo do .md, portável entre hosts.
+  # Formato esperado pelo Mavis runtime (verificado em ~/.minimax/agents/coder/
+  # que funciona nativamente):
+  #   <dir>/agent.md      — system_prompt (markdown puro, sem frontmatter)
+  #   <dir>/config.yaml   — opcional, defaultWorkspaceDir e overrides
+  # NÃO escrever name/description/systemPrompt em config.yaml — o Mavis
+  # não reconhece esse formato; só lê o system_prompt de agent.md.
   if [[ -d "$ROOT/agents" ]]; then
     for agent_md in "$ROOT/agents"/talos-*.md; do
       [[ -f "$agent_md" ]] || continue
@@ -220,18 +219,14 @@ EOF
       description="$(awk '/^description:/{gsub(/^description: */,""); gsub(/^"|"$/,""); print; exit}' "$agent_md")"
       agent_dir="$AGENTS_DIR/$name"
       mkdir -p "$agent_dir"
-      # Corpo do .md como system_prompt
+      # Corpo do .md (após o segundo ---) é o system_prompt.
+      # Vai como agent.md em markdown puro, no formato que o Mavis escaneia.
       body="$(awk 'BEGIN{p=0} /^---$/{c++; next} c>=2{print}' "$agent_md")"
-      # YAML safe quoting: usa single-quoted string (após dobrar single quotes
-      # internas). Descriptions dos agents/*.md podem conter ':' e aspas, e
-      # concatenar sem quoting quebra o parser (mapping values not allowed).
-      desc_q="${description//\'/\'\'}"
+      printf '%s\n' "$body" > "$agent_dir/agent.md"
+      # config.yaml com defaultWorkspaceDir apontando pro repo do Talos.
+      # Mantém os agents no escopo certo (workspace do Talos).
       cat > "$agent_dir/config.yaml" <<EOF
-name: $name
-displayName: $name
-description: '$desc_q'
-systemPrompt: |
-$(printf '%s\n' "$body" | sed 's/^/  /')
+defaultWorkspaceDir: $ROOT
 EOF
     done
   fi
