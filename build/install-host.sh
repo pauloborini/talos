@@ -203,10 +203,14 @@ EOF
       mkdir -p "$agent_dir"
       # Corpo do .md como system_prompt
       body="$(awk 'BEGIN{p=0} /^---$/{c++; next} c>=2{print}' "$agent_md")"
+      # YAML safe quoting: usa single-quoted string (após dobrar single quotes
+      # internas). Descriptions dos agents/*.md podem conter ':' e aspas, e
+      # concatenar sem quoting quebra o parser (mapping values not allowed).
+      desc_q="${description//\'/\'\'}"
       cat > "$agent_dir/config.yaml" <<EOF
 name: $name
 displayName: $name
-description: $description
+description: '$desc_q'
 systemPrompt: |
 $(printf '%s\n' "$body" | sed 's/^/  /')
 EOF
