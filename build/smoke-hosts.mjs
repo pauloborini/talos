@@ -21,6 +21,7 @@ const CASES = [
   { name: 'claude (= cursor via CLAUDE_PLUGIN_ROOT)', env: { CLAUDE_PLUGIN_ROOT: '/tmp/x' }, host: 'claude', via: 'env:CLAUDE_PLUGIN_ROOT', join_sync: 'self_evident' },
   { name: 'codex (CODEX_HOME)', env: { CODEX_HOME: '/tmp/y' }, host: 'codex', via: 'env:CODEX', join_sync: 'self_evident' },
   { name: 'zcode (ZCODE_PLUGIN_ROOT)', env: { ZCODE_PLUGIN_ROOT: '/tmp/z' }, host: 'zcode', via: 'env:ZCODE_PLUGIN_ROOT', join_sync: 'self_evident' },
+  { name: 'mavis (TALOS_HOST via servers.mcp.json)', env: { TALOS_HOST: 'mavis' }, host: 'mavis', via: 'env:TALOS_HOST', join_sync: 'self_evident' },
   { name: 'opencode (TALOS_HOST via opencode.json)', env: { TALOS_HOST: 'opencode' }, host: 'opencode', via: 'env:TALOS_HOST', join_sync: 'self_evident' },
   { name: 'pi (TALOS_HOST via mcp.json)', env: { TALOS_HOST: 'pi' }, host: 'pi', via: 'env:TALOS_HOST', join_sync: 'must_report' },
   { name: 'generic (sem env)', env: {}, host: 'generic', via: 'default', join_sync: 'must_report' },

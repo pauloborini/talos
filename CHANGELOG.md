@@ -1,5 +1,35 @@
 # Changelog
 
+## Unreleased
+
+Tipo: **adapter-only**. **Sem breaking**. Schema MCP: v5 (inalterado). Disco: v3 (inalterado). Motor (gates, state machine, executor, validator, repair, skills): **intocado**.
+
+Resumo: nono host do Talos — **Mavis (MiniMax Code)** — integrado como Plugin V1 do Mavis. Cada subagente Talos vira um custom agent Mavis (system_prompt derivado de `agents/<talos-*.md>`); MCP stdio injetado via `servers.mcp.json` com `TALOS_HOST=mavis`. Adição é puramente adapter: nova entrada `mavis` em `HOST_ADAPTERS`, linha na matriz de `host-adapters.md`, case no `smoke-hosts.mjs` e branch no `install-host.sh`. Sem mudança em `HOST_DETECTORS` (o override `env:TALOS_HOST` já cobria o caminho) nem em gates (PREREQ/JOIN/DISPATCH herdam do perfil `self_evident` + `dispatch_capability: "mutable"`, confirmados pelo smoke).
+
+Mudanças:
+- **`packages/mcp-server/server.js`** — entrada `mavis` em `HOST_ADAPTERS` (após `vscode`, antes de `generic`): `subagent_dispatch.mechanism = "task({ agent_name }) / mavis session send"`, `validator_dispatch.join.sync = "self_evident"` (task foreground bloqueante), `question_prompt.mechanism = "ask_user"` (1–4 steps), `todo_tool = "todowrite"`, `hooks.supported = false` (Plugin V1 do Mavis não suporta hooks), `capabilities_flags = { subagent_available: true, mcp_available: true, todo_available: true }`, `prereq_policy = "self_evident"`, `dispatch_capability = "mutable"`. Sem tocar no motor (gates, preflight, run state, slice ledger, validator lock, checkpoint state, schema de tools).
+- **`packages/orchestrator/references/host-adapters.md`** — linha de detecção `env:TALOS_HOST=mavis`; nova coluna `mavis (MiniMax Code)` na matriz principal com todos os 12 concerns (disparo, registro, topologia, fallback, join, dispatch_capability, todo, interview, config MCP, deps, run state, plan paths); mecanismo `ask_user` listado na linha 61.
+- **`build/smoke-hosts.mjs`** — case `mavis (TALOS_HOST via servers.mcp.json)` no array `CASES` (env `{ TALOS_HOST: 'mavis' }`, host `mavis`, via `env:TALOS_HOST`, join_sync `self_evident`).
+- **`build/install-host.sh`** — case `mavis` no switch; novo bloco no final gera o Plugin V1 em `~/.minimax/plugins/talos/` (`.minimax-plugin/plugin.json` + `servers.mcp.json` + `skills/<talos-*>/SKILL.md` copiados de `packages/skills/`) e cria 5 custom agents em `~/.minimax/agents/talos-<name>/config.yaml` (system_prompt = corpo de `agents/<talos-<name>.md`).
+- **`AGENTS.md`** — "Oito hosts" → "Nove hosts" com parágrafo sobre Mavis (Plugin V1 + 5 custom agents + `TALOS_HOST=mavis`).
+
+Impacto:
+- Demais hosts (claude, codex, cursor, antigravity, opencode, pi, zcode, vscode, generic) **sem mudança de comportamento** — a entrada nova é aditiva no objeto `HOST_ADAPTERS` e o `detectHost` continua resolvendo via `HOST_ADAPTERS[override]`.
+- Quem instalar Mavis ganha um nono host: packager único (`build/install-host.sh mavis`) materializa Plugin V1 + 5 custom agents em `~/.minimax/`; re-scan do Mavis descobre o plugin automaticamente; `talos_ping` confirma boot; `talos_capabilities` lista `mavis` em `known_hosts`.
+- Sem migração de disco/pipeline; state v3, schema MCP v5, gates G1–G12, topologia sibling, e conjunto de tools inalterados.
+
+Arquivos/artefatos:
+- `packages/mcp-server/server.js` (entrada `mavis` em `HOST_ADAPTERS`).
+- `packages/orchestrator/references/host-adapters.md` (linha de detecção + coluna na matriz + linha 61).
+- `build/smoke-hosts.mjs` (case novo no CASES).
+- `build/install-host.sh` (case `mavis` + bloco do Plugin V1).
+- `AGENTS.md` (parágrafo do nono host).
+- `CHANGELOG.md` (esta entrada).
+
+Validação:
+- `node build/smoke-hosts.mjs` — ok (9 hosts × boot + detecção + capabilities + ping, incluindo Mavis).
+- Bump `VERSION` + release do `0.18.2` pendente de validação end-to-end no Mavis (instalação real + dispatch de subagente + preflight reportando `dispatch_mutable: true`).
+
 ## 0.18.1 - 2026-08-24
 
 Tipo: **packaging**. **Sem breaking**. Schema MCP: v5 (inalterado).

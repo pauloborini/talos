@@ -4,10 +4,13 @@
 # Idempotente: rodar de novo atualiza para a versão atual (atende invariante #3 —
 # atualização simples, 1 comando). NÃO toca o caminho marketplace de claude/codex/cursor.
 #
-# Uso: build/install-host.sh <opencode|pi> <target-dir>
+# Uso: build/install-host.sh <opencode|pi|zcode|vscode|mavis> <target-dir>
 #   opencode → copia .opencode/ + opencode.json para <target-dir>/
 #   pi       → copia talos/ agents/ skills/ mcp.json para <target-dir>/
 #   vscode   → copia .vscode/ agents/ skills/ para <target-dir>/
+#   mavis    → instala Plugin V1 do Talos em ~/.minimax/plugins/talos/ e gera
+#              5 custom agents em ~/.minimax/agents/talos-*/config.yaml.
+#              <target-dir> é a raiz do repo do Talos (lê packages/, agents/).
 #
 # Layout/cwd: o MCP roda via path relativo (.opencode/talos/... ou talos/...). O host
 # DEVE lançar `node` com cwd em <target-dir>. Ver README (seções opencode/pi).
@@ -40,8 +43,12 @@ case "$HOST" in
     SRC="$ROOT/hosts/vscode"
     VERSION_FILE="$SRC/.vscode/talos/VERSION"
     ;;
+  mavis)
+    SRC="$ROOT"  # packager do Mavis lê direto do repo (não usa catálogo from-source)
+    VERSION_FILE="$ROOT/VERSION"
+    ;;
   *)
-    echo "host inválido: '$HOST' (use opencode, pi, zcode ou vscode)" >&2
+    echo "host inválido: '$HOST' (use opencode, pi, zcode, vscode ou mavis)" >&2
     exit 2
     ;;
 esac
@@ -62,7 +69,11 @@ echo "instalando talos ($HOST v$VERSION) em $TARGET"
 
 # cp -R do conteúdo do catálogo (inclui dotfiles como .opencode). Sobrescreve a
 # instalação anterior — é o caminho de update.
-cp -R "$SRC/." "$TARGET/"
+# Mavis não usa catálogo from-source (Plugin V1 vai pra ~/.minimax/plugins/talos/);
+# o target é só referência da raiz do repo.
+if [[ "$HOST" != "mavis" ]]; then
+  cp -R "$SRC/." "$TARGET/"
+fi
 
 if [[ "$HOST" == "pi" ]]; then
   echo "lembrete: pi exige 2 deps externas obrigatórias no host (DEC-005):"
@@ -89,6 +100,125 @@ elif [[ "$HOST" == "vscode" ]]; then
   echo "     cp -R $TARGET/skills/* ~/Library/Application Support/Code/User/prompts/"
   echo "  4. reinicie o VS Code ou recarregue a janela (Cmd+Shift+P → Reload Window)"
   echo "confirme com talos_ping (deve responder status=alive, version=$VERSION, host=vscode)."
+fi
+
+if [[ "$HOST" == "mavis" ]]; then
+  # Mavis usa Plugin V1 próprio. Layout obrigatório:
+  #   ~/.minimax/plugins/talos/
+  #     .minimax-plugin/plugin.json
+  #     icon.png
+  #     servers.mcp.json
+  #     skills/<talos-*>/SKILL.md
+  #   ~/.minimax/agents/talos-<name>/config.yaml  (5 custom agents)
+  DATA_DIR="${MINIMAX_DATA_DIR:-$HOME/.minimax}"
+  PLUGIN_DIR="$DATA_DIR/plugins/talos"
+  AGENTS_DIR="$DATA_DIR/agents"
+
+  echo "instalando Plugin V1 do Talos no Mavis..."
+  echo "  DATA_DIR   = $DATA_DIR"
+  echo "  PLUGIN_DIR = $PLUGIN_DIR"
+  echo "  AGENTS_DIR = $AGENTS_DIR"
+
+  mkdir -p "$PLUGIN_DIR/.minimax-plugin" \
+           "$PLUGIN_DIR/skills" \
+           "$AGENTS_DIR"
+
+  # 1) Manifest do Plugin V1
+  cat > "$PLUGIN_DIR/.minimax-plugin/plugin.json" <<EOF
+{
+  "schemaVersion": 1,
+  "name": "talos",
+  "displayName": "Talos",
+  "version": "$VERSION",
+  "description": "Pipeline de desenvolvimento determinística (sprint file → plano → execução → validação fria) com MCP local, 5 subagentes e skills de orquestração. Integração com Mavis via Plugin V1.",
+  "author": "Paulo Borini",
+  "icon": "icon.png",
+  "category": "Code",
+  "exampleQueries": [
+    "Use Talos to drive a sprint file through the deterministic pipeline.",
+    "Quero rodar a pipeline do Talos nesse projeto."
+  ],
+  "apps": [],
+  "mcpServers": ["servers.mcp.json"],
+  "skills": [
+    "skills/talos-audit/SKILL.md",
+    "skills/talos-backlog-generator/SKILL.md",
+    "skills/talos-direct-execute/SKILL.md",
+    "skills/talos-findings-repair/SKILL.md",
+    "skills/talos-memory-promote/SKILL.md",
+    "skills/talos-plan-execute/SKILL.md",
+    "skills/talos-plan-handoff/SKILL.md",
+    "skills/talos-slice-review/SKILL.md",
+    "skills/talos-sprint-interview/SKILL.md",
+    "skills/talos-task-validator/SKILL.md"
+  ]
+}
+EOF
+
+  # 2) servers.mcp.json — MCP stdio com env TALOS_HOST=mavis injetado
+  cat > "$PLUGIN_DIR/servers.mcp.json" <<EOF
+{
+  "schemaVersion": 1,
+  "mcpServers": {
+    "talos": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["$ROOT/packages/mcp-server/server.js"],
+      "env": {
+        "TALOS_HOST": "mavis"
+      },
+      "description": "MCP do Talos (gates, state, slice ledger, validator dispatch, sprint/plan state).",
+      "timeout": 30000
+    }
+  }
+}
+EOF
+
+  # 3) Skills — copia todos os SKILL.md de packages/skills/<name>/ para o Plugin V1
+  if [[ -d "$ROOT/packages/skills" ]]; then
+    for skill_dir in "$ROOT/packages/skills"/*/; do
+      [[ -d "$skill_dir" ]] || continue
+      name="$(basename "$skill_dir")"
+      [[ -f "$skill_dir/SKILL.md" ]] || continue
+      mkdir -p "$PLUGIN_DIR/skills/$name"
+      cp "$skill_dir/SKILL.md" "$PLUGIN_DIR/skills/$name/SKILL.md"
+    done
+  fi
+
+  # 4) Custom agents Mavis — 1 por agents/<talos-*.md> do Talos.
+  # system_prompt = corpo do .md (sem frontmatter YAML).
+  # Tool name do MCP no Mavis = mcp__<server>__<tool>. Server name = "talos"
+  # (do servers.mcp.json), então o MCP do Talos chega como mcp__talos__<tool>.
+  # O frontmatter dos .md canônicos declara mcp__plugin_talos_talos (padrão
+  # Claude) só no `tools:` — não é texto que o subagente vê no system_prompt.
+  # O Mavis injeta as tools MCP via runtime; o system_prompt continua sendo
+  # o corpo do .md, portável entre hosts.
+  if [[ -d "$ROOT/agents" ]]; then
+    for agent_md in "$ROOT/agents"/talos-*.md; do
+      [[ -f "$agent_md" ]] || continue
+      name="$(basename "$agent_md" .md)"
+      # description do frontmatter (segunda linha, sem aspas)
+      description="$(awk '/^description:/{gsub(/^description: */,""); gsub(/^"|"$/,""); print; exit}' "$agent_md")"
+      agent_dir="$AGENTS_DIR/$name"
+      mkdir -p "$agent_dir"
+      # Corpo do .md como system_prompt
+      body="$(awk 'BEGIN{p=0} /^---$/{c++; next} c>=2{print}' "$agent_md")"
+      cat > "$agent_dir/config.yaml" <<EOF
+name: $name
+displayName: $name
+description: $description
+systemPrompt: |
+$(printf '%s\n' "$body" | sed 's/^/  /')
+EOF
+    done
+  fi
+
+  echo "Plugin V1 instalado em $PLUGIN_DIR"
+  echo "Custom agents criados em $AGENTS_DIR (5 agents talos-*)"
+  echo "para o Mavis reconhecer:"
+  echo "  - feche a sessão atual e abra uma nova (re-scan automático)"
+  echo "  - ou: settings → plugins → re-scan"
+  echo "confirme com a tool MCP talos_ping (deve responder status=alive, version=$VERSION, host=mavis)."
 fi
 
 echo "ok — confirme com a tool MCP talos_ping (deve responder status=alive, version=$VERSION)."
