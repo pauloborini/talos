@@ -123,6 +123,25 @@ if [[ "$HOST" == "mavis" ]]; then
            "$PLUGIN_DIR/skills" \
            "$AGENTS_DIR"
 
+  # 0) Icon — PNG 1×1 RGBA mínimo (67 bytes; spec V1 exige PNG/JPEG/WebP).
+  # Sem isso o runtime do Mavis rejeita o plugin (manifest referencia icon que
+  # não existe). Garante a referência antes do manifest ser escrito.
+  python3 -c "
+import struct, zlib
+def make_png():
+    sig = b'\x89PNG\r\n\x1a\n'
+    def chunk(t, d):
+        c = zlib.crc32(t + d) & 0xffffffff
+        return struct.pack('>I', len(d)) + t + d + struct.pack('>I', c)
+    ihdr = chunk(b'IHDR', struct.pack('>IIBBBBB', 1, 1, 8, 6, 0, 0, 0))
+    raw = b'\x00\x00\x00\x00\x00'
+    idat = chunk(b'IDAT', zlib.compress(raw))
+    iend = chunk(b'IEND', b'')
+    return sig + ihdr + idat + iend
+import sys
+sys.stdout.buffer.write(make_png())
+" > "$PLUGIN_DIR/icon.png"
+
   # 1) Manifest do Plugin V1
   cat > "$PLUGIN_DIR/.minimax-plugin/plugin.json" <<EOF
 {
