@@ -231,6 +231,8 @@ function sprintFixture({
   acceptanceItems = null,
   /** v0.16.0 (CN6): célula `Fonte` da linha `Discussão` da §4; `null` omite a linha */
   discussao = '.app-work/brainstorming/fixture/BRAINSTORM.md',
+  /** Plano 01 (RASTREABILIDADE_MCP_GUIDE): metadado `Traceability` da §1; `null` omite a linha */
+  traceabilityMark = null,
 } = {}) {
   const decisionTable = decisionRows ?? [
     '| ID | Decisão | Origem |',
@@ -266,6 +268,7 @@ function sprintFixture({
     '| Fase | F0 |',
     `| MoSCoW | ${moscow} |`,
     `| Prioridade | ${prioridade} |`,
+    ...(traceabilityMark === null ? [] : [`| Traceability | ${traceabilityMark} |`]),
     '',
     '## 2. Objetivo e valor',
     'Objetivo único.',
@@ -652,4 +655,55 @@ test('skill backlog: nenhum nome de ferramenta de host como instrução (AC-04.3
   // Os descritores do host são a única fonte do verbo (multi-host por adapter).
   assert.match(BACKLOG_SKILL(), /question_prompt/, 'skill não aponta question_prompt');
   assert.match(BACKLOG_SKILL(), /subagent_dispatch/, 'skill não aponta subagent_dispatch');
+});
+
+// ── Plano 01 (RASTREABILIDADE_MCP_GUIDE) — marcas v1 consistência (INV3) ──────
+
+const TRACE_LEDGER_V1 = {
+  schema: 'traceability_v1', reqs: {},
+  sprints: { S01: { schema: 'traceability_v1' } }, pilot_metrics: [],
+};
+const TRACE_LEDGER_V1_SEM_S01 = {
+  schema: 'traceability_v1', reqs: {},
+  sprints: {}, pilot_metrics: [],
+};
+
+test('traceability: mismatch de marcas bloqueia nos dois sentidos; par v1 passa (AC-1.2.1 / INV3 / VC4)', () => {
+  // Sprint com metadado Traceability: v1 e ledger sem sprints[S01] → blocked.
+  const onlySprint = validateSprintFileConformance(
+    sprintFixture({ traceabilityMark: 'v1' }),
+    { traceability: TRACE_LEDGER_V1_SEM_S01 },
+  );
+  assert.equal(onlySprint.valid, false);
+  const sprintSide = onlySprint.pendencies.find((p) => p.category === 'rastreabilidade');
+  assert.ok(sprintSide, JSON.stringify(onlySprint.pendencies));
+  assert.equal(sprintSide.item, 'S01');
+  assert.equal(sprintSide.next_action, 'alinhar_marcadores_traceability');
+  // Ledger sprints[S01].schema = traceability_v1 e sprint sem metadado → blocked.
+  const onlyLedger = validateSprintFileConformance(
+    sprintFixture(),
+    { traceability: TRACE_LEDGER_V1 },
+  );
+  assert.equal(onlyLedger.valid, false);
+  assert.ok(onlyLedger.pendencies.some((p) => p.category === 'rastreabilidade'),
+    JSON.stringify(onlyLedger.pendencies));
+  // Par consistente (os dois lados) → modo v1, sem pendência de marcas.
+  const bothV1 = validateSprintFileConformance(
+    sprintFixture({ traceabilityMark: 'v1' }),
+    { traceability: TRACE_LEDGER_V1 },
+  );
+  assert.ok(!bothV1.pendencies.some((p) => p.category === 'rastreabilidade'),
+    JSON.stringify(bothV1.pendencies));
+});
+
+test('traceability: sprint sem marca não exige ledger (AC-1.2.2 / CN10 / VC4)', () => {
+  // Sem metadado e sem entrada no ledger: contrato atual (legacy) — passa.
+  const legacy = validateSprintFileConformance(
+    sprintFixture(),
+    { traceability: TRACE_LEDGER_V1_SEM_S01 },
+  );
+  assert.equal(legacy.valid, true, JSON.stringify(legacy.pendencies));
+  // Chamador que não conhece o ledger (opção ausente): comportamento idêntico.
+  const noOption = validateSprintFileConformance(sprintFixture());
+  assert.equal(noOption.valid, true, JSON.stringify(noOption.pendencies));
 });

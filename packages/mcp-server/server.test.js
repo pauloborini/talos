@@ -53,6 +53,11 @@ import {
   commitState,
 } from './server.js';
 import {
+  traceabilityHandler,
+  writeTraceabilityLedger,
+  TRACEABILITY_SCHEMA_VERSION,
+} from './traceability.mjs';
+import {
   parseSprintRows,
   validateSprintFileConformance,
   validateAcceptanceSeal,
@@ -265,6 +270,10 @@ test('tools: conjunto registrado é exatamente a lista canônica, sem adição (
     'talos_scan_acceptance',
     'talos_select_next_sprint',
     'talos_sync_manual_validation',
+    // Guide RASTREABILIDADE_MCP_GUIDE (Plano 01): tool única `talos_traceability`
+    // com action upsert|verify — ledger opt-in sem hook (D2/D5). Extensível no
+    // Plano 03 (receipt|record_metric) sem nova tool.
+    'talos_traceability',
     'talos_update_sprint_status',
     'talos_verify_artifact',
     'talos_verify_backlog_index',
@@ -7394,4 +7403,178 @@ test('proof-of-work: falhas de challenge são bounded — esgotado o teto, slot 
   // Slot fechado terminal: recovery não expõe mais validador ativo.
   const rec = runState({ action: 'get', run_id: 'pow8', project_root: root }).validator_recovery;
   assert.equal(rec, null, 'slot terminal fechado (sem active)');
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Guide RASTREABILIDADE_MCP_GUIDE — Plano 01: ledger traceability v1 (MCP-only)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function traceReq(overrides = {}) {
+  return {
+    id: 'REQ-001',
+    sources: [{ kind: 'talos', ref: 'sprint:S01' }],
+    criticality: 'alta',
+    disposition: 'included',
+    ...overrides,
+  };
+}
+
+const traceAlphaBacklog = '.talos/backlog/BACKLOG_MESTRE_alpha.md';
+const traceLedgerFile = (root, backlog) => path.join(
+  root, '.talos', 'traceability', `${path.basename(backlog).replace(/\.md$/i, '')}.json`,
+);
+
+test('traceability: upsert grava REQ no slug do backlog e preserva sprints/pilot_metrics (AC-1.1.1 / VC1 / VC6)', () => {
+  const root = tmpRoot();
+  // Documento com sprints e pilot_metrics pré-existentes: a escrita absoluta do
+  // ledger DEVE preservar as chaves irmãs (falsificador: write que só persiste reqs).
+  const pre = {
+    schema: TRACEABILITY_SCHEMA_VERSION,
+    reqs: {},
+    sprints: { S01: { schema: TRACEABILITY_SCHEMA_VERSION } },
+    pilot_metrics: [{
+      calls: 1, retries: 0, turns: 2, coverage: 'parcial',
+      observed_at: '2026-08-26T00:00:00.000Z',
+    }],
+  };
+  writeTraceabilityLedger(pre, traceAlphaBacklog, root);
+  const doc = traceabilityHandler({
+    run_id: 'tr011', project_root: root, backlog_path: traceAlphaBacklog,
+    reqs: [traceReq()],
+  });
+  assert.equal(doc.document.reqs['REQ-001'].disposition, 'included');
+  assert.deepEqual(doc.document.sprints, pre.sprints, 'sprints irmã preservada (write absoluto)');
+  assert.deepEqual(doc.document.pilot_metrics, pre.pilot_metrics, 'pilot_metrics irmã preservada (write absoluto)');
+  const onDisk = JSON.parse(fs.readFileSync(traceLedgerFile(root, traceAlphaBacklog), 'utf8'));
+  assert.deepEqual(onDisk, doc.document, 'disco == documento retornado');
+  // VC6: backlog B não escreve no slug de A.
+  const backlogB = '.talos/backlog/BACKLOG_MESTRE_beta.md';
+  traceabilityHandler({
+    run_id: 'tr011', project_root: root, backlog_path: backlogB,
+    reqs: [traceReq({ id: 'REQ-002' })],
+  });
+  assert.ok(fs.existsSync(traceLedgerFile(root, backlogB)), 'ledger de B criado no próprio slug');
+  const alpha = JSON.parse(fs.readFileSync(traceLedgerFile(root, traceAlphaBacklog), 'utf8'));
+  assert.ok(!('REQ-002' in alpha.reqs), 'upsert de B não vaza para o ledger de A (VC6)');
+});
+
+test('traceability: upsert do mesmo id atualiza destino, sem duplicar chave; duplicata no mesmo write recusa (AC-1.1.2 / VC1)', () => {
+  const root = tmpRoot();
+  traceabilityHandler({
+    run_id: 'tr012', project_root: root, backlog_path: traceAlphaBacklog,
+    reqs: [traceReq()],
+  });
+  // Update de disposition (D1/D12: deferred pode passar a included e vice-versa).
+  const updated = traceabilityHandler({
+    run_id: 'tr012', project_root: root, backlog_path: traceAlphaBacklog,
+    reqs: [traceReq({ disposition: 'rejected', reason: 'fora do escopo' })],
+  });
+  assert.deepEqual(Object.keys(updated.document.reqs), ['REQ-001'], 'exatamente uma chave REQ-001');
+  assert.equal(updated.document.reqs['REQ-001'].disposition, 'rejected');
+  // Duas entradas do mesmo id num único write: recusa e disco permanece o anterior.
+  const before = fs.readFileSync(traceLedgerFile(root, traceAlphaBacklog), 'utf8');
+  assert.throws(
+    () => traceabilityHandler({
+      run_id: 'tr012', project_root: root, backlog_path: traceAlphaBacklog,
+      reqs: [traceReq(), traceReq({ id: 'REQ-001' })],
+    }),
+    /REQ duplicado no mesmo write/,
+  );
+  assert.equal(fs.readFileSync(traceLedgerFile(root, traceAlphaBacklog), 'utf8'), before,
+    'disco permanece o anterior na recusa');
+  // Contraprova: id novo convive com o existente.
+  const both = traceabilityHandler({
+    run_id: 'tr012', project_root: root, backlog_path: traceAlphaBacklog,
+    reqs: [traceReq({ id: 'REQ-003' })],
+  });
+  assert.deepEqual(Object.keys(both.document.reqs).sort(), ['REQ-001', 'REQ-003']);
+});
+
+test('traceability: INV1 — deferred/rejected incompletos recusam e nada é gravado (AC-1.1.3 / INV1 / VC2)', () => {
+  const root = tmpRoot();
+  traceabilityHandler({
+    run_id: 'tr013', project_root: root, backlog_path: traceAlphaBacklog,
+    reqs: [traceReq()],
+  });
+  const cases = [
+    [traceReq({ disposition: 'deferred' }), /deferred exige reason/],
+    [traceReq({ disposition: 'deferred', reason: 'adiar' }), /deferred_target/],
+    [traceReq({ disposition: 'deferred', reason: 'adiar', deferred_target: { type: 'sprint' } }), /deferred_target\.id/],
+    [traceReq({ disposition: 'deferred', reason: 'adiar', deferred_target: { type: 'sprint', id: 'X1' } }), /deferred_target\.id/],
+    [traceReq({ disposition: 'deferred', reason: 'adiar', deferred_target: { type: 'inventado', id: 'S01' } }), /deferred_target\.type/],
+    [traceReq({ disposition: 'deferred', reason: 'adiar', deferred_target: { type: 'backlog_candidate' } }), /deferred_target\.name/],
+    [traceReq({ disposition: 'rejected' }), /rejected exige reason/],
+  ];
+  const before = fs.readFileSync(traceLedgerFile(root, traceAlphaBacklog), 'utf8');
+  for (const [payload, pattern] of cases) {
+    assert.throws(
+      () => traceabilityHandler({
+        run_id: 'tr013', project_root: root, backlog_path: traceAlphaBacklog, reqs: [payload],
+      }),
+      pattern,
+      `payload inválido deveria recusar: ${JSON.stringify(payload)}`,
+    );
+  }
+  assert.equal(fs.readFileSync(traceLedgerFile(root, traceAlphaBacklog), 'utf8'), before,
+    'nenhuma recusa gravou nada');
+  // VC2: deferred válido persiste como deferred no disco (não vira included).
+  const deferred = traceabilityHandler({
+    run_id: 'tr013', project_root: root, backlog_path: traceAlphaBacklog,
+    reqs: [traceReq({
+      id: 'REQ-004', disposition: 'deferred', reason: 'adiar',
+      deferred_target: { type: 'sprint', id: 'S02' },
+    })],
+  });
+  assert.equal(deferred.document.reqs['REQ-004'].disposition, 'deferred');
+  assert.deepEqual(deferred.document.reqs['REQ-004'].deferred_target, { type: 'sprint', id: 'S02' });
+});
+
+test('traceability: fonte externa sem ref não entra no ledger (AC-1.3.1 / CN9 / INV6)', () => {
+  const root = tmpRoot();
+  traceabilityHandler({
+    run_id: 'tr131', project_root: root, backlog_path: traceAlphaBacklog,
+    reqs: [traceReq()],
+  });
+  const before = fs.readFileSync(traceLedgerFile(root, traceAlphaBacklog), 'utf8');
+  assert.throws(
+    () => traceabilityHandler({
+      run_id: 'tr131', project_root: root, backlog_path: traceAlphaBacklog,
+      reqs: [traceReq({ id: 'REQ-005', sources: [{ kind: 'external' }] })],
+    }),
+    /fonte externa exige ref/,
+  );
+  assert.equal(fs.readFileSync(traceLedgerFile(root, traceAlphaBacklog), 'utf8'), before,
+    'external sem ref não grava');
+  // Contraprova: external com ref estável entra; kind talos aceito com ponteiro.
+  const ext = traceabilityHandler({
+    run_id: 'tr131', project_root: root, backlog_path: traceAlphaBacklog,
+    reqs: [traceReq({
+      id: 'REQ-006',
+      sources: [{ kind: 'external', ref: 'https://exemplo.invalid/reqs/6' }],
+    })],
+  });
+  assert.equal(ext.document.reqs['REQ-006'].sources[0].ref, 'https://exemplo.invalid/reqs/6');
+  assert.ok(!('REQ-005' in ext.document.reqs), 'REQ hostil não aparece em write posterior');
+});
+
+test('traceability: tool registrada sem hook nem pré-load de capabilities (AC-1.2.3 / CN10 / INV4)', () => {
+  const tool = toolsList().tools.find((t) => t.name === 'talos_traceability');
+  assert.ok(tool, 'talos_traceability precisa existir em tools/list');
+  assert.deepEqual(tool.inputSchema.properties.action.enum, ['upsert', 'verify']);
+  assert.deepEqual(tool.inputSchema.required, ['run_id', 'backlog_path']);
+  // Nenhum adapter declara hook cuja função seja pré-carregar traceability.
+  for (const host of HOST_NAMES) {
+    const hooks = capabilities({ host }).hooks;
+    assert.ok(!JSON.stringify(hooks).toLowerCase().includes('trace'),
+      `host ${host}: hooks citam traceability (D2/INV4) — hook proibido`);
+  }
+  // Estrutural: nenhuma linha de server.js junta hook com esta feature.
+  const source = fs.readFileSync(new URL('./server.js', import.meta.url), 'utf8');
+  for (const line of source.split('\n')) {
+    assert.ok(!(line.includes('hooks') && /trace/i.test(line)),
+      `linha de server.js casa hooks com traceability:\n${line}`);
+  }
+  // A tool existe só via call explícito: nada no boot (initialize/tools list) a invoca.
+  assert.ok(!/talos_traceability[\s\S]{0,120}hooks|hooks[\s\S]{0,120}talos_traceability/.test(source),
+    'dispatch de traceability não pode depender de hooks');
 });

@@ -523,12 +523,40 @@ export function validateAcceptanceSeal(markdown) {
   };
 }
 
+/**
+ * Modo de rastreabilidade de uma sprint (opt-in `traceability v1`, D5/D6/D15):
+ * - `v1`: metadado `Traceability: v1` na sprint E `ledger.sprints[<id>].schema`
+ *   = `traceability_v1` no ledger MCP — os dois lados, consistentes (INV3).
+ * - `legacy`: nenhum dos dois lados — contrato atual, sem exigir ledger.
+ * - `inconsistent`: um lado só — bloqueia (sprint marcada sem ledger, ou
+ *   ledger marcado sem sprint); não se pode julgar v1 nem legacy.
+ * O valor da marca é lido pelo rótulo da tabela (§1), nunca por posição de coluna
+ * (D5: `parseSprintRows` de 16 células não lê esta marca — inerte por construção).
+ */
+export function traceabilityMode({ sprintMarkdown, ledger, sprintId }) {
+  const sprintMark = tableValue(sprintMarkdown, 'Traceability');
+  const sprintV1 = typeof sprintMark === 'string' && /^v1$/i.test(sprintMark.trim());
+  const ledgerV1 = Boolean(
+    sprintId
+    && ledger && typeof ledger === 'object' && !Array.isArray(ledger)
+    && ledger.sprints && typeof ledger.sprints === 'object' && !Array.isArray(ledger.sprints)
+    && ledger.sprints[sprintId] && typeof ledger.sprints[sprintId] === 'object'
+    && ledger.sprints[sprintId].schema === 'traceability_v1',
+  );
+  if (sprintV1 && ledgerV1) return 'v1';
+  if (!sprintV1 && !ledgerV1) return 'legacy';
+  return 'inconsistent';
+}
+
 export function validateSprintFileConformance(markdown, {
   sprintPath = null,
   sprintId = null,
   backlogPath = null,
   backlogMarkdown = null,
   root = null,
+  // Opt-in `traceability v1` (Plano 01): objeto do ledger MCP quando o caller
+  // conhece o ledger; `undefined` preserva o comportamento atual (legacy puro).
+  traceability = undefined,
 } = {}) {
   const pendencies = [];
   let premissaCount = 0;
@@ -607,6 +635,28 @@ export function validateSprintFileConformance(markdown, {
   const status = tableValue(markdown, 'Status');
   if (!VALID.state.has(status)) {
     pendencies.push(sprintConformancePending('metadados', 'Status', lineOf(markdown, /^\|\s*Status\s*\|/i), `Status inválido: ${status ?? '<ausente>'}.`, 'corrigir_status'));
+  }
+
+  // Rastreabilidade opt-in (D5/D6/D15, INV3): par de marcadores consistente
+  // (sprint `Traceability: v1` ↔ ledger `sprints[<id>].schema`) ou nenhum.
+  // Um lado só = `inconsistent` → bloqueia; `legacy` não exige ledger nem
+  // `source_refs` (esse gate chega no Plano 02). Sem opção `traceability` o
+  // comportamento atual é preservado (chamadores antigos não conhecem o ledger).
+  if (traceability !== undefined && expectedSprintId) {
+    const traceabilityModeValue = traceabilityMode({
+      sprintMarkdown: markdown,
+      ledger: traceability,
+      sprintId: expectedSprintId,
+    });
+    if (traceabilityModeValue === 'inconsistent') {
+      pendencies.push(sprintConformancePending(
+        'rastreabilidade',
+        expectedSprintId,
+        lineOf(markdown, /^\|\s*Traceability\s*\|/i),
+        'Marcadores traceability v1 inconsistentes: o metadado `Traceability` da sprint e `ledger.sprints[<id>].schema` precisam vir juntos (ambos ou nenhum); um lado só bloqueia.',
+        'alinhar_marcadores_traceability',
+      ));
+    }
   }
 
   const backlog = tableValue(markdown, 'Backlog mestre');

@@ -12,6 +12,7 @@ import {
   validateAcceptanceSeal,
   parseAcceptanceContract,
 } from '../skills/_shared/scripts/document_quality.mjs';
+import { traceabilityHandler } from './traceability.mjs';
 
 const SERVER_NAME = 'talos';
 const RUN_DIR = path.join('.talos', 'state');
@@ -6725,6 +6726,62 @@ function toolsList() {
         },
       },
       {
+        name: 'talos_traceability',
+        description: 'Ledger MCP de rastreabilidade opt-in `traceability v1` (REQ de origem → destino; marcas v1 consistentes; sem hook). Actions: upsert (grava documento completo; insert-or-update por REQ; deferred/rejected com motivo; external exige ref) e verify (mínimo: destinos faltantes e ids duplicados).',
+        inputSchema: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['run_id', 'backlog_path'],
+          properties: {
+            run_id: { type: 'string', minLength: 1 },
+            project_root: { type: 'string', minLength: 1 },
+            backlog_path: { type: 'string', minLength: 1, description: 'Path do backlog mestre; o ledger vive em .talos/traceability/<slug>.json (D5: sem coluna nova).' },
+            action: { type: 'string', enum: ['upsert', 'verify'], default: 'upsert' },
+            reqs: {
+              type: 'array',
+              items: {
+                type: 'object',
+                required: ['id', 'sources', 'disposition'],
+                properties: {
+                  id: { type: 'string', pattern: '^REQ-\\d+$' },
+                  sources: {
+                    type: 'array',
+                    items: {
+                      type: 'object',
+                      required: ['kind'],
+                      properties: {
+                        kind: { type: 'string', enum: ['talos', 'external'] },
+                        ref: { type: 'string', description: 'Obrigatório para kind external (path ou URI registrada).' },
+                      },
+                    },
+                  },
+                  criticality: { type: 'string' },
+                  disposition: { type: 'string', enum: ['included', 'deferred', 'rejected'] },
+                  reason: { type: 'string', description: 'Obrigatório para deferred/rejected.' },
+                  deferred_target: {
+                    type: 'object',
+                    properties: {
+                      type: { type: 'string', enum: ['sprint', 'backlog_candidate'] },
+                      id: { type: 'string', pattern: '^S\\d{2}(?:[a-z]|\\.\\d+)?$', description: 'Obrigatório para type sprint.' },
+                      name: { type: 'string', description: 'Obrigatório para type backlog_candidate.' },
+                    },
+                  },
+                },
+              },
+            },
+            sprint: {
+              type: 'object',
+              additionalProperties: false,
+              required: ['sprint_id', 'schema'],
+              properties: {
+                sprint_id: { type: 'string', pattern: '^S\\d{2}(?:[a-z]|\\.\\d+)?$' },
+                schema: { type: 'string', description: 'Marcador v1 do ledger; casa com o metadado Traceability da sprint (INV3).' },
+              },
+            },
+          },
+        },
+      },
+      {
         name: 'talos_update_sprint_status',
         description: 'Sincroniza status backlog/sprint.',
         inputSchema: {
@@ -6954,8 +7011,9 @@ function handleRequest(message) {
                       name === 'talos_verify_backlog_index' ? verifyBacklogIndex(args) :
                         name === 'talos_select_next_sprint' ? selectNextSprint(args) :
                           name === 'talos_update_sprint_status' ? updateSprintStatus(args) :
-                            name === 'talos_sync_manual_validation' ? syncManualValidation(args) :
-                              name === 'talos_classify_input' ? classifyInput(args) :
+name === 'talos_sync_manual_validation' ? syncManualValidation(args) :
+                                name === 'talos_traceability' ? traceabilityHandler(args) :
+                                name === 'talos_classify_input' ? classifyInput(args) :
                               name === 'talos_preflight' ? preflight(args) :
                                 name === 'talos_lock_dispatch' ? lockDispatch(args) :
                                   name === 'talos_lock_validator' ? lockValidator(args) :
@@ -7088,6 +7146,7 @@ export {
   nextActionForSelectedSprint,
   updateSprintStatus,
   syncManualValidation,
+  traceabilityHandler,
   emitMemoryHandoff,
   propagateRevalidation,
   classifyInput,
