@@ -676,9 +676,14 @@ test('traceability: mismatch de marcas bloqueia nos dois sentidos; par v1 passa 
     { traceability: TRACE_LEDGER_V1_SEM_S01 },
   );
   assert.equal(onlySprint.valid, false);
-  const sprintSide = onlySprint.pendencies.find((p) => p.category === 'rastreabilidade');
+  // INV3: o bloqueio de marcas é semântico (ação alinhar_marcadores_traceability),
+  // não a presença de qualquer pendência de rastreabilidade — sob mutação "um
+  // lado só como v1", o grafo poderia mascarar o mismatch com pendências de
+  // source_refs. Assert pela ação, não por ordem de pendências.
+  const sprintSide = onlySprint.pendencies.find(
+    (p) => p.category === 'rastreabilidade' && p.next_action === 'alinhar_marcadores_traceability' && p.item === 'S01',
+  );
   assert.ok(sprintSide, JSON.stringify(onlySprint.pendencies));
-  assert.equal(sprintSide.item, 'S01');
   assert.equal(sprintSide.next_action, 'alinhar_marcadores_traceability');
   // Ledger sprints[S01].schema = traceability_v1 e sprint sem metadado → blocked.
   const onlyLedger = validateSprintFileConformance(
@@ -686,8 +691,10 @@ test('traceability: mismatch de marcas bloqueia nos dois sentidos; par v1 passa 
     { traceability: TRACE_LEDGER_V1 },
   );
   assert.equal(onlyLedger.valid, false);
-  assert.ok(onlyLedger.pendencies.some((p) => p.category === 'rastreabilidade'),
-    JSON.stringify(onlyLedger.pendencies));
+  const ledgerSide = onlyLedger.pendencies.find(
+    (p) => p.category === 'rastreabilidade' && p.next_action === 'alinhar_marcadores_traceability' && p.item === 'S01',
+  );
+  assert.ok(ledgerSide, JSON.stringify(onlyLedger.pendencies));
   // Par consistente (os dois lados) → modo v1, sem pendência de marcas. O ramo
   // v1 do Plano 02 também exige source_refs nos ACs — o filtro isola o gate de
   // marcas (INV3); a exigência de refs é coberta pelos testes do Plano 02.
