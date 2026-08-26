@@ -40,10 +40,18 @@ export function traceabilityError(message, code = -32602) {
   return error;
 }
 
-function ledgerRoot(args) {
+/** Root de consumo idêntico ao `consumerRoot` do server.js — fonte única da
+ * regra (o gate done lê o ledger exatamente onde esta tool grava; fallback
+ * HOME cobre hosts que spawnam o MCP com cwd transitório). */
+export function consumerRoot(args = {}) {
   const explicit = args?.project_root;
   if (typeof explicit === 'string' && explicit.trim() !== '') return path.resolve(explicit);
-  return path.resolve(process.cwd());
+  const cwd = process.cwd();
+  if (cwd === '/' || cwd === '/var/folders') {
+    const home = process.env.HOME || process.env.USERPROFILE;
+    if (home) return path.resolve(home);
+  }
+  return path.resolve(cwd);
 }
 
 /** Path absoluto do ledger: `<root>/.talos/traceability/<slug>.json`. */
@@ -96,7 +104,10 @@ export function readTraceabilityLedger(backlogPath, root) {
 export function writeTraceabilityLedger(ledger, backlogPath, root) {
   const ledgerPath = traceabilityLedgerPath(backlogPath, root);
   fs.mkdirSync(path.dirname(ledgerPath), { recursive: true, mode: 0o700 });
-  const tmp = `${ledgerPath}.${process.pid}.tmp`;
+  // Sufixo com tempo além do pid: rename é atômico e o loop stdio processa
+  // sequencialmente, mas writers cruzados (dois servidores, mesmo root) não
+  // podem sobrescrever o tmp um do outro.
+  const tmp = `${ledgerPath}.${process.pid}.${Date.now()}.tmp`;
   fs.writeFileSync(tmp, `${JSON.stringify(ledger)}\n`, { mode: 0o600 });
   fs.renameSync(tmp, ledgerPath);
   return ledgerPath;
@@ -209,6 +220,61 @@ export function applySprintMarker(ledger, sprint) {
   };
 }
 
+/** Regra de atribuição de um REQ à sprint — idêntica à usada pelo
+ * `checkTraceabilityGraph` (`included_sem_ac`): source `sprint:<id>`. */
+function reqAssignedToSprint(req, sprintId) {
+  return sprintId != null && (Array.isArray(req?.sources) ? req.sources : [])
+    .some((source) => source && typeof source === 'object' && source.ref === `sprint:${sprintId}`);
+}
+
+/**
+ * Projeção pura ÚNICA da regra "caminho REQ→AC" (source_refs §7.3 + `links[]`
+ * do ledger + status dos ACs no state): consumida pelo receipt (CN5/D8) e pelo
+ * gate `done` do server.js (AC-3.1.1). Fonte única evita que os dois oráculos
+ * derivaem. `sprintId` restringe às REQs atribuídas à sprint; sem ele, todas.
+ * Rows incluem apenas `included` com `ac_ids` ordenado e `ok` derivado
+ * (todos os ACs ligados `proved`). Função de leitura: nada grava.
+ */
+export function traceabilityRequirementRows({ ledger, acceptanceItems = null, acceptanceResults = null, sprintId = null } = {}) {
+  const reqs = ledger?.reqs && typeof ledger.reqs === 'object' && !Array.isArray(ledger.reqs)
+    ? ledger.reqs : {};
+  const statusByAc = new Map();
+  if (Array.isArray(acceptanceResults)) {
+    for (const entry of acceptanceResults) {
+      if (entry && typeof entry === 'object' && typeof entry.id === 'string') {
+        statusByAc.set(entry.id, entry.status);
+      }
+    }
+  }
+  // Mapa reverso REQ → ACs a partir dos `source_refs` do §7.3 (CN2/VC3).
+  const refAcs = new Map();
+  for (const item of Array.isArray(acceptanceItems) ? acceptanceItems : []) {
+    const ac = item?.id;
+    if (typeof ac !== 'string' || ac === '') continue;
+    const refs = Array.isArray(item?.source_refs) ? item.source_refs : [];
+    for (const ref of refs) {
+      if (typeof ref !== 'string' || ref === '') continue;
+      if (!refAcs.has(ref)) refAcs.set(ref, new Set());
+      refAcs.get(ref).add(ac);
+    }
+  }
+  const rows = [];
+  for (const [id, req] of Object.entries(reqs)) {
+    if (!req || typeof req !== 'object' || Array.isArray(req)) continue;
+    if (req.disposition !== 'included') continue;
+    if (sprintId !== null && !reqAssignedToSprint(req, sprintId)) continue;
+    const acIds = new Set(refAcs.get(id) ?? []);
+    for (const link of Array.isArray(req.links) ? req.links : []) {
+      if (link && typeof link.ac_id === 'string' && link.ac_id !== '') acIds.add(link.ac_id);
+    }
+    const sorted = [...acIds].sort();
+    const ac_status = sorted.map((ac) => ({ ac, status: statusByAc.get(ac) ?? 'ausente' }));
+    const ok = sorted.length > 0 && ac_status.every((entry) => entry.status === 'proved');
+    rows.push({ req: id, disposition: 'included', ac_ids: sorted, ac_status, ok });
+  }
+  return rows;
+}
+
 /**
  * Verify do Plano 02 (CN4/INV2): além dos destinos/divs do Plano 01, cruza o
  * grafo com `source_refs` dos ACs quando `acceptanceItems` é fornecido (mesma
@@ -220,10 +286,7 @@ export function verifyTraceability(ledger, { acceptanceItems = null, sprintId = 
   const reqs = ledger?.reqs && typeof ledger.reqs === 'object' && !Array.isArray(ledger.reqs)
     ? ledger.reqs : {};
   const gaps = [];
-  const seen = new Set();
   for (const [id, req] of Object.entries(reqs)) {
-    if (seen.has(id)) gaps.push({ req: id, problem: 'id_duplicado_no_ledger' });
-    seen.add(id);
     if (!req || typeof req !== 'object' || Array.isArray(req)) {
       gaps.push({ req: id, problem: 'req_invalido' });
       continue;
@@ -272,60 +335,28 @@ export function verifyTraceability(ledger, { acceptanceItems = null, sprintId = 
  * schema paralelo; o orquestrador ecoa o payload). Nunca aceita claim de
  * cobertura vinda do caller — `coverage` é derivada, não injetada.
  *
- * Campos: `reqs[]` (por REQ: disposition, ac_ids, ac_status, ok), `exceptions[]`
- * (deferred/rejected com motivo — não bloqueiam), `blockers[]` (included sem
- * proved). Sprint legacy (sem marcador v1) não entra aqui — o handler devolve
- * `schema: legacy` sem exigir ledger (D6/CN7).
+ * Escopo: com `sprintId`, o receipt é o fechamento DAQUELA sprint — rows e
+ * `exceptions[]` cobrem só REQs atribuídos a ela (`sprint:<id>`, mesma regra
+ * do gate `done`; antes eram globais ao backlog e podiam contradizer o gate).
+ * `blockers[]` deriva das rows sem cobertura.
  */
 export function renderTraceabilityReceipt(ledger, { acceptanceItems = null, acceptanceResults = null, sprintId = null } = {}) {
   const reqs = ledger?.reqs && typeof ledger.reqs === 'object' && !Array.isArray(ledger.reqs)
     ? ledger.reqs : {};
-  const statusByAc = new Map();
-  if (Array.isArray(acceptanceResults)) {
-    for (const entry of acceptanceResults) {
-      if (entry && typeof entry === 'object' && typeof entry.id === 'string') {
-        statusByAc.set(entry.id, entry.status);
-      }
-    }
-  }
-  // Mapa reverso REQ → ACs a partir dos `source_refs` do §7.3 (CN2/VC3).
-  const refAcs = new Map();
-  for (const item of Array.isArray(acceptanceItems) ? acceptanceItems : []) {
-    const ac = item?.id;
-    if (typeof ac !== 'string' || ac === '') continue;
-    const refs = Array.isArray(item?.source_refs) ? item.source_refs : [];
-    for (const ref of refs) {
-      if (typeof ref !== 'string' || ref === '') continue;
-      if (!refAcs.has(ref)) refAcs.set(ref, new Set());
-      refAcs.get(ref).add(ac);
-    }
-  }
-  const rows = [];
+  const rows = traceabilityRequirementRows({ ledger, acceptanceItems, acceptanceResults, sprintId });
   const exceptions = [];
-  const blockers = [];
   for (const [id, req] of Object.entries(reqs)) {
     if (!req || typeof req !== 'object' || Array.isArray(req)) continue;
-    if (req.disposition === 'deferred' || req.disposition === 'rejected') {
-      exceptions.push({
-        req: id,
-        disposition: req.disposition,
-        reason: req.reason ?? null,
-        ...(req.deferred_target !== undefined ? { deferred_target: req.deferred_target } : {}),
-      });
-      continue;
-    }
-    if (req.disposition !== 'included') continue;
-    const acIds = new Set(refAcs.get(id) ?? []);
-    for (const link of Array.isArray(req.links) ? req.links : []) {
-      if (link && typeof link.ac_id === 'string' && link.ac_id !== '') acIds.add(link.ac_id);
-    }
-    const sorted = [...acIds].sort();
-    const ac_status = sorted.map((ac) => ({ ac, status: statusByAc.get(ac) ?? 'ausente' }));
-    const ok = sorted.length > 0 && ac_status.every((entry) => entry.status === 'proved');
-    const row = { req: id, disposition: 'included', ac_ids: sorted, ac_status, ok };
-    rows.push(row);
-    if (!ok) blockers.push({ req: id, ac_status });
+    if (req.disposition !== 'deferred' && req.disposition !== 'rejected') continue;
+    if (sprintId !== null && !reqAssignedToSprint(req, sprintId)) continue;
+    exceptions.push({
+      req: id,
+      disposition: req.disposition,
+      reason: req.reason ?? null,
+      ...(req.deferred_target !== undefined ? { deferred_target: req.deferred_target } : {}),
+    });
   }
+  const blockers = rows.filter((row) => !row.ok).map((row) => ({ req: row.req, ac_status: row.ac_status }));
   const included = rows.length;
   const proved = rows.filter((row) => row.ok).length;
   return {
@@ -395,7 +426,7 @@ function readStateAcceptanceResultsFile(stateAbs) {
  * (append no documento completo — escrita absoluta preserva reqs/sprints).
  */
 export function traceabilityHandler(args = {}) {
-  const root = ledgerRoot(args);
+  const root = consumerRoot(args);
   const backlogPath = args.backlog_path;
   if (typeof backlogPath !== 'string' || backlogPath.trim() === '') {
     throw traceabilityError('backlog_path obrigatório');
@@ -445,6 +476,9 @@ export function traceabilityHandler(args = {}) {
       backlog_path: backlogPath,
       schema: ledger.schema,
       ...report,
+      // Superfície read-only das métricas de piloto (R5: comparabilidade exige
+      // leitura sem passar pela ação de escrita upsert).
+      pilot_metrics: Array.isArray(ledger.pilot_metrics) ? ledger.pilot_metrics : [],
     };
   }
   if (action === 'receipt') {
@@ -468,7 +502,13 @@ export function traceabilityHandler(args = {}) {
       ? args.sprint_id
       : (/^\|\s*Sprint ID\s*\|\s*(S\d{2}(?:[a-z]|\.\d+)?)\s*\|/im.exec(markdown)?.[1] ?? null);
     const tracked = /^\|\s*Traceability\s*\|\s*v1\s*\|/im.test(markdown);
-    if (!tracked) {
+    // Plano F (auditoria externa): o modo é decidido pelos DOIS lados do par —
+    // ledger marcado SEM metadado na sprint também lança (antes devolvia
+    // receipt legacy feliz, contradizendo INV3/D15). Sprint legacy cujo backlog
+    // tem ledger de OUTRAS sprints segue legacy happy (D6): o que decide é a
+    // marca naquele sprint_id, não a existência do arquivo.
+    const hasLedgerFile = fs.existsSync(traceabilityLedgerPath(backlogPath, root));
+    if (!tracked && !hasLedgerFile) {
       return {
         action: 'receipt',
         backlog_path: backlogPath,
@@ -480,11 +520,36 @@ export function traceabilityHandler(args = {}) {
         blockers: [],
       };
     }
+    if (!tracked && !sprintId) {
+      // Sem sprint_id não há contra-lado para consultar no ledger.
+      return {
+        action: 'receipt',
+        backlog_path: backlogPath,
+        schema: 'legacy',
+        sprint_id: null,
+        coverage: { included: 0, proved: 0, pending: 0 },
+        reqs: [],
+        exceptions: [],
+        blockers: [],
+      };
+    }
     const ledger = readTraceabilityLedger(backlogPath, root);
     const mode = traceabilityMode({ sprintMarkdown: markdown, ledger, sprintId });
+    if (mode === 'legacy') {
+      return {
+        action: 'receipt',
+        backlog_path: backlogPath,
+        schema: 'legacy',
+        sprint_id: sprintId,
+        coverage: { included: 0, proved: 0, pending: 0 },
+        reqs: [],
+        exceptions: [],
+        blockers: [],
+      };
+    }
     if (mode !== 'v1') {
       throw traceabilityError(
-        `Receipt v1 exige marcadores consistentes ledger↔sprint (INV3): modo ${mode} para ${sprintId} — alinhar o metadado da sprint e o ledger`,
+        `Receipt exige marcadores consistentes ledger↔sprint (INV3): modo ${mode} para ${sprintId} — alinhar o metadado \`Traceability\` da sprint e \`ledger.sprints[<id>].schema\`.`,
         -32002,
       );
     }

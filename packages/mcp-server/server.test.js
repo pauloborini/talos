@@ -59,6 +59,7 @@ import {
 } from './traceability.mjs';
 import {
   parseSprintRows,
+  parseAcceptanceContract,
   validateSprintFileConformance,
   validateAcceptanceSeal,
   computeAcceptanceSeal,
@@ -1704,6 +1705,19 @@ test('SPRINT_TEMPLATE: §7 contrato congelado com 7.1/7.2/7.3 e YAML acceptance 
 test('SPRINT_TEMPLATE: §1 contém Contrato status (AC-1.1.2)', () => {
   const template = fs.readFileSync(SPRINT_TEMPLATE_PATH, 'utf8');
   assert.match(template, /^\|\s*Contrato status\s*\|\s*\[draft \/ aprovado\]\s*\|/m);
+});
+
+test('SPRINT_TEMPLATE: exemplo §7.3 parseia source_refs em todo AC (Plano F — comentário inline matava o parse)', () => {
+  const template = fs.readFileSync(SPRINT_TEMPLATE_PATH, 'utf8');
+  const items = parseAcceptanceContract(template) ?? [];
+  assert.ok(items.length >= 2, 'template deve exemplificar ≥2 ACs');
+  for (const item of items) {
+    assert.ok(Array.isArray(item.source_refs) && item.source_refs.length > 0,
+      `${item.id} sem source_refs parseada — o usuário copia o exemplo e descobre tardiamente no gate`);
+    for (const ref of item.source_refs) {
+      assert.match(ref, /^REQ-\d+$/, 'ref malformada no exemplo do template');
+    }
+  }
 });
 
 test('SPRINT_TEMPLATE: numeração 1–16 preservada; §9/§10/§12/§13/§16 intactas (AC-1.1.3)', () => {
@@ -7792,6 +7806,135 @@ test('traceability: receipt exige proved para included, lista exceções e não 
   );
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Auditoria externa pós-fechamento (Plano F): lado B do INV3 nos gates,
+// escopo de sprint no receipt, pendência dedicada de ledger ilegível,
+// pilot_metrics legível via verify (superfície read-only).
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('update_sprint_status: done bloqueia ledger marcado sem metadado na sprint (lado B — INV3/D15)', () => {
+  const root = tmpRoot();
+  writeHandoffTemplateFixture(root);
+  // Sprint LEGACY (sem marca) cujo backlog TEM ledger com S01 marcado: par
+  // inconsistente no sentido oposto ao coberto pelo Plano 03 — antes fechava
+  // como legacy silencioso; agora bloqueia alinhar_marcadores_traceability.
+  const markdown = sprintDoc({ id: 'S01', status: 'ready', dorStatus: 'verde' });
+  const sprintPath = path.join(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md');
+  fs.mkdirSync(path.dirname(sprintPath), { recursive: true });
+  fs.writeFileSync(sprintPath, markdown);
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | ready | ready | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+  writeStateWithAcceptance(root, 'S01.json', [{ id: 'AC-001', status: 'proved' }]);
+  writeTraceabilityLedger({
+    schema: TRACEABILITY_SCHEMA_VERSION,
+    reqs: {
+      'REQ-001': { id: 'REQ-001', sources: [{ kind: 'talos', ref: 'sprint:S01' }], disposition: 'included' },
+    },
+    sprints: { S01: { schema: TRACEABILITY_SCHEMA_VERSION } },
+    pilot_metrics: [],
+  }, 'BACKLOG.md', root);
+  const beforeBacklog = fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8');
+  const beforeSprint = fs.readFileSync(sprintPath, 'utf8');
+  const r = updateSprintStatus({
+    run_id: 'rsideb', project_root: root, backlog_path: 'BACKLOG.md', sprint_id: 'S01',
+    status: 'done', validator_verdict: 'pass', plan_path: 'PLAN_S01.md',
+    state_path: '.talos/state/S01.json', evidence: 'validator pass',
+  });
+  assert.equal(r.status, 'blocked');
+  const pendB = r.pendencies.find((p) => p.category === 'rastreabilidade' && p.next_action === 'alinhar_marcadores_traceability');
+  assert.ok(pendB, `pendência lado B esperada: ${JSON.stringify(r.pendencies)}`);
+  assert.equal(fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8'), beforeBacklog, 'backlog intacto no bloqueio');
+  assert.equal(fs.readFileSync(sprintPath, 'utf8'), beforeSprint, 'sprint intacta no bloqueio');
+});
+
+test('update_sprint_status: sprint v1 com ledger ilegível bloqueia com pendência dedicada (corrigir_ledger_traceability)', () => {
+  const root = tmpRoot();
+  writeHandoffTemplateFixture(root);
+  const sprintPath = traceSprintV1(root);
+  // Falsificador: erro genérico de leitura viraria pendência ampla
+  // corrigir_backlog_ou_sprint_file, escondendo a causa real do caller.
+  fs.mkdirSync(path.dirname(traceLedgerFile(root, 'BACKLOG.md')), { recursive: true });
+  fs.writeFileSync(traceLedgerFile(root, 'BACKLOG.md'), '{ ledger quebrado', 'utf8');
+  writeStateWithAcceptance(root, 'S01.json', [
+    { id: 'AC-001', status: 'proved' },
+    { id: 'AC-002', status: 'proved' },
+  ]);
+  const beforeSprint = fs.readFileSync(sprintPath, 'utf8');
+  const r = updateSprintStatus({
+    run_id: 'rbadledger', project_root: root, backlog_path: 'BACKLOG.md', sprint_id: 'S01',
+    status: 'done', validator_verdict: 'pass', plan_path: 'PLAN_S01.md',
+    state_path: '.talos/state/S01.json', evidence: 'validator pass',
+  });
+  assert.equal(r.status, 'blocked');
+  const pend = r.pendencies.find(
+    (p) => p.category === 'rastreabilidade' && p.next_action === 'corrigir_ledger_traceability',
+  );
+  assert.ok(pend, `pendência de ledger ilegível esperada: ${JSON.stringify(r.pendencies)}`);
+  assert.match(pend.message, /ilegível/i);
+  assert.equal(fs.readFileSync(sprintPath, 'utf8'), beforeSprint, 'sprint intacta no bloqueio');
+});
+
+test('traceability: receipt tem escopo da sprint atribuída e lado B lança INV3; verify expõe pilot_metrics', () => {
+  const root = tmpRoot();
+  // REQ-001 pertence à S01 (incluído, proved); REQ-002 é REQ do backlog inteiro
+  // sem vínculo com a S01 — NÃO pode aparecer no receipt de fechamento da S01.
+  writeTraceabilityLedger({
+    schema: TRACEABILITY_SCHEMA_VERSION,
+    reqs: {
+      'REQ-001': { id: 'REQ-001', sources: [{ kind: 'talos', ref: 'sprint:S01' }], disposition: 'included' },
+      'REQ-002': { id: 'REQ-002', sources: [{ kind: 'talos', ref: 'brainstorm:piloto' }], disposition: 'included' },
+    },
+    sprints: { S01: { schema: TRACEABILITY_SCHEMA_VERSION } },
+    pilot_metrics: [],
+  }, traceAlphaBacklog, root);
+  const sprintMarkdown = sprintDoc({ id: 'S01' })
+    .replace('| Revalidação | false |', '| Revalidação | false |\n| Traceability | v1 |')
+    .replace(
+      '    behavior: "Gate observável passa quando AC válido"',
+      '    source_refs: [REQ-001]\n    behavior: "Gate observável passa quando AC válido"',
+    );
+  const sprintPath = path.join(root, 'SPRINT_S01_scope.md');
+  fs.writeFileSync(sprintPath, sprintMarkdown);
+  writeStateWithAcceptance(root, 'S01.json', [{ id: 'AC-001', status: 'proved' }]);
+  // Métrica de piloto registrada antes: verify precisa expor sem ação de escrita.
+  const stamped = traceabilityHandler({
+    run_id: 'rscope', project_root: root, backlog_path: traceAlphaBacklog,
+    action: 'record_metric', metric: { calls: 4, retries: 1, coverage: '3/3' },
+  });
+  assert.equal(stamped.metric_count, 1);
+  const receipt = traceabilityHandler({
+    run_id: 'rscope', project_root: root, backlog_path: traceAlphaBacklog, action: 'receipt',
+    sprint_path: sprintPath, sprint_id: 'S01', state_path: '.talos/state/S01.json',
+  });
+  assert.deepEqual(receipt.coverage, { included: 1, proved: 1, pending: 0 }, 'escopo: só REQ atribuído à S01 entra na cobertura');
+  assert.deepEqual(receipt.reqs.map((row) => row.req), ['REQ-001']);
+  assert.deepEqual(receipt.exceptions, []);
+  assert.deepEqual(receipt.blockers, [], 'REQ estranho não pode virar blocker da S01');
+  const consult = traceabilityHandler({
+    run_id: 'rscope', project_root: root, backlog_path: traceAlphaBacklog, action: 'verify',
+  });
+  assert.equal(consult.pilot_metrics.length, 1, 'verify expõe métricas registradas');
+  assert.equal(consult.pilot_metrics[0].calls, 4);
+  // LADO B: ledger marcado para ESTA sprint sem metadado `Traceability` no
+  // sprint file → erro determinístico (antes devolvia receipt legacy feliz
+  // contradizendo o conformance público, que bloqueia o mesmo par). Marca em
+  // outra sprint qualquer continua legacy happy.
+  traceabilityHandler({
+    run_id: 'rscope', project_root: root, backlog_path: traceAlphaBacklog,
+    action: 'upsert', sprint: { sprint_id: 'S05', schema: TRACEABILITY_SCHEMA_VERSION },
+  });
+  const unmarkedPath = path.join(root, 'SPRINT_unmarked.md');
+  fs.writeFileSync(unmarkedPath, sprintDoc({ id: 'S05' }));
+  assert.throws(
+    () => traceabilityHandler({
+      run_id: 'rscope', project_root: root, backlog_path: traceAlphaBacklog,
+      action: 'receipt', sprint_path: unmarkedPath, sprint_id: 'S05',
+    }),
+    /marcadores consistentes/,
+  );
+});
+
 test('traceability: record_metric persiste observação preservando reqs, sem claim de economia no receipt (AC-3.3.1 / CN6 / INV5)', () => {
   const root = tmpRoot();
   traceabilityHandler({
@@ -7833,4 +7976,81 @@ test('traceability: record_metric persiste observação preservando reqs, sem cl
   // INV5: nenhuma superfície do receipt nem do registro afirma economia (a
   // medição existe, a promoção da economia é do fechamento, não da tool).
   assert.ok(!JSON.stringify(stamped).includes('economia'), 'record_metric não afirma economia');
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Guide RASTREABILIDADE_MCP_GUIDE — Plano F (fechamento): wire de produção do
+// grafo v1 no gate público talos_verify_sprint_file (CN2/CN3/INV3). Até o
+// fechamento, os ACs 1.2.1/2.1.2/2.1.3/2.3.1 eram provados sob injeção direta
+// da opção `traceability`; nenhum call site de produção alimentava o ramo v1.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('talos_verify_sprint_file: mismatch de marcas bloqueia nos dois sentidos pelo gate público (AC-1.2.1 / INV3 — wire do Plano F)', () => {
+  const root = tmpRoot();
+  fs.mkdirSync(path.join(root, '.talos/backlog/sprints'), { recursive: true });
+  // Lado A: sprint marcada v1, ledger sem a marca da sprint.
+  const sprintA = path.join(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md');
+  fs.writeFileSync(sprintA, sprintDoc().replace('| Revalidação | false |', '| Revalidação | false |\n| Traceability | v1 |'));
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), BACKLOG_WITH_SPRINT_FILE);
+  writeTraceabilityLedger({
+    schema: TRACEABILITY_SCHEMA_VERSION,
+    reqs: {},
+    sprints: {},
+    pilot_metrics: [],
+  }, 'BACKLOG.md', root);
+  const ladoA = verifySprintFile({
+    run_id: 'rpf1', project_root: root,
+    sprint_path: '.talos/backlog/sprints/SPRINT_S01_runtime.md',
+    sprint_id: 'S01', backlog_path: 'BACKLOG.md',
+  });
+  assert.equal(ladoA.status, 'blocked');
+  const pendA = ladoA.pendencies.find((p) => p.category === 'rastreabilidade' && p.next_action === 'alinhar_marcadores_traceability');
+  assert.ok(pendA, `pendência de marcadores esperada no lado A: ${JSON.stringify(ladoA.pendencies)}`);
+  // Lado B: ledger marcado como v1, sprint sem o metadado Traceability.
+  fs.writeFileSync(sprintA, sprintDoc());
+  writeTraceabilityLedger({
+    schema: TRACEABILITY_SCHEMA_VERSION,
+    reqs: {},
+    sprints: { S01: { schema: TRACEABILITY_SCHEMA_VERSION } },
+    pilot_metrics: [],
+  }, 'BACKLOG.md', root);
+  const ladoB = verifySprintFile({
+    run_id: 'rpf1', project_root: root,
+    sprint_path: '.talos/backlog/sprints/SPRINT_S01_runtime.md',
+    sprint_id: 'S01', backlog_path: 'BACKLOG.md',
+  });
+  assert.equal(ladoB.status, 'blocked');
+  const pendB = ladoB.pendencies.find((p) => p.category === 'rastreabilidade' && p.next_action === 'alinhar_marcadores_traceability');
+  assert.ok(pendB, `pendência de marcadores esperada no lado B: ${JSON.stringify(ladoB.pendencies)}`);
+});
+
+test('talos_verify_sprint_file: v1 com source_refs órfã bloqueia antes do selo/execução (AC-2.1.2 / CN3 — wire do Plano F)', () => {
+  const root = tmpRoot();
+  fs.mkdirSync(path.join(root, '.talos/backlog/sprints'), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md'),
+    sprintDoc()
+      .replace('| Revalidação | false |', '| Revalidação | false |\n| Traceability | v1 |')
+      .replace(
+        'behavior: "Gate observável passa quando AC válido"',
+        'source_refs: [REQ-999]\n    behavior: "Gate observável passa quando AC válido"',
+      ),
+  );
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), BACKLOG_WITH_SPRINT_FILE);
+  writeTraceabilityLedger({
+    schema: TRACEABILITY_SCHEMA_VERSION,
+    reqs: {
+      'REQ-001': { id: 'REQ-001', sources: [{ kind: 'talos', ref: 'sprint:S01' }], criticality: 'alta', disposition: 'included' },
+    },
+    sprints: { S01: { schema: TRACEABILITY_SCHEMA_VERSION } },
+    pilot_metrics: [],
+  }, 'BACKLOG.md', root);
+  const r = verifySprintFile({
+    run_id: 'rpf2', project_root: root,
+    sprint_path: '.talos/backlog/sprints/SPRINT_S01_runtime.md',
+    sprint_id: 'S01', backlog_path: 'BACKLOG.md',
+  });
+  assert.equal(r.status, 'blocked');
+  const orfa = r.pendencies.find((p) => p.category === 'rastreabilidade' && /órfão|órfã/.test(p.message));
+  assert.ok(orfa, `pendência de ref órfã esperada: ${JSON.stringify(r.pendencies)}`);
 });

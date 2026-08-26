@@ -13,7 +13,12 @@ import {
   parseAcceptanceContract,
   traceabilityMode,
 } from '../skills/_shared/scripts/document_quality.mjs';
-import { traceabilityHandler, readTraceabilityLedger } from './traceability.mjs';
+import {
+  traceabilityHandler,
+  readTraceabilityLedger,
+  traceabilityRequirementRows,
+  consumerRoot as traceabilityConsumerRoot,
+} from './traceability.mjs';
 
 const SERVER_NAME = 'talos';
 const RUN_DIR = path.join('.talos', 'state');
@@ -889,16 +894,9 @@ function parseWorkflowConfig() {
 }
 
 function consumerRoot(args = {}) {
-  const explicitRoot = optionalString(args, 'project_root');
-  if (explicitRoot && explicitRoot.trim() !== '') {
-    return path.resolve(explicitRoot);
-  }
-  const cwd = process.cwd();
-  if (cwd === '/' || cwd === '/var/folders') {
-    const home = process.env.HOME || process.env.USERPROFILE;
-    if (home) return path.resolve(home);
-  }
-  return path.resolve(cwd);
+  // Fonte única: a regra vive em traceability.mjs (a tool de rastreabilidade
+  // lê/grava o ledger exatamente neste root — sem divergência de fallback).
+  return traceabilityConsumerRoot(args);
 }
 
 function runRoot(args = {}) {
@@ -2112,6 +2110,25 @@ function verifySprintFile(args = {}) {
         ));
       }
     }
+    // Plano F (RASTREABILIDADE_MCP_GUIDE): wire de produção do grafo v1 para o
+    // gate público (CN2/CN3/INV3) — o ledger acompanha o conformance quando o
+    // caller informa o backlog; sem backlog_path o comportamento atual é
+    // preservado (chamador legado não conhece rastreabilidade). Ledger ilegível
+    // vira pendência explícita (fail-closed), nunca exceção opaca.
+    let traceabilityLedger;
+    if (backlogPath) {
+      try {
+        traceabilityLedger = readTraceabilityLedger(backlogPath, consumerRoot(args));
+      } catch (error) {
+        extraPendencies.push(conformancePending(
+          'rastreabilidade',
+          backlogPath,
+          null,
+          `Ledger de rastreabilidade ilegível em .talos/traceability/: ${error.message}`,
+          'corrigir_ledger_traceability',
+        ));
+      }
+    }
     const validation = content.trim() === ''
       ? {
         valid: false,
@@ -2124,6 +2141,10 @@ function verifySprintFile(args = {}) {
         sprintId,
         backlogPath,
         backlogMarkdown,
+        // Plano F (RASTREABILIDADE_MCP_GUIDE): ramo v1 alimentado pelo ledger
+        // lido acima (CN2/CN3/INV3 — ref inválida/órfã/ausente e marcadores
+        // inconsistentes bloqueiam o gate público).
+        ...(traceabilityLedger !== undefined ? { traceability: traceabilityLedger } : {}),
         // D5 (v0.16.0): root do consumidor para resolver `derivado:<path>`.
         root: consumerRoot(args),
       });
@@ -2639,55 +2660,31 @@ function readStateAcceptanceResults(statePath, args) {
 function traceabilityDonePendencies({ sprintId, sprintMarkdown, ledger, acceptanceResults }) {
   const pendencies = [];
   const items = parseAcceptanceContract(sprintMarkdown) ?? [];
-  // Mapa reverso REQ → ACs a partir dos `source_refs` do §7.3 (CN2/VC3).
-  const refAcs = new Map();
-  for (const item of items) {
-    const ac = item?.id;
-    if (typeof ac !== 'string' || ac === '') continue;
-    const refs = Array.isArray(item?.source_refs) ? item.source_refs : [];
-    for (const ref of refs) {
-      if (typeof ref !== 'string' || ref === '') continue;
-      if (!refAcs.has(ref)) refAcs.set(ref, new Set());
-      refAcs.get(ref).add(ac);
-    }
-  }
-  const statusByAc = new Map();
-  if (Array.isArray(acceptanceResults)) {
-    for (const entry of acceptanceResults) {
-      if (entry && typeof entry === 'object' && typeof entry.id === 'string') {
-        statusByAc.set(entry.id, entry.status);
-      }
-    }
-  }
-  const reqs = ledger?.reqs && typeof ledger.reqs === 'object' && !Array.isArray(ledger.reqs)
-    ? ledger.reqs : {};
-  for (const [id, req] of Object.entries(reqs)) {
-    if (!req || typeof req !== 'object' || Array.isArray(req) || req.disposition !== 'included') continue;
-    const assigned = (Array.isArray(req.sources) ? req.sources : [])
-      .some((source) => source && typeof source === 'object' && source.ref === `sprint:${sprintId}`);
-    if (!assigned) continue;
-    const acIds = new Set(refAcs.get(id) ?? []);
-    for (const link of Array.isArray(req.links) ? req.links : []) {
-      if (link && typeof link.ac_id === 'string' && link.ac_id !== '') acIds.add(link.ac_id);
-    }
-    if (acIds.size === 0) {
+  // Fonte única da regra REQ→AC (source_refs §7.3 + links[] + status): mesma
+  // projeção pura consumida pelo receipt — os dois oráculos não podem divergir.
+  for (const row of traceabilityRequirementRows({
+    ledger,
+    acceptanceItems: items,
+    acceptanceResults,
+    sprintId,
+  })) {
+    if (row.ac_ids.length === 0) {
       pendencies.push(conformancePending(
         'rastreabilidade',
-        `${sprintId}:${id}`,
+        `${sprintId}:${row.req}`,
         null,
-        `REQ ${id} (included, atribuído a ${sprintId}) sem AC ligado — done v1 exige caminho até AC no grafo (sem proved não há cobertura).`,
+        `REQ ${row.req} (included, atribuído a ${sprintId}) sem AC ligado — done v1 exige caminho até AC no grafo (sem proved não há cobertura).`,
         'vincular_req_a_ac',
       ));
       continue;
     }
-    for (const ac of acIds) {
-      const status = statusByAc.get(ac);
-      if (status !== 'proved') {
+    for (const entry of row.ac_status) {
+      if (entry.status !== 'proved') {
         pendencies.push(conformancePending(
           'rastreabilidade',
-          `${sprintId}:${id}:${ac}`,
+          `${sprintId}:${row.req}:${entry.ac}`,
           null,
-          `REQ ${id} (included) ligado a AC ${ac} com status ${status ?? 'ausente (fora do acceptance_results)'} — done v1 exige todos os AC ligados proved (D14; um irmão unproved bloqueia).`,
+          `REQ ${row.req} (included) ligado a AC ${entry.ac} com status ${entry.status} — done v1 exige todos os AC ligados proved (D14; um irmão unproved bloqueia).`,
           'resolver_aceite_ou_avancar_manual_validation_pending',
         ));
       }
@@ -2800,11 +2797,27 @@ function updateSprintStatus(args = {}) {
         // write (fail-closed; mesmo padrão do throw de pré-condição acima).
         // Todo REQ `included` atribuído à sprint exige TODOS os AC ligados
         // `proved` (D14: um irmão unproved bloqueia; N:N não fecha por um lado).
-        // Sprint sem metadado v1 (legacy) não toca o ledger — comportamento
-        // atual preservado; sprint v1 sem a marca no ledger = inconsistent
-        // (INV3) e bloqueia o fechamento.
-        if (/^\|\s*Traceability\s*\|\s*v1\s*\|/im.test(sprintBefore)) {
-          const traceability = readTraceabilityLedger(backlogPath, consumerRoot(args));
+        // Plano F (auditoria externa): o modo é decidido pelos DOIS lados do par
+        // (INV3/D15) — pré-filtrar pela marca da sprint deixava "ledger marcado
+        // sem metadado" fechar como legacy silenciosamente. Sprint legacy de
+        // backlog sem piloto nem abre o ledger de forma frágil: leitura que falha
+        // só bloqueia se a sprint está marcada (D6); caso contrário é ignorada.
+        let traceability;
+        try {
+          traceability = readTraceabilityLedger(backlogPath, consumerRoot(args));
+        } catch (error) {
+          if (/^\|\s*Traceability\s*\|\s*v1\s*\|/im.test(sprintBefore)) {
+            pendencies.push(conformancePending(
+              'rastreabilidade',
+              sprintId,
+              null,
+              `Ledger de rastreabilidade ilegível em .talos/traceability/: ${error.message} — done v1 exige ledger legível.`,
+              'corrigir_ledger_traceability',
+            ));
+          }
+          traceability = undefined;
+        }
+        if (traceability !== undefined) {
           const traceabilityModeValue = traceabilityMode({
             sprintMarkdown: sprintBefore,
             ledger: traceability,
@@ -2822,7 +2835,7 @@ function updateSprintStatus(args = {}) {
               'rastreabilidade',
               sprintId,
               null,
-              'Sprint marcada `Traceability: v1` sem `ledger.sprints[<id>].schema = traceability_v1` — done v1 exige marcadores consistentes ledger↔sprint (INV3).',
+              'Marcadores traceability v1 inconsistentes ledger↔sprint: o metadado `Traceability` da sprint e `ledger.sprints[<id>].schema` precisam vir juntos (ambos ou nenhum) — um lado só bloqueia o fechamento (INV3).',
               'alinhar_marcadores_traceability',
             ));
           }

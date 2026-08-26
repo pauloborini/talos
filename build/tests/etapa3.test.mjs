@@ -881,3 +881,17 @@ test('traceability: vínculo N:N exige motivo; 1:1 segue livre (AC-2.3.1 / INV7)
   const ok3 = validateSprintFileConformance(umParaUm, { traceability: ledgerUmReq });
   assert.equal(ok3.valid, true, JSON.stringify(ok3.pendencies));
 });
+
+test('traceability: ref duplicada no mesmo AC não fabrica N:N (semântica de conjunto)', () => {
+  // `[REQ-001, REQ-001]` é 1:1 — antes a contagem por ocorrência exigia reason
+  // de autocitação (2× nn_sem_reason) e mascarava o motivo real do erro.
+  const ledger = traceLedgerWith({ 'REQ-001': traceReqLedger('REQ-001') });
+  const duplicada = sprintFixture({
+    traceabilityMark: 'v1',
+    acceptanceItems: traceAc({ id: 'AC-001', refs: ['REQ-001', 'REQ-001'] }),
+  });
+  const r = validateSprintFileConformance(duplicada, { traceability: ledger });
+  const nn = r.pendencies.filter((p) => p.category === 'rastreabilidade' && /N:N/.test(p.message));
+  assert.equal(nn.length, 0, JSON.stringify(r.pendencies));
+  assert.equal(r.valid, true, JSON.stringify(r.pendencies));
+});

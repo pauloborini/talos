@@ -573,6 +573,9 @@ export function checkTraceabilityGraph({ acceptanceItems = [], ledger = null, sp
   const reqs = ledger?.reqs && typeof ledger.reqs === 'object' && !Array.isArray(ledger.reqs)
     ? ledger.reqs : {};
   const refCountByReq = new Map();
+  // Duplicata da mesma ref no MESMO AC é ignorada (semântica de conjunto) —
+  // contar duas vezes fabricava N:N falso exigindo `reason` para autocitação.
+  const seenPairs = new Set();
   for (const item of acceptanceItems) {
     const ac = item?.id ?? '<ausente>';
     const refs = Array.isArray(item?.source_refs) ? item.source_refs : [];
@@ -589,6 +592,9 @@ export function checkTraceabilityGraph({ acceptanceItems = [], ledger = null, sp
         issues.push({ kind: 'ref_orfã', ac, req: ref });
         continue;
       }
+      const pairKey = `${ac}\u0000${ref}`;
+      if (seenPairs.has(pairKey)) continue;
+      seenPairs.add(pairKey);
       refCountByReq.set(ref, (refCountByReq.get(ref) ?? 0) + 1);
     }
   }
@@ -604,9 +610,9 @@ export function checkTraceabilityGraph({ acceptanceItems = [], ledger = null, sp
   }
   for (const item of acceptanceItems) {
     const ac = item?.id ?? '<ausente>';
-    const refs = Array.isArray(item?.source_refs) ? item.source_refs : [];
-    const acMulti = refs.length > 1;
-    for (const ref of refs) {
+    const uniqueRefs = [...new Set((Array.isArray(item?.source_refs) ? item.source_refs : []))];
+    const acMulti = uniqueRefs.length > 1;
+    for (const ref of uniqueRefs) {
       if (typeof ref !== 'string' || !REQ_ID_REGEX.test(ref) || !(ref in reqs)) continue;
       const needReason = acMulti || (refCountByReq.get(ref) ?? 0) > 1;
       if (!needReason) continue;

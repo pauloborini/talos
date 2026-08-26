@@ -159,7 +159,7 @@ acceptance:
   - id: AC-001
     origin: "usuario"
     behavior: "[efeito observável]"
-    source_refs: [REQ-001]   # opt-in `traceability v1`: REQs do ledger .talos/traceability/<slug>.json; todo AC declara ≥1
+    source_refs: [REQ-001]
     decisions: [D1]
     scenario: "[cenário §7.2]"
     evals: [EVAL-001]
@@ -169,6 +169,7 @@ acceptance:
   - id: AC-002
     origin: "derivado:packages/exemplo.js"
     behavior: "[efeito observável que requer smoke manual]"
+    source_refs: [REQ-002]
     decisions: [D2]
     scenario: "[cenário §7.2]"
     evals: [EVAL-002]
@@ -185,7 +186,7 @@ Todo `AC-*` declara `origin` (mesmo enum da §7.1: `usuario` | `derivado:<path>`
 
 Tipos de evidência (D4): `I` implementação, `T-outcome` resultado observável (assert de retorno/efeito), `W` wiring, `M` smoke manual. `manual` deve ser `null` quando `required` não inclui `M`; objeto (severity/scenario/expected_evidence/impact_paths) quando inclui.
 
-> Rastreabilidade opt-in (v1): com o metadado `Traceability: v1` **e** `ledger.sprints[<id>].schema: traceability_v1`, todo `AC-*` declara `source_refs: [REQ-*]` com ids existentes no ledger; REQ `included` atribuído à sprint precisa aparecer em ≥1 AC; vínculo fora de 1:1 (um REQ em vários ACs ou AC com vários REQs) exige `reason` em `reqs[<id>].links[]` do ledger (upsert via `talos_traceability`). Sem a marca (legacy), os gates atuais valem — nenhum campo novo é exigido.
+> Rastreabilidade opt-in (v1): com o metadado `Traceability: v1` **e** `ledger.sprints[<id>].schema: traceability_v1`, todo `AC-*` declara `source_refs: [REQ-*]` (sem comentário na mesma linha — o parser lê apenas a lista) com ids existentes no ledger `.talos/traceability/<slug>.json` (registrado via `talos_traceability` action `upsert`); REQ `included` atribuído à sprint precisa aparecer em ≥1 AC; vínculo fora de 1:1 (um REQ em vários ACs ou AC com vários REQs) exige `reason` em `reqs[<id>].links[]` do ledger. Sem a marca (legacy), os gates atuais valem — nenhum campo novo é exigido e `source_refs` é ignorada.
 
 ---
 
