@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Bump deterministico de versao. Sincroniza os arquivos com versao concreta,
-// regenera bundles/catalogos e roda check-consistency. NAO cria tag nem commita
-// — quem publica e cria a tag é o workflow Release ao detectar VERSION novo na main.
+// regenera bundles/catalogos e roda check-consistency. NAO cria tag, NAO commita,
+// NAO publica — release é MANUAL via `gh` (ver PATCH_PROCEDURE.md §9). Nao ha
+// workflow no GitHub Actions; a distribuicao oficial e via `npx github:`.
 //
 // Uso: node build/bump-version.mjs <nova-versao>   (ex.: 0.8.3)
 //
@@ -93,8 +94,15 @@ execFileSync('node', [path.join(ROOT, 'build', 'check-consistency.mjs')], { cwd:
 console.log(`\nbump-version: ${current} -> ${next} OK.
 
 Passos narrativos manuais (não automatizáveis):
-  1. CHANGELOG.md — adicionar entrada "## ${next} - YYYY-MM-DD".
-  2. packages/orchestrator/README.md — adicionar seção "### Novidades v${next}" e "Last updated".
-  3. Revisar 'git status', commitar e dar push na main:
-       git push origin main
-     => CI Release publica e cria a tag v${next}.`);
+  1. CHANGELOG.md — mover a seção "## Unreleased" para "## ${next} - YYYY-MM-DD"
+     (ou criar nova entrada se não houver Unreleased). Criar nova seção
+     "## Unreleased" vazia no topo se quiser acumular a próxima feature.
+     Ver PATCH_PROCEDURE.md §5 para o convention completo.
+  2. packages/orchestrator/README.md — adicionar seção "### Novidades v${next}" e
+     atualizar "Last updated".
+  3. Revisar 'git status', commitar o bump+catálogos e dar push.
+     - Se main/develop são protected branches (caso comum), o push direto é
+       rejeitado: abra PR com o bump como conteúdo, faça merge com --admin se
+       necessário (ver PATCH_PROCEDURE.md §9). Back-merge main→develop ao final.
+     - Release manual: tag v${next} + gh release create (ver §9). NUNCA criar
+       tag antes do commit final estar em main.`);
