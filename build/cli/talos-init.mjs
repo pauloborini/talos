@@ -4,12 +4,15 @@
 //
 // Hosts: claudecode|cursor (via `claude plugin`), codex (via `codex plugin` +
 //        custom agents globais),
-//        opencode (config + .opencode/), pi (config + .pi/agents/).
+//        opencode (config + .opencode/), pi (config + .pi/agents/),
+//        vscode (Copilot Chat MCP + prompts),
+//        minimaxcode (Plugin V1 em ~/.minimax/plugins/talos/).
 // Sem dependências externas (Node puro). Roda direto do checkout do repo (npx-from-GitHub).
 //
 // claude: orquestra o instalador NATIVO da CLI (marketplace from-source no GitHub).
 // codex: orquestra o instalador nativo + copia custom agents para CODEX_HOME/agents.
 // opencode/pi: coloca o catálogo from-source committed (hosts/<host>/) no diretório alvo.
+// minimaxcode: empacota Plugin V1 (MCP stdio relativo + sibling _shared + 5 custom agents).
 import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
@@ -17,6 +20,7 @@ import { homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import zlib from 'node:zlib';
 
 const SELF = fs.realpathSync(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(path.dirname(SELF), '../..');
@@ -37,6 +41,9 @@ const HOST_ALIASES = {
   zcode: 'zcode', zai: 'zcode',
   antigravity: 'antigravity', gemini: 'antigravity', antigravitycode: 'antigravity',
   vscode: 'vscode', 'visual-studio-code': 'vscode', 'vs-code': 'vscode',
+  // MinimaxCode (Mavis runtime) — nome comercial canônico; aliases preservam
+  // os nomes internos ('mavis' = agentName / TALOS_HOST / dataDir). 'mmc' = sigla.
+  minimaxcode: 'mavis', 'minimax-code': 'mavis', mmc: 'mavis', mavis: 'mavis',
   all: 'all',
 };
 
@@ -423,6 +430,256 @@ function installPi(targetDir, opts) {
   log('  (deve retornar host=pi) e talos_capabilities. NÃO dispare o validator à mão:');
   log('  o talos-task-validator roda automaticamente dentro do pipeline, com um state');
   log('  file real (.talos/state/<run_id>/<slice>.json) — não com placeholder.');
+}
+
+// --- MinimaxCode (Mavis) — Plugin V1 -----------------------------------------
+// MinimaxCode usa Plugin V1 próprio. Layout obrigatório em $DATA_DIR:
+//   plugins/talos/
+//     .minimax-plugin/plugin.json
+//     icon.png
+//     servers/mcp.json
+//     skills/<talos-*>/SKILL.md
+//   plugins/skills/_shared/   (sibling inerte pro scan; resolve import do server.js)
+//   agents/talos-<name>/
+//     agent.md       (system_prompt puro)
+//     config.yaml    (defaultWorkspaceDir)
+//
+// Detecção: pasta ~/.minimax/ presente. Instalar Plugin V1 diretamente (CLI do
+// Mavis não tem comando de marketplace público pro Talos; o caminho oficial é
+// este instalador ou `install-host.sh mavis`).
+
+function minimaxDataDir() {
+  return process.env.MINIMAX_DATA_DIR?.trim() || path.join(homedir(), '.minimax');
+}
+function minimaxPluginDir() { return path.join(minimaxDataDir(), 'plugins', 'talos'); }
+function minimaxAgentsDir() { return path.join(minimaxDataDir(), 'agents'); }
+
+// Gera o icon.png mínimo (1x1 RGBA, 67 bytes). Sem isso o runtime do MinimaxCode
+// rejeita o plugin (manifest referencia icon que não existe no filesystem).
+function makeMinimaxIconPng() {
+  const sig = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const ihdr = Buffer.concat([
+    Buffer.from('IHDR'),
+    Buffer.alloc(0),
+  ]);
+  // Build manual: chunk(tipo, dados) = length(4) + tipo + dados + crc32(4)
+  function chunk(type, data) {
+    const len = Buffer.alloc(4); len.writeUInt32BE(data.length, 0);
+    const t = Buffer.from(type, 'binary');
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(zlib.crc32(Buffer.concat([t, data])) >>> 0, 0);
+    return Buffer.concat([len, t, data, crc]);
+  }
+  const ihdrBody = Buffer.alloc(13);
+  ihdrBody.writeUInt32BE(1, 0);    // width
+  ihdrBody.writeUInt32BE(1, 4);    // height
+  ihdrBody.writeUInt8(8, 8);       // bit depth
+  ihdrBody.writeUInt8(6, 9);       // color type RGBA
+  ihdrBody.writeUInt8(0, 10);      // compression
+  ihdrBody.writeUInt8(0, 11);      // filter
+  ihdrBody.writeUInt8(0, 12);      // interlace
+  const raw = Buffer.from([0x00, 0x00, 0x00, 0x00, 0x00]); // filter byte + 4 pixels RGBA
+  const idatData = zlib.deflateSync(raw);
+  return Buffer.concat([sig, chunk('IHDR', ihdrBody), chunk('IDAT', idatData), chunk('IEND', Buffer.alloc(0))]);
+}
+
+// Lê a descrição de um agente Talos (segunda linha `description:` do frontmatter YAML
+// entre `---` ... `---`). Retorna string vazia se não encontrar.
+function readAgentDescription(mdPath) {
+  const text = fs.readFileSync(mdPath, 'utf8');
+  const m = text.match(/^---\n([\s\S]*?)\n---/);
+  if (!m) return '';
+  const fm = m[1];
+  const dm = fm.match(/^description:\s*(.+?)\s*$/m);
+  return dm ? dm[1].replace(/^['"]|['"]$/g, '') : '';
+}
+
+// Extrai o corpo de um agents/talos-*.md (markdown após o segundo `---` do frontmatter).
+function readAgentSystemPrompt(mdPath) {
+  const text = fs.readFileSync(mdPath, 'utf8');
+  const m = text.match(/^---\n[\s\S]*?\n---\n([\s\S]*)$/);
+  return m ? m[1].replace(/^\n/, '') : '';
+}
+
+function installMavis(opts) {
+  const dataDir = minimaxDataDir();
+  const pluginDir = minimaxPluginDir();
+  const agentsDir = minimaxAgentsDir();
+  const pluginsRoot = path.dirname(pluginDir);
+
+  log(`instalando Talos (MinimaxCode v${VERSION}) GLOBAL em ${pluginDir}`);
+  log(`  data dir: ${dataDir}`);
+
+  if (opts.dryRun) {
+    log(`  [dry-run] criaria Plugin V1 em ${pluginDir}/.minimax-plugin/ + icon.png + servers/mcp.json + server.js`);
+    log(`  [dry-run] copiaria skills/ (apenas talos-*) + sibling plugins/skills/_shared/`);
+    log(`  [dry-run] criaria 5 custom agents em ${agentsDir}/talos-*/`);
+    return;
+  }
+
+  // Defesa: dataDir precisa existir (ou ser criável) — MinimaxCode cria
+  // ~/.minimax no primeiro launch, mas o usuário pode ter rodado o init antes
+  // de abrir o app pela primeira vez. Cria só a raiz; o resto é específico do Talos.
+  fs.mkdirSync(dataDir, { recursive: true });
+  fs.mkdirSync(path.join(pluginDir, '.minimax-plugin'), { recursive: true });
+  fs.mkdirSync(path.join(pluginDir, 'skills'), { recursive: true });
+  fs.mkdirSync(agentsDir, { recursive: true });
+
+  // icon.png mínimo (1x1 RGBA) — spec V1 exige PNG/JPEG/WebP no filesystem.
+  fs.writeFileSync(path.join(pluginDir, 'icon.png'), makeMinimaxIconPng());
+
+  // Manifest do Plugin V1
+  const manifest = {
+    schemaVersion: 1,
+    name: 'talos',
+    displayName: 'Talos',
+    version: VERSION,
+    description: 'Pipeline de desenvolvimento determinística (sprint file → plano → execução → validação fria) com MCP local, 5 subagentes e skills de orquestração. Integração com MinimaxCode via Plugin V1.',
+    author: 'Paulo Borini',
+    icon: 'icon.png',
+    category: 'Code',
+    exampleQueries: [
+      'Use Talos to drive a sprint file through the deterministic pipeline.',
+      'Quero rodar a pipeline do Talos nesse projeto.',
+    ],
+    apps: [],
+    mcpServers: ['servers.mcp.json'],
+    skills: [
+      'skills/talos-audit/SKILL.md',
+      'skills/talos-backlog-generator/SKILL.md',
+      'skills/talos-direct-execute/SKILL.md',
+      'skills/talos-findings-repair/SKILL.md',
+      'skills/talos-memory-promote/SKILL.md',
+      'skills/talos-plan-execute/SKILL.md',
+      'skills/talos-plan-handoff/SKILL.md',
+      'skills/talos-slice-review/SKILL.md',
+      'skills/talos-sprint-interview/SKILL.md',
+      'skills/talos-task-validator/SKILL.md',
+    ],
+  };
+  fs.writeFileSync(
+    path.join(pluginDir, '.minimax-plugin', 'plugin.json'),
+    JSON.stringify(manifest, null, 2) + '\n',
+  );
+
+  // Bundle do server.js dentro do Plugin V1 (path absoluto é rejeitado pelo
+  // reader oficial do Mavis; ver install-host.sh mavis para histórico).
+  const serverSrc = path.join(ROOT, 'packages', 'mcp-server', 'server.js');
+  if (!fs.existsSync(serverSrc)) {
+    fail(`server.js ausente: ${serverSrc} (rode build/build-plugins.sh e commite)`);
+  }
+  fs.copyFileSync(serverSrc, path.join(pluginDir, 'server.js'));
+
+  // Sibling plugins/skills/_shared/ — resolve o import relativo
+  // '../skills/_shared/scripts/document_quality.mjs' do server.js.
+  // O loader do MinimaxCode ignora dirs sem manifest em <plugins_root>/
+  // (package-readers.js:scanLocalPluginCandidates), então _shared é inerte
+  // pro scan e existe só pra resolver o import.
+  const skillsRoot = path.join(pluginsRoot, 'skills');
+  const sharedSrc = path.join(ROOT, 'packages', 'skills', '_shared');
+  if (fs.existsSync(sharedSrc)) {
+    const sharedDst = path.join(skillsRoot, '_shared');
+    if (fs.existsSync(sharedDst)) fs.rmSync(sharedDst, { recursive: true, force: true });
+    fs.mkdirSync(skillsRoot, { recursive: true });
+    fs.cpSync(sharedSrc, sharedDst, { recursive: true });
+    log(`  ${path.relative(dataDir, sharedDst)}/ copiado (sibling, resolve import do server.js)`);
+  }
+
+  // servers.mcp.json — stdio com args relativo (./server.js), env TALOS_HOST=mavis.
+  const mcpServers = {
+    schemaVersion: 1,
+    mcpServers: {
+      talos: {
+        type: 'stdio',
+        command: 'node',
+        args: ['./server.js'],
+        env: { TALOS_HOST: 'mavis' },
+        description: 'MCP do Talos (gates, state, slice ledger, validator dispatch, sprint/plan state).',
+        timeout: 30000,
+      },
+    },
+  };
+  fs.mkdirSync(path.join(pluginDir, 'servers'), { recursive: true });
+  fs.writeFileSync(
+    path.join(pluginDir, 'servers', 'mcp.json'),
+    JSON.stringify(mcpServers, null, 2) + '\n',
+  );
+
+  // Skills — copia SKILL.md de cada packages/skills/<talos-*>/
+  const skillsSrc = path.join(ROOT, 'packages', 'skills');
+  let skillCount = 0;
+  if (fs.existsSync(skillsSrc)) {
+    for (const name of fs.readdirSync(skillsSrc)) {
+      if (!name.startsWith('talos-')) continue;
+      const skillMd = path.join(skillsSrc, name, 'SKILL.md');
+      if (!fs.existsSync(skillMd)) continue;
+      const destDir = path.join(pluginDir, 'skills', name);
+      fs.mkdirSync(destDir, { recursive: true });
+      fs.copyFileSync(skillMd, path.join(destDir, 'SKILL.md'));
+      skillCount += 1;
+    }
+  }
+
+  // Custom agents — 1 por agents/talos-*.md.
+  // Formato: <dir>/agent.md (system_prompt puro) + <dir>/config.yaml (defaultWorkspaceDir).
+  // NÃO escrever name/description/systemPrompt em config.yaml — o MinimaxCode
+  // não reconhece esse formato; só lê o system_prompt de agent.md.
+  const agentsSrc = path.join(ROOT, 'agents');
+  let agentCount = 0;
+  if (fs.existsSync(agentsSrc)) {
+    for (const name of fs.readdirSync(agentsSrc)) {
+      if (!name.startsWith('talos-') || !name.endsWith('.md')) continue;
+      const agentMd = path.join(agentsSrc, name);
+      if (!fs.existsSync(agentMd)) continue;
+      const stem = name.slice(0, -'.md'.length);
+      const agentDir = path.join(agentsDir, stem);
+      fs.mkdirSync(agentDir, { recursive: true });
+      const systemPrompt = readAgentSystemPrompt(agentMd);
+      fs.writeFileSync(path.join(agentDir, 'agent.md'), systemPrompt.endsWith('\n') ? systemPrompt : `${systemPrompt}\n`);
+      const yaml = `defaultWorkspaceDir: ${ROOT}\n`;
+      fs.writeFileSync(path.join(agentDir, 'config.yaml'), yaml);
+      agentCount += 1;
+    }
+  }
+
+  log(`ok — MinimaxCode GLOBAL instalado (${skillCount} skills + ${agentCount} custom agents + MCP via Plugin V1).`);
+  log('para o MinimaxCode reconhecer:');
+  log('  - feche a sessão atual e abra uma nova (re-scan automático)');
+  log('  - ou: settings → plugins → re-scan');
+  log('');
+  log('Depois do re-scan: o plugin \'Talos\' aparece na UI com as skills talos-*');
+  log('e o MCP \'talos\' (carregado de servers/mcp.json) vira sub-tools dos agents');
+  log('que recebem capacidade mcp__talos__*.');
+  log('');
+  log('confirme com a tool MCP talos_ping (deve responder status=alive, host=mavis).');
+}
+
+function uninstallMavis(opts) {
+  const dataDir = minimaxDataDir();
+  const pluginDir = minimaxPluginDir();
+  const agentsDir = minimaxAgentsDir();
+  const sharedSibling = path.join(path.dirname(pluginDir), 'skills', '_shared');
+
+  log(`removendo Talos (MinimaxCode) GLOBAL de ${pluginDir}`);
+
+  if (opts.dryRun) {
+    log(`  [dry-run] removeria ${pluginDir} + agents/talos-* + ${sharedSibling}`);
+    return;
+  }
+
+  rmIfExists(pluginDir, opts);
+  if (fs.existsSync(agentsDir)) {
+    for (const name of fs.readdirSync(agentsDir)) {
+      if (name.startsWith('talos-')) rmIfExists(path.join(agentsDir, name), opts);
+    }
+  }
+  // Sibling _shared: só remove se for nosso (sem talos- dentro).
+  if (fs.existsSync(sharedSibling)) {
+    const entries = fs.readdirSync(sharedSibling);
+    const ours = entries.every((e) => !e.startsWith('talos-'));
+    if (ours) rmIfExists(sharedSibling, opts);
+  }
+  log('ok — MinimaxCode: plugin + custom agents talos-* + sibling _shared removidos.');
 }
 
 // --- install global ----------------------------------------------------------
@@ -1231,6 +1488,15 @@ function allHostDescriptors(opts) {
       install: (o) => installVscodeGlobal(o),
       uninstall: (o) => uninstallVscodeGlobal(o),
     },
+    {
+      host: 'mavis',
+      label: 'MinimaxCode (global)',
+      // MinimaxCode não tem CLI no PATH — detecta pela pasta de dataDir.
+      // Honra MINIMAX_DATA_DIR (override); default ~/.minimax.
+      detect: () => fs.existsSync(minimaxDataDir()),
+      install: (o) => installMavis(o),
+      uninstall: (o) => uninstallMavis(o),
+    },
   ];
 }
 
@@ -1291,6 +1557,7 @@ hosts:
                         --global: ~/.pi/agent/ (vale em todos os projetos)
   vscode                por-projeto: .vscode/talos/ + .vscode/mcp.json no [dir]
                         --global: ~/.vscode-talos/ + user settings MCP + agents/skills no prompt folder
+  minimaxcode           Plugin V1 em ~/.minimax/plugins/talos/ (já global; auto-load do MCP)
 
 flags:
   --dir <d>    diretório alvo (opencode/pi/vscode por-projeto); default: diretório atual
@@ -1310,8 +1577,10 @@ exemplos:
   npx github:${REPO_SLUG} init pi --global --yes
   npx github:${REPO_SLUG} init vscode               # projeto atual
   npx github:${REPO_SLUG} init vscode --global       # todos os projetos
+  npx github:${REPO_SLUG} init minimaxcode           # Plugin V1 em ~/.minimax/plugins/talos/
   npx github:${REPO_SLUG} uninstall opencode --global
-  npx github:${REPO_SLUG} uninstall pi --global --dry-run`);
+  npx github:${REPO_SLUG} uninstall pi --global --dry-run
+  npx github:${REPO_SLUG} uninstall minimaxcode`);
 }
 
 function parseArgs(argv) {
@@ -1346,10 +1615,10 @@ function main() {
     fail(`comando desconhecido: ${cmd} (use \`init <host>\` ou \`uninstall <host>\`)`, 2);
   }
 
-  if (!rawHost) fail('informe o host: all | claudecode | cursor | codex | antigravity | zcode | opencode | pi | vscode', 2);
+  if (!rawHost) fail('informe o host: all | claudecode | cursor | codex | antigravity | zcode | opencode | pi | vscode | minimaxcode', 2);
   if (extra.length) fail(`argumentos extras não suportados: ${extra.join(' ')}`, 2);
   const host = HOST_ALIASES[rawHost.toLowerCase()];
-  if (!host) fail(`host inválido: ${rawHost} (use all|claudecode|cursor|codex|antigravity|zcode|opencode|pi|vscode)`, 2);
+  if (!host) fail(`host inválido: ${rawHost} (use all|claudecode|cursor|codex|antigravity|zcode|opencode|pi|vscode|minimaxcode)`, 2);
 
   const opts = parsed.opts;
 
@@ -1362,15 +1631,15 @@ function main() {
 
   const targetDir = path.resolve(opts.dir || rawDir || process.cwd());
   const actions = {
-    init: { claude: installClaude, codex: installCodex, antigravity: installAntigravity, zcode: installZcode, opencode: installOpencode, pi: installPi, vscode: installVscode },
-    uninstall: { claude: uninstallClaude, codex: uninstallCodex, antigravity: uninstallAntigravity, zcode: uninstallZcode, opencode: uninstallOpencode, pi: uninstallPi, vscode: uninstallVscode },
+    init: { claude: installClaude, codex: installCodex, antigravity: installAntigravity, zcode: installZcode, opencode: installOpencode, pi: installPi, vscode: installVscode, mavis: installMavis },
+    uninstall: { claude: uninstallClaude, codex: uninstallCodex, antigravity: uninstallAntigravity, zcode: uninstallZcode, opencode: uninstallOpencode, pi: uninstallPi, vscode: uninstallVscode, mavis: uninstallMavis },
   };
   const globalActions = {
     init: { opencode: installOpencodeGlobal, pi: installPiGlobal, vscode: installVscodeGlobal },
     uninstall: { opencode: uninstallOpencodeGlobal, pi: uninstallPiGlobal, vscode: uninstallVscodeGlobal },
   };
 
-  if (host === 'claude' || host === 'codex' || host === 'antigravity' || host === 'zcode') {
+  if (host === 'claude' || host === 'codex' || host === 'antigravity' || host === 'zcode' || host === 'mavis') {
     if (opts.global && (host === 'claude' || host === 'codex')) log('nota: claude/codex já são globais por natureza (registro da CLI) — --global ignorado.');
     actions[cmd][host](opts);
   } else if (opts.global) {

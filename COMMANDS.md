@@ -18,6 +18,7 @@ npx github:pauloborini/talos init zcode
 npx github:pauloborini/talos init opencode --global
 npx github:pauloborini/talos init pi --global --yes
 npx github:pauloborini/talos init vscode --global
+npx github:pauloborini/talos init minimaxcode
 ```
 
 After an update, call `talos_ping` and `talos_capabilities` in the host. `talos_ping` should report `version: 0.18.2`.
@@ -36,6 +37,7 @@ npx github:pauloborini/talos init zcode
 npx github:pauloborini/talos init opencode --global
 npx github:pauloborini/talos init pi --global --yes
 npx github:pauloborini/talos init vscode --global
+npx github:pauloborini/talos init minimaxcode   # also: mavis | minimax-code | mmc
 ```
 
 Omit `--global` for a project-only OpenCode, Pi, or VS Code installation. Use `--dry-run` to inspect changes without applying them.
@@ -51,6 +53,7 @@ npx github:pauloborini/talos uninstall zcode
 npx github:pauloborini/talos uninstall opencode --global
 npx github:pauloborini/talos uninstall pi --global
 npx github:pauloborini/talos uninstall vscode --global
+npx github:pauloborini/talos uninstall minimaxcode
 ```
 
 For a project-only install, omit `--global` for OpenCode, Pi, or VS Code.

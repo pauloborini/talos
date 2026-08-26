@@ -5,7 +5,7 @@
 
 # Talos v0.18.2
 
-**Talos** is a deterministic development pipeline: product contract (§7) → plan → isolated execution → cold validation. It ships as one public, free plugin for Claude Code, Cursor, Codex App, Antigravity, ZCode, OpenCode, Pi CLI, and VS Code.
+**Talos** is a deterministic development pipeline: product contract (§7) → plan → isolated execution → cold validation. It ships as one public, free plugin for Claude Code, Cursor, Codex App, Antigravity, ZCode, OpenCode, Pi CLI, VS Code, and MinimaxCode.
 
 **Version:** [`VERSION`](VERSION) (`0.18.2`) · **Command reference:** [COMMANDS.md](COMMANDS.md) · **Portuguese guide:** [README.pt-BR.md](README.pt-BR.md)
 
@@ -21,6 +21,7 @@ npx github:pauloborini/talos init zcode
 npx github:pauloborini/talos init opencode --global
 npx github:pauloborini/talos init pi --global --yes
 npx github:pauloborini/talos init vscode --global
+npx github:pauloborini/talos init minimaxcode   # also: mavis | minimax-code | mmc
 ```
 
 `--global` is recommended for OpenCode, Pi, and VS Code. For a project-only installation, omit it. Pi requires `pi-mcp-adapter` and `pi-subagents`; `--yes` installs missing dependencies.
@@ -123,6 +124,7 @@ The MCP exposes 16 tools for preflight, artifacts, contracts, locks, state, spri
 | OpenCode | `init opencode --global` | — |
 | Pi CLI | `init pi --global --yes` | `pi-mcp-adapter`, `pi-subagents` |
 | VS Code | `init vscode --global` | — |
+| MinimaxCode | `init minimaxcode` | — |
 
 Host adapters describe native differences; the pipeline contract stays portable. See [host adapters](packages/orchestrator/references/host-adapters.md).
 

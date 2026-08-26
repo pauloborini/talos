@@ -5,7 +5,7 @@
 
 # Talos
 
-Plugin **Talos** v0.18.2 — pipeline determinístico (contrato §7 → plano → execução → validação) com skills `talos-*`, templates e MCP. Um pacote, oito hosts: **Claude Code**, **Cursor**, **Codex App**, **Antigravity (Gemini)**, **ZCode**, **OpenCode**, **Pi CLI** e **VS Code**.
+Plugin **Talos** v0.18.2 — pipeline determinístico (contrato §7 → plano → execução → validação) com skills `talos-*`, templates e MCP. Um pacote, nove hosts: **Claude Code**, **Cursor**, **Codex App**, **Antigravity (Gemini)**, **ZCode**, **OpenCode**, **Pi CLI**, **VS Code** e **MinimaxCode**.
 
 **Versão:** [`VERSION`](VERSION) (`0.18.2`) · **Repo:** https://github.com/pauloborini/talos
 
@@ -21,6 +21,7 @@ Plugin **Talos** v0.18.2 — pipeline determinístico (contrato §7 → plano �
 | Opencode | Catálogo from-source `hosts/opencode/` | `talos-opencode.plugin` | — |
 | Pi CLI | Catálogo from-source `hosts/pi/` | `talos-pi.plugin` | **`pi-mcp-adapter` + `pi-subagents`** |
 | VS Code | Instalador from-source (`init vscode`) → `~/.vscode-talos/` (global) ou `.vscode/` (projeto) | `talos-vscode.plugin` | — |
+| MinimaxCode | Instalador from-source (`init minimaxcode`) → `~/.minimax/plugins/talos/` (Plugin V1; já global) | — (cópia direta do Plugin V1, sem artefato `.plugin`) | — |
 
 **Cursor:** não há pacote nem marketplace próprios — o plugin instalado via `claude plugin` no escopo do usuário já vale para o Cursor (mesmo manifest `.claude-plugin/`). Limitação de packaging, não do pipeline.
 
@@ -45,6 +46,7 @@ npx github:pauloborini/talos init opencode --global
 npx github:pauloborini/talos init pi --global --yes  # --yes auto-instala as 2 deps
 npx github:pauloborini/talos init vscode               # projeto atual
 npx github:pauloborini/talos init vscode --global       # todos os projetos
+npx github:pauloborini/talos init minimaxcode           # Plugin V1 em ~/.minimax/plugins/talos/ (aliases: mavis | minimax-code | mmc)
 ```
 
 - **claudecode/cursor**: o instalador roda o `marketplace add` + `install` nativos da CLI por você. Já são globais por natureza.
@@ -54,6 +56,7 @@ npx github:pauloborini/talos init vscode --global       # todos os projetos
 - **opencode**: com `--global`, instala globalmente em `~/.config/opencode/` (o MCP é registrado com caminho absoluto, funcionando em todos os projetos).
 - **pi**: com `--global`, instala globalmente em `~/.pi/agent/` (honra `PI_CODING_AGENT_DIR`), registra o MCP em `mcp.json` global e checa/instala as deps `pi-mcp-adapter` + `pi-subagents`.
 - **vscode**: com `--global`, instala o runtime em `~/.vscode-talos/`, copia agentes e skills para o prompt folder do VS Code (`~/Library/Application Support/Code/User/prompts/` no macOS) e registra o MCP no `settings.json` do usuário (`github.copilot.chat.mcpServers`). Sem `--global`, instala no projeto atual (`.vscode/talos/` + `.vscode/mcp.json`). VS Code Copilot Chat é o host nativo com `runSubagent` + `manage_todo_list` + MCP — perfil `self_evident`, sem dependências externas.
+- **minimaxcode**: instala o Plugin V1 do Talos em `~/.minimax/plugins/talos/` (estrutura: `.minimax-plugin/plugin.json` + `icon.png` + `server.js` empacotado + `skills/talos-*/SKILL.md` + `servers/mcp.json` com `args: ["./server.js"]` relativo). O MCP `talos` é auto-descoberto pelo MinimaxCode a partir do `servers/mcp.json` do plugin (sem registro manual no DB do Mavis). Cria também 5 custom agents em `~/.minimax/agents/talos-*/` (um por `agents/talos-*.md` do Talos) — formato MinimaxCode: `agent.md` (system_prompt puro) + `config.yaml` (`defaultWorkspaceDir`). O `install-host.sh mavis` faz o mesmo em bash; o `npx init minimaxcode` é o caminho oficial. Honra `MINIMAX_DATA_DIR` para override.
 
 No modo `--global` o runtime vai para um local estável (`~/.config/opencode/talos` ou `~/.pi/agent/talos`) e o MCP é registrado com **caminho absoluto** (sem depender do cwd). opencode: agente em `~/.config/opencode/agents/`, skills em `~/.config/opencode/skills/`. pi: agente em `~/.agents/` (se existir) ou `~/.pi/agent/agents/`, MCP em `~/.pi/agent/mcp.json`. A config existente é **mesclada** (preserva outros MCP servers e chaves); se houver `opencode.jsonc` com comentários, ele é preservado e o Talos é registrado no fallback `opencode.json`.
 
@@ -105,6 +108,7 @@ npx github:pauloborini/talos uninstall zcode
 npx github:pauloborini/talos uninstall opencode --global
 npx github:pauloborini/talos uninstall pi --global
 npx github:pauloborini/talos uninstall vscode --global
+npx github:pauloborini/talos uninstall minimaxcode
 ```
 
 Se a instalação foi local **por-projeto**:
@@ -123,7 +127,7 @@ Alternativa à instalação via GitHub: baixar o `.plugin` do host (`claude`, `c
 
 Comando (Claude Code / Cursor): `/talos <mode> <input-type> [input] [flags]`
 
-No Codex, Antigravity, opencode, pi, zcode e VS Code, invoque a skill do orquestrador com o mesmo padrão de argumentos (ex.: `/talos full sprint S05`). O verbo de dispatch do subagente é resolvido por `talos_capabilities` (host-agnóstico).
+No Codex, Antigravity, opencode, pi, zcode, VS Code e MinimaxCode, invoque a skill do orquestrador com o mesmo padrão de argumentos (ex.: `/talos full sprint S05`). O verbo de dispatch do subagente é resolvido por `talos_capabilities` (host-agnóstico).
 
 Se você quiser começar fora do fluxo principal, as skills listadas abaixo são os atalhos explícitos para backlog, contrato §7 (entrevista), auditoria, plano, execução e revisão.
 
