@@ -506,6 +506,58 @@ const HOST_ADAPTERS = {
     // (Write/Edit/Bash disponíveis no subagente nativo).
     dispatch_capability: 'mutable',
   },
+  mavis: {
+    label: 'MinimaxCode',
+    // MinimaxCode expõe subagentes via tool nativa `task` com agent_name — não há
+    // `Agent(subagent_type)` literal. Cada subagente Talos vira um custom agent
+    // MinimaxCode (config.yaml em ~/.minimax/agents/talos-<name>/) com system_prompt
+    // derivado de agents/<talos-<name>.md. O orquestrador despacha via
+    // `task({ agent_name: "talos-<name>", prompt: "<state_path>" })` e usa
+    // `mavis session send` (síncrono) para o gate JOIN ficar self_evident.
+    subagent_dispatch: {
+      mechanism: 'task({ agent_name }) / mavis session send',
+      example: 'task({ agent_name: "talos-task-validator", prompt: "<state_path>" }) ou session send { session_id: "<sub-session>", content: "<state_path>" }',
+      registration: '~/.minimax/agents/talos-<name>/config.yaml (custom agent MinimaxCode; system_prompt = corpo de agents/<talos-<name>.md do Talos)',
+    },
+    validator_dispatch: {
+      dispatcher: 'orchestrator',
+      join: {
+        // MinimaxCode `task` foreground é síncrono (retorna task result no mesmo turno).
+        // Equivalente a session send bloqueante. Sem polling, sem background.
+        sync: 'self_evident',
+        confidence: 'high',
+        mechanism: 'task foreground / session send bloqueante por design do host — aguarda retorno do subagente no mesmo turno',
+      },
+    },
+    // MinimaxCode expõe ask_user como tool de questionamento estruturado (1–4 steps,
+    // selectionMode single/multiple). Equivalente direto a AskUserQuestion.
+    // Limitação: max 4 steps por tool call (igual Claude). Mapeamento 1:1.
+    question_prompt: {
+      mechanism: 'ask_user',
+      mode: 'structured',
+      max_questions: 4,
+      // MinimaxCode ask_user aceita 2-4 options por pergunta; canônico no Talos = 3
+      // (consistente com os outros 8 hosts; test canônico: server.test.js:326).
+      options_per_question: 3,
+      persistence: 'sprint_after_each_round',
+    },
+    // MinimaxCode expõe todowrite nativo (built-in tool) ao agente primário e subagentes.
+    todo_tool: 'todowrite',
+    // MinimaxCode Plugin V1 não suporta hooks (PreToolUse/Stop). PreToolUse trava
+    // de path vira `null`; nada quebra porque o gate é não-essencial.
+    hooks: { supported: false, mechanism: null },
+    // MinimaxCode tem subagente (task/session send) + MCP (Plugin V1 servers.mcp.json)
+    // + todo (todowrite) — todos capabilities self_evident (nativas do host,
+    // boot prova MCP-vivo, subagente é nativo).
+    capabilities_flags: { subagent_available: true, mcp_available: true, todo_available: true },
+    // self_evident: MCP nativo + task/session send bloqueante nativos do MinimaxCode.
+    prereq_policy: 'self_evident',
+    // MinimaxCode task(session send) confirmado em produção com capacidade de mutação
+    // (Read/Write/Edit/Bash/Glob/Grep disponíveis no subagente nativo). Smoke
+    // inicial roda `talos_ping` e `talos_capabilities` (read-only); gate
+    // DISPATCH é self_evident porque o MinimaxCode não restringe tools por agente.
+    dispatch_capability: 'mutable',
+  },
   generic: {
     label: 'Host genérico',
     subagent_dispatch: {
