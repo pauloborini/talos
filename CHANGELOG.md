@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.18.2 - 2026-08-25
 
-Tipo: **adapter-only**. **Sem breaking**. Schema MCP: v5 (inalterado). Disco: v3 (inalterado). Motor (gates, state machine, executor, validator, repair, skills): **intocado**.
+Tipo: **packaging + adapter-only**. **Sem breaking**. Schema MCP: v5 (inalterado). Disco: v3 (inalterado). Motor (gates, state machine, executor, validator, repair, skills): **intocado**.
 
 Resumo: nono host do Talos — **Mavis (MiniMax Code)** — integrado como Plugin V1 do Mavis. Cada subagente Talos vira um custom agent Mavis (system_prompt derivado de `agents/<talos-*.md>`); MCP stdio injetado via `servers.mcp.json` com `TALOS_HOST=mavis`. Adição é puramente adapter: nova entrada `mavis` em `HOST_ADAPTERS`, linha na matriz de `host-adapters.md`, case no `smoke-hosts.mjs` e branch no `install-host.sh`. Sem mudança em `HOST_DETECTORS` (o override `env:TALOS_HOST` já cobria o caminho) nem em gates (PREREQ/JOIN/DISPATCH herdam do perfil `self_evident` + `dispatch_capability: "mutable"`, confirmados pelo smoke).
 
