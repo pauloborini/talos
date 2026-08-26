@@ -114,7 +114,7 @@ for (const rel of [
   }
 }
 
-// Catálogos from-source dos hosts opencode/pi/zcode devem existir (install via GitHub
+// Catálogos from-source dos hosts opencode/pi/zcode/vscode devem existir (install via GitHub
 // público — DEC-008). Stale/ausente => host não instala pelo caminho primário.
 for (const rel of [
   'hosts/opencode/opencode.json',
@@ -126,6 +126,9 @@ for (const rel of [
   'hosts/zcode/.zcode-plugin/plugin.json',
   'hosts/zcode/agents/talos-task-validator.md',
   'hosts/zcode/packages/mcp-server/server.js',
+  'hosts/vscode/.vscode/mcp.json',
+  'hosts/vscode/agents/talos-task-validator.md',
+  'hosts/vscode/.vscode/talos/packages/mcp-server/server.js',
 ]) {
   if (!fs.existsSync(path.join(ROOT, rel))) {
     errors.push(`ausente: ${rel} (rode build/build-plugins.sh e commite hosts/)`);
