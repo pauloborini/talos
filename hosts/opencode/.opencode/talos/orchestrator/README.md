@@ -249,9 +249,16 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `talos-*` para o
 
 ---
 
-**Plugin version:** 0.18.0
+**Plugin version:** 0.18.1
 **Author:** Paulo Borini
-**Last updated:** 2026-08-21
+**Last updated:** 2026-08-24
+
+### Novidades v0.18.1 — install zcode sob npx materializa o catálogo hosts/zcode (manifest na raiz do cache)
+
+- **`talos init zcode` funciona de verdade via `npx github:pauloborini/talos`.** O instalador copiava o pacote npm inteiro para o cache do host e dependia do `.claude-plugin/plugin.json` na raiz — mas o tarball npm exclui `.claude-plugin/` (`.npmignore`). Sob npx, o cache ficava sem NENHUM manifest: os registros marcavam `talos@talos` como instalado/habilitado, porém a descoberta não resolvia skill, agente ou MCP nenhum ("instalado" e morto — sintoma: zero skills `talos-*` na sessão com a 0.18.0 no cache).
+- **Cache materializado do catálogo `hosts/zcode/`** — mesmo layout do artefato `dist/talos-zcode.plugin`: `.zcode-plugin/plugin.json` NA RAIZ + `agents/` + `skills/` + `packages/`, com MCP via `${ZCODE_PLUGIN_ROOT}` (padrão dos plugins oficiais do zcode). Fail-cedo se o catálogo estiver ausente e assert pós-cópia do manifest (falha no install, não silenciosamente na sessão).
+- **Bootstrap MCP do manifesto Claude à prova de Cursor/Grok.** O bootstrap da 0.18.0 dependia de `CLAUDE_PLUGIN_ROOT` no ENV do spawn, que esses hosts não injetam (`talos-mcp: run.sh não encontrado` no log). Agora, esgotadas as sondas de env/PWD, o `-c` varre os caches conhecidos do Talos (`~/.cursor`, `~/.zcode`, `~/.claude` — marketplace e cache — e legados `/home/box`) e executa o `run.sh` mais recente; sem nenhum, falha dizendo para atualizar/reinstalar.
+- **`smoke-install.mjs`** valida o contrato novo (manifest `.zcode-plugin` na raiz, `skills === './skills/'`, args MCP com `${ZCODE_PLUGIN_ROOT}`, server.js/skill orquestradora/validator presentes) e **`run.test.mjs`** ganha 4 testes do bootstrap (cache mais recente sem env; falha acionável). Quem instalou a 0.18.0 via npx deve rodar `init zcode` 0.18.1 e reiniciar o host.
 
 ### Novidades v0.18.0 — onda 1 completa: writer MCP + guards DR01–04 + release 0.18
 

@@ -233,10 +233,18 @@ esac
   }));
   const r = run(['init', 'zcode'], { HOME: home });
   assert(r.status === 0, `zcode init falhou: ${r.stderr || r.stdout}`);
-  // Plugin instalado no cache do marketplace (server.js presente na versão correta).
+  // Plugin instalado no cache do marketplace, materializado do catálogo hosts/zcode/
+  // (mesmo layout de dist/talos-zcode.plugin): manifest .zcode-plugin/plugin.json NA
+  // RAIZ do cache. Copiar o repo inteiro quebrava sob npx — o tarball exclui
+  // .claude-plugin/ e o host registrava o plugin sem resolver skill/MCP nenhum.
+  assert(exists(path.join(CACHE, '.zcode-plugin/plugin.json')), 'zcode não materializou .zcode-plugin/plugin.json na raiz do cache');
+  const cacheManifest = json(path.join(CACHE, '.zcode-plugin/plugin.json'));
+  assert(cacheManifest.skills === './skills/', 'manifest zcode no cache não aponta skills para ./skills/');
+  const mcpArgs = (cacheManifest.mcpServers?.talos?.args ?? []).map(String);
+  assert(mcpArgs.some((a) => a.includes('${ZCODE_PLUGIN_ROOT}')), 'MCP zcode no cache não referencia ${ZCODE_PLUGIN_ROOT}');
   assert(exists(path.join(CACHE, 'packages/mcp-server/server.js')), 'zcode não copiou server.js para o cache do marketplace');
-  // Manifest do plugin (a UI usa .claude-plugin/plugin.json; não há .zcode-plugin na raiz).
-  assert(exists(path.join(CACHE, '.claude-plugin/plugin.json')), 'zcode não copiou .claude-plugin/plugin.json');
+  assert(exists(path.join(CACHE, 'skills/talos/SKILL.md')), 'zcode não copiou a skill orquestradora talos para o cache');
+  assert(exists(path.join(CACHE, 'agents/talos-task-validator.md')), 'zcode não copiou o subagente validator para o cache');
   // Catálogo do marketplace materializado com marketplace.json na raiz (o ZCode lê da raiz).
   assert(exists(path.join(MK, 'marketplace.json')), 'zcode não criou marketplace.json no catálogo do marketplace');
   assert(exists(path.join(MK, '.claude-plugin/plugin.json')), 'zcode não copiou .claude-plugin/plugin.json para o catálogo');

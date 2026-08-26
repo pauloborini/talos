@@ -122,3 +122,63 @@ test('plugin.json -c acha run.sh via CLAUDE_PLUGIN_ROOT com cwd fora do plugin',
   assert.ok(out.length > 0);
   assert.ok(fs.existsSync(out), `binário inexistente: ${out}`);
 });
+
+// Hosts que não injetam CLAUDE_PLUGIN_ROOT nem expandem o placeholder no argv
+// (Cursor/Grok): o bootstrap tem que achar o run.sh nos caches conhecidos,
+// escolhendo a instalação mais recente (-nt) entre marketplace/plugin/versão.
+function bootstrapCommand(file) {
+  const mcp = mcpFrom(file);
+  return { cmd: mcp.command, argv: [mcp.args[0], mcp.args[1], mcp.args[2]], label: file.includes('plugin-manifests') ? 'template-claude' : 'claude-plugin' };
+}
+
+function plantRunSh(home, relCache, marker, mtimeMs) {
+  const dir = path.join(home, relCache, 'packages/mcp-server');
+  fs.mkdirSync(dir, { recursive: true });
+  const sh = path.join(dir, 'run.sh');
+  fs.writeFileSync(sh, `#!/usr/bin/env bash\necho "${marker}"\n`);
+  fs.chmodSync(sh, 0o755);
+  fs.utimesSync(sh, new Date(mtimeMs), new Date(mtimeMs));
+  return sh;
+}
+
+const NO_PLUGIN_ROOT_ENV = (home) => ({
+  HOME: home,
+  PATH: process.env.PATH ?? '/usr/bin:/bin',
+});
+
+for (const file of [PLUGIN_JSON, MANIFEST_JSON]) {
+  test(`plugin.json (${bootstrapCommand(file).label}) -c resolve run.sh do cache mais recente sem env de plugin`, () => {
+    const { cmd, argv } = bootstrapCommand(file);
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'talos-bootstrap-home-'));
+    plantRunSh(home, '.cursor/plugins/cache/talos/talos/antigo', 'PICKED:ANTIGO', Date.now() - 60_000);
+    plantRunSh(home, '.zcode/cli/plugins/cache/talos/talos/0.0.9', 'PICKED:NOVO', Date.now());
+    const out = execFileSync(cmd, argv, {
+      cwd: os.tmpdir(),
+      env: NO_PLUGIN_ROOT_ENV(home),
+      encoding: 'utf8',
+      timeout: 10_000,
+    });
+    assert.match(out, /PICKED:NOVO/);
+    assert.doesNotMatch(out, /PICKED:ANTIGO/);
+  });
+
+  test(`plugin.json (${bootstrapCommand(file).label}) -c falha com mensagem acionável quando nada é encontrado`, () => {
+    const { cmd, argv } = bootstrapCommand(file);
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'talos-bootstrap-vazio-'));
+    let err;
+    try {
+      execFileSync(cmd, argv, {
+        cwd: os.tmpdir(),
+        env: NO_PLUGIN_ROOT_ENV(home),
+        encoding: 'utf8',
+        timeout: 10_000,
+      });
+    } catch (e) {
+      err = e;
+    }
+    assert.ok(err, 'bootstrap deveria falhar sem nenhum run.sh conhecido');
+    assert.equal(err.status, 1);
+    assert.match(String(err.stderr), /run\.sh não encontrado/);
+    assert.match(String(err.stderr), /atualize\/reinstale/);
+  });
+}

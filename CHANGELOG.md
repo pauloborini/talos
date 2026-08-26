@@ -1,5 +1,67 @@
 # Changelog
 
+## 0.18.2 - 2026-08-25
+
+Tipo: **packaging + adapter-only**. **Sem breaking**. Schema MCP: v5 (inalterado). Disco: v3 (inalterado). Motor (gates, state machine, executor, validator, repair, skills): **intocado**.
+
+Resumo: nono host do Talos — **Mavis (MiniMax Code)** — integrado como Plugin V1 do Mavis. Cada subagente Talos vira um custom agent Mavis (system_prompt derivado de `agents/<talos-*.md>`); MCP stdio injetado via `servers.mcp.json` com `TALOS_HOST=mavis`. Adição é puramente adapter: nova entrada `mavis` em `HOST_ADAPTERS`, linha na matriz de `host-adapters.md`, case no `smoke-hosts.mjs` e branch no `install-host.sh`. Sem mudança em `HOST_DETECTORS` (o override `env:TALOS_HOST` já cobria o caminho) nem em gates (PREREQ/JOIN/DISPATCH herdam do perfil `self_evident` + `dispatch_capability: "mutable"`, confirmados pelo smoke).
+
+Mudanças:
+- **`packages/mcp-server/server.js`** — entrada `mavis` em `HOST_ADAPTERS` (após `vscode`, antes de `generic`): `subagent_dispatch.mechanism = "task({ agent_name }) / mavis session send"`, `validator_dispatch.join.sync = "self_evident"` (task foreground bloqueante), `question_prompt.mechanism = "ask_user"` (1–4 steps), `todo_tool = "todowrite"`, `hooks.supported = false` (Plugin V1 do Mavis não suporta hooks), `capabilities_flags = { subagent_available: true, mcp_available: true, todo_available: true }`, `prereq_policy = "self_evident"`, `dispatch_capability = "mutable"`. Sem tocar no motor (gates, preflight, run state, slice ledger, validator lock, checkpoint state, schema de tools).
+- **`packages/orchestrator/references/host-adapters.md`** — linha de detecção `env:TALOS_HOST=mavis`; nova coluna `mavis (MiniMax Code)` na matriz principal com todos os 12 concerns (disparo, registro, topologia, fallback, join, dispatch_capability, todo, interview, config MCP, deps, run state, plan paths); mecanismo `ask_user` listado na linha 61.
+- **`build/smoke-hosts.mjs`** — case `mavis (TALOS_HOST via servers.mcp.json)` no array `CASES` (env `{ TALOS_HOST: 'mavis' }`, host `mavis`, via `env:TALOS_HOST`, join_sync `self_evident`).
+- **`build/install-host.sh`** — case `mavis` no switch; novo bloco no final gera o Plugin V1 em `~/.minimax/plugins/talos/` (`.minimax-plugin/plugin.json` + `servers.mcp.json` + `skills/<talos-*>/SKILL.md` copiados de `packages/skills/`) e cria 5 custom agents em `~/.minimax/agents/talos-<name>/config.yaml` (system_prompt = corpo de `agents/<talos-<name>.md`).
+- **`AGENTS.md`** — "Oito hosts" → "Nove hosts" com parágrafo sobre Mavis (Plugin V1 + 5 custom agents + `TALOS_HOST=mavis`).
+
+Patch subsequente (Unreleased → `0.18.2`):
+- **`build/install-host.sh` (mavis)** — corrige o motivo pelo qual o Plugin V1 não era reconhecido pelo runtime do Mavis mesmo com o manifest e os 10 skills no disco. Causa raiz: o `servers.mcp.json` referenciava o `server.js` por **path absoluto** (`$ROOT/packages/mcp-server/server.js`), e o reader de Plugin V1 do Mavis (`@mavis/local-runtime-v2/dist/service/plugin-system/mcp/config.js:normalizeStdioTransport`, modo `official`) **rejeita** args com path absoluto (`readerFail('MCP_SCHEMA_INVALID', 'contains an absolute stdio argument')`). Como o `minimax-reader` sempre delega o MCP para `readOfficialMcpFile` (mesmo com `source: 'LOCAL_MINIMAX'`), o plugin inteiro falhava a validação → não era registrado em `local_runtime_plugin_official_state` → 10 skills não carregavam. O `mcp` `talos` só funcionava porque era registrado na unha via `mavis mcp create` (workaround que vira dívida técnica). Fix: (1) **bundlear** o `server.js` dentro do Plugin V1 em `~/.minimax/plugins/talos/server.js` e usar `args: ["./server.js"]` (relativo, dentro do package); (2) **bundlear a árvore `skills/_shared/`** que o `server.js` importa via path relativo hard-coded `../skills/_shared/scripts/document_quality.mjs` — o destino precisa ser sibling do `talos/` (`~/.minimax/plugins/skills/_shared/...`) porque o path `../skills/_shared/` é relativo ao `server.js` e sai do package root; o loader de plugins do Mavis ignora subdiretórios sem manifest, então o sibling é inerte pro scan. Sem essa estrutura o MCP também falhava com `ERR_MODULE_NOT_FOUND` no boot. Sem mudança no motor, schema MCP, gates, disco v3 ou topologia.
+
+Impacto:
+- Demais hosts (claude, codex, cursor, antigravity, opencode, pi, zcode, vscode, generic) **sem mudança de comportamento** — a entrada nova é aditiva no objeto `HOST_ADAPTERS` e o `detectHost` continua resolvendo via `HOST_ADAPTERS[override]`.
+- Quem instalar Mavis ganha um nono host: packager único (`build/install-host.sh mavis`) materializa Plugin V1 + 5 custom agents em `~/.minimax/`; re-scan do Mavis descobre o plugin automaticamente; `talos_ping` confirma boot; `talos_capabilities` lista `mavis` em `known_hosts`.
+- Sem migração de disco/pipeline; state v3, schema MCP v5, gates G1–G12, topologia sibling, e conjunto de tools inalterados.
+
+Arquivos/artefatos:
+- `packages/mcp-server/server.js` (entrada `mavis` em `HOST_ADAPTERS`).
+- `packages/orchestrator/references/host-adapters.md` (linha de detecção + coluna na matriz + linha 61).
+- `build/smoke-hosts.mjs` (case novo no CASES).
+- `build/install-host.sh` (case `mavis` + bloco do Plugin V1).
+- `AGENTS.md` (parágrafo do nono host).
+- `CHANGELOG.md` (esta entrada).
+
+Validação:
+- `node build/smoke-hosts.mjs` — ok (9 hosts × boot + detecção + capabilities + ping, incluindo Mavis).
+- Bump `VERSION` + release do `0.18.2` pendente de validação end-to-end no Mavis (instalação real + dispatch de subagente + preflight reportando `dispatch_mutable: true`).
+
+## 0.18.1 - 2026-08-24
+
+Tipo: **packaging**. **Sem breaking**. Schema MCP: v5 (inalterado).
+
+Resumo: corrige dois modos de instalação que ficavam com o plugin "instalado" e morto. (1) **zcode via npx**: `talos init zcode` copiava o pacote npm inteiro para `~/.zcode/cli/plugins/cache/talos/talos/<versão>/` e contava com `.claude-plugin/plugin.json` na raiz — mas o tarball npm exclui `.claude-plugin/` (`.npmignore`); o cache ficava sem NENHUM manifest e a descoberta do host não resolvia skill, agente ou MCP nenhum. Agora o cache é materializado do catálogo `hosts/zcode/` — mesmo layout de `dist/talos-zcode.plugin`: `.zcode-plugin/plugin.json` NA RAIZ + `agents/` + `skills/` + `packages/`, MCP via `${ZCODE_PLUGIN_ROOT}`. (2) **Cursor/Grok (manifesto Claude compartilhado)**: o bootstrap do MCP introduzido na 0.18.0 dependia de `CLAUDE_PLUGIN_ROOT` no ENV do spawn, que esses hosts não injetam (e nem expandem o placeholder no argv) — `talos-mcp: run.sh não encontrado` + `Connection closed` no log. O bootstrap agora varre os caches conhecidos do Talos (`~/.cursor`, `~/.zcode`, `~/.claude` — marketplace e cache — e os legados `/home/box`), escolhendo a instalação mais recente (`-nt`), e falha com mensagem acionável quando nada é encontrado. Sem mudança de runtime MCP, schema v5, gates ou topologia sibling.
+
+Mudanças:
+- **`build/cli/talos-init.mjs`** — `copyZcodePluginToCache` copia `hosts/zcode/` para o cache (fail-cedo se o catálogo não existe; assert pós-cópia exige `.zcode-plugin/plugin.json` na raiz) em vez de copiar ROOT inteiro; `ensureZcodeRootMarketplaceJson` loga aviso quando `.claude-plugin/marketplace.json` não está presente (modo npx — o host regenera o `marketplace.json` raiz no refresh do catálogo, source git).
+- **`.claude-plugin/plugin.json` + `plugin-manifests/claude/plugin.json`** — bootstrap `-c` do MCP ganha varredura newest-wins pelos caches conhecidos (`$HOME/.cursor|zcode|claude/...`) após as sondas de env/PWD; mensagem de falha final diz o que fazer ("atualize/reinstale o Talos neste host").
+- **`build/smoke-install.mjs`** — asserções zcode migradas para o contrato novo: manifest `.zcode-plugin/plugin.json` na raiz do cache, `skills === './skills/'`, args MCP referenciando `${ZCODE_PLUGIN_ROOT}`, e presença de `packages/mcp-server/server.js`, `skills/talos/SKILL.md` e `agents/talos-task-validator.md`.
+- **`packages/mcp-server/run.test.mjs`** — 4 testes novos: bootstrap resolve `run.sh` do cache mais recente sem nenhuma env de plugin (para `.claude-plugin` e template) e falha com status 1 + mensagem acionável em HOME vazio.
+
+Impacto:
+- **zcode**: quem instalou/atualizou para a 0.18.0 via `npx ... init zcode` ficou com registros ok e componentes ausentes — reinstalar com `npx github:pauloborini/talos init zcode` (0.18.1) e reiniciar o host resolve; install por UI não exige ação além do upgrade.
+- **Cursor/Grok**: com o plugin apontando para o repositório atualizado, recarregar o host sobe o MCP via cache existente; sem cache nenhum, a nova mensagem indica reinstall.
+- Sem migração de disco/pipeline; state v3 e contrato das tools inalterados; demais hosts (claude, codex, antigravity, opencode, pi, vscode) sem mudança de comportamento.
+
+Arquivos/artefatos:
+- `VERSION` → `0.18.1`; `package.json`; `packages/mcp-server/package.json`; `.claude-plugin/plugin.json`; manifests/READMEs concretos; `CHANGELOG.md`; `packages/orchestrator/README.md`; `dist/talos-{claude,codex,opencode,pi,zcode,vscode}.plugin` + `SHA256SUMS`; catálogos `hosts/{opencode,pi,zcode,vscode}/` e `plugins/talos/`.
+
+Validação:
+- `node --test packages/mcp-server/server.test.js` — ok (311/311); `node --test packages/mcp-server/run.test.mjs` — ok (11/11, inclui os 4 novos).
+- `node --test build/tests/classify-findings.test.mjs build/tests/etapa3.test.mjs` — ok (29/29); `node --test build/check-consistency.guard.test.mjs` — ok (6/6).
+- `node build/smoke-install.mjs` — ok (contrato novo do cache zcode coberto); `node build/smoke-hosts.mjs` — ok; `node build/conformance-matrix.mjs` — ok (6 hosts × 10 cenários).
+- `shasum -a 256 -c dist/SHA256SUMS` — ok (6 artefatos); `unzip -t` dos 6 `.plugin` — ok.
+- `claude plugin validate ./ --strict` — ok.
+- Simulação do spawn Cursor (cwd neutro + env sem `*PLUGIN_ROOT*`) contra os caches reais da máquina: server responde `initialize` via varredura de cache.
+- §8 reforçado: `npm pack` + `init zcode` executado a partir do tarball extraído com HOME sandbox — cache com manifest na raiz.
+
 ## 0.18.0 - 2026-08-21
 
 Tipo: **runtime**. **Com breaking de procedimento** (writer do JSON de slice deixa de ser a LLM). Schema MCP: v5 (inalterado). Disco do state: v3 (inalterado).
