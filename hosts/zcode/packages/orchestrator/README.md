@@ -249,9 +249,18 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `talos-*` para o
 
 ---
 
-**Plugin version:** 0.18.1
+**Plugin version:** 0.18.2
 **Author:** Paulo Borini
-**Last updated:** 2026-08-24
+**Last updated:** 2026-08-25
+
+### Novidades v0.18.2 — nono host (MinimaxCode) + Plugin V1 spec-conforme + 5 custom agents + Plugin V1 visível com skills
+
+- **Nono host do Talos: MinimaxCode.** Adição puramente adapter: nova entrada `mavis` em `HOST_ADAPTERS` (perfil `self_evident` + `dispatch_capability: "mutable"` + `question_prompt: "ask_user"` + `todo_tool: "todowrite"` + `hooks.supported: false` + capabilities `{subagent, mcp, todo}`); linha de detecção `env:TALOS_HOST=mavis` na matriz; case em `smoke-hosts.mjs` (`sv=5 ping=ok`). Sem tocar no motor (gates, preflight, run state, slice ledger, validator lock, checkpoint state, schema de tools).
+- **Plugin V1 do MinimaxCode, gerado pelo packager e spec-conforme (13 files / 108 KiB, dentro dos 1024 files / 64 MiB do limite).** `build/install-host.sh mavis` materializa `~/.minimax/plugins/talos/`: `.minimax-plugin/plugin.json` (schemaVersion 1, name "talos", version 0.18.2, category "Code", apps vazio, 10 skills listadas), `servers.mcp.json` (stdio, `node` + `./server.js` relativo, env `TALOS_HOST=mavis`, timeout 30s), `icon.png` (PNG 1×1 RGBA 68B), `skills/talos-*/SKILL.md` (10, copiados de `packages/skills/`).
+- **5 custom agents MinimaxCode (não fallback genérico).** Cada um é um agente real no DB do MinimaxCode, criado via `mavis agent create` + `mavis agent update` (system_prompt = corpo do canônico `agents/<talos-<name>.md` do Talos): `talos-direct-execute`, `talos-findings-repair`, `talos-plan-execute`, `talos-slice-review`, `talos-task-validator`. Mirror no disco em `~/.minimax/agents/talos-*/` com `agent.md` (system_prompt puro) + `config.yaml` (defaultWorkspaceDir).
+- **Plugin V1 visível e skills carregando (fix do "instalado e morto").** O packager original referenciava o `server.js` por path absoluto (`$ROOT/packages/mcp-server/server.js`), que o reader oficial do MinimaxCode rejeita (`MCP_SCHEMA_INVALID: contains an absolute stdio argument` — o `minimax-reader` sempre delega o MCP para `readOfficialMcpFile` mesmo com `source: 'LOCAL_MINIMAX'`). Sem isso, o plugin inteiro falhava validação e o `mcpServers: {}` ficava vazio — sintoma exato: `talos-*` skills invisíveis, "instalado" mas morto. Fix: (1) **bundle do `server.js` dentro do Plugin V1** + `args: ["./server.js"]` relativo; (2) **bundle de `skills/_shared/`** como sibling `~/.minimax/plugins/skills/_shared/` (o loader ignora dirs sem manifest, então é inerte pro scan; existe só pra resolver o import hard-coded `../skills/_shared/scripts/document_quality.mjs` do `server.js`).
+- **Removido o "passo extra de registro MCP"** do output do install — o Plugin V1 agora se auto-registra (e auto-inicia o MCP) via `LocalPluginDirectoryWatcher` do MinimaxCode. O workaround `mavis mcp create` virou lixo histórico (e foi removido do DB pra não conflitar com o auto-load).
+- **Validação fim-a-fim no runtime real do MinimaxCode:** (a) subagente `talos-task-validator` invocou `mcp__talos__talos_ping` → `{status: alive, version: 0.18.1, 17 capabilities}` (versão anterior — o 0.18.2 entra no próximo release); (b) `node build/smoke-hosts.mjs` → 9/9 hosts OK; (c) `node build/check-consistency.mjs` → sem regressão A1/A2; (d) `mavis agent list` → 5/5 `talos-*` listados ao lado de `worker`/`verifier`/`explore`; (e) `mcp get` confirma 1 MCP `talos` (stdio) registrado.
 
 ### Novidades v0.18.1 — install zcode sob npx materializa o catálogo hosts/zcode (manifest na raiz do cache)
 

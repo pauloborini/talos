@@ -44,7 +44,7 @@ case "$HOST" in
     VERSION_FILE="$SRC/.vscode/talos/VERSION"
     ;;
   mavis)
-    SRC="$ROOT"  # packager do Mavis lê direto do repo (não usa catálogo from-source)
+    SRC="$ROOT"  # packager do MinimaxCode lê direto do repo (não usa catálogo from-source)
     VERSION_FILE="$ROOT/VERSION"
     ;;
   *)
@@ -69,7 +69,7 @@ echo "instalando talos ($HOST v$VERSION) em $TARGET"
 
 # cp -R do conteúdo do catálogo (inclui dotfiles como .opencode). Sobrescreve a
 # instalação anterior — é o caminho de update.
-# Mavis não usa catálogo from-source (Plugin V1 vai pra ~/.minimax/plugins/talos/);
+# MinimaxCode não usa catálogo from-source (Plugin V1 vai pra ~/.minimax/plugins/talos/);
 # o target é só referência da raiz do repo.
 if [[ "$HOST" != "mavis" ]]; then
   cp -R "$SRC/." "$TARGET/"
@@ -103,7 +103,7 @@ elif [[ "$HOST" == "vscode" ]]; then
 fi
 
 if [[ "$HOST" == "mavis" ]]; then
-  # Mavis usa Plugin V1 próprio. Layout obrigatório:
+  # MinimaxCode usa Plugin V1 próprio. Layout obrigatório:
   #   ~/.minimax/plugins/talos/
   #     .minimax-plugin/plugin.json
   #     icon.png
@@ -114,7 +114,7 @@ if [[ "$HOST" == "mavis" ]]; then
   PLUGIN_DIR="$DATA_DIR/plugins/talos"
   AGENTS_DIR="$DATA_DIR/agents"
 
-  echo "instalando Plugin V1 do Talos no Mavis..."
+  echo "instalando Plugin V1 do Talos no MinimaxCode..."
   echo "  DATA_DIR   = $DATA_DIR"
   echo "  PLUGIN_DIR = $PLUGIN_DIR"
   echo "  AGENTS_DIR = $AGENTS_DIR"
@@ -124,7 +124,7 @@ if [[ "$HOST" == "mavis" ]]; then
            "$AGENTS_DIR"
 
   # 0) Icon — PNG 1×1 RGBA mínimo (67 bytes; spec V1 exige PNG/JPEG/WebP).
-  # Sem isso o runtime do Mavis rejeita o plugin (manifest referencia icon que
+  # Sem isso o runtime do MinimaxCode rejeita o plugin (manifest referencia icon que
   # não existe). Garante a referência antes do manifest ser escrito.
   python3 -c "
 import struct, zlib
@@ -149,7 +149,7 @@ sys.stdout.buffer.write(make_png())
   "name": "talos",
   "displayName": "Talos",
   "version": "$VERSION",
-  "description": "Pipeline de desenvolvimento determinística (sprint file → plano → execução → validação fria) com MCP local, 5 subagentes e skills de orquestração. Integração com Mavis via Plugin V1.",
+  "description": "Pipeline de desenvolvimento determinística (sprint file → plano → execução → validação fria) com MCP local, 5 subagentes e skills de orquestração. Integração com MinimaxCode via Plugin V1.",
   "author": "Paulo Borini",
   "icon": "icon.png",
   "category": "Code",
@@ -175,7 +175,7 @@ sys.stdout.buffer.write(make_png())
 EOF
 
   # 2) Bundle do MCP server.js dentro do Plugin V1
-  # O reader de Plugin V1 do Mavis (mcp/config.js:normalizeStdioTransport) rejeita
+  # O reader de Plugin V1 do MinimaxCode (mcp/config.js:normalizeStdioTransport) rejeita
   # args com path absoluto em modo 'official' (readOfficialMcpFile é sempre
   # invocado, mesmo quando source === 'LOCAL_MINIMAX' via minimax-reader).
   # Solução: copiar o server.js para dentro do package e referenciar relativo.
@@ -185,7 +185,7 @@ EOF
   # O server.js importa '../skills/_shared/scripts/document_quality.mjs' (relativo
   # à sua posição original no repo). Quando copiado pra <plugin>/server.js, o
   # import resolve para <plugins_root>/skills/_shared/scripts/... (sibling do
-  # 'talos/', não dentro dele). O loader de plugins do Mavis ignora subdiretórios
+  # 'talos/', não dentro dele). O loader de plugins do MinimaxCode ignora subdiretórios
   # sem manifest em <plugins_root> (package-readers.js:scanLocalPluginCandidates),
   # então esse sibling é inerte pro scan e existe só pra resolver o import.
   if [[ -d "$ROOT/packages/skills/_shared" ]]; then
@@ -226,12 +226,12 @@ EOF
     done
   fi
 
-  # 5) Custom agents Mavis — 1 por agents/<talos-*.md> do Talos.
-  # Formato esperado pelo Mavis runtime (verificado em ~/.minimax/agents/coder/
+  # 5) Custom agents MinimaxCode — 1 por agents/<talos-*.md> do Talos.
+  # Formato esperado pelo MinimaxCode runtime (verificado em ~/.minimax/agents/coder/
   # que funciona nativamente):
   #   <dir>/agent.md      — system_prompt (markdown puro, sem frontmatter)
   #   <dir>/config.yaml   — opcional, defaultWorkspaceDir e overrides
-  # NÃO escrever name/description/systemPrompt em config.yaml — o Mavis
+  # NÃO escrever name/description/systemPrompt em config.yaml — o MinimaxCode
   # não reconhece esse formato; só lê o system_prompt de agent.md.
   if [[ -d "$ROOT/agents" ]]; then
     for agent_md in "$ROOT/agents"/talos-*.md; do
@@ -242,7 +242,7 @@ EOF
       agent_dir="$AGENTS_DIR/$name"
       mkdir -p "$agent_dir"
       # Corpo do .md (após o segundo ---) é o system_prompt.
-      # Vai como agent.md em markdown puro, no formato que o Mavis escaneia.
+      # Vai como agent.md em markdown puro, no formato que o MinimaxCode escaneia.
       body="$(awk 'BEGIN{p=0} /^---$/{c++; next} c>=2{print}' "$agent_md")"
       printf '%s\n' "$body" > "$agent_dir/agent.md"
       # config.yaml com defaultWorkspaceDir apontando pro repo do Talos.
@@ -255,7 +255,7 @@ EOF
 
   echo "Plugin V1 instalado em $PLUGIN_DIR"
   echo "Custom agents criados em $AGENTS_DIR (5 agents talos-*)"
-  echo "para o Mavis reconhecer:"
+  echo "para o MinimaxCode reconhecer:"
   echo "  - feche a sessão atual e abra uma nova (re-scan automático)"
   echo "  - ou: settings → plugins → re-scan"
   echo ""
