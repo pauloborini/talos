@@ -656,7 +656,8 @@ function uninstallAntigravity(opts) {
 // zcode), reproduzimos em arquivos exatamente o estado que a UI grava:
 //   - known_marketplaces.json    → marketplace `talos` (source git → repo)
 //   - marketplaces/talos/        → clone do catálogo (manifest marketplace.json raiz)
-//   - cache/talos/talos/<VERSÃO> → plugin instalado (manifest .claude-plugin/plugin.json)
+//   - cache/talos/talos/<VERSÃO> → plugin instalado (catálogo hosts/zcode/: manifest
+//     .zcode-plugin/plugin.json NA RAIZ + agents/ + skills/ + packages/)
 //   - installed_plugins.json     → registro `talos@talos`
 //   - data/talos@talos/          → data-dir (vazio, como a UI cria)
 //   - config.json                → enabledPlugins["talos@talos"]=true
@@ -753,7 +754,12 @@ function ensureZcodeRootMarketplaceJson(dest) {
   const rootManifest = path.join(dest, 'marketplace.json');
   if (fs.existsSync(rootManifest)) return rootManifest;
   const src = path.join(ROOT, '.claude-plugin', 'marketplace.json');
-  if (!fs.existsSync(src)) return null;
+  if (!fs.existsSync(src)) {
+    // Sob npx o tarball não traz .claude-plugin/ — o host regenera o marketplace.json
+    // raiz no primeiro refresh do catálogo (source git em known_marketplaces.json).
+    log('  aviso: .claude-plugin/marketplace.json ausente (tarball npx) — marketplace.json raiz será gerado pelo host no refresh do catálogo');
+    return null;
+  }
   fs.copyFileSync(src, rootManifest);
   log(`  ${path.relative(ROOT, rootManifest)} gerado a partir de .claude-plugin/marketplace.json`);
   return rootManifest;
@@ -849,12 +855,19 @@ function copyZcodeMarketplaceDir(opts) {
   log(`  ${dest} materializado (catálogo do marketplace)`);
 }
 
-// Copia o plugin instalado para cache/<marketplace>/<plugin>/<VERSION>/. É o que a UI
-// faz no "Install": copia o repo para o cache e lê o manifest .claude-plugin/plugin.json.
+// Copia o plugin instalado para cache/<marketplace>/<plugin>/<VERSION>/. A fonte é o
+// catálogo hosts/zcode/ — mesmo layout do artefato dist/talos-zcode.plugin: manifest
+// .zcode-plugin/plugin.json NA RAIZ + agents/ + skills/ + packages/ (é o que o host
+// espera ao sondar a raiz do installPath). Copiar o repo inteiro quebrava sob npx:
+// o tarball npm exclui .claude-plugin/ (.npmignore) e o cache ficava sem NENHUM
+// manifest na raiz — o host registrava talos@talos como instalado/habilitado, mas a
+// descoberta não resolvia skill, agente ou MCP nenhum.
 function copyZcodePluginToCache(opts) {
+  const bundleSrc = path.join(ROOT, 'hosts', 'zcode');
+  if (!fs.existsSync(bundleSrc)) fail('catálogo ausente no repo: hosts/zcode (rode build/build-plugins.sh e commite)');
   const cacheDir = zcodeCacheDir();
   const parent = path.dirname(cacheDir);
-  if (opts.dryRun) { log(`  [dry-run] copiaria ${ROOT} → ${cacheDir}`); return; }
+  if (opts.dryRun) { log(`  [dry-run] copiaria ${bundleSrc} → ${cacheDir}`); return; }
   if (fs.existsSync(parent)) {
     const lst = fs.lstatSync(parent);
     if (lst.isSymbolicLink()) {
@@ -865,8 +878,13 @@ function copyZcodePluginToCache(opts) {
     fs.rmSync(parent, { recursive: true, force: true });
   }
   fs.mkdirSync(cacheDir, { recursive: true });
-  fs.cpSync(ROOT, cacheDir, { recursive: true, filter: (s) => !s.includes(`${path.sep}.git${path.sep}`) && !s.endsWith(`${path.sep}.git`) });
-  log(`  ${cacheDir} materializado (plugin instalado)`);
+  fs.cpSync(bundleSrc, cacheDir, { recursive: true });
+  // Defensivo: sem manifest na raiz do cache o host não resolve componente algum
+  // (falha aqui, não silenciosamente na sessão do usuário).
+  if (!fs.existsSync(path.join(cacheDir, '.zcode-plugin', 'plugin.json'))) {
+    fail(`manifest .zcode-plugin/plugin.json ausente em ${cacheDir} — catálogo hosts/zcode incompleto (rode build/build-plugins.sh)`);
+  }
+  log(`  ${cacheDir} materializado (plugin instalado a partir de hosts/zcode)`);
 }
 
 // Habilita talos@talos e remove órfãos em enabledPlugins. Preserva demais. Fail-closed.
@@ -984,7 +1002,7 @@ function installZcode(opts) {
   // A instalação SEMPRE vem do GitHub (npx). Em dev, ROOT é o checkout local; sob
   // npx, ROOT é o conteúdo publicado. Garantimos marketplace.json na raiz (fonte do manifest).
   if (opts.dryRun) {
-    log(`  [dry-run] copiaria ${ROOT} → ${zcodeMarketplaceDir()} e ${zcodeCacheDir()}`);
+    log(`  [dry-run] copiaria ${ROOT} → ${zcodeMarketplaceDir()} e hosts/zcode → ${zcodeCacheDir()}`);
     log(`  [dry-run] registraria marketplace + plugin, habilitaria ${ZCODE_PLUGIN_ID}`);
     enableZcodePlugin(opts);
     return;
