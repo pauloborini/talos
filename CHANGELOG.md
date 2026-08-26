@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.19.0 - 2026-08-26
+
+Tipo: **runtime**. **Sem breaking**. Schema MCP: v5 (inalterado). Disco: v3 (inalterado).
+
+Resumo: rastreabilidade MCP de requisitos **opt-in `traceability v1`** — REQ de origem → destino → AC/`source_refs` → EVAL → `acceptance_results` v3 → receipt MCP, sem hook, sem coluna nova no backlog, sem state v4. Tool única `talos_traceability` (upsert/verify/receipt/record_metric); gate de `done` para sprint v1; receipt de fechamento renderizado pelo MCP; métricas de piloto; bump minor 0.18.2 → 0.19.0 (D10: feature aditiva opt-in com readers legacy).
+
+Mudanças:
+- **`packages/mcp-server/traceability.mjs` (novo, Planos 01–03)** — ledger `.talos/traceability/<slug>.json` (escrita absoluta tmp+rename mode 0o600); `upsert` insert-or-update com validação de `sources[]`/`disposition` (`external` exige `ref`; `deferred`/`rejected` com motivo; `deferred_target` tipado); `verify` cruza `source_refs` do §7.3 via `checkTraceabilityGraph` (função pura compartilhada com o conformance); `receipt` (projeção read-only: cobertura por REQ, `exceptions`, `blockers` — deriva de ledger + `acceptance_results` do state v3; rejeita claim do caller; legacy → `schema: legacy` sem exigir ledger); `record_metric` (append de observação de piloto no documento completo; `calls` obrigatório; `coverage` 0–1 ou fração).
+- **`packages/mcp-server/server.js`** — registro da tool `talos_traceability` (actions `upsert|verify|receipt|record_metric`, `sprint_path`/`sprint_id`/`state_path`/`metric`); ramo v1 no gate `done` de `updateSprintStatus` (AC-3.1.1): todo REQ `included` atribuído à sprint exige todos os AC ligados `proved` — um irmão unproved bloqueia, sem write; marcadores inconsistentes (INV3) bloqueiam o fechamento; sprint legacy intocada.
+- **`packages/skills/_shared/scripts/document_quality.mjs`** — `applyItemField` mapeia `source_refs` (antes no-op); `traceabilityMode` (v1/legacy/inconsistent por par metadado↔ledger); `checkTraceabilityGraph` (refs válidas/órfãs, included sem AC, N:N com motivo); ramo v1 no conformance.
+- **`packages/templates/SPRINT_TEMPLATE.md`** — metadado `Traceability` (default legacy) + exemplo `source_refs` no AC-001.
+- **`packages/orchestrator/skills/talos/SKILL.md`** — gate de fechamento (SPRINT_STATUS_SYNC) menciona o gate v1 e o receipt ecoado da action `receipt` (sem recalcular cobertura).
+- **Bump minor `0.19.0`** via `build/bump-version.mjs` (bundles `plugins/`/`hosts/` regenerados; `VERSION`/manifests/READMEs sincronizados).
+
+Impacto:
+- Sprints legacy (sem metadado `Traceability: v1`) **sem mudança de comportamento**: gates atuais de `acceptance_results`, selo e parser de 16 células intactos; fixtures seladas não são reescritas.
+- Sprints `traceability v1` passam a exigir grafo REQ↔AC no conformance e todos os AC ligados `proved` no `done` — opt-in por sprint, sem coluna nova no backlog.
+- `talos_traceability` é chamada sob demanda (D2): nada no boot, nenhum hook, nenhum cache de capabilities.
+
+Arquivos/artefatos:
+- `packages/mcp-server/traceability.mjs` (novo), `packages/mcp-server/server.js`, `packages/mcp-server/server.test.js`.
+- `packages/skills/_shared/scripts/document_quality.mjs`, `build/tests/etapa3.test.mjs`.
+- `packages/templates/SPRINT_TEMPLATE.md`, `packages/orchestrator/skills/talos/SKILL.md`, `packages/orchestrator/README.md`.
+- Bump: `VERSION`, `package.json`, `packages/mcp-server/package.json`, `.claude-plugin/plugin.json`, READMEs/COMMANDS/CLAUDE/AGENTS, bundles `plugins/`/`hosts/` e `dist/` regenerados.
+
+Validação:
+- `node --test packages/mcp-server/server.test.js build/tests/etapa3.test.mjs` — 353/353.
+- `node build/check-consistency.mjs` — ok (exit 0).
+- `git diff --check` — limpo.
+
 ## 0.18.2 - 2026-08-25
 
 Tipo: **packaging + adapter-only**. **Sem breaking**. Schema MCP: v5 (inalterado). Disco: v3 (inalterado). Motor (gates, state machine, executor, validator, repair, skills): **intocado**.

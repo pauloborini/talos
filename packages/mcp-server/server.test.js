@@ -7560,7 +7560,7 @@ test('traceability: fonte externa sem ref não entra no ledger (AC-1.3.1 / CN9 /
 test('traceability: tool registrada sem hook nem pré-load de capabilities (AC-1.2.3 / CN10 / INV4)', () => {
   const tool = toolsList().tools.find((t) => t.name === 'talos_traceability');
   assert.ok(tool, 'talos_traceability precisa existir em tools/list');
-  assert.deepEqual(tool.inputSchema.properties.action.enum, ['upsert', 'verify']);
+  assert.deepEqual(tool.inputSchema.properties.action.enum, ['upsert', 'verify', 'receipt', 'record_metric']);
   assert.deepEqual(tool.inputSchema.required, ['run_id', 'backlog_path']);
   // Nenhum adapter declara hook cuja função seja pré-carregar traceability.
   for (const host of HOST_NAMES) {
@@ -7629,4 +7629,208 @@ test('traceability: verify pleno cruza source_refs e reporta included sem AC (AC
     }),
     /Sprint file não encontrado/,
   );
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Guide RASTREABILIDADE_MCP_GUIDE — Plano 03: gate done v1, receipt MCP,
+// métricas e bump minor 0.19.0
+// ─────────────────────────────────────────────────────────────────────────────
+
+function traceSprintV1(root, overrides = {}) {
+  // Sprint v1 consistente (metadado Traceability: v1) com AC-001 e AC-002 ambos
+  // ligando REQ-001 (N:N) — base do gate done v1 e do receipt.
+  const markdown = sprintDoc({ id: 'S01', status: 'ready', dorStatus: 'verde' })
+    .replace('| Revalidação | false |', '| Revalidação | false |\n| Traceability | v1 |')
+    .replace(
+      '    behavior: "Gate observável passa quando AC válido"',
+      '    source_refs: [REQ-001]\n    behavior: "Gate observável passa quando AC válido"',
+    )
+    .replace(
+      '    behavior: "Parser antigo preservado após mudança"',
+      '    source_refs: [REQ-001]\n    behavior: "Parser antigo preservado após mudança"',
+    );
+  const sprintPath = path.join(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md');
+  fs.mkdirSync(path.dirname(sprintPath), { recursive: true });
+  fs.writeFileSync(sprintPath, markdown);
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | ready | ready | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+  writeTraceabilityLedger({
+    schema: TRACEABILITY_SCHEMA_VERSION,
+    reqs: {
+      'REQ-001': { id: 'REQ-001', sources: [{ kind: 'talos', ref: 'sprint:S01' }], criticality: 'alta', disposition: 'included' },
+      ...(overrides.reqs ?? {}),
+    },
+    sprints: { S01: { schema: TRACEABILITY_SCHEMA_VERSION } },
+    pilot_metrics: [],
+  }, 'BACKLOG.md', root);
+  return sprintPath;
+}
+
+test('update_sprint_status: done v1 bloqueia REQ included com qualquer AC ligado não proved, sem mutar disco (AC-3.1.1 / CN8 / INV8 / VC5)', () => {
+  const root = tmpRoot();
+  writeHandoffTemplateFixture(root);
+  const sprintPath = traceSprintV1(root);
+  const common = {
+    run_id: 'r311', project_root: root, backlog_path: 'BACKLOG.md', sprint_id: 'S01',
+    status: 'done', validator_verdict: 'pass', plan_path: 'PLAN_S01.md',
+    state_path: '.talos/state/S01.json', evidence: 'validator pass',
+  };
+  const beforeBacklog = fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8');
+  const beforeSprint = fs.readFileSync(sprintPath, 'utf8');
+  // (1) AC-001 unproved, AC-002 proved → done blocked com pendência de
+  // rastreabilidade (VC5: oráculo único de proved = acceptance_results do state),
+  // e backlog/sprint no disco idênticos ao before (sem write).
+  writeStateWithAcceptance(root, 'S01.json', [
+    { id: 'AC-001', status: 'unproved' },
+    { id: 'AC-002', status: 'proved' },
+  ]);
+  const r1 = updateSprintStatus(common);
+  assert.equal(r1.status, 'blocked');
+  assert.ok(r1.pendencies.some((p) => p.category === 'rastreabilidade' && p.item.includes('REQ-001')),
+    `pendência de rastreabilidade esperada: ${JSON.stringify(r1.pendencies)}`);
+  assert.equal(fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8'), beforeBacklog, 'backlog intacto no bloqueio');
+  assert.equal(fs.readFileSync(sprintPath, 'utf8'), beforeSprint, 'sprint intacto no bloqueio');
+  // (2) AC-001 proved e AC-002 unproved → irmão unproved bloqueia mesmo com o
+  // outro proved (D13/D14: cobertura N:N não fecha por um irmão proved).
+  writeStateWithAcceptance(root, 'S01.json', [
+    { id: 'AC-001', status: 'proved' },
+    { id: 'AC-002', status: 'unproved' },
+  ]);
+  const r2 = updateSprintStatus(common);
+  assert.equal(r2.status, 'blocked');
+  assert.ok(r2.pendencies.some((p) => p.category === 'rastreabilidade' && p.item.includes('AC-002')),
+    `pendência rastreabilidade (irmão N:N) esperada: ${JSON.stringify(r2.pendencies)}`);
+  assert.equal(fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8'), beforeBacklog, 'backlog intacto (N:N)');
+  // (3) Todos os AC ligados proved → done passa (gates pré-existentes seguem) e
+  // sincroniza backlog para done.
+  writeStateWithAcceptance(root, 'S01.json', [
+    { id: 'AC-001', status: 'proved' },
+    { id: 'AC-002', status: 'proved' },
+  ]);
+  const r3 = updateSprintStatus(common);
+  assert.equal(r3.status, 'passed', JSON.stringify(r3.pendencies));
+  assert.equal(parseSprintRows(fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8'))[0].state, 'done');
+});
+
+test('traceability: receipt exige proved para included, lista exceções e não aceita claim do caller (AC-3.2.1 / CN5)', () => {
+  const root = tmpRoot();
+  writeTraceabilityLedger({
+    schema: TRACEABILITY_SCHEMA_VERSION,
+    reqs: {
+      'REQ-001': { id: 'REQ-001', sources: [{ kind: 'talos', ref: 'sprint:S01' }], criticality: 'alta', disposition: 'included' },
+      'REQ-002': {
+        id: 'REQ-002', sources: [{ kind: 'talos', ref: 'sprint:S01' }],
+        disposition: 'deferred', reason: 'aguardar S02', deferred_target: { type: 'sprint', id: 'S02' },
+      },
+      'REQ-003': { id: 'REQ-003', sources: [{ kind: 'talos', ref: 'sprint:S01' }], disposition: 'included' },
+    },
+    sprints: { S01: { schema: TRACEABILITY_SCHEMA_VERSION } },
+    pilot_metrics: [],
+  }, traceAlphaBacklog, root);
+  // AC-001 liga REQ-001 (proved no state); AC-002 liga REQ-003 (unproved).
+  const sprintMarkdown = sprintDoc({ id: 'S01' })
+    .replace('| Revalidação | false |', '| Revalidação | false |\n| Traceability | v1 |')
+    .replace(
+      '    behavior: "Gate observável passa quando AC válido"',
+      '    source_refs: [REQ-001]\n    behavior: "Gate observável passa quando AC válido"',
+    )
+    .replace(
+      '    behavior: "Parser antigo preservado após mudança"',
+      '    source_refs: [REQ-003]\n    behavior: "Parser antigo preservado após mudança"',
+    );
+  const sprintPath = path.join(root, 'SPRINT_S01_tr32.md');
+  fs.writeFileSync(sprintPath, sprintMarkdown);
+  writeStateWithAcceptance(root, 'S01.json', [
+    { id: 'AC-001', status: 'proved', proof_types: ['I:present', 'T-outcome:proved'] },
+    { id: 'AC-002', status: 'unproved' },
+  ]);
+  const base = {
+    run_id: 'r321', project_root: root, backlog_path: traceAlphaBacklog, action: 'receipt',
+    sprint_path: sprintPath, sprint_id: 'S01', state_path: '.talos/state/S01.json',
+  };
+  const receipt = traceabilityHandler(base);
+  assert.equal(receipt.schema, TRACEABILITY_SCHEMA_VERSION);
+  const row1 = receipt.reqs.find((r) => r.req === 'REQ-001');
+  assert.deepEqual(row1.ac_ids, ['AC-001'], 'ac_ids pelos source_refs do §7.3');
+  assert.deepEqual(row1.ac_status, [{ ac: 'AC-001', status: 'proved' }]);
+  assert.equal(row1.ok, true, 'included proved → ok');
+  const row3 = receipt.reqs.find((r) => r.req === 'REQ-003');
+  assert.equal(row3.ok, false, 'included com AC unproved → não ok');
+  assert.deepEqual(row3.ac_status, [{ ac: 'AC-002', status: 'unproved' }]);
+  assert.ok(receipt.blockers.some((b) => b.req === 'REQ-003'), 'blockers lista included não proved');
+  assert.ok(receipt.exceptions.some((e) => e.req === 'REQ-002' && e.disposition === 'deferred' && e.reason === 'aguardar S02'),
+    'deferred com motivo vai para exceptions');
+  assert.equal(receipt.coverage.included, 2);
+  assert.equal(receipt.coverage.proved, 1);
+  assert.equal(receipt.coverage.pending, 1);
+  // Falsificador: claim de cobertura do caller não entra no payload (D8: a
+  // projeção é do MCP, o orquestrador só ecoa).
+  const claimed = traceabilityHandler({ ...base, coverage_claim: '100% coberto pelo agente' });
+  assert.equal(JSON.stringify(claimed.reqs), JSON.stringify(receipt.reqs), 'payload independe de claim do caller');
+  assert.ok(!JSON.stringify(claimed).includes('coverage_claim'), 'claim não é ecoado no payload');
+  // Legacy: sprint sem metadado v1 → receipt schema legacy sem exigir ledger.
+  const legacyPath = path.join(root, 'SPRINT_legacy.md');
+  fs.writeFileSync(legacyPath, sprintDoc({ id: 'L01', backlog: 'BACKLOG.md#L01' }));
+  const legacy = traceabilityHandler({
+    run_id: 'r321', project_root: root, backlog_path: traceAlphaBacklog,
+    action: 'receipt', sprint_path: legacyPath, sprint_id: 'L01',
+  });
+  assert.equal(legacy.schema, 'legacy');
+  assert.deepEqual(legacy.reqs, []);
+  assert.deepEqual(legacy.exceptions, []);
+  // INCONSISTENTE: sprint v1 sem a marca no ledger → erro determinístico (INV3).
+  const noLedgerPath = path.join(root, 'SPRINT_v1semledger.md');
+  fs.writeFileSync(noLedgerPath, sprintDoc({ id: 'S09' })
+    .replace('| Revalidação | false |', '| Revalidação | false |\n| Traceability | v1 |'));
+  assert.throws(
+    () => traceabilityHandler({
+      run_id: 'r321', project_root: root, backlog_path: traceAlphaBacklog,
+      action: 'receipt', sprint_path: noLedgerPath, sprint_id: 'S09',
+    }),
+    /marcadores consistentes/,
+  );
+});
+
+test('traceability: record_metric persiste observação preservando reqs, sem claim de economia no receipt (AC-3.3.1 / CN6 / INV5)', () => {
+  const root = tmpRoot();
+  traceabilityHandler({
+    run_id: 'r331', project_root: root, backlog_path: traceAlphaBacklog,
+    reqs: [traceReq()],
+  });
+  const stamped = traceabilityHandler({
+    run_id: 'r331', project_root: root, backlog_path: traceAlphaBacklog,
+    action: 'record_metric',
+    metric: { calls: 12, retries: 2, turns: 5, coverage: 0.8, instructions: 'piloto: registrar fluxo real' },
+  });
+  assert.equal(stamped.metric_count, 1);
+  const ledger = JSON.parse(fs.readFileSync(traceLedgerFile(root, traceAlphaBacklog), 'utf8'));
+  assert.equal(ledger.pilot_metrics.length, 1);
+  assert.equal(ledger.pilot_metrics[0].calls, 12);
+  assert.equal(ledger.pilot_metrics[0].retries, 2);
+  assert.equal(ledger.pilot_metrics[0].turns, 5);
+  assert.equal(ledger.pilot_metrics[0].coverage, 0.8);
+  assert.equal(ledger.pilot_metrics[0].instructions, 'piloto: registrar fluxo real');
+  assert.ok('REQ-001' in ledger.reqs, 'escrita absoluta preserva reqs irmãos (falsificador: append que apaga reqs)');
+  assert.equal(stamped.metric.coverage, 0.8);
+  // Recusas: payload sem calls; coverage fora de 0–1/fração; nada grava.
+  const before = fs.readFileSync(traceLedgerFile(root, traceAlphaBacklog), 'utf8');
+  assert.throws(
+    () => traceabilityHandler({
+      run_id: 'r331', project_root: root, backlog_path: traceAlphaBacklog,
+      action: 'record_metric', metric: { retries: 1 },
+    }),
+    /calls/,
+  );
+  assert.throws(
+    () => traceabilityHandler({
+      run_id: 'r331', project_root: root, backlog_path: traceAlphaBacklog,
+      action: 'record_metric', metric: { calls: 1, coverage: 1.5 },
+    }),
+    /coverage/,
+  );
+  assert.equal(fs.readFileSync(traceLedgerFile(root, traceAlphaBacklog), 'utf8'), before, 'recusas não gravam');
+  // INV5: nenhuma superfície do receipt nem do registro afirma economia (a
+  // medição existe, a promoção da economia é do fechamento, não da tool).
+  assert.ok(!JSON.stringify(stamped).includes('economia'), 'record_metric não afirma economia');
 });

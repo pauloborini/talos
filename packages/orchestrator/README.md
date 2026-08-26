@@ -249,9 +249,18 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `talos-*` para o
 
 ---
 
-**Plugin version:** 0.18.2
+**Plugin version:** 0.19.0
 **Author:** Paulo Borini
-**Last updated:** 2026-08-25
+**Last updated:** 2026-08-26
+
+### Novidades v0.19.0 — rastreabilidade MCP de requisitos `traceability v1` (opt-in) + receipt de fechamento + métricas de piloto
+
+- **Ledger de rastreabilidade opt-in (tool única `talos_traceability`).** REQs de origem → destino → AC/`source_refs` → `acceptance_results` v3 → receipt MCP, em `.talos/traceability/<backlog-slug>.json` (D5: zero coluna nova no backlog; D2: zero hook; state v3 intocado). Actions: `upsert` (insert-or-update por REQ; `deferred`/`rejected` com motivo; `deferred` com destino tipado; fonte `external` exige `ref`), `verify` (destinos/ids + cruzamento com `source_refs` do §7.3 via `checkTraceabilityGraph`).
+- **Parser/selo/conformance do §7.3 com `source_refs`.** `applyItemField` passa a mapear o campo (antes era no-op no YAML); sprint v1 tem grafo REQ↔AC exigido (refs válidas, sem órfãos, REQ `included` com caminho até AC, N:N com motivo); sprint sem marcador v1 (legacy) sela e fecha como hoje (CN7).
+- **Gate de fechamento v1 no `done`.** `talos_update_sprint_status(done)` em sprint v1 recusa REQ `included` com qualquer AC ligado `unproved`/`manual_pending`/`violated`/ausente — antes de qualquer write (D14; irmão N:N não fecha por um lado).
+- **Receipt de fechamento é projeção do MCP.** Action `receipt` devolve cobertura por REQ, exceções (deferred/rejected) e blockers, derivada de ledger + `acceptance_results` do state v3; o orquestrador ecoa o payload, sem claim de cobertura próprio.
+- **Métricas de piloto.** Action `record_metric` persiste `{calls, retries, turns, coverage, instructions}` no documento completo (escrita absoluta preserva `reqs`/`sprints`); economia só se promove com medição registrada (INV5).
+- **Minor 0.19.0 (D10):** feature aditiva opt-in com readers legacy — bump minor, sem breaking; bundes `plugins/`/`hosts/` regenerados pelo `build/bump-version.mjs`.
 
 ### Novidades v0.18.2 — nono host (MinimaxCode) + Plugin V1 spec-conforme + 5 custom agents + Plugin V1 visível com skills
 

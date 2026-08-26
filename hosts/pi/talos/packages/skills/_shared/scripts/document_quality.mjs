@@ -12,6 +12,7 @@ const VALID = Object.freeze({
 });
 const SPRINT_ID_SOURCE = 'S\\d{2}(?:[a-z]|\\.\\d+)?';
 const SPRINT_ID_REGEX = new RegExp(`^${SPRINT_ID_SOURCE}$`);
+const REQ_ID_REGEX = /^REQ-\d+$/;
 
 const STACK_MANIFESTS = [
   'package.json', 'tsconfig.json', 'pubspec.yaml', 'pyproject.toml', 'requirements.txt', 'setup.py',
@@ -194,6 +195,9 @@ function applyItemField(item, text) {
   else if (key === 'origin') item.origin = unquoteYaml(val);
   else if (key === 'decisions') item.decisions = parseInlineYamlList(val) ?? [];
   else if (key === 'evals') item.evals = parseInlineYamlList(val) ?? [];
+  // Plano 02 (RASTREABILIDADE_MCP_GUIDE): `source_refs` do §7.3 vira o array de
+  // REQs do grafo v1 (D4: campo com consumidor no parser/conformance/verify).
+  else if (key === 'source_refs') item.source_refs = parseInlineYamlList(val) ?? [];
 }
 
 function applyManualField(manual, text) {
@@ -523,12 +527,109 @@ export function validateAcceptanceSeal(markdown) {
   };
 }
 
+/**
+ * Modo de rastreabilidade de uma sprint (opt-in `traceability v1`, D5/D6/D15):
+ * - `v1`: metadado `Traceability: v1` na sprint E `ledger.sprints[<id>].schema`
+ *   = `traceability_v1` no ledger MCP — os dois lados, consistentes (INV3).
+ * - `legacy`: nenhum dos dois lados — contrato atual, sem exigir ledger.
+ * - `inconsistent`: um lado só — bloqueia (sprint marcada sem ledger, ou
+ *   ledger marcado sem sprint); não se pode julgar v1 nem legacy.
+ * O valor da marca é lido pelo rótulo da tabela (§1), nunca por posição de coluna
+ * (D5: `parseSprintRows` de 16 células não lê esta marca — inerte por construção).
+ */
+export function traceabilityMode({ sprintMarkdown, ledger, sprintId }) {
+  const sprintMark = tableValue(sprintMarkdown, 'Traceability');
+  const sprintV1 = typeof sprintMark === 'string' && /^v1$/i.test(sprintMark.trim());
+  const ledgerV1 = Boolean(
+    sprintId
+    && ledger && typeof ledger === 'object' && !Array.isArray(ledger)
+    && ledger.sprints && typeof ledger.sprints === 'object' && !Array.isArray(ledger.sprints)
+    && ledger.sprints[sprintId] && typeof ledger.sprints[sprintId] === 'object'
+    && ledger.sprints[sprintId].schema === 'traceability_v1',
+  );
+  if (sprintV1 && ledgerV1) return 'v1';
+  if (!sprintV1 && !ledgerV1) return 'legacy';
+  return 'inconsistent';
+}
+
+/**
+ * Plano 02 (RASTREABILIDADE_MCP_GUIDE): checagem do grafo v1 REQ↔AC — função
+ * pura compartilhada entre `validateSprintFileConformance` (ramo v1, CN2/CN3/
+ * INV7) e `traceability.mjs:verifyTraceability` (CN4/INV2): a regra mora num
+ * lugar só (D4/D13). Roda apenas no modo v1; chamadores legacy ficam intactos.
+ *
+ * Issues emitidas (kind — `ac`/`req` nomeiam o lado do grafo):
+ * - `ac_sem_source_refs`: AC sem `source_refs` não vazio (CN3).
+ * - `ref_malformada`: ref que não casa `/^REQ-\d+$/` (CN3).
+ * - `ref_orfã`: ref fora do `ledger.reqs` (CN3).
+ * - `included_sem_ac`: REQ `included` atribuído à sprint (source `sprint:<id>`)
+ *   que não aparece em nenhum AC — o verify reporta e não afirma cobertura
+ *   (CN4/INV2); exige `sprintId` (sem ele o sentido inverso é pulado).
+ * - `nn_sem_reason`: aresta (REQ→AC) com count(REQ→AC) ≠ 1 ou count(AC→REQ)
+ *   ≠ 1 sem `reqs[id].links[].reason` não vazio para o AC (D13/INV7).
+ */
+export function checkTraceabilityGraph({ acceptanceItems = [], ledger = null, sprintId = null }) {
+  const issues = [];
+  const reqs = ledger?.reqs && typeof ledger.reqs === 'object' && !Array.isArray(ledger.reqs)
+    ? ledger.reqs : {};
+  const refCountByReq = new Map();
+  for (const item of acceptanceItems) {
+    const ac = item?.id ?? '<ausente>';
+    const refs = Array.isArray(item?.source_refs) ? item.source_refs : [];
+    if (refs.length === 0) {
+      issues.push({ kind: 'ac_sem_source_refs', ac });
+      continue;
+    }
+    for (const ref of refs) {
+      if (typeof ref !== 'string' || !REQ_ID_REGEX.test(ref)) {
+        issues.push({ kind: 'ref_malformada', ac, req: String(ref) });
+        continue;
+      }
+      if (!(ref in reqs)) {
+        issues.push({ kind: 'ref_orfã', ac, req: ref });
+        continue;
+      }
+      refCountByReq.set(ref, (refCountByReq.get(ref) ?? 0) + 1);
+    }
+  }
+  if (sprintId) {
+    for (const [id, req] of Object.entries(reqs)) {
+      if (!req || typeof req !== 'object' || Array.isArray(req) || req.disposition !== 'included') continue;
+      const assigned = (Array.isArray(req.sources) ? req.sources : [])
+        .some((source) => source && typeof source === 'object' && source.ref === `sprint:${sprintId}`);
+      if (assigned && !refCountByReq.has(id)) {
+        issues.push({ kind: 'included_sem_ac', req: id });
+      }
+    }
+  }
+  for (const item of acceptanceItems) {
+    const ac = item?.id ?? '<ausente>';
+    const refs = Array.isArray(item?.source_refs) ? item.source_refs : [];
+    const acMulti = refs.length > 1;
+    for (const ref of refs) {
+      if (typeof ref !== 'string' || !REQ_ID_REGEX.test(ref) || !(ref in reqs)) continue;
+      const needReason = acMulti || (refCountByReq.get(ref) ?? 0) > 1;
+      if (!needReason) continue;
+      const reqDoc = reqs[ref];
+      const links = Array.isArray(reqDoc?.links) ? reqDoc.links : [];
+      const link = links.find((entry) => entry && entry.ac_id === ac);
+      if (!link || typeof link.reason !== 'string' || link.reason.trim() === '') {
+        issues.push({ kind: 'nn_sem_reason', ac, req: ref });
+      }
+    }
+  }
+  return { valid: issues.length === 0, issues };
+}
+
 export function validateSprintFileConformance(markdown, {
   sprintPath = null,
   sprintId = null,
   backlogPath = null,
   backlogMarkdown = null,
   root = null,
+  // Opt-in `traceability v1` (Plano 01): objeto do ledger MCP quando o caller
+  // conhece o ledger; `undefined` preserva o comportamento atual (legacy puro).
+  traceability = undefined,
 } = {}) {
   const pendencies = [];
   let premissaCount = 0;
@@ -607,6 +708,30 @@ export function validateSprintFileConformance(markdown, {
   const status = tableValue(markdown, 'Status');
   if (!VALID.state.has(status)) {
     pendencies.push(sprintConformancePending('metadados', 'Status', lineOf(markdown, /^\|\s*Status\s*\|/i), `Status inválido: ${status ?? '<ausente>'}.`, 'corrigir_status'));
+  }
+
+  // Rastreabilidade opt-in (D5/D6/D15, INV3): par de marcadores consistente
+  // (sprint `Traceability: v1` ↔ ledger `sprints[<id>].schema`) ou nenhum.
+  // Um lado só = `inconsistent` → bloqueia; `legacy` não exige ledger nem
+  // `source_refs` (os gates do grafo v1 chegam no Plano 02, abaixo). Sem opção
+  // `traceability` o comportamento atual é preservado (chamadores antigos não
+  // conhecem o ledger).
+  let traceabilityModeValue = null;
+  if (traceability !== undefined && expectedSprintId) {
+    traceabilityModeValue = traceabilityMode({
+      sprintMarkdown: markdown,
+      ledger: traceability,
+      sprintId: expectedSprintId,
+    });
+    if (traceabilityModeValue === 'inconsistent') {
+      pendencies.push(sprintConformancePending(
+        'rastreabilidade',
+        expectedSprintId,
+        lineOf(markdown, /^\|\s*Traceability\s*\|/i),
+        'Marcadores traceability v1 inconsistentes: o metadado `Traceability` da sprint e `ledger.sprints[<id>].schema` precisam vir juntos (ambos ou nenhum); um lado só bloqueia.',
+        'alinhar_marcadores_traceability',
+      ));
+    }
   }
 
   const backlog = tableValue(markdown, 'Backlog mestre');
@@ -854,6 +979,63 @@ export function validateSprintFileConformance(markdown, {
             'fechar_premissa_em_entrevista',
           ));
         }
+      }
+    }
+  }
+
+  // Plano 02 (RASTREABILIDADE_MCP_GUIDE): ramo v1 — o grafo REQ↔AC é exigido.
+  // Todo AC tem `source_refs` não vazio, cada ref casa /^REQ-\d+$/ e existe no
+  // ledger; REQ `included` atribuído à sprint aparece em ≥1 AC; N:N com motivo
+  // (CN2/CN3/INV2/INV7 — matriz 2.4 passos 5–7). Legacy/`inconsistent` não
+  // entram aqui (D6/CN7: sprint sem marca sela como hoje).
+  if (traceabilityModeValue === 'v1') {
+    const graph = checkTraceabilityGraph({
+      acceptanceItems: acceptanceItems ?? [],
+      ledger: traceability,
+      sprintId: expectedSprintId,
+    });
+    const aceiteLine = lineOf(markdown, /^##\s+7\./i);
+    for (const issue of graph.issues) {
+      if (issue.kind === 'ac_sem_source_refs') {
+        pendencies.push(sprintConformancePending(
+          'rastreabilidade',
+          issue.ac,
+          aceiteLine,
+          `AC ${issue.ac} sem \`source_refs\` — sprint v1 exige referência a ≥1 REQ do ledger (.talos/traceability/<slug>.json).`,
+          'preencher_source_refs',
+        ));
+      } else if (issue.kind === 'ref_malformada') {
+        pendencies.push(sprintConformancePending(
+          'rastreabilidade',
+          issue.ac,
+          aceiteLine,
+          `AC ${issue.ac} com \`source_refs\` inválido: ${issue.req} (esperado REQ-\\d+).`,
+          'corrigir_source_refs',
+        ));
+      } else if (issue.kind === 'ref_orfã') {
+        pendencies.push(sprintConformancePending(
+          'rastreabilidade',
+          issue.ac,
+          aceiteLine,
+          `AC ${issue.ac} referencia REQ órfão: ${issue.req} não existe no ledger de rastreabilidade.`,
+          'registrar_req_no_ledger',
+        ));
+      } else if (issue.kind === 'included_sem_ac') {
+        pendencies.push(sprintConformancePending(
+          'rastreabilidade',
+          issue.req,
+          aceiteLine,
+          `REQ ${issue.req} (included, atribuído a ${expectedSprintId}) não aparece em nenhum \`source_refs\` de AC — todo included exige caminho até AC no grafo v1.`,
+          'vincular_req_a_ac',
+        ));
+      } else if (issue.kind === 'nn_sem_reason') {
+        pendencies.push(sprintConformancePending(
+          'rastreabilidade',
+          issue.ac,
+          aceiteLine,
+          `Vínculo N:N ${issue.req}↔${issue.ac} sem motivo: fora de 1:1, cada aresta exige \`links[].reason\` não vazio no ledger (upsert do REQ).`,
+          'declarar_reason_no_link',
+        ));
       }
     }
   }

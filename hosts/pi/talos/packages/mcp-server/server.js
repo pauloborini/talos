@@ -11,7 +11,9 @@ import {
   validateSprintFileConformance,
   validateAcceptanceSeal,
   parseAcceptanceContract,
+  traceabilityMode,
 } from '../skills/_shared/scripts/document_quality.mjs';
+import { traceabilityHandler, readTraceabilityLedger } from './traceability.mjs';
 
 const SERVER_NAME = 'talos';
 const RUN_DIR = path.join('.talos', 'state');
@@ -2625,6 +2627,75 @@ function readStateAcceptanceResults(statePath, args) {
   return { results: Array.isArray(state?.acceptance_results) ? state.acceptance_results : null };
 }
 
+/**
+ * Plano 03 (RASTREABILIDADE_MCP_GUIDE, AC-3.1.1 / CN8 / INV8 / VC5): pendências
+ * do gate `done` v1 — cada REQ `included` atribuído à sprint (source
+ * `sprint:<id>`) exige TODOS os AC ligados (source_refs do §7.3 + `links[]` do
+ * ledger) `proved` no acceptance_results do state v3. Included sem AC ligado
+ * também bloqueia (sem proved não há cobertura). Um único irmão
+ * unproved/manual_pending/violated/ausente bloqueia o fechamento (D13/D14).
+ * Função pura de leitura: não grava nada — o caller decide o write.
+ */
+function traceabilityDonePendencies({ sprintId, sprintMarkdown, ledger, acceptanceResults }) {
+  const pendencies = [];
+  const items = parseAcceptanceContract(sprintMarkdown) ?? [];
+  // Mapa reverso REQ → ACs a partir dos `source_refs` do §7.3 (CN2/VC3).
+  const refAcs = new Map();
+  for (const item of items) {
+    const ac = item?.id;
+    if (typeof ac !== 'string' || ac === '') continue;
+    const refs = Array.isArray(item?.source_refs) ? item.source_refs : [];
+    for (const ref of refs) {
+      if (typeof ref !== 'string' || ref === '') continue;
+      if (!refAcs.has(ref)) refAcs.set(ref, new Set());
+      refAcs.get(ref).add(ac);
+    }
+  }
+  const statusByAc = new Map();
+  if (Array.isArray(acceptanceResults)) {
+    for (const entry of acceptanceResults) {
+      if (entry && typeof entry === 'object' && typeof entry.id === 'string') {
+        statusByAc.set(entry.id, entry.status);
+      }
+    }
+  }
+  const reqs = ledger?.reqs && typeof ledger.reqs === 'object' && !Array.isArray(ledger.reqs)
+    ? ledger.reqs : {};
+  for (const [id, req] of Object.entries(reqs)) {
+    if (!req || typeof req !== 'object' || Array.isArray(req) || req.disposition !== 'included') continue;
+    const assigned = (Array.isArray(req.sources) ? req.sources : [])
+      .some((source) => source && typeof source === 'object' && source.ref === `sprint:${sprintId}`);
+    if (!assigned) continue;
+    const acIds = new Set(refAcs.get(id) ?? []);
+    for (const link of Array.isArray(req.links) ? req.links : []) {
+      if (link && typeof link.ac_id === 'string' && link.ac_id !== '') acIds.add(link.ac_id);
+    }
+    if (acIds.size === 0) {
+      pendencies.push(conformancePending(
+        'rastreabilidade',
+        `${sprintId}:${id}`,
+        null,
+        `REQ ${id} (included, atribuído a ${sprintId}) sem AC ligado — done v1 exige caminho até AC no grafo (sem proved não há cobertura).`,
+        'vincular_req_a_ac',
+      ));
+      continue;
+    }
+    for (const ac of acIds) {
+      const status = statusByAc.get(ac);
+      if (status !== 'proved') {
+        pendencies.push(conformancePending(
+          'rastreabilidade',
+          `${sprintId}:${id}:${ac}`,
+          null,
+          `REQ ${id} (included) ligado a AC ${ac} com status ${status ?? 'ausente (fora do acceptance_results)'} — done v1 exige todos os AC ligados proved (D14; um irmão unproved bloqueia).`,
+          'resolver_aceite_ou_avancar_manual_validation_pending',
+        ));
+      }
+    }
+  }
+  return pendencies;
+}
+
 function updateSprintStatus(args = {}) {
   const runId = validateRunId(args.run_id);
   const backlogPath = requiredString(args, 'backlog_path');
@@ -2671,6 +2742,11 @@ function updateSprintStatus(args = {}) {
         pendencies.push(conformancePending('sprint_file', sprintId, null, `Linha ${sprintId} não aponta Sprint file real.`, 'preencher_sprint_file_no_backlog'));
       }
     }
+    // Sprint file lido cedo: o gate v1 de fechamento (Plano 03) cruza o
+    // metadado `Traceability` e os `source_refs` ANTES de qualquer write.
+    const sprintPath = cleanBacklogPathToken(row.sprint_file);
+    const sprintAbs = resolveConsumerPath(sprintPath, args);
+    const sprintBefore = fs.readFileSync(sprintAbs, 'utf8');
     // D5/D23 + A6 (fechamento Plano F): gate de aceite por estado.
     // acceptance_results moram no state v3 (eco do oráculo classifyAcceptanceResults —
     // VC5; o validator emite no packet e o MCP persiste o eco no complete).
@@ -2719,6 +2795,38 @@ function updateSprintStatus(args = {}) {
             ));
           }
         }
+        // Plano 03 (RASTREABILIDADE_MCP_GUIDE, AC-3.1.1 / CN8 / INV8 / VC5):
+        // ramo v1 — depois do gate de acceptance_results e antes de qualquer
+        // write (fail-closed; mesmo padrão do throw de pré-condição acima).
+        // Todo REQ `included` atribuído à sprint exige TODOS os AC ligados
+        // `proved` (D14: um irmão unproved bloqueia; N:N não fecha por um lado).
+        // Sprint sem metadado v1 (legacy) não toca o ledger — comportamento
+        // atual preservado; sprint v1 sem a marca no ledger = inconsistent
+        // (INV3) e bloqueia o fechamento.
+        if (/^\|\s*Traceability\s*\|\s*v1\s*\|/im.test(sprintBefore)) {
+          const traceability = readTraceabilityLedger(backlogPath, consumerRoot(args));
+          const traceabilityModeValue = traceabilityMode({
+            sprintMarkdown: sprintBefore,
+            ledger: traceability,
+            sprintId,
+          });
+          if (traceabilityModeValue === 'v1') {
+            pendencies.push(...traceabilityDonePendencies({
+              sprintId,
+              sprintMarkdown: sprintBefore,
+              ledger: traceability,
+              acceptanceResults: acceptance.results,
+            }));
+          } else if (traceabilityModeValue === 'inconsistent') {
+            pendencies.push(conformancePending(
+              'rastreabilidade',
+              sprintId,
+              null,
+              'Sprint marcada `Traceability: v1` sem `ledger.sprints[<id>].schema = traceability_v1` — done v1 exige marcadores consistentes ledger↔sprint (INV3).',
+              'alinhar_marcadores_traceability',
+            ));
+          }
+        }
       }
       if (status === 'manual_validation_pending') {
         if (!Array.isArray(acceptance.results)) {
@@ -2757,9 +2865,6 @@ function updateSprintStatus(args = {}) {
       throw new Error('update_sprint_status_precondition_failed');
     }
 
-    const sprintPath = cleanBacklogPathToken(row.sprint_file);
-    const sprintAbs = resolveConsumerPath(sprintPath, args);
-    const sprintBefore = fs.readFileSync(sprintAbs, 'utf8');
     // D10 (Plano 5): done só avança com a flag ligada quando a revalidação foi
     // observada (todos os AC proved — gate acima); nesse caso a flag é limpa.
     const clearRevalidation = status === 'done' && row.revalidation_required === true;
@@ -6725,6 +6830,76 @@ function toolsList() {
         },
       },
       {
+        name: 'talos_traceability',
+        description: 'Ledger MCP de rastreabilidade opt-in `traceability v1` (REQ de origem → destino; marcas v1 consistentes; sem hook). Actions: upsert (grava documento completo; insert-or-update por REQ; deferred/rejected com motivo; external exige ref), verify (destinos/ids + cruzamento com source_refs do §7.3 quando sprint_path é passado), receipt (projeção read-only de fechamento: cobertura por REQ, exceções e blockers — deriva de ledger + acceptance_results do state v3; não grava state nem aceita claim do caller) e record_metric (append de observação de piloto no documento completo — calls obrigatório; coverage 0–1 ou fração).',
+        inputSchema: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['run_id', 'backlog_path'],
+          properties: {
+            run_id: { type: 'string', minLength: 1 },
+            project_root: { type: 'string', minLength: 1 },
+            backlog_path: { type: 'string', minLength: 1, description: 'Path do backlog mestre; o ledger vive em .talos/traceability/<slug>.json (D5: sem coluna nova).' },
+            action: { type: 'string', enum: ['upsert', 'verify', 'receipt', 'record_metric'], default: 'upsert' },
+            sprint_path: { type: 'string', minLength: 1, description: 'Opcional (verify/receipt): path do sprint file; cruza source_refs do §7.3 com o ledger (CN4/INV2); no receipt define o modo v1/legacy.' },
+            sprint_id: { type: 'string', pattern: '^S\\d{2}(?:[a-z]|\\.\\d+)?$', description: 'Opcional (verify/receipt): id da sprint; fallback: metadado Sprint ID do sprint file.' },
+            state_path: { type: 'string', minLength: 1, description: 'Opcional (receipt): path do state v3; o receipt deriva acceptance_results dele (VC5).' },
+            metric: {
+              type: 'object',
+              description: 'Obrigatório para action record_metric: observação de piloto (calls obrigatório; retries/turns ≥ 0; coverage 0–1 ou fração; instructions opcional).',
+              properties: {
+                calls: { type: 'number', minimum: 0 },
+                retries: { type: 'number', minimum: 0 },
+                turns: { type: 'number', minimum: 0 },
+                coverage: { type: ['number', 'string'] },
+                instructions: { type: 'string' },
+              },
+            },
+            reqs: {
+              type: 'array',
+              items: {
+                type: 'object',
+                required: ['id', 'sources', 'disposition'],
+                properties: {
+                  id: { type: 'string', pattern: '^REQ-\\d+$' },
+                  sources: {
+                    type: 'array',
+                    items: {
+                      type: 'object',
+                      required: ['kind'],
+                      properties: {
+                        kind: { type: 'string', enum: ['talos', 'external'] },
+                        ref: { type: 'string', description: 'Obrigatório para kind external (path ou URI registrada).' },
+                      },
+                    },
+                  },
+                  criticality: { type: 'string' },
+                  disposition: { type: 'string', enum: ['included', 'deferred', 'rejected'] },
+                  reason: { type: 'string', description: 'Obrigatório para deferred/rejected.' },
+                  deferred_target: {
+                    type: 'object',
+                    properties: {
+                      type: { type: 'string', enum: ['sprint', 'backlog_candidate'] },
+                      id: { type: 'string', pattern: '^S\\d{2}(?:[a-z]|\\.\\d+)?$', description: 'Obrigatório para type sprint.' },
+                      name: { type: 'string', description: 'Obrigatório para type backlog_candidate.' },
+                    },
+                  },
+                },
+              },
+            },
+            sprint: {
+              type: 'object',
+              additionalProperties: false,
+              required: ['sprint_id', 'schema'],
+              properties: {
+                sprint_id: { type: 'string', pattern: '^S\\d{2}(?:[a-z]|\\.\\d+)?$' },
+                schema: { type: 'string', description: 'Marcador v1 do ledger; casa com o metadado Traceability da sprint (INV3).' },
+              },
+            },
+          },
+        },
+      },
+      {
         name: 'talos_update_sprint_status',
         description: 'Sincroniza status backlog/sprint.',
         inputSchema: {
@@ -6954,8 +7129,9 @@ function handleRequest(message) {
                       name === 'talos_verify_backlog_index' ? verifyBacklogIndex(args) :
                         name === 'talos_select_next_sprint' ? selectNextSprint(args) :
                           name === 'talos_update_sprint_status' ? updateSprintStatus(args) :
-                            name === 'talos_sync_manual_validation' ? syncManualValidation(args) :
-                              name === 'talos_classify_input' ? classifyInput(args) :
+name === 'talos_sync_manual_validation' ? syncManualValidation(args) :
+                                name === 'talos_traceability' ? traceabilityHandler(args) :
+                                name === 'talos_classify_input' ? classifyInput(args) :
                               name === 'talos_preflight' ? preflight(args) :
                                 name === 'talos_lock_dispatch' ? lockDispatch(args) :
                                   name === 'talos_lock_validator' ? lockValidator(args) :
@@ -7088,6 +7264,7 @@ export {
   nextActionForSelectedSprint,
   updateSprintStatus,
   syncManualValidation,
+  traceabilityHandler,
   emitMemoryHandoff,
   propagateRevalidation,
   classifyInput,
