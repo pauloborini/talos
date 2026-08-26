@@ -33,6 +33,7 @@ const HOSTS = [
   { host: 'pi', agent: 'hosts/pi/.pi/agents/talos-task-validator.md', join_sync: 'must_report' },
   { host: 'zcode', agent: 'hosts/zcode/agents/talos-task-validator.md', join_sync: 'self_evident' },
   { host: 'vscode', agent: 'hosts/vscode/agents/talos-task-validator.md', join_sync: 'self_evident' },
+  { host: 'mavis', agent: 'agents/talos-task-validator.md', join_sync: 'self_evident' },
   { host: 'generic', agent: 'agents/talos-task-validator.md', join_sync: 'must_report' },
 ];
 
@@ -164,7 +165,7 @@ for (const { host, agent, join_sync } of HOSTS) {
 
   // --- Cenário JOIN/blocked (P3 S13) ---
   // must_report (pi/generic): PREREQ ok mas join_sync_available ausente → gate JOIN blocked.
-  // self_evident (claude/codex/opencode/zcode): mesmo payload audit → preflight passa (G10/passed).
+  // self_evident (claude/codex/opencode/zcode/vscode/mavis): mesmo payload audit → preflight passa (G10/passed).
   if (join_sync === 'must_report') {
     (r[11] && r[11].gate === 'JOIN' && r[11].status === 'blocked')
       ? ok() : fail(`preflight JOIN/blocked != JOIN/blocked para must_report (${JSON.stringify(r[11])})`);
@@ -183,4 +184,4 @@ if (errors.length) {
   for (const e of errors) console.error(`  - ${e}`);
   process.exit(1);
 }
-console.log('conformance-matrix: ok (6 hosts × 10 cenários verdes — simulado por env)');
+console.log('conformance-matrix: ok (8 hosts × 10 cenários verdes — simulado por env)');
