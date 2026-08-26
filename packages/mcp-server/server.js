@@ -6727,7 +6727,7 @@ function toolsList() {
       },
       {
         name: 'talos_traceability',
-        description: 'Ledger MCP de rastreabilidade opt-in `traceability v1` (REQ de origem → destino; marcas v1 consistentes; sem hook). Actions: upsert (grava documento completo; insert-or-update por REQ; deferred/rejected com motivo; external exige ref) e verify (mínimo: destinos faltantes e ids duplicados).',
+        description: 'Ledger MCP de rastreabilidade opt-in `traceability v1` (REQ de origem → destino; marcas v1 consistentes; sem hook). Actions: upsert (grava documento completo; insert-or-update por REQ; deferred/rejected com motivo; external exige ref) e verify (destinos/ids + cruzamento com source_refs do §7.3 quando sprint_path é passado).',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
@@ -6737,6 +6737,8 @@ function toolsList() {
             project_root: { type: 'string', minLength: 1 },
             backlog_path: { type: 'string', minLength: 1, description: 'Path do backlog mestre; o ledger vive em .talos/traceability/<slug>.json (D5: sem coluna nova).' },
             action: { type: 'string', enum: ['upsert', 'verify'], default: 'upsert' },
+            sprint_path: { type: 'string', minLength: 1, description: 'Opcional (verify): path do sprint file; cruza source_refs do §7.3 com o ledger (CN4/INV2).' },
+            sprint_id: { type: 'string', pattern: '^S\\d{2}(?:[a-z]|\\.\\d+)?$', description: 'Opcional (verify): id da sprint; fallback: metadado Sprint ID do sprint file.' },
             reqs: {
               type: 'array',
               items: {

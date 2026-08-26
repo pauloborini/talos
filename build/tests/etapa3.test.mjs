@@ -7,6 +7,7 @@ import test from 'node:test';
 import {
   approveAcceptanceContract,
   closedDecisionIds,
+  computeAcceptanceSeal,
   detectStackProfiles,
   parseAcceptanceContract,
   pendingInterviewQuestions,
@@ -687,12 +688,14 @@ test('traceability: mismatch de marcas bloqueia nos dois sentidos; par v1 passa 
   assert.equal(onlyLedger.valid, false);
   assert.ok(onlyLedger.pendencies.some((p) => p.category === 'rastreabilidade'),
     JSON.stringify(onlyLedger.pendencies));
-  // Par consistente (os dois lados) → modo v1, sem pendência de marcas.
+  // Par consistente (os dois lados) → modo v1, sem pendência de marcas. O ramo
+  // v1 do Plano 02 também exige source_refs nos ACs — o filtro isola o gate de
+  // marcas (INV3); a exigência de refs é coberta pelos testes do Plano 02.
   const bothV1 = validateSprintFileConformance(
     sprintFixture({ traceabilityMark: 'v1' }),
     { traceability: TRACE_LEDGER_V1 },
   );
-  assert.ok(!bothV1.pendencies.some((p) => p.category === 'rastreabilidade'),
+  assert.ok(!bothV1.pendencies.some((p) => p.category === 'rastreabilidade' && p.next_action === 'alinhar_marcadores_traceability'),
     JSON.stringify(bothV1.pendencies));
 });
 
@@ -706,4 +709,168 @@ test('traceability: sprint sem marca não exige ledger (AC-1.2.2 / CN10 / VC4)',
   // Chamador que não conhece o ledger (opção ausente): comportamento idêntico.
   const noOption = validateSprintFileConformance(sprintFixture());
   assert.equal(noOption.valid, true, JSON.stringify(noOption.pendencies));
+});
+
+// ── Plano 02 (RASTREABILIDADE_MCP_GUIDE) — source_refs, conformance e selo ─────
+
+/** AC completo do §7.3 com `source_refs` opcional (Plano 02). */
+function traceAc({ id = 'AC-001', refs = null, origin = 'usuario' } = {}) {
+  return [
+    `  - id: ${id}`,
+    `    origin: "${origin}"`,
+    '    behavior: "Comportamento observável"',
+    '    decisions: [D1]',
+    '    scenario: "Cenário 1"',
+    ...(refs === null ? [] : [`    source_refs: [${refs.join(', ')}]`]),
+    '    evals: [EVAL-001]',
+    '    evidence:',
+    '      required: [I, T-outcome]',
+    '      manual: null',
+  ];
+}
+
+/** REQ do ledger (shape do upsert do Plano 01), atribuído à sprint S01. */
+function traceReqLedger(id, { disposition = 'included', links = null } = {}) {
+  const req = {
+    id,
+    sources: [{ kind: 'talos', ref: 'sprint:S01' }],
+    criticality: 'alta',
+    disposition,
+  };
+  if (links !== null) req.links = links;
+  return req;
+}
+
+function traceLedgerWith(reqs) {
+  return {
+    schema: 'traceability_v1',
+    reqs,
+    sprints: { S01: { schema: 'traceability_v1' } },
+    pilot_metrics: [],
+  };
+}
+
+test('traceability: parseAcceptanceContract lê source_refs do YAML (AC-2.1.1 / CN2 / VC3)', () => {
+  const markdown = sprintFixture({
+    acceptanceItems: traceAc({ id: 'AC-001', refs: ['REQ-001', 'REQ-002'] }),
+  });
+  const items = parseAcceptanceContract(markdown);
+  assert.equal(items.length, 1);
+  assert.deepEqual(items[0].source_refs, ['REQ-001', 'REQ-002'], 'array sobrevive ao parse');
+  // VC3: sprint sem o campo continua sem source_refs (ausência ≠ lista vazia).
+  const legacy = parseAcceptanceContract(sprintFixture());
+  assert.ok(!('source_refs' in legacy[0]), 'sprint sem o campo não ganha source_refs');
+});
+
+test('traceability: v1 — source_refs ausente/malformada/órfã bloqueiam conformance (AC-2.1.2 / CN3)', () => {
+  const ledger = traceLedgerWith({ 'REQ-001': traceReqLedger('REQ-001') });
+  // (a) AC sem source_refs em sprint v1 → blocked nomeando o AC.
+  const semRefs = validateSprintFileConformance(
+    sprintFixture({ traceabilityMark: 'v1', acceptanceItems: traceAc({ id: 'AC-001' }) }),
+    { traceability: ledger },
+  );
+  assert.equal(semRefs.valid, false);
+  const pSemRefs = semRefs.pendencies.find(
+    (p) => p.category === 'rastreabilidade' && p.item === 'AC-001' && /source_refs/.test(p.message),
+  );
+  assert.ok(pSemRefs, JSON.stringify(semRefs.pendencies));
+  assert.equal(pSemRefs.next_action, 'preencher_source_refs');
+  // (b) ref fora do formato REQ-\d+ → blocked.
+  const malformada = validateSprintFileConformance(
+    sprintFixture({ traceabilityMark: 'v1', acceptanceItems: traceAc({ id: 'AC-001', refs: ['REQ-x1'] }) }),
+    { traceability: ledger },
+  );
+  assert.equal(malformada.valid, false);
+  assert.ok(malformada.pendencies.some(
+    (p) => p.category === 'rastreabilidade' && p.item === 'AC-001' && /inválido/.test(p.message),
+  ), JSON.stringify(malformada.pendencies));
+  // (c) REQ-999 ausente do ledger → blocked (falsificador: selo/conformance passar).
+  const orfa = validateSprintFileConformance(
+    sprintFixture({ traceabilityMark: 'v1', acceptanceItems: traceAc({ id: 'AC-001', refs: ['REQ-999'] }) }),
+    { traceability: ledger },
+  );
+  assert.equal(orfa.valid, false);
+  const pOrfa = orfa.pendencies.find((p) => p.category === 'rastreabilidade' && /REQ-999/.test(p.message));
+  assert.ok(pOrfa, JSON.stringify(orfa.pendencies));
+  assert.equal(pOrfa.next_action, 'registrar_req_no_ledger');
+  // Contraprova: REQ-999 registrado no ledger → esse check some; par v1 fecha.
+  const comReq = validateSprintFileConformance(
+    sprintFixture({ traceabilityMark: 'v1', acceptanceItems: traceAc({ id: 'AC-001', refs: ['REQ-999'] }) }),
+    { traceability: traceLedgerWith({ 'REQ-999': traceReqLedger('REQ-999') }) },
+  );
+  assert.equal(comReq.valid, true, JSON.stringify(comReq.pendencies));
+});
+
+test('traceability: legacy sem source_refs e sem marca valida como hoje; selo do §7 estável (AC-2.2.1 / CN7)', () => {
+  // ≥4 artefatos legacy em memória — nenhum arquivo selado de produto é tocado
+  // (o template real é coberto pelos testes SPRINT_TEMPLATE de server.test.js).
+  const legacyCases = [
+    sprintFixture(),
+    sprintFixture({ moscow: 'Should', prioridade: 'P1' }),
+    sprintFixture({ traceabilityMark: 'legacy' }),
+    sprintFixture({ acceptanceItems: traceAc({ id: 'AC-002', refs: ['REQ-007'] }) }),
+  ];
+  for (const [index, markdown] of legacyCases.entries()) {
+    const r = validateSprintFileConformance(markdown, { root: ROOT });
+    assert.equal(r.valid, true, `caso legacy ${index} deve passar; pendências: ${JSON.stringify(r.pendencies)}`);
+    assert.ok(!r.pendencies.some((p) => p.category === 'rastreabilidade'),
+      `caso legacy ${index} não pode exigir grafo v1; pendências: ${JSON.stringify(r.pendencies)}`);
+  }
+  // Selo de um §7 sem o campo: hash estável (constante no teste; falsificador:
+  // parser/conformance exigir source_refs fora do ramo v1 muda o hash ou o veredito).
+  const seal = computeAcceptanceSeal(sprintFixture());
+  assert.equal(seal, 'sha256:63671be3dfcaf662e701f2979346422cc4e193826280fe7ce59ccb8909cc9f88', 'hash do bloco §7 sem source_refs permanece estável');
+});
+
+test('traceability: vínculo N:N exige motivo; 1:1 segue livre (AC-2.3.1 / INV7)', () => {
+  // Dois ACs no mesmo REQ (count(REQ→AC) = 2) sem reason → blocked.
+  const ledgerUmReq = traceLedgerWith({ 'REQ-001': traceReqLedger('REQ-001') });
+  const doisAcs = sprintFixture({
+    traceabilityMark: 'v1',
+    acceptanceItems: [...traceAc({ id: 'AC-001', refs: ['REQ-001'] }), ...traceAc({ id: 'AC-002', refs: ['REQ-001'] })],
+  });
+  const r = validateSprintFileConformance(doisAcs, { traceability: ledgerUmReq });
+  assert.equal(r.valid, false);
+  const nn = r.pendencies.filter((p) => p.category === 'rastreabilidade' && /N:N/.test(p.message));
+  assert.equal(nn.length, 2, JSON.stringify(r.pendencies));
+  assert.ok(nn.every((p) => p.next_action === 'declarar_reason_no_link'));
+  // Com reason nos dois links do ledger → esse check passa.
+  const comReason = validateSprintFileConformance(doisAcs, {
+    traceability: traceLedgerWith({
+      'REQ-001': traceReqLedger('REQ-001', {
+        links: [
+          { ac_id: 'AC-001', reason: 'origem comum' },
+          { ac_id: 'AC-002', reason: 'visão de aceite distinta' },
+        ],
+      }),
+    }),
+  });
+  assert.equal(comReason.valid, true, JSON.stringify(comReason.pendencies));
+  // AC com dois REQs (count(AC→REQ) = 2): idem — sem reason bloqueia, com reason passa.
+  const ledgerDoisReqs = traceLedgerWith({
+    'REQ-001': traceReqLedger('REQ-001'),
+    'REQ-002': traceReqLedger('REQ-002'),
+  });
+  const acDoisReqs = sprintFixture({
+    traceabilityMark: 'v1',
+    acceptanceItems: traceAc({ id: 'AC-001', refs: ['REQ-001', 'REQ-002'] }),
+  });
+  const r2 = validateSprintFileConformance(acDoisReqs, { traceability: ledgerDoisReqs });
+  assert.equal(r2.valid, false);
+  assert.equal(r2.pendencies.filter((p) => p.category === 'rastreabilidade' && /N:N/.test(p.message)).length, 2,
+    JSON.stringify(r2.pendencies));
+  const ok2 = validateSprintFileConformance(acDoisReqs, {
+    traceability: traceLedgerWith({
+      'REQ-001': traceReqLedger('REQ-001', { links: [{ ac_id: 'AC-001', reason: 'x' }] }),
+      'REQ-002': traceReqLedger('REQ-002', { links: [{ ac_id: 'AC-001', reason: 'y' }] }),
+    }),
+  });
+  assert.equal(ok2.valid, true, JSON.stringify(ok2.pendencies));
+  // 1:1 sem links segue livre (sem pendência N:N nem included sem AC).
+  const umParaUm = sprintFixture({
+    traceabilityMark: 'v1',
+    acceptanceItems: traceAc({ id: 'AC-001', refs: ['REQ-001'] }),
+  });
+  const ok3 = validateSprintFileConformance(umParaUm, { traceability: ledgerUmReq });
+  assert.equal(ok3.valid, true, JSON.stringify(ok3.pendencies));
 });

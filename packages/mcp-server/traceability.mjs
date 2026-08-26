@@ -14,10 +14,13 @@
 //   `deferred_target.type` ∈ {sprint (id Sxx), backlog_candidate (name não
 //   vazio)}; `rejected` exige motivo (INV1).
 // - IO tmp+rename com mode 0o600 (análogo a upsertRunState, server.js).
-// - `verify` é mínimo neste plano: destinos inválidos/faltantes e ids
-//   duplicados internos; cruzamento com AC/source_refs fica no Plano 02.
+// - `verify` (Plano 02): destinos/ids + cruzamento com source_refs do §7.3 via
+//   `checkTraceabilityGraph` (mesma função pura do conformance — CN4/INV2).
 import fs from 'node:fs';
 import path from 'node:path';
+// Plano 02: a regra do grafo v1 REQ↔AC mora numa única função pura no parser de
+// sprint (evita duplicar a regra entre conformance e verify — D4/D13).
+import { checkTraceabilityGraph, parseAcceptanceContract } from '../skills/_shared/scripts/document_quality.mjs';
 
 export const TRACEABILITY_SCHEMA_VERSION = 'traceability_v1';
 
@@ -204,8 +207,14 @@ export function applySprintMarker(ledger, sprint) {
   };
 }
 
-/** Verify mínimo do Plano 01: destinos faltantes/inválidos e ids duplicados. */
-export function verifyTraceability(ledger) {
+/**
+ * Verify do Plano 02 (CN4/INV2): além dos destinos/divs do Plano 01, cruza o
+ * grafo com `source_refs` dos ACs quando `acceptanceItems` é fornecido (mesma
+ * função pura do conformance). `sprintId` habilita o sentido inverso (REQ
+ * included atribuído à sprint sem AC). `status` reflete o veredito do report;
+ * nunca afirma cobertura quando há buracos.
+ */
+export function verifyTraceability(ledger, { acceptanceItems = null, sprintId = null } = {}) {
   const reqs = ledger?.reqs && typeof ledger.reqs === 'object' && !Array.isArray(ledger.reqs)
     ? ledger.reqs : {};
   const gaps = [];
@@ -236,11 +245,21 @@ export function verifyTraceability(ledger) {
       gaps.push({ req: id, problem: 'rejected_sem_reason' });
     }
   }
+  if (Array.isArray(acceptanceItems)) {
+    const graph = checkTraceabilityGraph({ acceptanceItems, ledger, sprintId });
+    for (const issue of graph.issues) {
+      gaps.push({
+        req: issue.req ?? issue.ac ?? '<desconhecido>',
+        problem: issue.kind,
+        ...(issue.ac ? { ac: issue.ac } : {}),
+      });
+    }
+  }
   return {
     valid: gaps.length === 0,
     req_count: Object.keys(reqs).length,
     gaps,
-    // Plano 02: cruzamento com source_refs/AC entra aqui (INV2/CN4).
+    status: gaps.length === 0 ? 'passed' : 'failed',
   };
 }
 
@@ -275,7 +294,26 @@ export function traceabilityHandler(args = {}) {
   }
   if (action === 'verify') {
     const ledger = readTraceabilityLedger(backlogPath, root);
-    const report = verifyTraceability(ledger);
+    const options = {};
+    if (typeof args.sprint_path === 'string' && args.sprint_path.trim() !== '') {
+      // Plano 02 (CN4/INV2): cruza source_refs do §7.3 da sprint com o ledger.
+      // `sprint_id` explícito tem precedência; fallback: metadado Sprint ID.
+      const sprintAbsolute = path.resolve(root, args.sprint_path);
+      if (!fs.existsSync(sprintAbsolute)) {
+        throw traceabilityError(`Sprint file não encontrado: ${args.sprint_path}`, -32002);
+      }
+      let markdown;
+      try {
+        markdown = fs.readFileSync(sprintAbsolute, 'utf8');
+      } catch (cause) {
+        throw traceabilityError(`Sprint file ilegível: ${args.sprint_path}: ${cause.message}`, -32003);
+      }
+      options.acceptanceItems = parseAcceptanceContract(markdown) ?? [];
+      options.sprintId = (typeof args.sprint_id === 'string' && args.sprint_id.trim() !== '')
+        ? args.sprint_id
+        : (/^\|\s*Sprint ID\s*\|\s*(S\d{2}(?:[a-z]|\.\d+)?)\s*\|/im.exec(markdown)?.[1] ?? null);
+    }
+    const report = verifyTraceability(ledger, options);
     return {
       action: 'verify',
       backlog_path: backlogPath,

@@ -7578,3 +7578,55 @@ test('traceability: tool registrada sem hook nem pré-load de capabilities (AC-1
   assert.ok(!/talos_traceability[\s\S]{0,120}hooks|hooks[\s\S]{0,120}talos_traceability/.test(source),
     'dispatch de traceability não pode depender de hooks');
 });
+
+test('traceability: verify pleno cruza source_refs e reporta included sem AC (AC-2.1.3 / CN4 / INV2)', () => {
+  const root = tmpRoot();
+  traceabilityHandler({
+    run_id: 'tr213', project_root: root, backlog_path: traceAlphaBacklog,
+    reqs: [traceReq(), traceReq({ id: 'REQ-002' }), traceReq({ id: 'REQ-003' })],
+  });
+  // Sprint v1 cujos ACs cobrem REQ-001 e REQ-002: REQ-003 (included, S01) fica sem AC.
+  const sprintMarkdown = sprintDoc()
+    .replace(
+      '| Revalidação | false |',
+      '| Revalidação | false |\n| Traceability | v1 |',
+    )
+    .replace(
+      '    behavior: "Gate observável passa quando AC válido"',
+      '    source_refs: [REQ-001]\n    behavior: "Gate observável passa quando AC válido"',
+    )
+    .replace(
+      '    behavior: "Parser antigo preservado após mudança"',
+      '    source_refs: [REQ-002]\n    behavior: "Parser antigo preservado após mudança"',
+    );
+  const sprintPath = path.join(root, 'SPRINT_S01_tr213.md');
+  fs.writeFileSync(sprintPath, sprintMarkdown);
+  const report = traceabilityHandler({
+    run_id: 'tr213', project_root: root, backlog_path: traceAlphaBacklog,
+    action: 'verify', sprint_path: sprintPath,
+  });
+  assert.equal(report.valid, false);
+  assert.equal(report.status, 'failed', 'verify não afirma cobertura com buraco (INV2)');
+  assert.deepEqual(report.gaps, [{ req: 'REQ-003', problem: 'included_sem_ac' }],
+    JSON.stringify(report.gaps));
+  // Contraprova: REQ-003 coberto por um AC → verify passa (status passed).
+  const covered = sprintMarkdown.replace(
+    '    source_refs: [REQ-002]',
+    '    source_refs: [REQ-002]\n    extra: null\n  - id: AC-003\n    origin: "usuario"\n    behavior: "Cobre REQ-003"\n    source_refs: [REQ-003]\n    decisions: [D1]\n    scenario: "Cenário 1"\n    evals: [EVAL-001]\n    evidence:\n      required: [I, T-outcome]\n      manual: null',
+  );
+  fs.writeFileSync(sprintPath, covered);
+  const report2 = traceabilityHandler({
+    run_id: 'tr213', project_root: root, backlog_path: traceAlphaBacklog,
+    action: 'verify', sprint_path: sprintPath,
+  });
+  assert.equal(report2.valid, true, JSON.stringify(report2.gaps));
+  assert.equal(report2.status, 'passed');
+  // sprint_path inexistente → erro determinístico (nenhum report fabricado).
+  assert.throws(
+    () => traceabilityHandler({
+      run_id: 'tr213', project_root: root, backlog_path: traceAlphaBacklog,
+      action: 'verify', sprint_path: path.join(root, 'nao-existe.md'),
+    }),
+    /Sprint file não encontrado/,
+  );
+});
