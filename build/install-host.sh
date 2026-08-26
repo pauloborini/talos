@@ -174,7 +174,29 @@ sys.stdout.buffer.write(make_png())
 }
 EOF
 
-  # 2) servers.mcp.json — MCP stdio com env TALOS_HOST=mavis injetado
+  # 2) Bundle do MCP server.js dentro do Plugin V1
+  # O reader de Plugin V1 do Mavis (mcp/config.js:normalizeStdioTransport) rejeita
+  # args com path absoluto em modo 'official' (readOfficialMcpFile é sempre
+  # invocado, mesmo quando source === 'LOCAL_MINIMAX' via minimax-reader).
+  # Solução: copiar o server.js para dentro do package e referenciar relativo.
+  # Sem isso o plugin inteiro falha validação e nem aparece como instalado —
+  # por consequência as 10 skills também não carregam.
+  cp "$ROOT/packages/mcp-server/server.js" "$PLUGIN_DIR/server.js"
+  # O server.js importa '../skills/_shared/scripts/document_quality.mjs' (relativo
+  # à sua posição original no repo). Quando copiado pra <plugin>/server.js, o
+  # import resolve para <plugins_root>/skills/_shared/scripts/... (sibling do
+  # 'talos/', não dentro dele). O loader de plugins do Mavis ignora subdiretórios
+  # sem manifest em <plugins_root> (package-readers.js:scanLocalPluginCandidates),
+  # então esse sibling é inerte pro scan e existe só pra resolver o import.
+  if [[ -d "$ROOT/packages/skills/_shared" ]]; then
+    PLUGINS_ROOT="$(dirname "$PLUGIN_DIR")"
+    SHARED_PARENT="$PLUGINS_ROOT/skills"
+    rm -rf "$SHARED_PARENT"           # idempotente: limpa estado anterior
+    mkdir -p "$SHARED_PARENT"
+    cp -R "$ROOT/packages/skills/_shared" "$SHARED_PARENT/_shared"
+  fi
+
+  # 3) servers.mcp.json — MCP stdio com env TALOS_HOST=mavis injetado
   cat > "$PLUGIN_DIR/servers.mcp.json" <<EOF
 {
   "schemaVersion": 1,
@@ -182,7 +204,7 @@ EOF
     "talos": {
       "type": "stdio",
       "command": "node",
-      "args": ["$ROOT/packages/mcp-server/server.js"],
+      "args": ["./server.js"],
       "env": {
         "TALOS_HOST": "mavis"
       },
@@ -193,7 +215,7 @@ EOF
 }
 EOF
 
-  # 3) Skills — copia todos os SKILL.md de packages/skills/<name>/ para o Plugin V1
+  # 4) Skills — copia todos os SKILL.md de packages/skills/<name>/ para o Plugin V1
   if [[ -d "$ROOT/packages/skills" ]]; then
     for skill_dir in "$ROOT/packages/skills"/*/; do
       [[ -d "$skill_dir" ]] || continue
@@ -204,7 +226,7 @@ EOF
     done
   fi
 
-  # 4) Custom agents Mavis — 1 por agents/<talos-*.md> do Talos.
+  # 5) Custom agents Mavis — 1 por agents/<talos-*.md> do Talos.
   # Formato esperado pelo Mavis runtime (verificado em ~/.minimax/agents/coder/
   # que funciona nativamente):
   #   <dir>/agent.md      — system_prompt (markdown puro, sem frontmatter)
@@ -237,19 +259,13 @@ EOF
   echo "  - feche a sessão atual e abra uma nova (re-scan automático)"
   echo "  - ou: settings → plugins → re-scan"
   echo ""
-  echo "⚠ PASSO EXTRA NECESSÁRIO (causa raiz do 'não apareceu' v0.18.1):"
-  echo "  O Mavis runtime NÃO escaneia ~/.minimax/plugins/ dinamicamente para"
-  echo "  registrar MCP servers. O Plugin V1 do Talos fica no disco mas o MCP"
-  echo "  'talos' não é descoberto. Workaround: registrar manualmente via tool."
-  echo "  No chat Mavis, peça pro agente:"
+  echo "Depois do re-scan: o plugin 'Talos' aparece na UI com 10 skills (talos-*)"
+  echo "e o MCP 'talos' (carregado de servers.mcp.json) vira sub-tools dos agents"
+  echo "que recebem capacidade mcp__talos__*."
   echo ""
-  echo "    'Registre o MCP server do Talos via mcp create: name=talos,"
-  echo "     transport=stdio, command=node, args=[<repo>/packages/mcp-server/server.js],"
-  echo "     env={TALOS_HOST:mavis}, timeout=30000. Depois faça mcp update com"
-  echo "     o env se necessário.'"
-  echo ""
-  echo "  Alternativa: rodar o install em uma sessão Mavis (Mavis tem acesso à"
-  echo "  tool mcp diretamente) e pedir o registro na mesma sessão."
+  echo "Se aparecer conflito de MCP duplicado (este install + um registro manual"
+  echo "anterior via 'mavis mcp create'), remova o manual: mavis mcp delete talos."
+  echo "A auto-descoberta do plugin já cobre o caso."
   echo ""
   echo "confirme com a tool MCP talos_ping (deve responder status=alive, version=$VERSION, host=mavis)."
 fi
