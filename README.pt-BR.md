@@ -216,7 +216,7 @@ talos-plan-handoff (uso direto, fora do /talos)
 ### Dicas práticas
 
 1. Confirme o MCP antes de começar (`talos_ping`); sem MCP o orquestrador para no pré-flight.
-2. Artefatos ficam no projeto consumidor: planos em `.talos/plans/`, estado em `.talos/state/<run_id>/`, validação manual em `.talos/manual-validation/`.
+2. Artefatos ficam no projeto consumidor: planos em `.talos/plans/`, estado em `.talos/state/<run_id>/`, validação manual em `.talos/manual-validation/`, ledger de rastreabilidade opt-in em `.talos/traceability/`.
 3. Em `full`, não espere código antes do `PLAN_*.md` validado — é gate explícito.
 4. Ambiguidades no contrato §7 disparam entrevista automaticamente; use `--interview` se quiser forçar.
 5. Toda execução passa pelo validador frio (`talos-task-validator`) antes de declarar a slice pronta.
@@ -275,6 +275,29 @@ brainstorm → scan do rascunho em memória → rodadas de entrevista (Origem: u
 ```
 
 Nenhuma tool MCP nova, nenhum gate novo de orquestrador e nenhum selo de revisão entraram neste release. Schema MCP v5 e topologia sibling/G4/dispatch intactos.
+
+### Rastreabilidade v1 (opt-in) — `talos_traceability`
+
+Disponível a partir da **v0.19.0** (aditiva, opt-in por sprint; sprints legacy intocadas — schema MCP v5 e disco v3 inalterados). Uma sprint entra no modo `traceability v1` com o metadado `Traceability: v1` no sprint file; aí cada requisito (`REQ-*`) é registrado no ledger `.talos/traceability/<backlog-slug>.json` pela tool única `talos_traceability` (actions `upsert`, `verify`, `receipt`, `record_metric`), e cada `AC-*` pode declarar `source_refs` apontando para seus requisitos.
+
+| Conceito | O que é |
+|----------|---------|
+| **Ledger** | `.talos/traceability/<backlog-slug>.json` — REQs com `sources[]`/`disposition` (`external` exige `ref`; `deferred`/`rejected` com motivo; `deferred` com destino tipado). Escrita absoluta tmp+rename, sem hook, sem coluna nova no backlog. |
+| **`source_refs`** | Campo opcional no YAML de cada `AC-*` do §7.3 ligando o critério aos REQs; o conformance valida o grafo REQ↔AC (refs válidas, sem órfãs, REQ `included` com caminho até AC, N:N com motivo). |
+| **Gate de fechamento** | `talos_update_sprint_status(done)` em sprint v1 recusa REQ `included` com qualquer AC ligado `unproved` — antes de qualquer write; marcadores inconsistentes nos dois sentidos (sprint marcada sem ledger / ledger marcado sem sprint) bloqueiam com `alinhar_marcadores_traceability`. |
+| **Receipt** | Action `receipt` devolve a projeção read-only de fechamento: cobertura por REQ, exceções (`deferred`/`rejected`) e blockers, com escopo da sprint atribuída; o orquestrador só ecoa o payload — não reclama cobertura própria. |
+| **Métricas de piloto** | Action `record_metric` persiste `{calls, retries, turns, coverage, instructions}` no documento; economia só se promove com medição registrada. |
+
+Fluxo de fechamento em sprint v1:
+
+```text
+REQs via talos_traceability upsert → source_refs nos AC-* do §7.3
+→ talos_traceability verify (grafo REQ↔AC)
+→ execução → acceptance_results v3 (ACs proved)
+→ talos_update_sprint_status done (gate: included ⇒ ACs proved)
+→ talos_traceability receipt (projeção de fechamento ecoada pelo orquestrador)
+```
+
 
 ### Backlog em 2 camadas
 
@@ -385,7 +408,7 @@ Templates canônicos em [`packages/templates/`](packages/templates/) — fonte �
 
 - Adapters de host: [`host-adapters.md`](packages/orchestrator/references/host-adapters.md)
 - Orquestrador: [`packages/orchestrator/README.md`](packages/orchestrator/README.md)
-- MCP: [`packages/mcp-server/`](packages/mcp-server/) — 16 ferramentas disponíveis:
+- MCP: [`packages/mcp-server/`](packages/mcp-server/) — 18 ferramentas disponíveis:
 
 | Tool | Função |
 |------|--------|
@@ -403,5 +426,7 @@ Templates canônicos em [`packages/templates/`](packages/templates/) — fonte �
 | `talos_verify_sprint_file` | Valida conformidade de sprint file |
 | `talos_verify_backlog_index` | Valida backlog mestre como índice |
 | `talos_select_next_sprint` | Seleção determinística da próxima sprint executável |
-| `talos_update_sprint_status` | Atualiza status atomicamente (`done` / `manual_validation_pending` + handoff só em `done`) |
+| `talos_update_sprint_status` | Atualiza status atomicamente (`done` / `manual_validation_pending` + handoff só em `done`; gate traceability v1 no `done`) |
 | `talos_sync_manual_validation` | Sync do relatório humano `MV-*` → promove `done` ou bloqueia origem |
+| `talos_commit_state` | Writer único do JSON de slice v3 (executor/repair enviam julgamento curto; recebe `state_path` + sha) |
+| `talos_traceability` | Ledger opt-in de rastreabilidade de requisitos (`upsert`/`verify`/`receipt`/`record_metric`) — sprint `Traceability: v1` |

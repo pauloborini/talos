@@ -1,6 +1,6 @@
 ---
 vault_version: 1
-updated: 2026-08-06
+updated: 2026-08-30
 scope: Plugin Talos — pipeline determinística multi-host
 ---
 
@@ -34,4 +34,5 @@ scope: Plugin Talos — pipeline determinística multi-host
 ## Histórico
 
 - 2026-08-06 — Migração AppVault (`vault-migrate` passos 1–6). `DEC-006` nunca atribuído (lacuna
-  intencional na numeração legada); próximo ID livre: `DEC-028`.
+  intencional na numeração legada).
+- 2026-08-30 — `DEC-028` atribuído: rastreabilidade v1 opt-in por sprint (0.19.0), domínio `artefatos`.

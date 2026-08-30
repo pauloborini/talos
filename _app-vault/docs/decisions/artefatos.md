@@ -29,3 +29,7 @@ O `talos-backlog-generator` substitui texto livre por entrevista estruturada via
 ### DEC-027 — Revisão fria interna ao generator
 
 O passo final do `talos-backlog-generator` lê o mandato de `references/COLD_BACKLOG_REVIEW_PROMPT.md`, despacha subagente genérico do host por `capabilities.subagent_dispatch` (incondicional, foreground), audita e corrige artefatos, regateia gates sobre artefatos corrigidos e entrega relatório ao chamador. O revisor não muta código do produto — só markdown de backlog/sprint.
+
+### DEC-028 — Rastreabilidade v1 opt-in por sprint (0.19.0)
+
+Sprint entra no modo com metadado `Traceability: v1` no sprint file; sem a marca (legacy), comportamento atual intacto. Requisitos (`REQ-*`) vivem no ledger `.talos/traceability/<backlog-slug>.json`, escrito só pela tool única `talos_traceability` (`upsert`/`verify`/`receipt`/`record_metric`). Cada `AC-*` pode declarar `source_refs` no YAML do §7.3; sprint v1 exige grafo REQ↔AC consistente no conformance (refs válidas, sem órfãs, `included` com caminho até AC, N:N com motivo). Fechamento `done` em sprint v1 é gated: REQ `included` exige todos os AC ligados `proved`; marcadores inconsistentes em qualquer sentido (sprint marcada sem ledger / ledger marcado sem sprint) bloqueiam (`alinhar_marcadores_traceability`). Receipt de fechamento é projeção read-only do MCP — o orquestrador ecoa o payload, nunca reclama cobertura própria. Chamada sob demanda: nada no boot, nenhum hook, sem coluna nova no backlog, state v3 e schema MCP v5 inalterados.

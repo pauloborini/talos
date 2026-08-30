@@ -79,7 +79,8 @@ The pipeline stores consumer-project artifacts under `.talos/`:
 - `backlog/` — strategic index and sprint files;
 - `plans/` — executable plans;
 - `state/<run_id>/` — execution proof and acceptance results;
-- `manual-validation/` — human smoke checks when automation is insufficient.
+- `manual-validation/` — human smoke checks when automation is insufficient;
+- `traceability/` — optional opt-in requirements ledger (traceability v1).
 
 Automated proof can end at `manual_validation_pending` when a human smoke check remains. Only the human sync flow can validate or waive that check and promote the sprint to `done`.
 
@@ -94,6 +95,12 @@ validator pass → manual_validation_pending
 → human completes MV-* report → talos_sync_manual_validation
 → done + HANDOFF_*.md
 ```
+
+### Requirements traceability (opt-in, traceability v1)
+
+A sprint can opt into requirements traceability by setting `Traceability: v1` in its metadata. Each requirement (`REQ-*`) is then recorded in the ledger `.talos/traceability/<backlog-slug>.json` through the single `talos_traceability` MCP tool (`upsert`, `verify`, `receipt`, `record_metric`), and each `AC-*` may declare `source_refs` pointing back to its requirements.
+
+Closing a v1 sprint as `done` is gated: every requirement marked `included` must be linked to proved acceptance criteria, and the ledger markers must match the sprint markers in both directions. The closure receipt (coverage per requirement, exceptions, blockers) is a read-only projection returned by `talos_traceability receipt` — the orchestrator echoes it and never claims coverage itself. Sprints without the marker (legacy) keep the previous behavior unchanged.
 
 ## Backlog and execution model
 
@@ -111,7 +118,7 @@ The sibling validation loop is bounded: executor writes a state path, the orches
 
 ## References
 
-The MCP exposes 16 tools for preflight, artifacts, contracts, locks, state, sprint status, and manual-validation sync. The detailed adapter contract is in [host adapters](packages/orchestrator/references/host-adapters.md); implementation-level references remain in Portuguese while the public installation and operational path is fully covered here and in [COMMANDS.md](COMMANDS.md).
+The MCP exposes 18 tools for preflight, artifacts, contracts, locks, state, sprint status, manual-validation sync, and requirements traceability. The detailed adapter contract is in [host adapters](packages/orchestrator/references/host-adapters.md); implementation-level references remain in Portuguese while the public installation and operational path is fully covered here and in [COMMANDS.md](COMMANDS.md).
 
 ## Hosts
 
