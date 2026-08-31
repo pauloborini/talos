@@ -44,6 +44,7 @@ Pipeline completo executado automaticamente:
 
 - `--interview` — Força entrevista do contrato §7 do sprint mesmo sem ambiguidades
 - `--review` — Executa slice-review ao final (senão opcional; sprints com `policy_manifest.critical_review.required: true` no §10 tornam a review obrigatória — G8)
+- `--loop` — Esteira serial de sprints com auto-correção (v0.20.0): percorre as sprints `ready` em sequência (única pausa = entrevista), corrige residual de review in-loop (repair origem `slice_review` → verification), despacha o sidecar `talos-escalation-repair` se o residual persistir, estaciona sprint irrecuperável em `detached_repair` e drena `PENDENCIAS_<slug>.md` sob demanda (`drain_required` do MCP); implica review crítica (G8) sem editar `policy_manifest` por sprint. Sem a flag, o pipeline atual não muda
 - `--handoff` — Só em `audit`: grava `.talos/plans/PLAN_AUDIT_*.md` TC-conforme
 - `--scope <descrição>` — Só em `audit`: restringe o boundary textual
 - `--help` — Mostra sintaxe completa
@@ -164,6 +165,8 @@ Talos é família única. Cliente (Claude Code, Cursor, Codex App) é apenas o h
 | `direct` | sprint/contrato §7 → `talos-direct-execute` → `talos-task-validator` → `talos-findings-repair` (no `fail`) → `talos-slice-review` (com `--review`; obrigatória quando `critical_review.required:true` — G8) |
 | `interview-only` | draft sprint standalone §7 (se brainstorm) → `talos-sprint-interview` |
 
+Residual da review (v0.20.0, em loop e standalone): P0/P1 → `talos-findings-repair` com origem `slice_review` → **verification pontual** (delta do `repair_evidence`; executa os checks declarados antes de julgar) → sidecar `talos-escalation-repair` se o residual persistir; P2/P3 → `talos_pendencies(append)` (`PD-<sprint>-<NN>` em `PENDENCIAS_<slug>.md`). Nunca 2º `talos-task-validator` nem nova review completa no ramo da review.
+
 ## Validação automática
 
 Plugin detecta ambiguidades no contrato §7 do sprint file (`talos_scan_acceptance`):
@@ -229,7 +232,8 @@ Plugin automatiza tudo. Você valida output.
 | `talos-direct-execute` | Executa direto a partir do sprint/contrato §7 (modo `direct`) |
 | `talos-findings-repair` | Corrige findings P0/P1/P2 após `fail` do validator dentro do boundary executado |
 | `talos-task-validator` | Validador frio sibling; lê `state_path`, emite veredito estruturado + `acceptance_results` e nunca corrige |
-| `talos-slice-review` | Review fria quando `--review` ou `critical_review.required:true` (G8) |
+| `talos-slice-review` | Review fria quando `--review` ou `critical_review.required:true` (G8); fase de verification (pós-repair) |
+| `talos-escalation-repair` | Sidecar serial do loop `--loop`: residual P0/P1 pós-verification (slot `escalation`) e PDs delegadas pelo drain |
 | `talos-memory-promote` | Promove candidatos de `HANDOFF_*.md` após `done` (nunca em MVP); sink Argus opcional |
 
 ## Configuração
@@ -249,9 +253,19 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `talos-*` para o
 
 ---
 
-**Plugin version:** 0.19.0
+**Plugin version:** 0.20.0
 **Author:** Paulo Borini
 **Last updated:** 2026-08-26
+
+### Novidades v0.20.0 — esteira `--loop` de sprints com auto-correção (minor aditiva, D18)
+
+- **Flag `--loop`** — esteira serial de sprints: puxa a próxima sprint `ready` sozinha após fechar a atual (única pausa = entrevista), com repair in-loop, sidecar de escalation, drain de pendências e estacionamento. Flag gravada no ledger (`options.loop`); sem a flag, o pipeline atual não muda (CN7) e o gate de review crítica sob `policy_manifest` segue como estava.
+- **Residual da review — auto-correção (D3/D4/D17).** P0/P1 na review abre `repair_start` com origem `slice_review` (budget 1 fail-closed por provenance) → `talos-findings-repair` → **verification pontual** (fase nova da `talos-slice-review`: delta do `repair_evidence`, executa os checks declarados antes de julgar, veredito `resolved`/`not_resolved`/`regression` por finding) → veredito persistido via `repair_complete` (`data.verification` validado pelo MCP; `resolved` sem check executado é recusado). Nunca 2º `talos-task-validator` nem nova review completa no ramo da review (LEG1 cortado no G8/bloco EXEC; G4 do validator preservado).
+- **Sidecar `talos-escalation-repair` (D7).** Residual P0/P1 persistente abre slot com origem `escalation` (budget próprio, 1 dispatch por sprint) e é corrigido serial, sem self-validation; falha do sidecar estaciona a sprint em **`detached_repair`** (novo status: não `done`, não satisfaz DEP, não emite handoff; saída `→ready`/`→blocked`) enquanto a campanha segue para a próxima independente.
+- **PENDENCIAS + drain (D9/D10/D20).** Residual P2/P3 vira `PD-<sprint>-<NN>` em `.talos/backlog/PENDENCIAS_<slug>.md` (writer exclusivo do MCP, id monotônico por arquivo); `talos_select_next_sprint` retorna `drain_required` com ≥3 PDs abertas, PD no cone DEP do candidato ou overlap de files — drenada pelo sidecar em modo drain antes do avanço.
+- **Standalone com a mesma cadeia (D13)** — o arco review→repair→verification→sidecar não é condicional a `--loop`; review crítica sob `critical_review.required` segue antes de `talos_update_sprint_status` (G8 preservado).
+- **Blindagem (Plano 06).** Guards permanentes no `check-consistency` (review read-only, ramo review sem 2º validator, verification com eco/âncora de checks/roteamento por severidade, violated⇒P0 mecânico, enum `detached_repair` e catálogo do sidecar) + guard test; docs descrevem o loop.
+- Bump minor `0.19.0 → 0.20.0`. Schema MCP v5 e disco v3 inalterados.
 
 ### Novidades v0.19.0 — rastreabilidade MCP de requisitos `traceability v1` (opt-in) + receipt de fechamento + métricas de piloto
 
@@ -461,7 +475,7 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `talos-*` para o
 ### Novidades v0.6.1 — fronteira documental no orquestrador
 
 - Fases documentais (`contrato §7`, entrevista, `PLAN_*.md`) são conduzidas no orquestrador; o primeiro sub-agent obrigatório do `full` nasce em `talos-plan-execute`.
-- Os únicos sub-agents do pipeline são `talos-plan-execute`/`talos-direct-execute`, `talos-task-validator`, `talos-findings-repair` e `talos-slice-review`.
+- Os sub-agents do pipeline são `talos-plan-execute`/`talos-direct-execute`, `talos-task-validator`, `talos-findings-repair`, `talos-slice-review` e — desde v0.20.0 — o sidecar `talos-escalation-repair` (serial, só com slot de escalation/drain aberto).
 - A topologia é **sibling** em todos os hosts: o orquestrador coordena o validator irmão a partir do `state_path` retornado pelo executor e só reabre execução em `fail`. Host sem join síncrono é rejeitado no preflight (gate JOIN).
 - `talos_preflight`/dispatchability distinguem skills documentais de skills executoras, evitando exigir sub-agent para entrevista/plano.
 

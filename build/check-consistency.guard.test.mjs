@@ -22,6 +22,15 @@ import {
   collectExecuteSkillDirs,
   scanDirDr,
 } from './dr-guard.mjs';
+import {
+  DISPATCHED_EXEC_AGENTS,
+  guardReviewReadonly,
+  guardReviewBranch,
+  guardNoReopen,
+  guardViolatedP0,
+  guardVerificationAnchor,
+  guardEnumCatalog,
+} from './loop-guard.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -124,4 +133,113 @@ test('matchDrAnchors: 4 âncoras individuais', () => {
   assert.deepEqual(matchDrAnchors('payload com "acceptance_results"'), ['DR04']);
   assert.deepEqual(matchDrAnchors('first_write e talos_commit_state'), []);
   assert.deepEqual(matchDrAnchors('O executor nunca monta o JSON'), []);
+});
+
+// ── Loop de sprints: fixtures dos falsificadores (Plano 06 — AC-06.1.x/AC-06.2.1) ──
+// Cada teste planta o texto-regressão e exige violação da guard; o repo canônico é
+// verificado por leitura (texto correto não produz violação). "Remover a guarda"
+// (falsificador do AC) deixa a fixture sem reprovação → teste vermelho.
+const ORCH_SKILL = fs.readFileSync(path.join(ROOT, 'packages/orchestrator/skills/talos/SKILL.md'), 'utf8');
+const REVIEW_SKILL = fs.readFileSync(path.join(ROOT, 'packages/skills/talos-slice-review/SKILL.md'), 'utf8');
+const SERVER_JS = fs.readFileSync(path.join(ROOT, 'packages/mcp-server/server.js'), 'utf8');
+const BACKLOG_TMPL = fs.readFileSync(path.join(ROOT, 'packages/templates/BACKLOG_MESTRE_TEMPLATE.md'), 'utf8');
+
+test('guard review read-only (AC-06.1.1/INV1): instrução de mutação é reprovada; repo passa', () => {
+  // Falsificador 1: instrução de chamada de talos_commit_state injetada na review.
+  const comCommit = REVIEW_SKILL + '\nAo fim, execute `talos_commit_state` para gravar o veredito no state.\n';
+  const v1 = guardReviewReadonly(comCommit);
+  assert.ok(v1.some((v) => v.includes('instrução de chamada de talos_commit_state')), `guard INV1 reprova chamada: ${JSON.stringify(v1)}`);
+  // Falsificador 2: instrução de Write de state injetada.
+  const comWrite = REVIEW_SKILL + '\nEscreva o state file diretamente via Write antes de devolver o relatório.\n';
+  const v2 = guardReviewReadonly(comWrite);
+  assert.ok(v2.some((v) => v.includes('instrução de Write')), `guard INV1 reprova Write de state: ${JSON.stringify(v2)}`);
+  // Falsificador 3: regra read-only removida da skill.
+  const semRegra = REVIEW_SKILL.replace(/Read-only:[^\n]*talos_commit_state[^\n]*/, 'Read-only: regra removida.');
+  const v3 = guardReviewReadonly(semRegra);
+  assert.ok(v3.some((v) => v.includes('regra read-only')), `guard INV1 reprova ausência da regra: ${JSON.stringify(v3)}`);
+  // Proibições legítimas (texto atual) não são falso-positivo.
+  assert.deepEqual(guardReviewReadonly(REVIEW_SKILL), [], 'repo correto não produz violação de read-only');
+});
+
+test('guard ramo review (AC-06.1.2/INV2/LEG1): ramo antigo é reprovado; G4 sem 2º validator é reprovado; repo passa', () => {
+  // Falsificador 1: ramo morto reinjetado no bloco EXEC (review → 2º validator → nova review).
+  const ramoAntigo = ORCH_SKILL.replace(
+    '**Residual — a mesma cadeia em loop e standalone (D13, sem condicional de `--loop`):**',
+    '**Residual — a mesma cadeia em loop e standalone (D13, sem condicional de `--loop`):** P0/P1 na review → talos-findings-repair → 2º validator → nova review completa. (ramo antigo reinjetado)',
+  );
+  assert.notEqual(ramoAntigo, ORCH_SKILL, 'âncora da mutação existe no texto real');
+  const v1 = guardReviewBranch(ramoAntigo);
+  assert.ok(v1.some((v) => v.includes('ramo review do orquestrador cita')), `guard LEG1 reprova ramo antigo: ${JSON.stringify(v1)}`);
+  // Falsificador 2: cutover excessivo — G4 perde o "2º e último" validator (R2).
+  const g4Cortado = ORCH_SKILL.replace('fecha o repair e executa o **2º e último** validator', 'fecha o repair e executa o validator final');
+  assert.notEqual(g4Cortado, ORCH_SKILL, 'âncora G4 existe no texto real');
+  const v2 = guardReviewBranch(g4Cortado);
+  assert.ok(v2.some((v) => v.includes('perdeu o "2º e último" validator')), `guard reprova cutover excessivo: ${JSON.stringify(v2)}`);
+  // Falsificador 3: despacho de task-validator dentro do ramo review (INV2).
+  const comDispatch = ORCH_SKILL.replace(
+    '**Review crítica (CN5/D06) e cadeia de fechamento (D3/D4/D13):**',
+    '**Review crítica (CN5/D06) e cadeia de fechamento (D3/D4/D13):** ao residual, despachar talos-task-validator para recobrir a slice.',
+  );
+  const v3 = guardReviewBranch(comDispatch);
+  assert.ok(v3.some((v) => v.includes('despacha talos-task-validator')), `guard INV2 reprova dispatch no ramo review: ${JSON.stringify(v3)}`);
+  // Falso-positivo do repo correto: G8/G4/EXEC legítimos (proibições + cadeia nova) passam.
+  assert.deepEqual(guardReviewBranch(ORCH_SKILL), [], 'repo correto não produz violação no ramo review');
+});
+
+test('guard sem reabertura (AC-06.1.3/INV10): exceção de reabertura é reprovada; repo passa', () => {
+  // Falsificador: condição de reabertura de review por finding novo.
+  const comReabertura = REVIEW_SKILL + '\nSe um finding novo aparecer fora do delta, reabra a review completa para recobrir a slice.\n';
+  const v1 = guardNoReopen(comReabertura);
+  assert.ok(v1.some((v) => v.includes('condição de reabertura')), `guard INV10 reprova reabertura: ${JSON.stringify(v1)}`);
+  // Falsificador 2: proibição removida da skill.
+  const semProibicao = REVIEW_SKILL.replace('É proibido reabrir a review completa', 'A review pode ser reaberta quando necessário');
+  const v2 = guardNoReopen(semProibicao);
+  assert.ok(v2.some((v) => v.includes('proibição de reabrir')), `guard INV10 reprova ausência da proibição: ${JSON.stringify(v2)}`);
+  assert.deepEqual(guardNoReopen(REVIEW_SKILL), [], 'repo correto não produz violação de reabertura');
+});
+
+test('guard violated para P0 (AC-06.1.4/INV12): regra ausente é reprovada; repo passa', () => {
+  // Falsificador: regra violated⇒P0 removida (tabela + bullet da verification).
+  const semRegra = REVIEW_SKILL
+    .replace(/\n\| AC `violated` no state[^\n]*\|/, '')
+    .replace(/\n- `violated` no state ⇒ residual P0 mecânico \(INV12\)\./, '');
+  assert.notEqual(semRegra, REVIEW_SKILL, 'âncoras da regra violated⇒P0 existem no texto real');
+  const v1 = guardViolatedP0(semRegra);
+  assert.ok(v1.some((v) => v.includes('residual P0 mecânico')), `guard INV12 reprova ausência: ${JSON.stringify(v1)}`);
+  assert.deepEqual(guardViolatedP0(REVIEW_SKILL), [], 'repo correto não produz violação violated→P0');
+});
+
+test('guard verification eco, âncora e roteamento (AC-06.1.5/INV4): exigências ausentes ou juízo do revisor são reprovados; repo passa', () => {
+  // Falsificador 1: cláusula de eco removida.
+  const semEco = REVIEW_SKILL.replace('### Saída: eco obrigatório do veredito (VC4/D21)', '### Saída');
+  assert.notEqual(semEco, REVIEW_SKILL, 'âncora do eco existe no texto real');
+  assert.ok(guardVerificationAnchor(semEco).some((v) => v.includes('eco obrigatório')), 'guard reprova eco ausente');
+  // Falsificador 2: âncora de checks removida.
+  const semAncora = REVIEW_SKILL.replace('**checks executados ANTES do veredito; sem execução não há veredito.**', 'a ordem fica a cargo do revisor.');
+  assert.ok(guardVerificationAnchor(semAncora).some((v) => v.includes('checks antes do veredito') || v.includes('sem execução não há veredito')), 'guard reprova âncora ausente');
+  // Falsificador 3: roteamento por severidade removido.
+  const semRoteamento = REVIEW_SKILL.replace('### Roteamento do residual por severidade declarada (D6/INV4)', '### Roteamento do residual');
+  assert.ok(guardVerificationAnchor(semRoteamento).some((v) => v.includes('roteamento declarado')), 'guard reprova roteamento ausente');
+  // Falsificador 4: roteamento por juízo do revisor (D6/R4).
+  const comJuizo = REVIEW_SKILL + '\nDestino do residual: a critério do revisor.\n';
+  assert.ok(guardVerificationAnchor(comJuizo).some((v) => v.includes('a critério do revisor')), 'guard reprova juízo do revisor');
+  assert.deepEqual(guardVerificationAnchor(REVIEW_SKILL), [], 'repo correto não produz violação de verification');
+});
+
+test('guard enum e catálogo loop (AC-06.2.1): drift de enum/catálogo é reprovado; repo passa', () => {
+  // Falsificador 1: detached_repair removido de BACKLOG_STATES.
+  const semEstado = SERVER_JS.replace("'manual_validation_pending', 'done', 'blocked', 'detached_repair'", "'manual_validation_pending', 'done', 'blocked'");
+  assert.notEqual(semEstado, SERVER_JS, 'âncora do enum existe no server real');
+  assert.ok(guardEnumCatalog({ server: semEstado, template: BACKLOG_TMPL }).some((v) => v.includes('BACKLOG_STATES')), 'guard reprova enum sem detached_repair');
+  // Falsificador 2: linha detached_repair removida do template de backlog.
+  const semLinha = BACKLOG_TMPL.replace(/^\|\s*detached_repair[^\n]*\n/m, '');
+  assert.notEqual(semLinha, BACKLOG_TMPL, 'âncora da tabela existe no template real');
+  assert.ok(guardEnumCatalog({ server: SERVER_JS, template: semLinha }).some((v) => v.includes('BACKLOG_MESTRE_TEMPLATE')), 'guard reprova template sem detached_repair');
+  // Falsificador 3: id do sidecar removido de WORKFLOW_CONFIG.skills.
+  const semCatalogo = SERVER_JS.replace("escalation_repair: 'talos-escalation-repair',", '');
+  assert.notEqual(semCatalogo, SERVER_JS, 'âncora do catálogo existe no server real');
+  assert.ok(guardEnumCatalog({ server: semCatalogo, template: BACKLOG_TMPL }).some((v) => v.includes('WORKFLOW_CONFIG')), 'guard reprova catálogo sem sidecar');
+  // Falso-positivo: id do sidecar fora de DISPATCHED_EXEC_AGENTS.
+  assert.ok(DISPATCHED_EXEC_AGENTS.includes('talos-escalation-repair'), 'sidecar registrado em DISPATCHED_EXEC_AGENTS (5 hosts via shim-drift/M4)');
+  assert.deepEqual(guardEnumCatalog({ server: SERVER_JS, template: BACKLOG_TMPL }), [], 'repo correto não produz violação de enum/catálogo');
 });

@@ -8,6 +8,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { collectExecuteSkillDirs, scanDirDr } from './dr-guard.mjs';
+import {
+  DISPATCHED_EXEC_AGENTS,
+  guardReviewReadonly,
+  guardReviewBranch,
+  guardNoReopen,
+  guardViolatedP0,
+  guardVerificationAnchor,
+  guardEnumCatalog,
+} from './loop-guard.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const errors = [];
@@ -150,7 +159,9 @@ if (zcodeValidatorAgent != null) {
 // sem o MCP no frontmatter, o subagente perde acesso ao state/lock e quebra em G4).
 // Não cobre opencode (não lista tools) nem pi (formato próprio, sem mcp em tools).
 const MCP_SERVER = 'mcp__plugin_talos_talos';
-for (const agentName of ['talos-task-validator', 'talos-findings-repair', 'talos-slice-review']) {
+// Plano 06 do loop: o sidecar `talos-escalation-repair` chama talos_* (lock de
+// repair, commit, pendencies) — o M4 passa a cobrir o frontmatter do id novo.
+for (const agentName of ['talos-task-validator', 'talos-findings-repair', 'talos-slice-review', 'talos-escalation-repair']) {
   const skillPath = `packages/skills/${agentName}/SKILL.md`;
   const skillText = read(skillPath);
   const agentPath = `agents/${agentName}.md`;
@@ -213,7 +224,8 @@ for (const rel of [
 // slice-review revisa — todos são DESPACHADOS pelo orquestrador e por isso precisam
 // de registro de agente nativo por host. Ausência = orquestrador cai pro fio principal
 // (Gate G9 violado). O corpo é um SHIM fino que DEVE citar o skill_id carregado.
-const DISPATCHED_EXEC_AGENTS = ['talos-plan-execute', 'talos-direct-execute', 'talos-findings-repair', 'talos-slice-review'];
+// Plano 06 do loop: o sidecar `talos-escalation-repair` entra no catálogo canônico
+// (movido para build/loop-guard.mjs — guard de catálogo + guard test o leem; D7/CN3).
 const AGENT_DIRS = [
   ['claude', 'agents'],
   ['codex', 'plugins/talos/.codex/agents'],
@@ -465,6 +477,21 @@ if (stateSchema != null) {
     }
   }
 }
+
+// ── Loop de sprints: guards permanentes (pack LOOP_SPRINTS_AUTOCORRECAO, Plano 06) ──
+// As skills são prosa contratual — sem guard, regressão de texto é invisível.
+// Blinda CN8/INV1 (review read-only), INV2/LEG1 (ramo review sem 2º validator,
+// G4 preservado), INV10 (sem reabertura por finding novo), INV12 (violated⇒P0
+// mecânico), INV4 (verification: eco + âncora de checks + roteamento por
+// severidade) e o enum/catálogo do loop (D7/D8: detached_repair + sidecar).
+// Funções puras em loop-guard.mjs; fixtures no guard test (AC-06.1.x / AC-06.2.1).
+const backlogTemplate = read('packages/templates/BACKLOG_MESTRE_TEMPLATE.md');
+for (const v of guardReviewReadonly(sliceReviewSkill)) errors.push(v);
+for (const v of guardReviewBranch(orchestratorSkill)) errors.push(v);
+for (const v of guardNoReopen(sliceReviewSkill)) errors.push(v);
+for (const v of guardViolatedP0(sliceReviewSkill)) errors.push(v);
+for (const v of guardVerificationAnchor(sliceReviewSkill)) errors.push(v);
+for (const v of guardEnumCatalog({ server: mcpServer, template: backlogTemplate })) errors.push(v);
 
 // Codex custom agents não podem depender apenas do bundle do plugin: o instalador
 // precisa copiar os talos-*.toml para CODEX_HOME/agents, que é o caminho nativo que
