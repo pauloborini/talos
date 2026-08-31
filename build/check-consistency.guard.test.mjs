@@ -191,6 +191,12 @@ test('guard sem reabertura (AC-06.1.3/INV10): exceção de reabertura é reprova
   const comReabertura = REVIEW_SKILL + '\nSe um finding novo aparecer fora do delta, reabra a review completa para recobrir a slice.\n';
   const v1 = guardNoReopen(comReabertura);
   assert.ok(v1.some((v) => v.includes('condição de reabertura')), `guard INV10 reprova reabertura: ${JSON.stringify(v1)}`);
+  // Falsificador real do AC-03.2.2 (recibo do Plano 03): infinitivo "reabrir" em
+  // linha própria — /reabr\w*/ não casa "reabrir" (r-e-a-b-i-r); a âncora precisa
+  // de /reab\w*/ para cobrir todas as flexões do verbo.
+  const comReabrirInfinitivo = REVIEW_SKILL + '\nSe o finding novo for relevante o bastante, o revisor pode reabrir a review completa para cobrir o caso.\n';
+  const v1b = guardNoReopen(comReabrirInfinitivo);
+  assert.ok(v1b.some((v) => v.includes('condição de reabertura')), `guard INV10 reprova "reabrir" infinitivo: ${JSON.stringify(v1b)}`);
   // Falsificador 2: proibição removida da skill.
   const semProibicao = REVIEW_SKILL.replace('É proibido reabrir a review completa', 'A review pode ser reaberta quando necessário');
   const v2 = guardNoReopen(semProibicao);
