@@ -8,7 +8,10 @@ const VALID = Object.freeze({
   gain: new Set(['alto', 'médio', 'baixo']),
   effort: new Set(['alto', 'médio', 'baixo']),
   priority: new Set(['P0', 'P1', 'P2', 'P3']),
-  state: new Set(['backlog', 'ready', 'doing', 'review', 'manual_validation_pending', 'done', 'blocked']),
+  // D8 (loop): detached_repair é estacionamento do backlog (BACKLOG_STATES do
+  // MCP); o sprint file sincroniza o status via update_sprint_status, então o
+  // enum do validador precisa acompanhá-lo (mesma lista canônica).
+  state: new Set(['backlog', 'ready', 'doing', 'review', 'manual_validation_pending', 'done', 'blocked', 'detached_repair']),
 });
 const SPRINT_ID_SOURCE = 'S\\d{2}(?:[a-z]|\\.\\d+)?';
 const SPRINT_ID_REGEX = new RegExp(`^${SPRINT_ID_SOURCE}$`);

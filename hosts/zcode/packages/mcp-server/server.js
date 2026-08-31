@@ -68,6 +68,10 @@ const WORKFLOW_CONFIG = {
     findings_repair: 'talos-findings-repair',
     slice_review: 'talos-slice-review',
     task_validator: 'talos-task-validator',
+    // Plano 02 (loop): sidecar serial de escalation (D7). Registro é catálogo
+    // para o G10 (preflight lista ids oficiais) — SEM exigência por mode: o
+    // sidecar é condicional a residual (fail-closed em runtime, Plano 05).
+    escalation_repair: 'talos-escalation-repair',
   },
   modes: ['full', 'direct', 'execute', 'interview-only', 'interview_only', 'audit'],
 };
@@ -156,7 +160,7 @@ const ROUTED_MODE_BY_TYPE = {
   idea: 'direct',
 };
 const BACKLOG_PRIORITY_INPUT_TYPES = new Set(['idea', 'briefing', 'roadmap', 'conversation', 'spec-macro']);
-const BACKLOG_STATES = new Set(['backlog', 'ready', 'doing', 'review', 'manual_validation_pending', 'done', 'blocked']);
+const BACKLOG_STATES = new Set(['backlog', 'ready', 'doing', 'review', 'manual_validation_pending', 'done', 'blocked', 'detached_repair']);
 const BACKLOG_MOSCOW = new Set(['Must', 'Should', 'Could', "Won't now"]);
 const BACKLOG_LEVEL = new Set(['alto', 'médio', 'baixo']);
 const BACKLOG_PRIORITY = new Set(['P0', 'P1', 'P2', 'P3']);
@@ -166,11 +170,15 @@ const TERMINAL_VALIDATOR_VERDICTS = new Set(['pass', 'pass_with_observations']);
 const SPRINT_STATUS_TRANSITIONS = {
   backlog: new Set(['ready', 'blocked']),
   ready: new Set(['doing', 'review', 'done', 'blocked']),
-  doing: new Set(['review', 'done', 'blocked']),
-  review: new Set(['manual_validation_pending', 'done', 'doing', 'blocked']),
+  // D8 (loop): doing/review → detached_repair estaciona a sprint com residual
+  // irrecuperável sem abortar a campanha; saída (P1) só para ready (reingresso
+  // após correção via drain/sidecar) ou blocked. SEM detached_repair→done direto.
+  doing: new Set(['review', 'done', 'blocked', 'detached_repair']),
+  review: new Set(['manual_validation_pending', 'done', 'doing', 'blocked', 'detached_repair']),
   manual_validation_pending: new Set(['done', 'blocked']),
   blocked: new Set(['ready', 'backlog']),
   done: new Set(['done']),
+  detached_repair: new Set(['ready', 'blocked']),
 };
 const MOSCOW_RANK = new Map([['Must', 0], ['Should', 1], ['Could', 2], ["Won't now", 3]]);
 const GAIN_RANK = new Map([['alto', 0], ['médio', 1], ['baixo', 2]]);
@@ -181,6 +189,20 @@ const PRIORITY_RANK = new Map([['P0', 0], ['P1', 1], ['P2', 2], ['P3', 3]]);
 const MANUAL_VALIDATION_DIR = '.talos/manual-validation';
 const MANUAL_VALIDATION_REPORT_STATUSES = new Set(['pending', 'in_progress', 'validated', 'waived', 'failed']);
 const MANUAL_VALIDATION_MV_ID_RE = /^MV-(S\d{2}(?:[a-z]|\.\d+)?)-(AC-\d+)$/;
+
+// ===== Plano 02 (loop) — repair por provenance, verification e PENDENCIAS =====
+// D17: provenances do slot de repair (lock de repair com procedência). Ausente
+// = 'validator' (fluxo atual, byte a byte — D18 aditivo).
+const REPAIR_ORIGINS = new Set(['validator', 'slice_review', 'escalation']);
+const REPAIR_IN_LOOP_ORIGINS = new Set(['slice_review', 'escalation']);
+// D21: veredito da verification — enum fechado, enforcement no repair_complete.
+const VERIFICATION_VERDICTS = new Set(['resolved', 'not_resolved', 'regression']);
+// D10/D20: PENDENCIAS — writer único MCP, arquivo parseável, teto de drain 3.
+const PENDENCIES_DIR = path.join('.talos', 'backlog');
+const PENDENCIES_DRAIN_THRESHOLD = 3;
+const PENDENCIES_SEVERITIES = new Set(['P0', 'P1', 'P2', 'P3']);
+const PENDENCIES_STATUSES = new Set(['open', 'closed']);
+const PENDENCIES_ID_RE = /^PD-(S\d{2}(?:[a-z]|\.\d+)?)-(\d{2,})$/;
 // D14/D24: resultado humano mapeado para o acceptance_results do state (oráculo).
 const MANUAL_VALIDATION_STATE_MAP = {
   validated: { to: 'proved', proof: 'M:validated' },
@@ -1460,6 +1482,12 @@ function patchDispatchResult(runId, result, args = {}) {
   });
   const data = {
     ...(previous.data ?? {}),
+    // Plano 01 (loop): `options` (flag --loop) chega no result do start passed e
+    // é projetado no nível raiz de `data` (data.options.loop) — o sink é a leitura
+    // no updateSprintStatus. Sem `options` no result, nenhum campo é criado/mutado.
+    ...(result.options !== undefined
+      ? { options: { ...(previous.data?.options ?? {}), ...result.options } }
+      : {}),
     dispatch: {
       ...currentDispatch,
       ...(result.dispatch ?? {}),
@@ -1510,6 +1538,12 @@ function normalizeValidatorCycle(cycle = {}) {
     last_state_path: typeof cycle.last_state_path === 'string' ? cycle.last_state_path : null,
     last_verdict: typeof cycle.last_verdict === 'string' ? cycle.last_verdict : null,
     findings_packet: cycle.findings_packet && typeof cycle.findings_packet === 'object' ? cycle.findings_packet : null,
+    // Plano 02 (loop): veredito da verification (D21). Persistido pelo
+    // repair_complete quando o payload valida; default null (fluxo validator
+    // sem verification continua idêntico — AC-02.3.2).
+    verification: cycle.verification && typeof cycle.verification === 'object'
+      ? cycle.verification
+      : null,
     repair: cycle.repair && typeof cycle.repair === 'object'
       ? {
         skill: typeof cycle.repair.skill === 'string' ? cycle.repair.skill : WORKFLOW_CONFIG.skills.findings_repair,
@@ -1518,6 +1552,13 @@ function normalizeValidatorCycle(cycle = {}) {
         requested_at: typeof cycle.repair.requested_at === 'string' ? cycle.repair.requested_at : null,
         completed_at: typeof cycle.repair.completed_at === 'string' ? cycle.repair.completed_at : null,
         active: cycle.repair.active && typeof cycle.repair.active === 'object' ? cycle.repair.active : null,
+        // Plano 02 (loop): procedência do slot (VC1) — S04: run.json adulterado
+        // cai no default canônico 'validator'; budget por provenance (INV5) com
+        // piso ≥0 (padrão attempts_used). Chaves fora da lista canônica somem.
+        origin: typeof cycle.repair.origin === 'string' && REPAIR_ORIGINS.has(cycle.repair.origin)
+          ? cycle.repair.origin
+          : 'validator',
+        budget_used: normalizeRepairBudget(cycle.repair.budget_used),
       }
       : {
         skill: WORKFLOW_CONFIG.skills.findings_repair,
@@ -1526,10 +1567,26 @@ function normalizeValidatorCycle(cycle = {}) {
         requested_at: null,
         completed_at: null,
         active: null,
+        origin: 'validator',
+        budget_used: normalizeRepairBudget(null),
       },
     applied: normalizeApplied(cycle.applied),
     history: Array.isArray(cycle.history) ? cycle.history : [],
   };
+}
+
+// Plano 02 (loop): contador de budget por provenance (INV5). Lista final
+// completa sobre as chaves canônicas — chaves desconhecidas são descartadas e
+// valores não-inteiro/negativo caem no piso 0 (run.json adulterado não eleva
+// nem zera o enforcement; padrão S04/attempts_used).
+function normalizeRepairBudget(budget) {
+  const source = budget && typeof budget === 'object' ? budget : {};
+  return Object.fromEntries(
+    [...REPAIR_ORIGINS].map((origin) => {
+      const value = source[origin];
+      return [origin, Number.isInteger(value) && value >= 0 ? value : 0];
+    }),
+  );
 }
 
 function patchValidatorResult(runId, result, args = {}) {
@@ -2482,6 +2539,8 @@ function nextActionForSelectedSprint(info, mode = 'full') {
 function derivedSprintGateStatus(status, validatorVerdict) {
   if (status === 'done') return `validator:${validatorVerdict}`;
   if (status === 'manual_validation_pending') return `validator:${validatorVerdict};manual_pending`;
+  // D8 (loop): estacionada por falha do sidecar — gate canônico `escalation:failed`.
+  if (status === 'detached_repair') return 'escalation:failed';
   if (status === 'review') return 'validator:pending';
   if (status === 'doing') return 'exec:running';
   if (status === 'blocked') return validatorVerdict === 'fail' ? 'validator:fail' : 'blocked';
@@ -2737,6 +2796,41 @@ function updateSprintStatus(args = {}) {
       if (transitionPending) pendencies.push(transitionPending);
       if (pendingPathToken(row.sprint_file)) {
         pendencies.push(conformancePending('sprint_file', sprintId, null, `Linha ${sprintId} não aponta Sprint file real.`, 'preencher_sprint_file_no_backlog'));
+      }
+    }
+    // Plano 01 (loop): sink do VC3 — a flag `--loop` gravada no ledger pela
+    // origem (lockDispatch start, options.loop) é consumida aqui como exigência
+    // extra de fechamento (D12): done/manual_validation_pending em run de loop
+    // exigem gate `slice_review` `passed` no MESMO ledger. Fail-closed ANTES de
+    // qualquer write (mesmo padrão do throw de pré-condição abaixo). Run sem
+    // `options.loop` (campo ausente/falsey) → nenhum comportamento novo (CN7).
+    // Leitura do run: mesmo acesso de patchGateResult (readState); run ausente
+    // ou ilegível ⇒ sem flag ⇒ sem gate novo (comportamento aditivo, D18).
+    if (status === 'done' || status === 'manual_validation_pending') {
+      let loopReviewRequired = false;
+      try {
+        const runLedger = readState(runId, args);
+        loopReviewRequired = runLedger?.data?.options?.loop === true;
+      } catch {
+        loopReviewRequired = false;
+      }
+      if (loopReviewRequired) {
+        let loopReviewPassed = false;
+        try {
+          const runLedger = readState(runId, args);
+          loopReviewPassed = runLedger?.data?.gates?.slice_review?.status === 'passed';
+        } catch {
+          loopReviewPassed = false;
+        }
+        if (!loopReviewPassed) {
+          pendencies.push(conformancePending(
+            'loop_review',
+            sprintId,
+            null,
+            '--loop implica review crítica (D12): rode talos-slice-review antes de fechar.',
+            'rodar_slice_review_loop',
+          ));
+        }
       }
     }
     // Sprint file lido cedo: o gate v1 de fechamento (Plano 03) cruza o
@@ -3029,6 +3123,73 @@ function updateSprintStatus(args = {}) {
   return result;
 }
 
+// Plano 02 (loop): ancestrais transitivos da sprint (cone DEP) — BFS reverso
+// sobre `Depende de` (padrão propagateRevalidation, sentido origem→dependentes
+// invertido): deps diretos + deps dos deps, sem ciclos.
+function transitiveDependencyCone(rows, sprintId) {
+  const depsById = new Map(rows.map((row) => [row.id, sprintDeps(row.dependencies)]));
+  const cone = new Set();
+  const queue = [...(depsById.get(sprintId) ?? [])];
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (cone.has(current)) continue;
+    cone.add(current);
+    for (const dep of depsById.get(current) ?? []) {
+      if (!cone.has(dep)) queue.push(dep);
+    }
+  }
+  return cone;
+}
+
+// Plano 02 (loop): paths declarados no escopo do sprint file do candidato (§3
+// "Escopo da sprint"). Extração conservadora de tokens de path de arquivo
+// (`x/y.ext`) SOMENTE da seção §3 — sem tokens, o drain por overlap não dispara
+// e só teto/DEP-cone contam (GUIDE §2.5: "quando o candidato declarar paths").
+function sprintScopePaths(sprintMarkdown) {
+  if (typeof sprintMarkdown !== 'string') return [];
+  const section = /^##\s+3\.\s+Escopo da sprint\s*$/im.exec(sprintMarkdown);
+  if (!section) return [];
+  const rest = sprintMarkdown.slice(section.index + section[0].length);
+  const nextHeading = /^##\s+\d+\./im.exec(rest);
+  const body = nextHeading ? rest.slice(0, nextHeading.index) : rest;
+  return [...new Set(
+    [...body.matchAll(/(?:^|[\s(`"])([\w.-]+(?:\/[\w.-]+)+\.[A-Za-z]{1,5})(?=[\s)`".,;:]|$)/g)]
+      .map((match) => match[1]),
+  )];
+}
+
+// Plano 02 (loop): drain gate aditivo do select_next (CN4/D20). required é
+// informação para a esteira (Plano 05 decide drenar) — NUNCA bloqueia a seleção.
+// Dispara com: teto de 3 PDs abertas (reason threshold); PD open cuja sprint de
+// origem está no cone DEP do candidato (reason dep_cone); overlap entre files da
+// PD e os paths do escopo do sprint file do candidato quando declarados (reason
+// files_overlap). Backlog sem PENDENCIAS ⇒ required false, retorno idêntico.
+function drainRequiredFor(backlogPath, args, rows, candidate) {
+  const base = { required: false, reasons: [], open_pd_count: 0 };
+  const open = readOpenPendencies(backlogPath, args);
+  base.open_pd_count = open.openCount;
+  if (open.error || open.open.length === 0) return base;
+  const reasons = new Set();
+  if (open.openCount >= PENDENCIES_DRAIN_THRESHOLD) reasons.add('threshold');
+  if (candidate) {
+    const cone = transitiveDependencyCone(rows, candidate.id);
+    if (open.open.some((pd) => cone.has(pd.sprint_id))) reasons.add('dep_cone');
+    if (candidate.sprint_file) {
+      try {
+        const sprintMarkdown = fs.readFileSync(resolveConsumerPath(candidate.sprint_file, args), 'utf8');
+        const scopePaths = new Set(sprintScopePaths(sprintMarkdown));
+        if (scopePaths.size > 0
+          && open.open.some((pd) => (pd.files ?? []).some((file) => scopePaths.has(file)))) {
+          reasons.add('files_overlap');
+        }
+      } catch {
+        // Sprint file ilegível: overlap não dispara (teto e DEP-cone seguem).
+      }
+    }
+  }
+  return { ...base, required: reasons.size > 0, reasons: [...reasons] };
+}
+
 function selectNextSprint(args = {}) {
   const runId = validateRunId(args.run_id);
   const backlogPath = requiredString(args, 'backlog_path');
@@ -3083,6 +3244,9 @@ function selectNextSprint(args = {}) {
       next_action: blocked
         ? (structuralPendencies[0]?.next_action ?? 'atualizar_sprint_file_ou_dependencias')
         : nextActionForSelectedSprint(selected, mode),
+      // Plano 02 (loop): bloco aditivo (CN4) — drain gate informativo; nenhum
+      // campo existente muda de valor (AC-02.4.3 caso negativo).
+      drain_required: drainRequiredFor(backlogPath, args, index.rows, selected),
     };
   } catch (error) {
     result = {
@@ -3099,6 +3263,7 @@ function selectNextSprint(args = {}) {
       error: `Backlog mestre ausente ou ilegível: ${backlogPath}`,
       cause: error.message,
       next_action: 'corrigir_backlog_path',
+      drain_required: { required: false, reasons: [], open_pd_count: 0 },
     };
   }
   patchGateResult(runId, 'select_next_sprint', result, args);
@@ -3157,6 +3322,244 @@ function renderManualValidationReport(slug, backlogPath, timestamp, rows) {
     body,
     '',
   ].join('\n');
+}
+
+// ===== Plano 02 (loop) — PENDENCIAS: writer/reader MCP + drain gate =====
+// D10/D20/INV7/CN4/VC2: residual P2/P3 vira `PD-<sprint>-<NN>` em
+// `.talos/backlog/PENDENCIAS_<slug>.md` (slug igual ao padrão manual-validation).
+// Único writer = MCP (escrita ABSOLUTA do documento inteiro, tmp+rename mode
+// 0o600 — padrão traceability.mjs); NN monotônico POR SPRINT derivado do parse
+// do arquivo (nunca de contador em memória) e sem reuso após `close` (a linha
+// vira `closed`, nunca é apagada — histórico preservado).
+
+function pendenciesFileRel(backlogPath) {
+  return path.join(PENDENCIES_DIR, `PENDENCIAS_${manualValidationSlug(backlogPath)}.md`);
+}
+
+// Parser determinístico: a tabela `## Pendências` (7 colunas) é o contrato;
+// restante do markdown é livre (mesmo estilo de parseManualValidationReport).
+function parsePendenciesDocument(markdown) {
+  const lines = markdown.split(/\r?\n/);
+  const heading = lines.findIndex((line) => /^##\s+Pendências\s*$/i.test(line.trim()));
+  if (heading < 0) return { rows: [], error: 'Seção ## Pendências ausente no arquivo de pendencies.' };
+  const rows = [];
+  for (let i = heading + 1; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (/^##\s+/.test(line)) break;
+    if (!/^\|.*\|\s*$/.test(line)) continue;
+    const cells = line.split('|').slice(1, -1).map((cell) => cell.trim());
+    if (cells.length === 0 || cells.every((cell) => /^-+$/.test(cell))) continue;
+    if (cells[0] === 'ID') continue;
+    rows.push(cells);
+  }
+  return { rows, error: null };
+}
+
+function renderPendenciesDocument(slug, backlogPath, timestamp, rows) {
+  const body = rows.map((row) => `| ${row.join(' | ')} |`).join('\n');
+  return [
+    `# Pendências — ${slug}`,
+    '',
+    '| Campo | Valor |',
+    '|---|---|',
+    `| Backlog | \`${backlogPath}\` |`,
+    `| Atualizado em | ${timestamp} |`,
+    '',
+    '## Pendências',
+    '',
+    '| ID | Sprint | Severidade | Files | Recomendação | Fix validation | Status |',
+    '|---|---|---|---|---|---|---|',
+    body,
+    '',
+  ].join('\n');
+}
+
+// FUNÇÃO ÚNICA de escrita do PENDENCIAS (INV7/AC-02.4.2): toda persistência do
+// arquivo passa aqui — append e close incluídos. Escrita absoluta (documento
+// inteiro regenerado), tmp+rename, mode 0o600.
+function writePendenciesDocument(absPath, content) {
+  fs.mkdirSync(path.dirname(absPath), { recursive: true, mode: 0o700 });
+  // Sufixo pid+tempo: writers cruzados (dois servidores, mesmo root) não podem
+  // sobrescrever o tmp um do outro (padrão traceability.mjs).
+  const tmp = `${absPath}.${process.pid}.${Date.now()}.tmp`;
+  fs.writeFileSync(tmp, content, { mode: 0o600 });
+  fs.renameSync(tmp, absPath);
+}
+
+function normalizePendencyRow(cells) {
+  return {
+    id: cells[0],
+    sprint_id: cells[1],
+    severity: cells[2],
+    files: (cells[3] ?? '').split(/\s+/).filter(Boolean).map((file) => file.replace(/^`|`$/g, '')),
+    recommendation: cells[4] ?? '',
+    fix_validation: cells[5] ?? '',
+    status: cells[6] ?? 'open',
+  };
+}
+
+function readPendenciesRows(backlogPath, args) {
+  const abs = resolveConsumerPath(pendenciesFileRel(backlogPath), args);
+  if (!fs.existsSync(abs)) return { rows: [], abs, error: null };
+  let markdown;
+  try {
+    markdown = fs.readFileSync(abs, 'utf8');
+  } catch (cause) {
+    return { rows: [], abs, error: `PENDENCIAS ilegível: ${cause.message}` };
+  }
+  const parsed = parsePendenciesDocument(markdown);
+  if (parsed.error) return { rows: [], abs, error: parsed.error };
+  return { rows: parsed.rows, abs, error: null };
+}
+
+function pendenciesOpenCount(rows) {
+  return rows.filter((cells) => (cells[6] ?? 'open') === 'open').length;
+}
+
+// Plano 02 (loop): PDs do backlog com status open — fonte do drain gate (CN4).
+
+// Erro de leitura/parse NÃO quebra a leitura do índice: drain é aditivo e
+// informativo; arquivo corrompido é reportado por `pendencies(list)` com recusa
+// tipada (corrigir_pendencias_file).
+function readOpenPendencies(backlogPath, args) {
+  const read = readPendenciesRows(backlogPath, args);
+  if (read.error) return { open: [], openCount: 0, error: read.error };
+  const open = read.rows.filter((cells) => (cells[6] ?? 'open') === 'open').map(normalizePendencyRow);
+  return { open, openCount: open.length, error: null };
+}
+
+function pendenciesHandler(args = {}) {
+  const backlogPath = requiredString(args, 'backlog_path');
+  const action = typeof args.action === 'string' && args.action.trim() ? args.action.trim() : 'append';
+  if (!['append', 'list', 'close'].includes(action)) {
+    throw rpcError(-32602, `Ação inválida para talos_pendencies: ${action} (append|list|close)`);
+  }
+  const timestamp = nowIso();
+  const runId = validateRunId(args.run_id);
+  const fileRel = pendenciesFileRel(backlogPath);
+
+  const blocked = (code, error, nextAction) => ({
+    gate: 'pendencies',
+    action,
+    status: 'blocked',
+    run_id: runId,
+    backlog_path: backlogPath,
+    file: fileRel,
+    code,
+    error,
+    next_action: nextAction,
+  });
+
+  if (action === 'list') {
+    const read = readPendenciesRows(backlogPath, args);
+    if (read.error) return blocked('corrigir_pendencias_file', read.error, 'corrigir_pendencias_file');
+    const pds = read.rows.map(normalizePendencyRow);
+    return {
+      gate: 'pendencies',
+      action,
+      status: 'passed',
+      run_id: runId,
+      backlog_path: backlogPath,
+      file: fileRel,
+      pds,
+      open_count: pendenciesOpenCount(read.rows),
+      next_action: 'consumir_pendencias_quando_drain_required',
+    };
+  }
+
+  // append/close exigem backlog legível (fonte do sprint_id canônico).
+  let backlogMarkdown;
+  try {
+    backlogMarkdown = fs.readFileSync(resolveConsumerPath(backlogPath, args), 'utf8');
+  } catch (cause) {
+    return blocked('backlog_ilegivel', `Backlog mestre ausente ou ilegível: ${backlogPath} (${cause.message})`, 'corrigir_backlog_path');
+  }
+  const backlogRows = parseSprintRows(backlogMarkdown);
+  const backlogIds = new Set(backlogRows.map((row) => row.id));
+
+  if (action === 'append') {
+    const sprintId = requiredString(args, 'sprint_id');
+    if (!backlogIds.has(sprintId)) {
+      return blocked('sprint_inexistente', `Sprint ${sprintId} não existe no backlog ${backlogPath}`, 'corrigir_sprint_id_da_pendency');
+    }
+    const severity = requiredString(args, 'severity');
+    if (!PENDENCIES_SEVERITIES.has(severity)) {
+      return blocked('severidade_invalida', `Severidade inválida: ${severity} (P0|P1|P2|P3)`, 'corrigir_severidade_da_pendency');
+    }
+    const recommendation = requiredString(args, 'recommendation');
+    const fixValidation = requiredString(args, 'fix_validation');
+    const files = Array.isArray(args.files)
+      ? args.files.filter((file) => typeof file === 'string' && file.trim())
+      : [];
+    const read = readPendenciesRows(backlogPath, args);
+    if (read.error) return blocked('corrigir_pendencias_file', read.error, 'corrigir_pendencias_file');
+    // VC2: NN monotônico POR SPRINT derivado do parse do arquivo (máximo
+    // existente + 1); close não recicla NN porque a linha closed permanece.
+    const prefix = `PD-${sprintId}-`;
+    const maxNn = read.rows
+      .map((cells) => (typeof cells[0] === 'string' ? PENDENCIES_ID_RE.exec(cells[0]) : null))
+      .filter((match) => match && match[1] === sprintId)
+      .map((match) => Number(match[2]))
+      .reduce((acc, value) => Math.max(acc, value), 0);
+    const pdId = `${prefix}${String(maxNn + 1).padStart(2, '0')}`;
+    const rowCells = [
+      pdId,
+      sprintId,
+      severity,
+      files.length > 0 ? files.map((file) => `\`${file}\``).join(' ') : '—',
+      recommendation,
+      fixValidation,
+      'open',
+    ];
+    // Escrita absoluta: documento inteiro regenerado com a linha nova (a lista
+    // final completa de PDs é sempre o arquivo por inteiro).
+    const nextRows = [...read.rows, rowCells];
+    writePendenciesDocument(read.abs, renderPendenciesDocument(
+      manualValidationSlug(backlogPath), backlogPath, timestamp, nextRows,
+    ));
+    return {
+      gate: 'pendencies',
+      action,
+      status: 'passed',
+      run_id: runId,
+      backlog_path: backlogPath,
+      file: fileRel,
+      pd_id: pdId,
+      open_count: pendenciesOpenCount(nextRows),
+      next_action: 'rotear_residual_p2_p3_como_pendency',
+    };
+  }
+
+  // close: marca Status `closed` na linha do pd_id (nunca apaga — histórico).
+  const pdId = requiredString(args, 'pd_id');
+  if (!PENDENCIES_ID_RE.test(pdId)) {
+    return blocked('pd_id_invalido', `ID de pendency inválido: ${pdId} (esperado PD-<sprint>-<NN>)`, 'corrigir_pd_id');
+  }
+  const read = readPendenciesRows(backlogPath, args);
+  if (read.error) return blocked('corrigir_pendencias_file', read.error, 'corrigir_pendencias_file');
+  let closed = false;
+  const nextRows = read.rows.map((cells) => {
+    if (cells[0] !== pdId) return cells;
+    closed = true;
+    return [...cells.slice(0, 6), 'closed'];
+  });
+  if (!closed) {
+    return blocked('pd_inexistente', `Pendency não encontrada: ${pdId} em ${fileRel}`, 'corrigir_pd_id');
+  }
+  writePendenciesDocument(read.abs, renderPendenciesDocument(
+    manualValidationSlug(backlogPath), backlogPath, timestamp, nextRows,
+  ));
+  return {
+    gate: 'pendencies',
+    action,
+    status: 'passed',
+    run_id: runId,
+    backlog_path: backlogPath,
+    file: fileRel,
+    pd_id: pdId,
+    open_count: pendenciesOpenCount(nextRows),
+    next_action: 'drenar_pendency_no_sidecar',
+  };
 }
 
 // Validação estrita de uma linha do relatório. Devolve o MV parseado ou uma
@@ -3949,6 +4352,26 @@ function startDispatch(args, context) {
   if (Object.prototype.hasOwnProperty.call(args, LEGACY_ROUTE_KEY)) {
     throw rpcError(-32602, `unknown_property: ${LEGACY_ROUTE_KEY}`);
   }
+  // Plano 01 (loop): origem do VC3 — flag opt-in `--loop` da esteira serial
+  // (D1/D12/D18). Normalização estrita: `options` é objeto opcional com campo
+  // único reconhecido `loop: boolean`; não-objeto/não-bool é recusa -32602.
+  // Ausente ⇒ nada é gravado e nenhum retorno muda (CN7: opt-in byte a byte).
+  let dispatchOptions;
+  if (Object.prototype.hasOwnProperty.call(args, 'options') && args.options !== undefined) {
+    if (typeof args.options !== 'object' || args.options === null || Array.isArray(args.options)) {
+      throw rpcError(-32602, 'invalid_params: options deve ser objeto (ex.: { loop: true }).');
+    }
+    const unknownOption = Object.keys(args.options).find((key) => key !== 'loop');
+    if (unknownOption !== undefined) {
+      throw rpcError(-32602, `unknown_property: options.${unknownOption}`);
+    }
+    if (args.options.loop !== undefined && typeof args.options.loop !== 'boolean') {
+      throw rpcError(-32602, 'invalid_params: options.loop deve ser boolean.');
+    }
+    if (args.options.loop !== undefined) {
+      dispatchOptions = { loop: args.options.loop };
+    }
+  }
   const timestamp = nowIso();
   let baseSha = null;
   if (phase === 'plan_execute') {
@@ -4013,6 +4436,9 @@ function startDispatch(args, context) {
     timestamp,
     current_phase: phase,
     expected_phase: expected,
+    // Flag `--loop` só no start passed: start bloqueado não inicia run e não
+    // grava a flag (patchDispatchResult projeta `options` apenas quando presente).
+    ...(dispatchOptions ? { options: dispatchOptions } : {}),
     dispatch: {
       active: {
         phase,
@@ -5324,6 +5750,11 @@ function validatorStart(args, context) {
         requested_at: cycle.repair.requested_at,
         completed_at: cycle.repair.completed_at,
         active: null,
+        // Plano 02 (loop): o contador por provenance é enforcement do ciclo da
+        // slice (INV5) — o retry do validator NÃO pode zerá-lo (2ª abertura
+        // in-loop continua bloqueada mesmo após retry do validator).
+        origin: cycle.repair.origin,
+        budget_used: cycle.repair.budget_used,
       },
       // O retry precisa manter os findings originais: o complete do attempt 2
       // correlaciona `repaired_finding_ids` contra exatamente esse packet.
@@ -5829,6 +6260,25 @@ function validatorRepairStart(args, context) {
   const timestamp = nowIso();
   const cycle = normalizeValidatorCycle(context.state.data?.validator_cycle ?? {});
   const statePathValue = requiredString(args, 'state_path');
+  // Plano 02 (loop): procedência do slot (VC1/D17). O valor NUNCA é inferido —
+  // vem do orquestrador. Ausente = 'validator' (fluxo atual, byte a byte);
+  // fora do enum → blocked tipado sem abrir slot (AC-02.1.1). A validação vem
+  // antes das checagens de estado: provenance inválida não deve ser confundida
+  // com estado de ciclo errado.
+  const origin = args.origin === undefined || args.origin === null
+    ? 'validator'
+    : args.origin;
+  if (typeof origin !== 'string' || !REPAIR_ORIGINS.has(origin)) {
+    return {
+      gate: 'G4',
+      action: 'repair_start',
+      status: 'blocked',
+      timestamp,
+      code: 'origin_invalida',
+      error: `Procedência de repair inválida: ${JSON.stringify(origin)}; enum fechado ${[...REPAIR_ORIGINS].join(', ')}`,
+      next_action: 'corrigir_origin_do_repair_start',
+    };
+  }
 
   if (cycle.active) {
     return {
@@ -5855,7 +6305,28 @@ function validatorRepairStart(args, context) {
     };
   }
 
-  if (cycle.status !== 'repair_required') {
+  // Plano 02 (loop): budget fail-closed por provenance (INV5/D17). Enforcement
+  // só nas provenances in-loop — para 'validator' o fluxo atual fica intacto
+  // (GUIDE §2.5 "validator: fluxo atual intacto"; alerta §2.10: nenhum teste do
+  // ciclo G4 muda de veredito). Contagem por provenance é independente (AC-02.2.2).
+  if (REPAIR_IN_LOOP_ORIGINS.has(origin) && cycle.repair.budget_used[origin] >= 1) {
+    return {
+      gate: 'G4',
+      action: 'repair_start',
+      status: 'blocked',
+      timestamp,
+      code: 'repair_budget_exhausted',
+      repair_origin: origin,
+      budget_used: { ...cycle.repair.budget_used },
+      error: `Budget de repair esgotado para a provenance ${origin} neste ciclo (1 por provenance)`,
+      next_action: 'estacionar_sprint_detached_repair',
+    };
+  }
+
+  // Ramo validator: exigência atual preservada. Provenances in-loop abrem slot
+  // fora do ramo do validator (pós-review/sidecar, D3/D4) — bastam as checagens
+  // de concorrência, state_path e boundary.
+  if (origin === 'validator' && cycle.status !== 'repair_required') {
     return {
       gate: 'G4',
       action: 'repair_start',
@@ -5900,10 +6371,13 @@ function validatorRepairStart(args, context) {
     validator_attempt: cycle.attempts_used,
     repair_run_id: activeRepairRunId,
     repair_budget: 1,
+    repair_origin: origin,
     findings: cycle.findings_packet?.findings ?? [],
     state_path: statePathValue,
     validator_status: 'repair_running',
-    next_action: `dispatch_${WORKFLOW_CONFIG.skills.findings_repair}`,
+    next_action: origin === 'validator'
+      ? `dispatch_${WORKFLOW_CONFIG.skills.findings_repair}`
+      : `dispatch_${WORKFLOW_CONFIG.skills.findings_repair}_origem_${origin}`,
     banner: renderBanner('validacao', { status: 'repair_running' }),
     validator_cycle: {
       status: 'repair_running',
@@ -5924,8 +6398,92 @@ function validatorRepairStart(args, context) {
             worktree_final: boundaryBefore.state.worktree_final ?? null,
           },
         },
+        // Plano 02 (loop): sink do VC1/INV5 — procedência persistida e
+        // contador incrementado SOMENTE da provenance chamada (lista final
+        // completa sobre o objeto normalizado).
+        origin,
+        budget_used: {
+          ...cycle.repair.budget_used,
+          [origin]: cycle.repair.budget_used[origin] + 1,
+        },
       },
     },
+  };
+}
+
+// Plano 02 (loop): valida `data.verification` (D21/INV3/VC4) mecanicamente
+// antes de qualquer write. Fonte de ids conhecidos: findings packet do cycle
+// (ramo validator), repair_evidence do state no boundary (fluxo in-loop — a
+// review julga o delta do último commit de repair) e repairs[] do próprio
+// payload. Resolved SEM check executado não existe (INV3 — recusa fail-closed).
+function validateVerificationPayload(verification, knownIds, stateRepairs, repairs) {
+  const violations = [];
+  if (!verification || typeof verification !== 'object' || Array.isArray(verification)) {
+    return ['verification deve ser objeto {findings[], verified_at}'];
+  }
+  const repairIds = new Set(
+    [...stateRepairs, ...repairs]
+      .map((item) => item?.finding_id)
+      .filter((id) => typeof id === 'string' && id),
+  );
+  const allowed = new Set([...knownIds, ...repairIds]);
+  if (!Array.isArray(verification.findings)) {
+    violations.push('verification.findings deve ser array');
+  } else {
+    for (const [index, item] of verification.findings.entries()) {
+      const label = item && typeof item === 'object' ? (item.finding_id ?? `item ${index}`) : `item ${index}`;
+      if (!item || typeof item !== 'object') {
+        violations.push(`${label}: finding deve ser objeto`);
+        continue;
+      }
+      if (typeof item.finding_id !== 'string' || !item.finding_id.trim()) {
+        violations.push(`${label}: finding_id obrigatório`);
+        continue;
+      }
+      if (!allowed.has(item.finding_id.trim())) {
+        violations.push(`${item.finding_id}: finding_id desconhecido (fora do packet e do delta do repair)`);
+      }
+      if (typeof item.verdict !== 'string' || !VERIFICATION_VERDICTS.has(item.verdict)) {
+        violations.push(`${item.finding_id}: verdict deve ser ${[...VERIFICATION_VERDICTS].join('|')}`);
+      }
+      const checksExecuted = item.checks_executed;
+      if (item.verdict === 'resolved') {
+        if (!Array.isArray(checksExecuted) || checksExecuted.length === 0
+          || checksExecuted.some((check) => typeof check !== 'string' || !check.trim())) {
+          violations.push(`${item.finding_id}: resolved exige checks_executed[] de strings não vazio (INV3)`);
+        } else {
+          const results = Array.isArray(item.check_results) ? item.check_results : [];
+          const succeeded = new Set(
+            results
+              .filter((result) => result && typeof result === 'object')
+              .filter((result) => result.ok === true || result.exit_code === 0)
+              .map((result) => (typeof result.check === 'string' ? result.check : null))
+              .filter(Boolean),
+          );
+          const missing = checksExecuted.filter((check) => !succeeded.has(check));
+          if (missing.length > 0) {
+            violations.push(`${item.finding_id}: resolved exige check_results com sucesso declarado para ${missing.join(', ')} (exit 0/ok)`);
+          }
+        }
+      }
+    }
+  }
+  if (typeof verification.verified_at !== 'string'
+    || Number.isFinite(Date.parse(verification.verified_at)) === false) {
+    violations.push('verified_at deve ser timestamp ISO');
+  }
+  return violations;
+}
+
+function normalizeVerificationForLedger(verification) {
+  return {
+    findings: verification.findings.map((item) => ({
+      finding_id: typeof item.finding_id === 'string' ? item.finding_id.trim() : item.finding_id,
+      verdict: item.verdict,
+      checks_executed: Array.isArray(item.checks_executed) ? [...item.checks_executed] : [],
+      check_results: Array.isArray(item.check_results) ? [...item.check_results] : [],
+    })),
+    verified_at: verification.verified_at,
   };
 }
 
@@ -6038,12 +6596,21 @@ function validatorRepairComplete(args, context) {
   const stateRepairs = Array.isArray(boundaryAfter.state.repair_evidence)
     ? boundaryAfter.state.repair_evidence
     : [];
+  // Plano 02 (loop): fonte de ids válidos. Com packet (ramo validator) o
+  // comportamento é o atual byte a byte — id fora do packet é recusado. Sem
+  // packet (fluxo in-loop pós-review/sidecar, D4) a fonte é o próprio delta do
+  // repair: repair_evidence do state no boundary + repairs[] do payload.
+  const repairSourceIds = new Set([
+    ...stateRepairs.map((repair) => repair?.finding_id),
+    ...repairs.map((repair) => repair?.finding_id),
+  ].filter((id) => typeof id === 'string' && id));
+  const allowedRepairIds = receivedIds.size > 0 ? receivedIds : repairSourceIds;
   const repairViolations = [];
   for (const [label, entries] of [['output', repairs], ['state', stateRepairs]]) {
     const seen = new Set();
     for (const repair of entries) {
       const id = repair?.finding_id;
-      if (!receivedIds.has(id)) repairViolations.push(`${label}: repair ID desconhecido ${id ?? '<ausente>'}`);
+      if (!allowedRepairIds.has(id)) repairViolations.push(`${label}: repair ID desconhecido ${id ?? '<ausente>'}`);
       if (seen.has(id)) repairViolations.push(`${label}: repair ID duplicado ${id}`);
       seen.add(id);
       if (!Array.isArray(repair?.files_touched) || repair.files_touched.length === 0) {
@@ -6116,6 +6683,31 @@ function validatorRepairComplete(args, context) {
     }
   }
 
+  // Plano 02 (loop): veredito da verification (D21/INV3/VC4). Presente →
+  // validado mecanicamente; inválido → blocked SEM mutar cycle (retorno antes
+  // do patch com validator_cycle — o slot não fecha, o chamador corrige o
+  // payload e reenvia). Ausente → fluxo atual idêntico (ramo validator).
+  let verification;
+  if (repairData?.verification !== undefined) {
+    const verificationViolations = validateVerificationPayload(
+      repairData.verification,
+      allowedRepairIds,
+      stateRepairs,
+      repairs,
+    );
+    if (verificationViolations.length > 0) {
+      return {
+        gate: 'G4', action: 'repair_complete', status: 'blocked', timestamp,
+        repair_run_id: activeRepairRunId, state_path: statePathValue,
+        code: 'verification_invalida',
+        verification_violations: verificationViolations,
+        error: `Verification inválida: ${verificationViolations.join('; ')}`,
+        next_action: 'corrigir_payload_da_verification',
+      };
+    }
+    verification = normalizeVerificationForLedger(repairData.verification);
+  }
+
   return {
     gate: 'G4',
     action: 'repair_complete',
@@ -6138,7 +6730,12 @@ function validatorRepairComplete(args, context) {
         requested_at: cycle.repair.requested_at,
         completed_at: timestamp,
         active: null,
+        // Plano 02 (loop): procedência e contador sobrevivem ao fechamento do
+        // slot (o enforcement por provenance cobre o ciclo inteiro da slice).
+        origin: cycle.repair.origin,
+        budget_used: cycle.repair.budget_used,
       },
+      ...(verification !== undefined ? { verification } : {}),
       applied: appendAppliedRepairCompletion(cycle.applied, {
         repair_run_id: activeRepairRunId,
         status: 'passed',
@@ -6913,6 +7510,27 @@ function toolsList() {
         },
       },
       {
+        name: 'talos_pendencies',
+        description: 'CN4/D10/D20: writer/reader MCP do PENDENCIAS_<slug>.md (residual P2/P3 da review). Actions: append (grava PD-<sprint>-<NN> monotônico por sprint; única escrita do arquivo), list (relê o disco; pds + open_count) e close (marca Status closed; nunca apaga a linha). Único writer = MCP (INV7).',
+        inputSchema: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['run_id', 'backlog_path'],
+          properties: {
+            run_id: { type: 'string', minLength: 1 },
+            project_root: { type: 'string', minLength: 1 },
+            backlog_path: { type: 'string', minLength: 1, description: 'Path do backlog mestre; o arquivo vive em .talos/backlog/PENDENCIAS_<slug>.md (slug igual ao padrão manual-validation).' },
+            action: { type: 'string', enum: ['append', 'list', 'close'], default: 'append' },
+            sprint_id: { type: 'string', pattern: '^S\\d{2}(?:[a-z]|\\.\\d+)?$', description: 'Obrigatório para append: sprint de origem do residual (deve existir no backlog).' },
+            severity: { type: 'string', enum: ['P0', 'P1', 'P2', 'P3'], description: 'Obrigatório para append: severidade declarada do residual.' },
+            files: { type: 'array', items: { type: 'string', minLength: 1 }, description: 'Opcional (append): arquivos do residual — alimenta o overlap do drain gate.' },
+            recommendation: { type: 'string', minLength: 1, description: 'Obrigatório para append: recomendação de correção.' },
+            fix_validation: { type: 'string', minLength: 1, description: 'Obrigatório para append: check declarado para validar a correção futura.' },
+            pd_id: { type: 'string', pattern: '^PD-\\S+-\\d{2,}$', description: 'Obrigatório para close: id da pendency (ex.: PD-S03-01).' },
+          },
+        },
+      },
+      {
         name: 'talos_update_sprint_status',
         description: 'Sincroniza status backlog/sprint.',
         inputSchema: {
@@ -7023,6 +7641,15 @@ function toolsList() {
             state_path: { type: 'string' },
             detail: { type: 'string' },
             validator_status: { type: 'string' },
+            // Plano 01 (loop): flag opt-in da esteira serial (D1/D12). Só o start
+            // consome; ausente ⇒ nada gravado (CN7).
+            options: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                loop: { type: 'boolean', description: 'Esteira serial --loop (D1/D12): review crítica obrigatória antes de done/manual_validation_pending.' },
+              },
+            },
           },
         },
       },
@@ -7143,6 +7770,7 @@ function handleRequest(message) {
                         name === 'talos_select_next_sprint' ? selectNextSprint(args) :
                           name === 'talos_update_sprint_status' ? updateSprintStatus(args) :
 name === 'talos_sync_manual_validation' ? syncManualValidation(args) :
+                                name === 'talos_pendencies' ? pendenciesHandler(args) :
                                 name === 'talos_traceability' ? traceabilityHandler(args) :
                                 name === 'talos_classify_input' ? classifyInput(args) :
                               name === 'talos_preflight' ? preflight(args) :
@@ -7277,6 +7905,7 @@ export {
   nextActionForSelectedSprint,
   updateSprintStatus,
   syncManualValidation,
+  pendenciesHandler,
   traceabilityHandler,
   emitMemoryHandoff,
   propagateRevalidation,

@@ -154,3 +154,69 @@ Return exactly this structure:
 ```
 
 Do not add extra sections or narrative conclusions.
+
+---
+
+## Fase de verification (pós-repair)
+
+Segundo modo desta skill: revisão pontual pós-repair. **Não é uma segunda review completa** — é o fechamento mecânico do delta do `repair_evidence` (D3/D4). A review completa (passos 1–7 acima) permanece a **única revisão integral por sprint** (D11): a verification NÃO repete os passos 1–4/6/7 dela; o recorte dela é o delta do repair + probes de vizinhança dos arquivos do delta. É proibido usar esta fase como segundo passe integral.
+
+### Disparo e entrada
+
+- **Disparo:** despachada pelo orquestrador após o `talos-findings-repair` com origem `slice_review` (repair in-loop) ou após o sidecar `talos-escalation-repair`. Nunca se auto-dispara e nunca roda antes de existir um commit de repair com `repair[]` no state.
+- **Entrada:** `state_path` da slice, os findings originais da review (packet `F-NNN`) e o `repair_evidence` do último commit de repair (`talos_commit_state` com `repair[]` — files e checks por finding).
+- **Escopo fechado no delta:** apenas os arquivos e checks nomeados no `repair_evidence`. O revisor lê o diff real desses arquivos (e o state citado) — nunca a slice inteira, nunca arquivos fora do delta. Achado em arquivo fora do delta é "finding novo fora do delta" (regra própria abaixo), não motivo de expansão de escopo.
+
+### Âncora mecânica: executar os checks antes de julgar (D5/INV3)
+
+A ordem é obrigatória e inverte qualquer atalho: **checks executados ANTES do veredito; sem execução não há veredito.**
+
+1. Para cada item do `repair_evidence`, executar cada check declarado (`fix_validation` do finding + `checks` do `repair[]` correspondente) como comando real no repositório, com resultado observado (`exit code`), não por leitura de código. Check só conta se foi executado nesta fase.
+2. Veredito binário por finding, no enum fechado que o MCP valida (`resolved | not_resolved | regression`):
+   - `resolved` — todos os checks do finding executados com exit 0 e o defeito ausente no delta;
+   - `not_resolved` — check falho, check não executável (comando quebra por ambiente) ou defeito persiste no delta; registrar a evidência do erro no finding. Nunca `resolved` por piedade;
+   - `regression` — o delta quebrou comportamento vizinho verificado (probe de vizinhança dos arquivos do delta falhou).
+3. `resolved` sem `checks_executed[]` não vazio (com resultado de sucesso declarado em `check_results[]`) é recusado pelo MCP (`verification_invalida` — AC-02.3.1/INV3); proibir o atalho aqui é obrigação do produtor: o payload só sai da fase com checks executados de verdade.
+
+### Saída: eco obrigatório do veredito (VC4/D21)
+
+A fase termina entregando ao orquestrador um bloco `verification` estruturado, no formato exato que `talos_lock_validator(action=repair_complete, data.verification)` valida:
+
+```json
+{
+  "verification": {
+    "findings": [
+      {
+        "finding_id": "F-NN",
+        "verdict": "resolved|not_resolved|regression",
+        "checks_executed": ["comando executado"],
+        "check_results": [{ "check": "comando executado", "exit_code": 0 }]
+      }
+    ],
+    "verified_at": "<timestamp ISO>"
+  }
+}
+```
+
+O eco é **passo de fechamento obrigatório da fase**, não sugestão: veredito que não chega ao `repair_complete` morre na conversa e a sprint não fecha. A review em modo verification **não chama** `talos_lock_validator`, `talos_commit_state` nem nenhuma tool de escrita do MCP — ela devolve o bloco ao orquestrador, que é quem o ecoa (regra dura D2: escrita e correção pertencem a outro agente).
+
+### Roteamento do residual por severidade declarada (D6/INV4)
+
+O destino do residual é **função da severidade declarada no campo do finding** (classificada pelo gate canônico `scripts/classify_findings.mjs`), nunca da opinião do revisor. É proibido reclassificar severidade (ex.: "P2 grave vira sidecar").
+
+| Caso | Destino |
+|------|---------|
+| `resolved` | finding fechado |
+| `not_resolved`/`regression` com severidade P0/P1 | packet de escalation para o sidecar `talos-escalation-repair` (join serial — D7/D16) |
+| `not_resolved`/`regression` com severidade P2/P3 | orquestrador registra via `talos_pendencies(append)` (`PD-<sprint>-<NN>`) |
+| AC `violated` no state (`acceptance_results`) | residual P0 mecânico — classificação por campo do state, sem juízo do revisor (D4/R12); segue ao sidecar se persistir |
+
+### Finding novo fora do delta (D11/R10/INV10)
+
+Finding descoberto fora do delta é **reportado no relatório da verification** e roteado pela mesma regra de severidade (P0/P1 → sidecar; P2/P3 → PD). É proibido reabrir a review completa, reexecutar os passos 1–7 ou iniciar segundo passe de delta por causa dele — a iteração tem teto finito e o residual vai para sidecar/PD. Na fase de verification é proibido despachar `talos-task-validator` (task-validator ⟂ slice-review — INV2).
+
+### Regras duras da fase
+
+- Read-only: não edita código, não chama `talos_commit_state`, não despacha subagente de correção — a correção é do `talos-findings-repair`/sidecar (INV1/D2).
+- Não reabre nem reexecuta a review completa; não despacha `talos-task-validator`; sem segundo passe (INV2/INV10).
+- `violated` no state ⇒ residual P0 mecânico (INV12).

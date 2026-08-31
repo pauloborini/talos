@@ -51,6 +51,7 @@ DISPATCHED_AGENTS=(
   talos-plan-execute
   talos-direct-execute
   talos-slice-review
+  talos-escalation-repair
 )
 
 copy_mcp_runtime() {

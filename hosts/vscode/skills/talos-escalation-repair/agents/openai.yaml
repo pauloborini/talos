@@ -1,0 +1,7 @@
+interface:
+  display_name: "Talos Escalation Repair"
+  short_description: "Serial escalation sidecar: residual P0/P1 fixer and PD drain executor (talos-escalation-repair)"
+  default_prompt: "Use $talos-escalation-repair to fix the residual P0/P1 findings that survived verification (slot origin=escalation already opened by the orchestrator), or to drain open pendencies (PDs) delegated by the loop — committing via talos_commit_state(repair[]) on the same state_path, never self-validating."
+
+policy:
+  allow_implicit_invocation: true
