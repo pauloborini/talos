@@ -156,7 +156,7 @@ const ROUTED_MODE_BY_TYPE = {
   idea: 'direct',
 };
 const BACKLOG_PRIORITY_INPUT_TYPES = new Set(['idea', 'briefing', 'roadmap', 'conversation', 'spec-macro']);
-const BACKLOG_STATES = new Set(['backlog', 'ready', 'doing', 'review', 'manual_validation_pending', 'done', 'blocked']);
+const BACKLOG_STATES = new Set(['backlog', 'ready', 'doing', 'review', 'manual_validation_pending', 'done', 'blocked', 'detached_repair']);
 const BACKLOG_MOSCOW = new Set(['Must', 'Should', 'Could', "Won't now"]);
 const BACKLOG_LEVEL = new Set(['alto', 'médio', 'baixo']);
 const BACKLOG_PRIORITY = new Set(['P0', 'P1', 'P2', 'P3']);
@@ -166,11 +166,15 @@ const TERMINAL_VALIDATOR_VERDICTS = new Set(['pass', 'pass_with_observations']);
 const SPRINT_STATUS_TRANSITIONS = {
   backlog: new Set(['ready', 'blocked']),
   ready: new Set(['doing', 'review', 'done', 'blocked']),
-  doing: new Set(['review', 'done', 'blocked']),
-  review: new Set(['manual_validation_pending', 'done', 'doing', 'blocked']),
+  // D8 (loop): doing/review → detached_repair estaciona a sprint com residual
+  // irrecuperável sem abortar a campanha; saída (P1) só para ready (reingresso
+  // após correção via drain/sidecar) ou blocked. SEM detached_repair→done direto.
+  doing: new Set(['review', 'done', 'blocked', 'detached_repair']),
+  review: new Set(['manual_validation_pending', 'done', 'doing', 'blocked', 'detached_repair']),
   manual_validation_pending: new Set(['done', 'blocked']),
   blocked: new Set(['ready', 'backlog']),
   done: new Set(['done']),
+  detached_repair: new Set(['ready', 'blocked']),
 };
 const MOSCOW_RANK = new Map([['Must', 0], ['Should', 1], ['Could', 2], ["Won't now", 3]]);
 const GAIN_RANK = new Map([['alto', 0], ['médio', 1], ['baixo', 2]]);
@@ -1460,6 +1464,12 @@ function patchDispatchResult(runId, result, args = {}) {
   });
   const data = {
     ...(previous.data ?? {}),
+    // Plano 01 (loop): `options` (flag --loop) chega no result do start passed e
+    // é projetado no nível raiz de `data` (data.options.loop) — o sink é a leitura
+    // no updateSprintStatus. Sem `options` no result, nenhum campo é criado/mutado.
+    ...(result.options !== undefined
+      ? { options: { ...(previous.data?.options ?? {}), ...result.options } }
+      : {}),
     dispatch: {
       ...currentDispatch,
       ...(result.dispatch ?? {}),
@@ -2482,6 +2492,8 @@ function nextActionForSelectedSprint(info, mode = 'full') {
 function derivedSprintGateStatus(status, validatorVerdict) {
   if (status === 'done') return `validator:${validatorVerdict}`;
   if (status === 'manual_validation_pending') return `validator:${validatorVerdict};manual_pending`;
+  // D8 (loop): estacionada por falha do sidecar — gate canônico `escalation:failed`.
+  if (status === 'detached_repair') return 'escalation:failed';
   if (status === 'review') return 'validator:pending';
   if (status === 'doing') return 'exec:running';
   if (status === 'blocked') return validatorVerdict === 'fail' ? 'validator:fail' : 'blocked';
@@ -2737,6 +2749,41 @@ function updateSprintStatus(args = {}) {
       if (transitionPending) pendencies.push(transitionPending);
       if (pendingPathToken(row.sprint_file)) {
         pendencies.push(conformancePending('sprint_file', sprintId, null, `Linha ${sprintId} não aponta Sprint file real.`, 'preencher_sprint_file_no_backlog'));
+      }
+    }
+    // Plano 01 (loop): sink do VC3 — a flag `--loop` gravada no ledger pela
+    // origem (lockDispatch start, options.loop) é consumida aqui como exigência
+    // extra de fechamento (D12): done/manual_validation_pending em run de loop
+    // exigem gate `slice_review` `passed` no MESMO ledger. Fail-closed ANTES de
+    // qualquer write (mesmo padrão do throw de pré-condição abaixo). Run sem
+    // `options.loop` (campo ausente/falsey) → nenhum comportamento novo (CN7).
+    // Leitura do run: mesmo acesso de patchGateResult (readState); run ausente
+    // ou ilegível ⇒ sem flag ⇒ sem gate novo (comportamento aditivo, D18).
+    if (status === 'done' || status === 'manual_validation_pending') {
+      let loopReviewRequired = false;
+      try {
+        const runLedger = readState(runId, args);
+        loopReviewRequired = runLedger?.data?.options?.loop === true;
+      } catch {
+        loopReviewRequired = false;
+      }
+      if (loopReviewRequired) {
+        let loopReviewPassed = false;
+        try {
+          const runLedger = readState(runId, args);
+          loopReviewPassed = runLedger?.data?.gates?.slice_review?.status === 'passed';
+        } catch {
+          loopReviewPassed = false;
+        }
+        if (!loopReviewPassed) {
+          pendencies.push(conformancePending(
+            'loop_review',
+            sprintId,
+            null,
+            '--loop implica review crítica (D12): rode talos-slice-review antes de fechar.',
+            'rodar_slice_review_loop',
+          ));
+        }
       }
     }
     // Sprint file lido cedo: o gate v1 de fechamento (Plano 03) cruza o
@@ -3949,6 +3996,26 @@ function startDispatch(args, context) {
   if (Object.prototype.hasOwnProperty.call(args, LEGACY_ROUTE_KEY)) {
     throw rpcError(-32602, `unknown_property: ${LEGACY_ROUTE_KEY}`);
   }
+  // Plano 01 (loop): origem do VC3 — flag opt-in `--loop` da esteira serial
+  // (D1/D12/D18). Normalização estrita: `options` é objeto opcional com campo
+  // único reconhecido `loop: boolean`; não-objeto/não-bool é recusa -32602.
+  // Ausente ⇒ nada é gravado e nenhum retorno muda (CN7: opt-in byte a byte).
+  let dispatchOptions;
+  if (Object.prototype.hasOwnProperty.call(args, 'options') && args.options !== undefined) {
+    if (typeof args.options !== 'object' || args.options === null || Array.isArray(args.options)) {
+      throw rpcError(-32602, 'invalid_params: options deve ser objeto (ex.: { loop: true }).');
+    }
+    const unknownOption = Object.keys(args.options).find((key) => key !== 'loop');
+    if (unknownOption !== undefined) {
+      throw rpcError(-32602, `unknown_property: options.${unknownOption}`);
+    }
+    if (args.options.loop !== undefined && typeof args.options.loop !== 'boolean') {
+      throw rpcError(-32602, 'invalid_params: options.loop deve ser boolean.');
+    }
+    if (args.options.loop !== undefined) {
+      dispatchOptions = { loop: args.options.loop };
+    }
+  }
   const timestamp = nowIso();
   let baseSha = null;
   if (phase === 'plan_execute') {
@@ -4013,6 +4080,9 @@ function startDispatch(args, context) {
     timestamp,
     current_phase: phase,
     expected_phase: expected,
+    // Flag `--loop` só no start passed: start bloqueado não inicia run e não
+    // grava a flag (patchDispatchResult projeta `options` apenas quando presente).
+    ...(dispatchOptions ? { options: dispatchOptions } : {}),
     dispatch: {
       active: {
         phase,
@@ -7023,6 +7093,15 @@ function toolsList() {
             state_path: { type: 'string' },
             detail: { type: 'string' },
             validator_status: { type: 'string' },
+            // Plano 01 (loop): flag opt-in da esteira serial (D1/D12). Só o start
+            // consome; ausente ⇒ nada gravado (CN7).
+            options: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                loop: { type: 'boolean', description: 'Esteira serial --loop (D1/D12): review crítica obrigatória antes de done/manual_validation_pending.' },
+              },
+            },
           },
         },
       },

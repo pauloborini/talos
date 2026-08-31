@@ -2953,6 +2953,257 @@ test('talos_update_sprint_status: manual_validation_pending exige validator term
   assert.ok(rD.pendencies.some((p) => p.category === 'acceptance_results'));
 });
 
+// ===== Plano 01 (loop) — estacionamento detached_repair + flag --loop no ledger =====
+
+// Fixture do run de loop: preflight + lock_dispatch(start, options.loop) — a
+// ORIGEM real do VC3 (a flag nasce no ledger por lockDispatch, nunca à mão).
+function startLoopRun(root, runId, { withFlag = true } = {}) {
+  preflight({
+    run_id: runId, project_root: root, mode: 'execute',
+    host: 'claude', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  return lockDispatch({
+    run_id: runId, project_root: root, action: 'start', phase: 'plan_execute',
+    ...(withFlag ? { options: { loop: true } } : {}),
+  });
+}
+
+// Fixture de READER do gate slice_review (o gravador real do veredito é o
+// orquestrador — Plano 05; hoje nenhum path público grava data.gates.slice_review).
+// Mesmo padrão de harness documentado do wrapper lockValidator acima.
+function grantSliceReviewPassed(root, runId) {
+  const current = runState({ action: 'get', run_id: runId, project_root: root });
+  const data = current.data ?? {};
+  data.gates = { ...(data.gates ?? {}), slice_review: { status: 'passed', timestamp: '2026-08-31T00:00:00.000Z' } };
+  runState({ action: 'upsert', run_id: runId, project_root: root, data });
+}
+
+// Fixture de fechamento (done) com acceptance_results provados.
+function writeDoneFixture(root) {
+  writeHandoffTemplateFixture(root);
+  writeSprintFixture(root, 'S01', { status: 'doing', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | doing | exec:running | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+  writeStateWithAcceptance(root, 'S01.json', [
+    { id: 'AC-001', status: 'proved', proof_types: ['I:present', 'T-outcome:proved'] },
+  ]);
+}
+
+function closeDone(root, runId) {
+  return updateSprintStatus({
+    run_id: runId, project_root: root, backlog_path: 'BACKLOG.md', sprint_id: 'S01',
+    status: 'done', validator_verdict: 'pass', plan_path: 'PLAN_S01.md',
+    state_path: '.talos/state/S01.json', evidence: 'validator pass',
+  });
+}
+
+test('update sprint status detached_repair: grava estacionamento (gate escalation:failed) e recusa transições fora da régua', () => {
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S01', { status: 'doing', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | doing | exec:running | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+  const r = updateSprintStatus({
+    run_id: 'r1', project_root: root, backlog_path: 'BACKLOG.md', sprint_id: 'S01',
+    status: 'detached_repair',
+  });
+  assert.equal(r.status, 'passed');
+  assert.equal(r.next_status, 'detached_repair');
+  const backlog = fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8');
+  const row = parseSprintRows(backlog)[0];
+  assert.equal(row.state, 'detached_repair');
+  assert.equal(row.gate, 'escalation:failed');
+  const sprint = fs.readFileSync(path.join(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md'), 'utf8');
+  assert.match(sprint, /^\| Status \| detached_repair \|$/m);
+  // O índice aceita o estado novo (enum propaga à validação do backlog).
+  assert.equal(verifyBacklogIndex({ run_id: 'r1', project_root: root, backlog_path: 'BACKLOG.md' }).status, 'passed');
+
+  // Transição ilegal: detached_repair → done (sem caminho direto estacionado→done).
+  const rBadDone = updateSprintStatus({
+    run_id: 'r1', project_root: root, backlog_path: 'BACKLOG.md', sprint_id: 'S01',
+    status: 'done', validator_verdict: 'pass', state_path: '.talos/state/S01.json',
+  });
+  assert.equal(rBadDone.status, 'blocked');
+  assert.ok(rBadDone.pendencies.some((p) => p.category === 'status_transition' && p.next_action === 'corrigir_fluxo_status_sprint'));
+
+  // Saída P1 legal: detached_repair → ready (reingresso após correção).
+  const rReady = updateSprintStatus({
+    run_id: 'r1', project_root: root, backlog_path: 'BACKLOG.md', sprint_id: 'S01',
+    status: 'ready',
+  });
+  assert.equal(rReady.status, 'passed');
+  assert.equal(parseSprintRows(fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8'))[0].state, 'ready');
+
+  // Transição ilegal: done → detached_repair (reabertura de done segue recusada).
+  const rootDone = tmpRoot();
+  writeSprintFixture(rootDone, 'S01', { status: 'done', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(rootDone, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | done | validator:pass | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+  const rReopen = updateSprintStatus({
+    run_id: 'r1', project_root: rootDone, backlog_path: 'BACKLOG.md', sprint_id: 'S01',
+    status: 'detached_repair',
+  });
+  assert.equal(rReopen.status, 'blocked');
+  assert.ok(rReopen.pendencies.some((p) => p.category === 'status_transition'));
+
+  // Transição ilegal: backlog → detached_repair.
+  const rootBacklog = tmpRoot();
+  writeSprintFixture(rootBacklog, 'S01', { status: 'backlog', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(rootBacklog, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | backlog | — | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+  const rBacklog = updateSprintStatus({
+    run_id: 'r1', project_root: rootBacklog, backlog_path: 'BACKLOG.md', sprint_id: 'S01',
+    status: 'detached_repair',
+  });
+  assert.equal(rBacklog.status, 'blocked');
+  assert.ok(rBacklog.pendencies.some((p) => p.category === 'status_transition' && p.next_action === 'corrigir_fluxo_status_sprint'));
+});
+
+test('detached_repair não satisfaz DEP e select_next pula presa pega independente', () => {
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S01', { status: 'detached_repair', dorStatus: 'verde' });
+  writeSprintFixture(root, 'S02', { status: 'ready', dorStatus: 'verde' });
+  writeSprintFixture(root, 'S03', { status: 'ready', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Estacionada | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | detached_repair | escalation:failed | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+    '| S02 | Dependente | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | S01 | ready | — | `.talos/backlog/sprints/SPRINT_S02_runtime.md` | pendente | pendente |',
+    '| S03 | Independente | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | ready | — | `.talos/backlog/sprints/SPRINT_S03_runtime.md` | pendente | pendente |',
+  ]));
+  const r = selectNextSprint({ run_id: 'r1', project_root: root, backlog_path: 'BACKLOG.md' });
+  assert.equal(r.status, 'passed');
+  assert.equal(r.selected.sprint_id, 'S03');
+  // A presa estacionada sai em rejected com a razão do estado; o dependente fica
+  // travado por unmet_dependencies apontando o estado detached_repair.
+  assert.ok(r.rejected.some((item) => item.id === 'S01' && item.reasons.includes('state=detached_repair')));
+  assert.ok(r.rejected.some((item) => item.id === 'S02' && item.reasons.some((reason) => /unmet_dependencies=S01:detached_repair/.test(reason))));
+
+  // Zero candidata (presa + dependente, sem independente) → blocked: a campanha
+  // não avança com dependência estacionada, mas a presa NÃO é DEP-satisfatória.
+  const rootBlocked = tmpRoot();
+  writeSprintFixture(rootBlocked, 'S01', { status: 'detached_repair', dorStatus: 'verde' });
+  writeSprintFixture(rootBlocked, 'S02', { status: 'ready', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(rootBlocked, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Estacionada | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | detached_repair | escalation:failed | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+    '| S02 | Dependente | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | S01 | ready | — | `.talos/backlog/sprints/SPRINT_S02_runtime.md` | pendente | pendente |',
+  ]));
+  const rBlocked = selectNextSprint({ run_id: 'r1', project_root: rootBlocked, backlog_path: 'BACKLOG.md' });
+  assert.equal(rBlocked.status, 'blocked');
+  assert.equal(rBlocked.selected, null);
+  assert.ok(rBlocked.rejected.some((item) => item.id === 'S02' && item.reasons.some((reason) => /unmet_dependencies=S01:detached_repair/.test(reason))));
+});
+
+test('manual_validation_pending satisfaz DEP (regressão D15)', () => {
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S01', { status: 'manual_validation_pending', dorStatus: 'verde' });
+  writeSprintFixture(root, 'S02', { status: 'ready', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | M pendente | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | manual_validation_pending | validator:pass;manual_pending | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+    '| S02 | Dependente | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | S01 | ready | — | `.talos/backlog/sprints/SPRINT_S02_runtime.md` | pendente | pendente |',
+  ]));
+  const r = selectNextSprint({ run_id: 'r1', project_root: root, backlog_path: 'BACKLOG.md' });
+  assert.equal(r.status, 'passed');
+  assert.equal(r.selected.sprint_id, 'S02');
+  assert.ok(!r.rejected.some((item) => item.reasons.some((reason) => /unmet_dependencies=S01/.test(reason))));
+});
+
+test('loop exige slice review antes de done', () => {
+  const root = tmpRoot();
+  writeDoneFixture(root);
+  startLoopRun(root, 'loopgate', { withFlag: true });
+
+  // Run de loop SEM gate slice_review passed: done é recusado fail-closed.
+  const r = closeDone(root, 'loopgate');
+  assert.equal(r.status, 'blocked');
+  const loopPendency = r.pendencies.find((p) => p.next_action === 'rodar_slice_review_loop');
+  assert.ok(loopPendency, `esperava pendência rodar_slice_review_loop; obtido: ${JSON.stringify(r.pendencies)}`);
+  assert.equal(loopPendency.category, 'loop_review');
+  assert.match(loopPendency.message, /--loop implica review crítica/);
+  // Fail-closed: backlog inalterado (nenhum write parcial).
+  assert.equal(parseSprintRows(fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8'))[0].state, 'doing');
+
+  // manual_validation_pending é fechamento e exige review no loop do mesmo jeito.
+  writeStateWithAcceptance(root, 'S01.json', [{ id: 'AC-001', status: 'manual_pending', proof_types: ['M:pending'] }]);
+  const rMvp = updateSprintStatus({
+    run_id: 'loopgate', project_root: root, backlog_path: 'BACKLOG.md', sprint_id: 'S01',
+    status: 'manual_validation_pending', validator_verdict: 'pass', state_path: '.talos/state/S01.json',
+  });
+  assert.equal(rMvp.status, 'blocked');
+  assert.ok(rMvp.pendencies.some((p) => p.next_action === 'rodar_slice_review_loop'));
+  writeStateWithAcceptance(root, 'S01.json', [
+    { id: 'AC-001', status: 'proved', proof_types: ['I:present', 'T-outcome:proved'] },
+  ]);
+
+  // Gravado slice_review passed no MESMO ledger → done passa.
+  grantSliceReviewPassed(root, 'loopgate');
+  const r2 = closeDone(root, 'loopgate');
+  assert.equal(r2.status, 'passed', JSON.stringify(r2.pendencies, null, 1));
+  assert.ok(!r2.pendencies.some((p) => p.next_action === 'rodar_slice_review_loop'));
+  assert.equal(parseSprintRows(fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8'))[0].state, 'done');
+});
+
+test('loop com review passed fecha normal', () => {
+  const root = tmpRoot();
+  writeDoneFixture(root);
+  startLoopRun(root, 'loopok', { withFlag: true });
+  grantSliceReviewPassed(root, 'loopok');
+
+  const r = closeDone(root, 'loopok');
+  assert.equal(r.status, 'passed');
+  assert.equal(r.next_status, 'done');
+  // Gate idempotente: output existente mantido (sem pendência nova, handoff emitido).
+  assert.equal(r.pending_count, 0);
+  assert.equal(r.next_action, 'promover_handoff');
+  assert.ok(r.handoff_path);
+});
+
+test('loop flag persistida no ledger', () => {
+  const root = tmpRoot();
+  const r = startLoopRun(root, 'loopflag', { withFlag: true });
+  assert.equal(r.status, 'passed');
+  const st = runState({ action: 'get', run_id: 'loopflag', project_root: root });
+  assert.equal(st.data.options.loop, true);
+
+  // Normalização estrita (detalhe local do plano): não-bool e não-objeto → -32602.
+  assert.throws(
+    () => lockDispatch({ run_id: 'loopflag', project_root: root, action: 'start', phase: 'plan_execute', options: { loop: 'sim' } }),
+    (error) => error.code === -32602 && /options\.loop/.test(error.message),
+  );
+  assert.throws(
+    () => lockDispatch({ run_id: 'loopflag', project_root: root, action: 'start', phase: 'plan_execute', options: { loop: 1 } }),
+    (error) => error.code === -32602,
+  );
+  assert.throws(
+    () => lockDispatch({ run_id: 'loopflag', project_root: root, action: 'start', phase: 'plan_execute', options: 'loop' }),
+    (error) => error.code === -32602 && /options/.test(error.message),
+  );
+  assert.throws(
+    () => lockDispatch({ run_id: 'loopflag', project_root: root, action: 'start', phase: 'plan_execute', options: { outro: true } }),
+    (error) => error.code === -32602 && /options\.outro/.test(error.message),
+  );
+  // A recusa não mutou a flag gravada.
+  assert.equal(runState({ action: 'get', run_id: 'loopflag', project_root: root }).data.options.loop, true);
+});
+
+test('sem flag loop nada grava e pipeline atual passa', () => {
+  const root = tmpRoot();
+  writeDoneFixture(root);
+  const start = startLoopRun(root, 'noflag', { withFlag: false });
+  assert.equal(start.status, 'passed');
+  assert.equal(start.options, undefined);
+  // Sem options: nenhum campo de loop no run.json (opt-in byte a byte, CN7).
+  const st = runState({ action: 'get', run_id: 'noflag', project_root: root });
+  assert.equal(st.data.options, undefined);
+
+  // Fechamento sem flag flui como hoje: review crítica NÃO é exigida pelo gate.
+  const r = closeDone(root, 'noflag');
+  assert.equal(r.status, 'passed', JSON.stringify(r.pendencies, null, 1));
+  assert.ok(!r.pendencies.some((p) => p.next_action === 'rodar_slice_review_loop'));
+  assert.equal(parseSprintRows(fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8'))[0].state, 'done');
+});
+
 // ===== Plano 4 — relatório de validação manual e sync (AC-4.* / CN3 / D11-D15) =====
 
 // Sprint file com AC-002 (e opcionalmente AC-003) declarando smoke manual `M`
