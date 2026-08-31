@@ -37,6 +37,7 @@ import {
   nextActionForSelectedSprint,
   updateSprintStatus,
   syncManualValidation,
+  pendenciesHandler,
   emitMemoryHandoff,
   propagateRevalidation,
   classifyInput,
@@ -271,6 +272,10 @@ test('tools: conjunto registrado é exatamente a lista canônica, sem adição (
     'talos_scan_acceptance',
     'talos_select_next_sprint',
     'talos_sync_manual_validation',
+    // Guide LOOP_SPRINTS_AUTOCORRECAO_GUIDE (Plano 02): `talos_pendencies` —
+    // writer/reader MCP do PENDENCIAS_<slug>.md (D10/D20/INV7); único writer do
+    // arquivo é o MCP (append|list|close). Adição consciente ao catálogo canônico.
+    'talos_pendencies',
     // Guide RASTREABILIDADE_MCP_GUIDE (Plano 01): tool única `talos_traceability`
     // com action upsert|verify — ledger opt-in sem hook (D2/D5). Extensível no
     // Plano 03 (receipt|record_metric) sem nova tool.
@@ -8304,4 +8309,444 @@ test('talos_verify_sprint_file: v1 com source_refs órfã bloqueia antes do selo
   assert.equal(r.status, 'blocked');
   const orfa = r.pendencies.find((p) => p.category === 'rastreabilidade' && /órfão|órfã/.test(p.message));
   assert.ok(orfa, `pendência de ref órfã esperada: ${JSON.stringify(r.pendencies)}`);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Plano 02 (loop) — provenance/budget do repair, veredito da verification e
+// PENDENCIAS writer/reader + drain gate (CN6/CN9/CN4 parcial; VC1/VC2/VC4;
+// INV3/INV5/INV7). Princípio aditivo: chamadas sem `origin` mantêm o fluxo G4.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Fluxo in-loop pós-review: sem validator aberto (D4 corta o 2º validator no
+// ramo review→repair). O slot de repair abre sobre state v3 válido em disco.
+function plan02InLoopSetup(root, runId, statePath = `.talos/state/${runId}/slice.json`) {
+  preflight({
+    run_id: runId, project_root: root, mode: 'execute',
+    host: 'codex', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: runId, project_root: root, action: 'start', phase: 'plan_execute' });
+  ensureValidatorStateFixture(root, runId, statePath);
+  return statePath;
+}
+
+function plan02Verification(verdict, overrides = {}) {
+  return {
+    findings: [{
+      finding_id: 'F-001', verdict,
+      checks_executed: ['node --test'],
+      check_results: [{ check: 'node --test', ok: true }],
+      ...overrides,
+    }],
+    verified_at: new Date().toISOString(),
+  };
+}
+
+// AC-02.1.1 (VC1/CN6): procedência persistida; default validator preserva o fluxo.
+test('Plano 02: repair start persiste procedência (AC-02.1.1)', () => {
+  const root = tmpRoot();
+  const statePath = plan02InLoopSetup(root, 'p02prov');
+
+  const slice = lockValidator({
+    run_id: 'p02prov', project_root: root, action: 'repair_start',
+    state_path: statePath, origin: 'slice_review',
+  });
+  assert.equal(slice.status, 'passed');
+  assert.equal(slice.validator_status, 'repair_running');
+  let cycle = readRunJson(root, 'p02prov').data.validator_cycle;
+  assert.equal(cycle.repair.origin, 'slice_review', 'procedência in-loop persistida no cycle');
+  assert.equal(cycle.repair.budget_used.slice_review, 1);
+  assert.equal(cycle.repair.budget_used.escalation, 0);
+  assert.equal(cycle.repair.budget_used.validator, 0);
+
+  // Default: fluxo validator sem `origin` — mesma semântica de hoje.
+  const root2 = tmpRoot();
+  const statePath2 = plan02InLoopSetup(root2, 'p02prov2');
+  const start = lockValidator({
+    run_id: 'p02prov2', project_root: root2, action: 'start', state_path: statePath2,
+  });
+  assert.equal(start.status, 'passed');
+  lockValidator({
+    run_id: 'p02prov2', project_root: root2, action: 'complete', state_path: statePath2,
+    validator_run_id: start.validator_run_id, verdict: 'fail',
+    data: { findings: [finding()] },
+  });
+  const legacy = lockValidator({
+    run_id: 'p02prov2', project_root: root2, action: 'repair_start', state_path: statePath2,
+  });
+  assert.equal(legacy.status, 'passed', 'fluxo validator sem origin intacto (D18)');
+  cycle = readRunJson(root2, 'p02prov2').data.validator_cycle;
+  assert.equal(cycle.repair.origin, 'validator');
+
+  // Origin fora do enum: blocked tipado, sem abrir slot.
+  const root3 = tmpRoot();
+  const statePath3 = plan02InLoopSetup(root3, 'p02prov3');
+  const bad = lockValidator({
+    run_id: 'p02prov3', project_root: root3, action: 'repair_start',
+    state_path: statePath3, origin: 'outro',
+  });
+  assert.equal(bad.status, 'blocked');
+  assert.equal(bad.code, 'origin_invalida');
+  cycle = readRunJson(root3, 'p02prov3').data.validator_cycle;
+  assert.equal(cycle.repair.status, 'not_needed', 'slot não abre com origin inválida');
+});
+
+// AC-02.2.1 (INV5/CN6/CN9): 2ª abertura da mesma provenance → blocked (fail-closed).
+test('Plano 02: budget 1 por provenance bloqueia 2ª abertura (AC-02.2.1)', () => {
+  const root = tmpRoot();
+  const statePath = plan02InLoopSetup(root, 'p02budget');
+
+  const first = lockValidator({
+    run_id: 'p02budget', project_root: root, action: 'repair_start',
+    state_path: statePath, origin: 'slice_review',
+  });
+  assert.equal(first.status, 'passed');
+  const done = lockValidator({
+    run_id: 'p02budget', project_root: root, action: 'repair_complete',
+    repair_run_id: first.repair_run_id, state_path: statePath,
+  });
+  assert.equal(done.status, 'passed', 'slot fecha sem verification (fluxo mínimo)');
+
+  const second = lockValidator({
+    run_id: 'p02budget', project_root: root, action: 'repair_start',
+    state_path: statePath, origin: 'slice_review',
+  });
+  assert.equal(second.status, 'blocked');
+  assert.equal(second.code, 'repair_budget_exhausted');
+  assert.equal(second.next_action, 'estacionar_sprint_detached_repair');
+  const cycle = readRunJson(root, 'p02budget').data.validator_cycle;
+  assert.equal(cycle.repair.status, 'completed', 'block de budget não abre slot');
+  assert.equal(cycle.repair.active, null);
+});
+
+// AC-02.2.2 (VC1/INV5/CN3 fundação): contadores independentes; slot escalation
+// habilita commit de role repair pela role inference existente.
+test('Plano 02: escalation com budget próprio e commit de repair (AC-02.2.2)', () => {
+  const { root } = planCommitSetup('p02esc', { mutar: true });
+  const commit = commitState({
+    run_id: 'p02esc', project_root: root, slice: 'A',
+    plan_path: '.talos/plans/PLAN_S41.md',
+    proofs: [{ kind: 'AC', id: 'AC-001', check: 'node --test', files: ['src/a.js'] }],
+  });
+  assert.equal(commit.status, 'passed');
+
+  // Esgota o budget da esteira primeiro.
+  const inLoop = lockValidator({
+    run_id: 'p02esc', project_root: root, action: 'repair_start',
+    state_path: commit.state_path, origin: 'slice_review',
+  });
+  assert.equal(inLoop.status, 'passed');
+  const inLoopDone = lockValidator({
+    run_id: 'p02esc', project_root: root, action: 'repair_complete',
+    repair_run_id: inLoop.repair_run_id, state_path: commit.state_path,
+  });
+  assert.equal(inLoopDone.status, 'passed');
+  const secondSlice = lockValidator({
+    run_id: 'p02esc', project_root: root, action: 'repair_start',
+    state_path: commit.state_path, origin: 'slice_review',
+  });
+  assert.equal(secondSlice.status, 'blocked');
+  assert.equal(secondSlice.code, 'repair_budget_exhausted');
+
+  // escalation NÃO consome o contador da esteira (falsificador: budget único).
+  const esc = lockValidator({
+    run_id: 'p02esc', project_root: root, action: 'repair_start',
+    state_path: commit.state_path, origin: 'escalation',
+  });
+  assert.equal(esc.status, 'passed', 'sidecar com budget próprio');
+  let cycle = readRunJson(root, 'p02esc').data.validator_cycle;
+  assert.equal(cycle.repair.origin, 'escalation');
+  assert.equal(cycle.repair.budget_used.escalation, 1);
+  assert.equal(cycle.repair.budget_used.slice_review, 1, 'contador da esteira intocado');
+
+  // Commit de role repair do sidecar passa na role inference (mesmo state_path).
+  fs.writeFileSync(path.join(root, 'src/a.js'), 'export const a = 2;\n');
+  const escCommit = commitState({
+    run_id: 'p02esc', project_root: root, slice: 'A',
+    plan_path: '.talos/plans/PLAN_S41.md',
+    proofs: [{ kind: 'AC', id: 'AC-001', check: 'node --test', files: ['src/a.js'] }],
+    repair: [{ finding_id: 'F-001', files: ['src/a.js'], checks: ['node --test'], status: 'resolved' }],
+  });
+  assert.equal(escCommit.status, 'passed', `commit do sidecar: ${escCommit.error ?? ''}`);
+  assert.equal(escCommit.role, 'repair');
+  cycle = readRunJson(root, 'p02esc').data.validator_cycle;
+  assert.equal(cycle.repair.budget_used.escalation, 1, 'commit não abre novo slot');
+});
+
+// AC-02.3.1 (VC4/INV3/CN2): veredito persiste; payload inválido → blocked sem mutar.
+test('Plano 02: verification persistida e recusas tipadas (AC-02.3.1)', () => {
+  const root = tmpRoot();
+  const statePath = plan02InLoopSetup(root, 'p02verif');
+  const slot = lockValidator({
+    run_id: 'p02verif', project_root: root, action: 'repair_start',
+    state_path: statePath, origin: 'slice_review',
+  });
+  assert.equal(slot.status, 'passed');
+  // Delta do repair no fluxo in-loop: sem packet de validator (D4), a fonte de
+  // finding_ids é o repair_evidence do state (commit do repair, F-001).
+  const repairData = resolvedRepair(root, statePath);
+
+  const casos = [
+    ['resolved sem checks', plan02Verification('resolved', { checks_executed: [], check_results: [] }), /checks_executed/],
+    ['verdict fora do enum', plan02Verification('aprovado'), /verdict/],
+    ['finding_id desconhecido', plan02Verification('resolved', { finding_id: 'F-999' }), /desconhecido/],
+  ];
+  for (const [nome, payload, motivo] of casos) {
+    const bad = lockValidator({
+      run_id: 'p02verif', project_root: root, action: 'repair_complete',
+      repair_run_id: slot.repair_run_id, state_path: statePath,
+      data: { repairs: repairData.repairs, verification: payload },
+    });
+    assert.equal(bad.status, 'blocked', `${nome}: deveria bloquear (recebido ${bad.error ?? ''})`);
+    assert.equal(bad.code, 'verification_invalida', `${nome}: ${JSON.stringify(bad.verification_violations ?? bad.error)}`);
+    assert.match(JSON.stringify(bad.verification_violations), motivo);
+    const cycle = readRunJson(root, 'p02verif').data.validator_cycle;
+    assert.equal(cycle.verification, null, `${nome}: block não muta cycle`);
+    assert.equal(cycle.repair.active?.run_id, slot.repair_run_id, `${nome}: slot permanece aberto`);
+  }
+
+  const good = lockValidator({
+    run_id: 'p02verif', project_root: root, action: 'repair_complete',
+    repair_run_id: slot.repair_run_id, state_path: statePath,
+    data: { repairs: repairData.repairs, verification: plan02Verification('resolved') },
+  });
+  assert.equal(good.status, 'passed', `verification válida: ${good.error ?? ''}`);
+  const cycle = readRunJson(root, 'p02verif').data.validator_cycle;
+  assert.equal(cycle.verification.findings[0].verdict, 'resolved', 'veredito persiste no cycle');
+  assert.deepEqual(cycle.verification.findings[0].checks_executed, ['node --test']);
+  assert.ok(cycle.verification.verified_at);
+});
+
+// AC-02.3.2 (CN7/D18): repair do ramo validator SEM verification segue válido e
+// idempotente — verification opcional não quebra o ciclo G4.
+test('Plano 02: repair sem verification segue válido (AC-02.3.2)', () => {
+  const root = tmpRoot();
+  const statePath = plan02InLoopSetup(root, 'p02nover');
+  const start = lockValidator({
+    run_id: 'p02nover', project_root: root, action: 'start', state_path: statePath,
+  });
+  assert.equal(start.status, 'passed');
+  lockValidator({
+    run_id: 'p02nover', project_root: root, action: 'complete', state_path: statePath,
+    validator_run_id: start.validator_run_id, verdict: 'fail',
+    data: { findings: [finding()] },
+  });
+  const repairStart = lockValidator({
+    run_id: 'p02nover', project_root: root, action: 'repair_start', state_path: statePath,
+  });
+  assert.equal(repairStart.status, 'passed');
+  const done = lockValidator({
+    run_id: 'p02nover', project_root: root, action: 'repair_complete',
+    repair_run_id: repairStart.repair_run_id, state_path: statePath,
+    data: resolvedRepair(root, statePath),
+  });
+  assert.equal(done.status, 'passed', `repair sem verification: ${done.error ?? ''}`);
+  const cycle = readRunJson(root, 'p02nover').data.validator_cycle;
+  assert.ok(cycle.verification === null || cycle.verification === undefined, 'verification ausente no fluxo validator');
+  // Idempotência S10 preservada: retorno duplicado é descartado.
+  const dup = lockValidator({
+    run_id: 'p02nover', project_root: root, action: 'repair_complete',
+    repair_run_id: repairStart.repair_run_id, state_path: statePath,
+    data: resolvedRepair(root, statePath),
+  });
+  assert.equal(dup.status, 'blocked');
+  assert.equal(dup.stale_discarded, true);
+  assert.equal(dup.reason, 'repair_duplicate_already_applied');
+});
+
+// AC-02.4.1 (VC2/CN4): NN monotônico por sprint, sem reuso após close; recarga.
+test('Plano 02: pendencies id monotônico e recarga (AC-02.4.1)', () => {
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S01', { status: 'ready', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | ready | — | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+  const append = (sprint = 'S01') => pendenciesHandler({
+    run_id: 'p02pd', project_root: root, backlog_path: 'BACKLOG.md', action: 'append',
+    sprint_id: sprint, severity: 'P2', files: ['src/a.js'],
+    recommendation: 'corrigir fluxo', fix_validation: 'node --test',
+  });
+  const p1 = append();
+  assert.equal(p1.status, 'passed');
+  assert.equal(p1.pd_id, 'PD-S01-01');
+  const p2 = append();
+  assert.equal(p2.pd_id, 'PD-S01-02', 'NN sequencial');
+  const close = pendenciesHandler({
+    run_id: 'p02pd', project_root: root, backlog_path: 'BACKLOG.md',
+    action: 'close', pd_id: 'PD-S01-01',
+  });
+  assert.equal(close.status, 'passed');
+  const p3 = append();
+  assert.equal(p3.pd_id, 'PD-S01-03', 'close não recicla NN');
+  // Recarga: list relê o arquivo do disco com os mesmos IDs.
+  const list = pendenciesHandler({
+    run_id: 'p02pd', project_root: root, backlog_path: 'BACKLOG.md', action: 'list',
+  });
+  assert.equal(list.status, 'passed');
+  assert.equal(list.open_count, 2);
+  assert.deepEqual(list.pds.map((pd) => pd.id), ['PD-S01-01', 'PD-S01-02', 'PD-S01-03']);
+  assert.deepEqual(list.pds.find((pd) => pd.id === 'PD-S01-01').status, 'closed');
+});
+
+// AC-02.4.2 (INV7/CN9): append só via tool MCP; recusa tipada; writer único.
+test('Plano 02: pendencies writer único (AC-02.4.2)', () => {
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S01', { status: 'ready', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | ready | — | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+
+  // Backlog inexistente → recusa tipada, sem criar arquivo.
+  const missing = pendenciesHandler({
+    run_id: 'p02w1', project_root: root, backlog_path: 'NAO_EXISTE.md', action: 'append',
+    sprint_id: 'S01', severity: 'P2', files: [], recommendation: 'r', fix_validation: 'node --test',
+  });
+  assert.equal(missing.status, 'blocked');
+  assert.equal(missing.code, 'backlog_ilegivel');
+  assert.equal(fs.existsSync(path.join(root, '.talos/backlog/PENDENCIAS_nao_existe.md')), false);
+
+  // Sprint inexistente no backlog → recusa tipada.
+  const noSprint = pendenciesHandler({
+    run_id: 'p02w1', project_root: root, backlog_path: 'BACKLOG.md', action: 'append',
+    sprint_id: 'S09', severity: 'P2', files: [], recommendation: 'r', fix_validation: 'node --test',
+  });
+  assert.equal(noSprint.status, 'blocked');
+  assert.equal(noSprint.code, 'sprint_inexistente');
+
+  // Busca estrutural: uma única função de escrita do PENDENCIAS no server.
+  const source = fs.readFileSync(
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'server.js'),
+    'utf8',
+  );
+  const writerDefs = (source.match(/function writePendenciesDocument\(/g) ?? []).length;
+  assert.equal(writerDefs, 1, 'definição única do writer PENDENCIAS');
+  const writerBody = source.slice(
+    source.indexOf('function writePendenciesDocument('),
+    source.indexOf('\nfunction ', source.indexOf('function writePendenciesDocument(')),
+  );
+  assert.ok(/fs\.writeFileSync\(tmp/.test(writerBody), 'writer único usa writeFileSync tmp');
+  assert.ok(/fs\.renameSync\(tmp/.test(writerBody), 'writer único usa renameSync tmp');
+  assert.ok(writerBody.includes('0o600'), 'writer único usa mode 0o600');
+  const restante = source.replace(writerBody, '');
+  const escritaDireta = restante
+    .split('\n')
+    .filter((line) => /PENDENCIES|PENDENCIAS/.test(line) && /fs\.writeFileSync\(/.test(line));
+  assert.deepEqual(escritaDireta, [], 'nenhuma escrita de PENDENCIAS fora do writer único');
+});
+
+// AC-02.4.3 (CN4): drain_required no select_next — teto 3, DEP-cone, closed não conta.
+test('Plano 02: drain_required no select_next (AC-02.4.3)', () => {
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S01', { status: 'done', dorStatus: 'verde' });
+  writeSprintFixture(root, 'S02', { status: 'ready', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Base | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | done | — | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+    '| S02 | Presa | F0 | objetivo | Must | Médio | Baixo | P1 | pendente | S01 | ready | — | `.talos/backlog/sprints/SPRINT_S02_runtime.md` | pendente | pendente |',
+  ]));
+  const append = (sprint) => pendenciesHandler({
+    run_id: 'p02drain', project_root: root, backlog_path: 'BACKLOG.md', action: 'append',
+    sprint_id: sprint, severity: 'P3', files: [], recommendation: 'melhorar', fix_validation: 'node --test',
+  });
+  const select = () => selectNextSprint({ run_id: 'p02drain', project_root: root, backlog_path: 'BACKLOG.md' });
+
+  // Sem PENDENCIAS: required false, demais campos idênticos.
+  const r0 = select();
+  assert.equal(r0.status, 'passed');
+  assert.equal(r0.selected.sprint_id, 'S02');
+  assert.equal(r0.drain_required.required, false);
+  assert.deepEqual(r0.drain_required.reasons, []);
+
+  append('S02');
+  append('S02');
+  const r1 = select();
+  assert.equal(r1.drain_required.required, false, '2 PDs < teto 3');
+
+  append('S02');
+  const r2 = select();
+  assert.equal(r2.drain_required.required, true, '3 PDs abertas atingem o teto');
+  assert.ok(r2.drain_required.reasons.includes('threshold'));
+  assert.equal(r2.drain_required.open_pd_count, 3);
+  assert.equal(r2.status, 'passed', 'drain_required anexa informação, não bloqueia a seleção');
+  assert.equal(r2.selected.sprint_id, 'S02');
+
+  // Falsificador: PDs closed não contam no limiar.
+  for (const pdId of ['PD-S02-01', 'PD-S02-02', 'PD-S02-03']) {
+    pendenciesHandler({
+      run_id: 'p02drain', project_root: root, backlog_path: 'BACKLOG.md',
+      action: 'close', pd_id: pdId,
+    });
+  }
+  const r3 = select();
+  assert.equal(r3.drain_required.required, false, 'closed não conta no teto');
+  assert.equal(r3.drain_required.open_pd_count, 0);
+
+  // DEP-cone: PD aberta de S01 (ancestral de S02) dispara com 1 PD.
+  append('S01');
+  const r4 = select();
+  assert.equal(r4.drain_required.required, true, 'PD de DEP-ancestral dispara');
+  assert.ok(r4.drain_required.reasons.includes('dep_cone'));
+  assert.equal(r4.drain_required.open_pd_count, 1);
+});
+
+// AC-02.5.1 (INV7/CN9): commit repair sem slot correspondente é recusado —
+// inclusive quando um slot de OUTRA provenance/state_path está aberto.
+test('Plano 02: commit repair sem slot é recusado (AC-02.5.1)', () => {
+  // Caso 1: ciclo idle, repair[] no input → repair_sem_slot (nada escreve).
+  const idle = planCommitSetup('p02slot1', { mutar: true });
+  const stateRel = '.talos/state/p02slot1/A.json';
+  const abs = path.join(idle.root, stateRel);
+  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  fs.writeFileSync(abs, 'ORIGINAL');
+  const noSlot = commitState({
+    run_id: 'p02slot1', project_root: idle.root, slice: 'A',
+    proofs: [{ kind: 'AC', id: 'AC-001', check: 'node --test' }],
+    repair: [{ finding_id: 'F-001', files: ['src/a.js'], checks: ['node --test'], status: 'resolved' }],
+  });
+  assert.equal(noSlot.status, 'blocked');
+  assert.equal(noSlot.code, 'repair_sem_slot');
+  assert.equal(fs.readFileSync(abs, 'utf8'), 'ORIGINAL', 'commit sem slot não escreve');
+
+  // Caso 2: slot escalation aberto para A não habilita commit repair em B.
+  const { root } = planCommitSetup('p02slot2', { mutar: true });
+  const commitA = commitState({
+    run_id: 'p02slot2', project_root: root, slice: 'A',
+    plan_path: '.talos/plans/PLAN_S41.md',
+    proofs: [{ kind: 'AC', id: 'AC-001', check: 'node --test', files: ['src/a.js'] }],
+  });
+  assert.equal(commitA.status, 'passed');
+  const slot = lockValidator({
+    run_id: 'p02slot2', project_root: root, action: 'repair_start',
+    state_path: commitA.state_path, origin: 'escalation',
+  });
+  assert.equal(slot.status, 'passed');
+  const commitB = commitState({
+    run_id: 'p02slot2', project_root: root, slice: 'B',
+    plan_path: '.talos/plans/PLAN_S41.md',
+    proofs: [{ kind: 'AC', id: 'AC-002', check: 'node --test' }],
+    repair: [{ finding_id: 'F-001', files: ['src/b.js'], checks: ['node --test'], status: 'resolved' }],
+  });
+  assert.equal(commitB.status, 'blocked', 'slot de outro state_path não habilita commit');
+  assert.equal(fs.existsSync(path.join(root, '.talos/state/p02slot2/B.json')), false, 'commit em B não escreve');
+});
+
+// AC-02.5.2 (CN3 fundação/D18): catálogo da skill sidecar sem exigência por mode.
+test('Plano 02: catálogo escalation sem exigência por mode (AC-02.5.2)', () => {
+  assert.equal(WORKFLOW_CONFIG.skills.escalation_repair, 'talos-escalation-repair');
+  // Sidecar não virou fase obrigatória de modo algum (falsificador).
+  assert.equal(expectedExecutorSkill('full'), 'talos-plan-execute');
+  assert.equal(expectedExecutorSkill('direct'), 'talos-direct-execute');
+  assert.equal(expectedExecutorSkill('execute'), 'talos-plan-execute');
+  const flow = JSON.stringify(documentFlowForRouting('full', 'backlog-item'));
+  assert.ok(!flow.includes('escalation-repair'), 'routing não cita o sidecar');
+  // Preflight continua passando sem nenhuma exigência nova da skill — o
+  // catálogo ecoa o id (G10), mas nada do preflight exige o sidecar para os
+  // modos com execução (status passed sem report de sidecar).
+  const root = tmpRoot();
+  const pf = preflight({
+    run_id: 'p02cat', project_root: root, mode: 'execute',
+    host: 'claude', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  assert.equal(pf.status, 'passed');
+  assert.ok(!JSON.stringify(pf.gates ?? {}).includes('escalation'), 'nenhum gate do preflight exige o sidecar');
+  const exigencias = JSON.stringify(pf.routing?.skills_exigidos ?? pf.required_skills ?? []);
+  assert.ok(!exigencias.includes('escalation-repair'), 'skills exigidas não incluem o sidecar');
 });
