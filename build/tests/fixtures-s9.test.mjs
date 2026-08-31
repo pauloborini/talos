@@ -52,7 +52,7 @@ const FIXTURES = [
     label: 'Relatório inválido, item não declarado, waiver sem justificativa, escrita concorrente → falha sem drift',
     anchors: [
       'talos_sync_manual_validation: relatório inválido bloqueia sem drift (fix_manual_validation_report)',
-      'talos_sync_manual_validation: item fantasma sem AC.manual correspondente bloqueia (AC-4.1.2)',
+      'talos_sync_manual_validation: item fantasma sem AC correspondente no §7.3 bloqueia (AC-4.1.2)',
       'talos_sync_manual_validation: waiver sem justificativa bloqueia (AC-4.1.1)',
       'talos_sync_manual_validation: lock por backlog bloqueia sync concorrente (D15)',
     ],
