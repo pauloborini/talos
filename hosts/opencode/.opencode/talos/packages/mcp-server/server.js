@@ -3194,26 +3194,51 @@ function selectNextSprint(args = {}) {
   const runId = validateRunId(args.run_id);
   const backlogPath = requiredString(args, 'backlog_path');
   const mode = typeof args.mode === 'string' && args.mode.trim() ? args.mode.trim() : 'full';
+  // `loop` é opt-in estrito para esta seleção. Não reutiliza `options.loop`
+  // do dispatch porque a seleção acontece antes de existir uma fase ativa.
+  // Ausente preserva literalmente a seleção normal (CN7).
+  if (args.loop !== undefined && typeof args.loop !== 'boolean') {
+    throw rpcError(-32602, 'invalid_params: loop deve ser boolean.');
+  }
+  const loop = args.loop === true;
   const timestamp = nowIso();
   let result;
   try {
     const index = inspectBacklogIndex(args);
     const rowsById = new Map(index.rows.map((row) => [row.id, row]));
     const candidates = [];
+    const loopMaturationCandidates = [];
     const rejected = [];
     for (const info of index.sprints) {
       const row = rowsById.get(info.id);
       const unmet = depsSatisfied(row, rowsById);
       const reasons = [];
-      if (info.state !== 'ready') reasons.push(`state=${info.state}`);
+      const loopMaturation = loop && info.state === 'backlog';
+      if (info.state !== 'ready' && !loopMaturation) reasons.push(`state=${info.state}`);
       if (unmet.length > 0) reasons.push(`unmet_dependencies=${unmet.map((dep) => `${dep.id}:${dep.state}`).join(',')}`);
       if (info.sprint_file_status !== 'valid') reasons.push(`sprint_file=${info.sprint_file_status}`);
-      if (info.dor_status !== 'verde') reasons.push(`dor=${info.dor_status ?? 'ausente'}`);
-      if (reasons.length === 0) candidates.push(info);
+      // Apenas a pré-etapa do loop pode maturar um backlog em DoR amarelo.
+      // `ready` permanece exigindo verde mesmo no loop; vermelho/ausente nunca
+      // é candidata em qualquer modo.
+      const dorAllowed = loopMaturation
+        ? (info.dor_status === 'amarelo' || info.dor_status === 'verde')
+        : info.dor_status === 'verde';
+      if (!dorAllowed) reasons.push(`dor=${info.dor_status ?? 'ausente'}`);
+      if (reasons.length === 0) {
+        if (loopMaturation) loopMaturationCandidates.push(info);
+        else candidates.push(info);
+      }
       else rejected.push({ id: info.id, reasons });
     }
     candidates.sort(compareSprintCandidates);
-    const selected = candidates[0] ?? null;
+    loopMaturationCandidates.sort(compareSprintCandidates);
+    // O loop primeiro esgota a fila de maturação. Misturar `ready` e
+    // `backlog` no mesmo ranking faria uma ready P0 pular uma entrevista
+    // pendente, quebrando a promessa de continuação automática do §7.
+    const orderedCandidates = loop
+      ? [...loopMaturationCandidates, ...candidates]
+      : candidates;
+    const selected = orderedCandidates[0] ?? null;
     const structuralPendencies = index.pendencies.filter((p) => p.category !== 'status_drift');
     const blocked = structuralPendencies.length > 0 || !selected;
     result = {
@@ -3230,9 +3255,11 @@ function selectNextSprint(args = {}) {
         state_path: selected.state_file,
         contrato_status: selected.contrato_status,
         contrato_sealed: selected.contrato_sealed === true,
-        reason: 'ready + deps done/manual_validation_pending + sprint file válido + DoR verde + maior prioridade determinística',
+        reason: loop && selected.state === 'backlog'
+          ? 'loop: sprint backlog maturável + deps done/manual_validation_pending + sprint file válido + DoR amarelo/verde + maior prioridade determinística'
+          : 'ready + deps done/manual_validation_pending + sprint file válido + DoR verde + maior prioridade determinística',
       } : null,
-      candidates: candidates.map((item) => item.id),
+      candidates: orderedCandidates.map((item) => item.id),
       rejected,
       pending_count: blocked ? (structuralPendencies.length || 1) : 0,
       pendencies: structuralPendencies.length > 0 ? structuralPendencies : (selected ? [] : [
@@ -3243,7 +3270,9 @@ function selectNextSprint(args = {}) {
         : renderBanner('preflight_ok', { caps: `next=${selected.id}` }),
       next_action: blocked
         ? (structuralPendencies[0]?.next_action ?? 'atualizar_sprint_file_ou_dependencias')
-        : nextActionForSelectedSprint(selected, mode),
+        // A candidata backlog do loop entra sempre pela maturação do §7; plano
+        // e execução só voltam a ser avaliados após a entrevista/reseleção.
+        : (loop && selected.state === 'backlog' ? 'sprint_interview' : nextActionForSelectedSprint(selected, mode)),
       // Plano 02 (loop): bloco aditivo (CN4) — drain gate informativo; nenhum
       // campo existente muda de valor (AC-02.4.3 caso negativo).
       drain_required: drainRequiredFor(backlogPath, args, index.rows, selected),
@@ -5443,6 +5472,45 @@ function snapshotDeltaFiles(baseline, finalSnapshot) {
     .sort();
 }
 
+function commitClaimedPaths(args = {}) {
+  const paths = new Set();
+  for (const proof of args.proofs ?? []) {
+    if (!proof || !Array.isArray(proof.files)) continue;
+    for (const file of proof.files) {
+      if (typeof file === 'string' && file.trim()) paths.add(file.trim());
+    }
+  }
+  for (const item of args.repair ?? []) {
+    if (!item || typeof item !== 'object') continue;
+    const list = Array.isArray(item.files)
+      ? item.files
+      : (Array.isArray(item.files_touched) ? item.files_touched : []);
+    for (const file of list) {
+      if (typeof file === 'string' && file.trim()) paths.add(file.trim());
+    }
+  }
+  return paths;
+}
+
+function sliceOwnedPaths(state, committed) {
+  const owned = new Set(committed ?? []);
+  for (const file of state.files_changed ?? []) {
+    if (typeof file === 'string' && file.trim()) owned.add(file);
+  }
+  for (const file of stateEvidenceFiles(state)) owned.add(file);
+  return owned;
+}
+
+function snapshotOnOwnedPaths(snapshot, owned) {
+  return (Array.isArray(snapshot) ? snapshot : []).filter((entry) => owned.has(entry.path));
+}
+
+function sliceExpectedFiles(committed, baseline, finalSnapshot, owned) {
+  const delta = snapshotDeltaFiles(baseline ?? [], finalSnapshot ?? [])
+    .filter((rel) => owned.has(rel));
+  return [...new Set([...(committed ?? []), ...delta])].sort();
+}
+
 function validateStateBoundary(statePathValue, args = {}) {
   let state;
   try {
@@ -5492,16 +5560,32 @@ function validateStateBoundary(statePathValue, args = {}) {
   try {
     gitOutput(root, ['rev-parse', '--verify', `${state.base_sha}^{commit}`]);
     gitOutput(root, ['rev-parse', '--verify', `${state.head_sha}^{commit}`]);
-    const currentHead = gitOutput(root, ['rev-parse', 'HEAD']);
-    if (currentHead !== state.head_sha) violations.push(`head_sha stale: state=${state.head_sha}, real=${currentHead}`);
     const committed = gitLines(root, ['diff', '--name-only', `${state.base_sha}...${state.head_sha}`]);
     const actualFinal = captureWorktreeSnapshot(root);
-    if (JSON.stringify(actualFinal) !== JSON.stringify(state.worktree_final)) {
+    const owned = sliceOwnedPaths(state, committed);
+    const currentHead = gitOutput(root, ['rev-parse', 'HEAD']);
+    if (currentHead !== state.head_sha) {
+      try {
+        gitOutput(root, ['merge-base', '--is-ancestor', state.head_sha, 'HEAD']);
+      } catch {
+        violations.push(`head_sha stale: state=${state.head_sha} não é ancestral de HEAD=${currentHead}`);
+      }
+      const ownedList = [...owned].sort();
+      if (ownedList.length > 0) {
+        const drifted = gitLines(root, ['diff', '--name-only', state.head_sha, 'HEAD', '--', ...ownedList]);
+        if (drifted.length > 0) {
+          violations.push(`head_sha drift na slice: ${JSON.stringify(drifted)}`);
+        }
+      }
+    }
+    if (JSON.stringify(snapshotOnOwnedPaths(actualFinal, owned))
+      !== JSON.stringify(snapshotOnOwnedPaths(state.worktree_final, owned))) {
       violations.push('worktree_final stale: snapshot diverge do working tree atual');
     }
-    const worktreeDelta = snapshotDeltaFiles(state.worktree_baseline, state.worktree_final);
     const claimedEvidence = stateEvidenceFiles(state);
-    const expectedFiles = [...new Set([...committed, ...worktreeDelta])].sort();
+    const expectedFiles = sliceExpectedFiles(
+      committed, state.worktree_baseline, state.worktree_final, owned,
+    );
     const declaredFiles = [...new Set((state.files_changed ?? []).filter((f) => typeof f === 'string'))].sort();
     if (JSON.stringify(expectedFiles) !== JSON.stringify(declaredFiles)) {
       violations.push(`files_changed diverge do boundary real: esperado=${JSON.stringify(expectedFiles)} recebido=${JSON.stringify(declaredFiles)}`);
@@ -6643,11 +6727,13 @@ function validatorRepairComplete(args, context) {
         repairViolations.push(`não foi possível derivar commits do repair: ${error.message}`);
       }
     }
-    const touchedReal = [...new Set([
-      ...snapshotDeltaFiles(before.worktree_final, boundaryAfter.state.worktree_final),
-      ...committedDuringRepair,
-    ])].sort();
     const touchedClaimed = [...new Set(repairs.flatMap((repair) => repair?.files_touched ?? []))].sort();
+    const claimedRepair = new Set(touchedClaimed);
+    const touchedReal = [...new Set([
+      ...snapshotDeltaFiles(before.worktree_final, boundaryAfter.state.worktree_final)
+        .filter((rel) => claimedRepair.has(rel)),
+      ...committedDuringRepair.filter((rel) => claimedRepair.has(rel)),
+    ])].sort();
     if (JSON.stringify(touchedReal) !== JSON.stringify(touchedClaimed)) {
       repairViolations.push(`arquivos do repair divergem do delta real: esperado=${JSON.stringify(touchedReal)} recebido=${JSON.stringify(touchedClaimed)}`);
     }
@@ -6820,7 +6906,13 @@ function projectCommitStateV3(args, context) {
   const baseline = Array.isArray(liveness?.worktree_baseline)
     ? liveness.worktree_baseline
     : [];
-  const hasMutated = snapshotDeltaFiles(baseline, captureWorktreeSnapshot(root)).length > 0;
+  const currentSnapshot = captureWorktreeSnapshot(root);
+  const committedNow = gitLines(root, ['diff', '--name-only', `${baseSha}...HEAD`]);
+  const claimedNow = commitClaimedPaths(args);
+  const ownedNow = new Set([...committedNow, ...claimedNow]);
+  const sliceDeltaNow = snapshotDeltaFiles(baseline, currentSnapshot)
+    .filter((rel) => ownedNow.has(rel));
+  const hasMutated = committedNow.length > 0 || sliceDeltaNow.length > 0;
 
   const planPath = optionalString(args, 'plan_path');
   const sprintFilePath = optionalString(args, 'sprint_file_path');
@@ -6873,12 +6965,13 @@ function projectCommitStateV3(args, context) {
     }
   }
 
-  const worktreeFinal = captureWorktreeSnapshot(root);
-  const committed = gitLines(root, ['diff', '--name-only', `${baseSha}...HEAD`]);
-  const worktreeDelta = snapshotDeltaFiles(baseline, worktreeFinal);
+  const worktreeFinal = currentSnapshot;
+  const committed = committedNow;
+  const claimedFiles = [...claimedNow];
+  const worktreeDelta = sliceDeltaNow;
   const expectedFiles = [...new Set([...committed, ...worktreeDelta])].sort();
   const filesChanged = hasMutated
-    ? [...new Set([...expectedFiles, ...taskEvidence.flatMap((item) => item.files), ...proofRefsFiles(proofRefs)])].sort()
+    ? [...new Set([...expectedFiles, ...claimedFiles])].sort()
     : [];
   const indexOfFile = (rel) => filesChanged.indexOf(rel);
   const proofRefsIndexed = Object.fromEntries(
@@ -6967,10 +7060,10 @@ function inferCommitRole(args, context) {
     if (cycle.active) {
       return { status: 'blocked', code: 'validator_ativo', error: 'Commit bloqueado: validator ativo para esta slice; complete o ciclo antes de novo commit', next_action: 'completar_ciclo_validator_antes_de_commit' };
     }
-    if (active.liveness?.last_commit_state_path && active.liveness.last_commit_state_path !== slicePathForCommit(args)) {
+    const sliceRel = slicePathForCommit(args);
+    if (active.liveness?.last_commit_state_path && active.liveness.last_commit_state_path !== sliceRel) {
       return { status: 'blocked', code: 'outro_path_commitado', error: `Commit bloqueado: último commit foi para ${active.liveness.last_commit_state_path}`, next_action: 'commit_apenas_no_path_da_slice_atual' };
     }
-    const sliceRel = slicePathForCommit(args);
     const sliceAbs = resolveConsumerPath(sliceRel, args);
     const sliceExists = fs.existsSync(sliceAbs);
     const sliceSha = sliceExists ? sha256HexFile(sliceAbs) : null;
@@ -6989,7 +7082,20 @@ function inferCommitRole(args, context) {
       }
       return { role: 'repair', baseline: active.liveness?.worktree_baseline ?? [], baseSha: active.liveness?.base_sha ?? null, sliceSha };
     }
-    if (active.liveness?.status === 'handoff_ready') {
+    // Um `start` do validator pode falhar antes de abrir slot (G4) por boundary
+    // incompleto. Nesse único caso, o mesmo executor pode reemitir o MESMO
+    // state MCP, desde que o arquivo ainda seja exatamente o último commit do
+    // ledger. Sem esse escape, a única correção seria editar JSON à mão ou
+    // abandonar um delta já executado — ambos violam D9/G12.
+    const validatorGate = context.state?.data?.gates?.G4;
+    const canRecommitAfterBoundaryBlock = active.liveness?.status === 'handoff_ready'
+      && cycle.status === 'idle'
+      && validatorGate?.action === 'start'
+      && validatorGate?.status === 'blocked'
+      && validatorGate?.next_action === 'regerar_state_path_com_boundary_real'
+      && sliceSha !== null
+      && sliceSha === active.liveness?.slice_commit_sha256;
+    if (active.liveness?.status === 'handoff_ready' && !canRecommitAfterBoundaryBlock) {
       return { status: 'blocked', code: 'handoff_ja_pronto', error: 'Commit bloqueado: liveness já handoff_ready para este path', next_action: 'abrir_validator_ou_novo_dispatch' };
     }
     if (Array.isArray(args.repair) && args.repair.length > 0) {
@@ -7004,7 +7110,9 @@ function inferCommitRole(args, context) {
       const rootNow = consumerRoot(args);
       const baseShaNow = active.liveness?.base_sha ?? gitOutput(rootNow, ['rev-parse', 'HEAD']).trim();
       const committedNow = gitLines(rootNow, ['diff', '--name-only', `${baseShaNow}...HEAD`]);
-      const worktreeNow = snapshotDeltaFiles([], captureWorktreeSnapshot(rootNow));
+      const claimedNow = commitClaimedPaths(args);
+      const worktreeNow = snapshotDeltaFiles([], captureWorktreeSnapshot(rootNow))
+        .filter((rel) => claimedNow.has(rel));
       if (committedNow.length > 0 || worktreeNow.length > 0) {
         return { status: 'blocked', code: 'sem_first_write_dirty', error: 'Commit bloqueado: worktree sujo sem first_write (baseline ausente no ledger)', next_action: 'emitir_first_write_antes_do_commit' };
       }
@@ -7435,6 +7543,10 @@ function toolsList() {
               type: 'string',
               enum: ['full', 'direct', 'execute', 'interview-only', 'audit'],
               description: 'Modo do pipeline; altera next_action (ex.: direct nunca sugere plan_handoff). Default: full.',
+            },
+            loop: {
+              type: 'boolean',
+              description: 'Opt-in estrito da seleção de maturação do --loop: permite somente sprint backlog válida, deps satisfeitas e DoR amarelo/verde para sprint_interview. Ausente/false preserva a seleção normal.',
             },
           },
         },

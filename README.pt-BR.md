@@ -157,7 +157,7 @@ Se você quiser começar fora do fluxo principal, as skills listadas abaixo são
 ### Flags
 
 - `--review` — roda `talos-slice-review` no final (senão opcional). Se o sprint declara `policy_manifest.critical_review.required: true` no §10, a review é **obrigatória** mesmo sem a flag (Gate G8)
-- `--loop` — esteira serial de sprints com auto-correção: percorre as sprints `ready` em sequência (única pausa = entrevista), corrige residual de review in-loop (repair → verification), despacha o sidecar `talos-escalation-repair` se o residual persistir, estaciona sprint irrecuperável em `detached_repair` e drena `PENDENCIAS_<slug>.md` sob demanda; implica review crítica (G8) sem editar `policy_manifest` por sprint. Sem a flag, o pipeline atual não muda
+- `--loop` — esteira serial de sprints com auto-correção: em toda seleção passa `loop:true` ao MCP e pode maturar primeiro uma sprint `backlog` válida, com deps satisfeitas e DoR amarelo/verde, pela entrevista do §7; depois a reseleciona antes de plano/execução. Corrige residual de review in-loop (repair → verification), despacha o sidecar `talos-escalation-repair` se o residual persistir, estaciona sprint irrecuperável em `detached_repair` e drena `PENDENCIAS_<slug>.md` sob demanda; implica review crítica (G8) sem editar `policy_manifest` por sprint. Sem a flag, o pipeline atual não muda
 - `--interview` — força entrevista do contrato §7 mesmo sem ambiguidades detectadas
 - `--handoff` — só em **`audit`**: grava `.talos/plans/PLAN_AUDIT_*.md` TC-conforme sem executar correção
 - `--scope <descrição>` — só em **`audit`**: restringe o boundary textual da auditoria

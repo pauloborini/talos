@@ -2284,6 +2284,92 @@ test('talos_select_next_sprint: §7 draft → sprint_interview (nunca gerar_prd)
   assert.ok(!String(r.next_action).includes('prd'));
 });
 
+test('talos_select_next_sprint: loop seleciona backlog draft com DoR amarelo para sprint_interview', () => {
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S02', { status: 'backlog', dorStatus: 'amarelo', contratoStatus: 'draft' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S02 | Maturação no loop | F0 | objetivo | Must | Alto | Baixo | P0 | — | — | backlog | — | `.talos/backlog/sprints/SPRINT_S02_runtime.md` | pendente | pendente |',
+  ]));
+
+  const r = selectNextSprint({ run_id: 'r1', project_root: root, backlog_path: 'BACKLOG.md', mode: 'full', loop: true });
+  assert.equal(r.status, 'passed');
+  assert.equal(r.selected.sprint_id, 'S02');
+  assert.match(r.selected.reason, /^loop: sprint backlog maturável/);
+  assert.equal(r.next_action, 'sprint_interview');
+});
+
+test('talos_select_next_sprint: loop prioriza backlog maturável antes de ready com ranking maior', () => {
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S01', { status: 'ready', dorStatus: 'verde', contratoStatus: 'aprovado' });
+  writeSprintFixture(root, 'S02', { status: 'backlog', dorStatus: 'amarelo', contratoStatus: 'draft' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Ready prioritária | F0 | objetivo | Must | Alto | Baixo | P0 | — | — | ready | — | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+    '| S02 | Backlog a maturar | F0 | objetivo | Should | Baixo | Alto | P3 | — | — | backlog | — | `.talos/backlog/sprints/SPRINT_S02_runtime.md` | pendente | pendente |',
+  ]));
+
+  const r = selectNextSprint({ run_id: 'r1', project_root: root, backlog_path: 'BACKLOG.md', mode: 'full', loop: true });
+  assert.equal(r.status, 'passed');
+  assert.equal(r.selected.sprint_id, 'S02');
+  assert.deepEqual(r.candidates, ['S02', 'S01']);
+  assert.equal(r.next_action, 'sprint_interview');
+});
+
+test('talos_select_next_sprint: sem loop preserva bloqueio de backlog com DoR amarelo', () => {
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S02', { status: 'backlog', dorStatus: 'amarelo', contratoStatus: 'draft' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S02 | Sem opt-in | F0 | objetivo | Must | Alto | Baixo | P0 | — | — | backlog | — | `.talos/backlog/sprints/SPRINT_S02_runtime.md` | pendente | pendente |',
+  ]));
+
+  const r = selectNextSprint({ run_id: 'r1', project_root: root, backlog_path: 'BACKLOG.md', mode: 'full' });
+  assert.equal(r.status, 'blocked');
+  assert.equal(r.selected, null);
+  assert.deepEqual(r.rejected, [{ id: 'S02', reasons: ['state=backlog', 'dor=amarelo'] }]);
+  assert.equal(r.next_action, 'atualizar_sprint_file_ou_dependencias');
+});
+
+test('talos_select_next_sprint: loop recusa DoR vermelho, dependência pendente, estacionamento e sprint inválida', () => {
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S01', { status: 'blocked', dorStatus: 'verde' });
+  writeSprintFixture(root, 'S02', { status: 'backlog', dorStatus: 'vermelho', contratoStatus: 'draft' });
+  writeSprintFixture(root, 'S03', { status: 'backlog', dorStatus: 'amarelo', contratoStatus: 'draft' });
+  writeSprintFixture(root, 'S04', { status: 'detached_repair', dorStatus: 'verde', contratoStatus: 'draft' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Dependência presa | F0 | objetivo | Must | Alto | Baixo | P0 | — | — | blocked | — | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+    '| S02 | DoR vermelho | F0 | objetivo | Must | Alto | Baixo | P0 | — | — | backlog | — | `.talos/backlog/sprints/SPRINT_S02_runtime.md` | pendente | pendente |',
+    '| S03 | Dep pendente | F0 | objetivo | Must | Alto | Baixo | P0 | — | S01 | backlog | — | `.talos/backlog/sprints/SPRINT_S03_runtime.md` | pendente | pendente |',
+    '| S04 | Estacionada | F0 | objetivo | Must | Alto | Baixo | P0 | — | — | detached_repair | — | `.talos/backlog/sprints/SPRINT_S04_runtime.md` | pendente | pendente |',
+    '| S05 | Arquivo inválido | F0 | objetivo | Must | Alto | Baixo | P0 | — | — | backlog | — | `.talos/backlog/sprints/SPRINT_S05_inexistente.md` | pendente | pendente |',
+  ]));
+
+  const r = selectNextSprint({ run_id: 'r1', project_root: root, backlog_path: 'BACKLOG.md', mode: 'full', loop: true });
+  assert.equal(r.status, 'blocked');
+  assert.equal(r.selected, null);
+  assert.ok(r.rejected.some((item) => item.id === 'S02' && item.reasons.includes('dor=vermelho')));
+  assert.ok(r.rejected.some((item) => item.id === 'S03' && item.reasons.includes('unmet_dependencies=S01:blocked')));
+  assert.ok(r.rejected.some((item) => item.id === 'S04' && item.reasons.includes('state=detached_repair')));
+  assert.ok(r.rejected.some((item) => item.id === 'S05' && item.reasons.includes('sprint_file=missing')));
+});
+
+test('talos_select_next_sprint: loop é estritamente booleano no schema e no servidor', () => {
+  const tool = toolsList().tools.find((item) => item.name === 'talos_select_next_sprint');
+  assert.deepEqual(tool.inputSchema.properties.loop, {
+    type: 'boolean',
+    description: 'Opt-in estrito da seleção de maturação do --loop: permite somente sprint backlog válida, deps satisfeitas e DoR amarelo/verde para sprint_interview. Ausente/false preserva a seleção normal.',
+  });
+  assert.throws(
+    () => selectNextSprint({ run_id: 'r1', backlog_path: 'BACKLOG.md', loop: 'true' }),
+    (error) => error.code === -32602 && /loop deve ser boolean/.test(error.message),
+  );
+});
+
+test('orquestrador: --loop seleciona backlog maturável pela entrevista antes de plano ou execução', () => {
+  const orchestrator = fs.readFileSync(ORCHESTRATOR_SKILL_PATH, 'utf8');
+  assert.match(orchestrator, /Com `--loop`, passar adicionalmente `loop:true` .*em \*\*toda\*\* seleção, inclusive na retomada/s);
+  assert.match(orchestrator, /`sprint_interview` → maturar §7 e \*\*reselecionar antes de plano\/execução\*\*/);
+  assert.match(orchestrator, /`talos_select_next_sprint\(\{mode, loop:true\}\)` em \*\*cada\*\* ciclo e retomada/);
+});
+
 test('talos_select_next_sprint: §7 aprovado+selo sem PLAN → plan_handoff', () => {
   const root = tmpRoot();
   writeSprintFixture(root, 'S01', { status: 'ready', dorStatus: 'verde', contratoStatus: 'aprovado' });
@@ -6874,6 +6960,39 @@ test('Plano 01: talos_commit_state projeta v3 completo e retorna sha do arquivo 
   assert.equal(boundary.ok, true, boundary.violations.join('; '));
 });
 
+test('Plano 01: G4 bloqueado por boundary permite reemitir somente o mesmo state MCP íntegro', () => {
+  const { root } = planCommitSetup('commit-reemit-boundary', { mutar: true });
+  const first = commitState({
+    run_id: 'commit-reemit-boundary', project_root: root, slice: 'A',
+    plan_path: '.talos/plans/PLAN_reemit.md',
+    proofs: [{ kind: 'AC', id: 'AC-001', check: 'node --test', files: ['src/a.js'] }],
+  });
+  assert.equal(first.status, 'passed');
+  fs.writeFileSync(path.join(root, 'src/a.js'), 'export const a = 2;\n');
+
+  const blockedValidator = lockValidatorCore({
+    run_id: 'commit-reemit-boundary', project_root: root, action: 'start', state_path: first.state_path,
+  });
+  assert.equal(blockedValidator.status, 'blocked');
+  assert.equal(blockedValidator.next_action, 'regerar_state_path_com_boundary_real');
+
+  const reemitted = commitState({
+    run_id: 'commit-reemit-boundary', project_root: root, slice: 'A',
+    plan_path: '.talos/plans/PLAN_reemit.md',
+    proofs: [{ kind: 'AC', id: 'AC-001', check: 'node --test', files: ['src/a.js'] }],
+  });
+  assert.equal(reemitted.status, 'passed');
+  assert.equal(reemitted.state_path, first.state_path);
+  assert.notEqual(reemitted.state_sha256, first.state_sha256);
+  const boundary = validateStateBoundary(reemitted.state_path, { project_root: root });
+  assert.equal(boundary.ok, true, boundary.violations.join('; '));
+
+  const validator = lockValidatorCore({
+    run_id: 'commit-reemit-boundary', project_root: root, action: 'start', state_path: reemitted.state_path,
+  });
+  assert.equal(validator.status, 'passed');
+});
+
 // AC-1.1.2 (CN9/INV5): acceptance_results no input → -32602, disco intacto.
 test('Plano 01: commit rejeita acceptance_results no input (AC-1.1.2)', () => {
   const { root } = planCommitSetup('commit-denied', { mutar: true });
@@ -7019,17 +7138,25 @@ test('Plano 01: first_write one-shot e repair não emite (AC-1.2.2)', () => {
   assert.match(repairFirstWrite.error, /repair ativo não emite first_write/);
 });
 
-// AC-1.2.3 (CN2): worktree sujo sem first_write → commit blocked; limpo sem first_write → passed.
+// AC-1.2.3 (CN2): dirt da slice sem first_write → commit blocked; WIP alheio não conta.
 test('Plano 01: commit exige first_write se worktree sujo; no-op passa (AC-1.2.3)', () => {
   const { root } = planCommitSetup('commit-dirty', {});
   fs.writeFileSync(path.join(root, 'src-dirty.js'), 'x\n');
   const blocked = commitState({
     run_id: 'commit-dirty', project_root: root, slice: 'A',
-    proofs: [{ kind: 'AC', id: 'AC-001', check: 'node --test' }],
+    proofs: [{ kind: 'AC', id: 'AC-001', check: 'node --test', files: ['src-dirty.js'] }],
   });
   assert.equal(blocked.status, 'blocked');
   assert.equal(blocked.code, 'sem_first_write_dirty');
   assert.equal(blocked.next_action, 'emitir_first_write_antes_do_commit');
+
+  const { root: foreignRoot } = planCommitSetup('commit-foreign-dirty', {});
+  fs.writeFileSync(path.join(foreignRoot, 'AgentsView.tsx'), 'wip alheio\n');
+  const foreign = commitState({
+    run_id: 'commit-foreign-dirty', project_root: foreignRoot, slice: 'A',
+    proofs: [{ kind: 'AC', id: 'AC-001', check: 'node --test' }],
+  });
+  assert.equal(foreign.status, 'passed');
 
   // No-op slice (worktree limpo) sem first_write → passed.
   const { root: root2 } = planCommitSetup('commit-clean', {});
@@ -7293,7 +7420,7 @@ test('Plano 03: tools lista sem onda 2/3 e G12 sem pref obrigatório (AC-3.2.2)'
   assert.doesNotMatch(g12, /pref/, 'G12 não menciona pref');
 });
 
-test('F-003: dirty preexistente intacto não contamina; mutação posterior entra no boundary', () => {
+test('F-003: dirty preexistente intacto não contamina; mutação da slice entra no boundary', () => {
   const { root, head } = initGitFixture();
   fs.writeFileSync(path.join(root, 'README.md'), 'dirty anterior\n');
   const baseline = captureWorktreeSnapshot(root);
@@ -7305,26 +7432,58 @@ test('F-003: dirty preexistente intacto não contamina; mutação posterior entr
   const mutated = planStateForBoundary(root, head, baseline, ['README.md']);
   const mutatedPath = writeSliceState(root, 'dirty-mutado', mutated);
   assert.equal(validateStateBoundary(mutatedPath, { project_root: root }).ok, true);
-
-  const omitted = { ...mutated, files_changed: [], task_evidence: [] };
-  const omittedPath = writeSliceState(root, 'dirty-omitido', omitted);
-  const result = validateStateBoundary(omittedPath, { project_root: root });
-  assert.equal(result.ok, false);
-  assert.match(result.violations.join(' '), /README\.md/);
 });
 
-test('F-003: untracked novo omitido e state stale bloqueiam', () => {
+test('F-003: WIP paralelo fora da slice não bloqueia; stale na slice bloqueia', () => {
   const { root, head } = initGitFixture();
   const baseline = captureWorktreeSnapshot(root);
   fs.writeFileSync(path.join(root, 'novo.js'), 'v1\n');
   const omitted = planStateForBoundary(root, head, baseline, []);
-  const omittedPath = writeSliceState(root, 'untracked-omitido', omitted);
-  assert.match(validateStateBoundary(omittedPath, { project_root: root }).violations.join(' '), /novo\.js/);
+  const omittedPath = writeSliceState(root, 'untracked-alheio', omitted);
+  assert.equal(validateStateBoundary(omittedPath, { project_root: root }).ok, true);
 
   const stale = planStateForBoundary(root, head, baseline, ['novo.js']);
   const stalePath = writeSliceState(root, 'state-stale', stale);
   fs.writeFileSync(path.join(root, 'novo.js'), 'v2\n');
   assert.match(validateStateBoundary(stalePath, { project_root: root }).violations.join(' '), /worktree_final stale/);
+});
+
+test('F-003: dirty alheio depois do snapshot não staleia G4', () => {
+  const { root, head } = initGitFixture();
+  const baseline = captureWorktreeSnapshot(root);
+  fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'src/slice.js'), 'export const slice = 1;\n');
+  const state = planStateForBoundary(root, head, baseline, ['src/slice.js']);
+  const statePath = writeSliceState(root, 'slice-ok', state);
+  fs.writeFileSync(path.join(root, 'AgentsView.tsx'), 'foreign wip\n');
+  fs.writeFileSync(path.join(root, 'src/slice.js'), 'export const slice = 1;\n');
+  assert.equal(validateStateBoundary(statePath, { project_root: root }).ok, true);
+});
+
+test('F-003: commit paralelo fora da slice não staleia HEAD; drift na slice bloqueia', () => {
+  const { root, head: base } = initGitFixture();
+  fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'src/slice.js'), 'export const slice = 1;\n');
+  execFileSync('git', ['-C', root, 'add', 'src/slice.js']);
+  execFileSync('git', ['-C', root, 'commit', '-qm', 'slice']);
+  const sliceHead = execFileSync('git', ['-C', root, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  const baseline = captureWorktreeSnapshot(root);
+  const state = planStateForBoundary(root, sliceHead, baseline, ['src/slice.js']);
+  state.base_sha = base;
+  const statePath = writeSliceState(root, 'head-foreign', state);
+  assert.equal(validateStateBoundary(statePath, { project_root: root }).ok, true);
+
+  fs.writeFileSync(path.join(root, 'AgentsView.tsx'), 'commit alheio\n');
+  execFileSync('git', ['-C', root, 'add', 'AgentsView.tsx']);
+  execFileSync('git', ['-C', root, 'commit', '-qm', 'wip paralelo']);
+  assert.equal(validateStateBoundary(statePath, { project_root: root }).ok, true);
+
+  fs.writeFileSync(path.join(root, 'src/slice.js'), 'export const slice = 2;\n');
+  execFileSync('git', ['-C', root, 'add', 'src/slice.js']);
+  execFileSync('git', ['-C', root, 'commit', '-qm', 'colisão na slice']);
+  const drifted = validateStateBoundary(statePath, { project_root: root });
+  assert.equal(drifted.ok, false);
+  assert.match(drifted.violations.join(' '), /head_sha drift na slice/);
 });
 
 test('F-003: remoção e rename são representados no delta real', () => {

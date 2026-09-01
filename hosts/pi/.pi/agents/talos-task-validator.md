@@ -1,7 +1,9 @@
 ---
 name: talos-task-validator
 description: "Validador frio de slice executada por talos-plan-execute ou talos-direct-execute. Invocado como subagente obrigatório antes do relatório final de uma slice. Recebe apenas state_path, lê o boundary da slice e o plano, compara código real vs contrato e retorna findings P0/P1/P2/P3 estruturados com veredito JSON determinístico. Não corrige código. Não propõe diff."
-tools: read, grep, find, ls, bash
+tools: Read, Grep, Glob, Bash, mcp__plugin_talos_talos
+model: sonnet
+effort: high
 ---
 
 # Talos Task Validator
@@ -28,12 +30,12 @@ Leia o JSON em `.talos/state/<run_id>/<slice>.json` usando o schema em `packages
 3. **Executed task ids** — `tasks`.
 4. **Boundary refs** — `boundary_refs`.
 5. **Deterministic boundary** — `base_sha`, `head_sha`, `contract_kind` e arrays de evidence/probes.
-6. **Working-tree delta** — confronte `worktree_baseline`, `worktree_final` e árvore atual; dirty preexistente intacto fica fora, mutação posterior entra.
+6. **Working-tree delta** — confronte `worktree_baseline`, `worktree_final` e árvore atual **só nos paths da slice** (`files_changed` + evidência); dirty preexistente intacto e WIP paralelo fora da slice ficam fora; mutação posterior **da slice** entra.
 7. **Repair correlation** — no attempt 2, correlacione findings por ID com `repair_evidence` no mesmo state path.
 
 Não aceite contrato inline, diff colado ou listas de tasks coladas como boundary de validação. Se `state_path` estiver ausente, ilegível, ou faltar qualquer campo obrigatório, retorne JSON com `verdict: "fail"` e um finding P1 `Input insuficiente: <missing item>`.
 
-Compatibilidade: state legado mínimo sem `contract_kind` só é aceito para `talos-plan-execute`. `talos-direct-execute` exige extensão completa e `obligations` não vazio. Compare `base_sha...head_sha`, `HEAD` atual e arquivos evidenciados no working tree com `files_changed`; nunca infira base pelo nome da branch. Divergência gera boundary violation + P1.
+Compatibilidade: state legado mínimo sem `contract_kind` só é aceito para `talos-plan-execute`. `talos-direct-execute` exige extensão completa e `obligations` não vazio. Compare `base_sha...head_sha`, `HEAD` atual e arquivos evidenciados no working tree com `files_changed`; nunca infira base pelo nome da branch. Dirty fora da slice não é boundary violation. Divergência **na slice** gera boundary violation + P1.
 
 ## State persistence
 
