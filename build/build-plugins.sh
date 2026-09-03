@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Talos — build dos pacotes .plugin (Claude/Cursor + Codex).
+# Talos — build dos pacotes .plugin (Claude/Cursor + Codex + opencode + pi + zcode + vscode).
 # Lê VERSION, monta bundle único (10 skills talos-* + subagentes + orquestrador + templates), gera zips + checksums.
-# Idempotente; sem Node/npm. Aborta com exit != 0 em qualquer entrada faltante.
+# Idempotente; usa `node` para gerar subagentes nativos por host (gen-host-agent.mjs).
+# Aborta com exit != 0 em qualquer entrada faltante.
 
 set -euo pipefail
 
@@ -50,6 +51,7 @@ DISPATCHED_AGENTS=(
   talos-plan-execute
   talos-direct-execute
   talos-slice-review
+  talos-escalation-repair
 )
 
 copy_mcp_runtime() {

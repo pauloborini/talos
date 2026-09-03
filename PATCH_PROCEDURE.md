@@ -156,6 +156,17 @@ Validacao:
 - ...
 ```
 
+**Convenção `## Unreleased`:** entre releases, manter uma seção `## Unreleased`
+no topo do `CHANGELOG.md` acumulando features prontas cujo bump será adiado
+(mesma linha do que motivou a entrada do PR #79 do init minimaxcode). Ao
+bumpar, **mover** o conteúdo de `## Unreleased` para a nova entrada
+`## X.Y.Z - YYYY-MM-DD`. Se a feature do Unreleased não justifica bump sozinha,
+o bump cumulativo (PR com feature nova + Unreleased junto) é o caminho
+padrão. O awk extrator de release notes (§9) só captura `## X.Y.Z - ...` —
+Unreleased nunca vaza para o release, mesmo se a promoção for esquecida.
+Quando `## Unreleased` ficar vazia após mover, recriar a seção vazia no topo
+para acumular a próxima.
+
 Para `runtime`, tambem atualizar o changelog resumido no fim de
 `packages/orchestrator/skills/talos/SKILL.md`.
 
@@ -191,6 +202,7 @@ Este e o unico gate de qualidade (substitui o antigo CI remoto). Rodar, nesta or
 
 ```bash
 rtk node build/check-consistency.mjs
+rtk node build/check-public-docs.mjs
 rtk node --test packages/mcp-server/server.test.js
 rtk node --test build/tests/classify-findings.test.mjs build/tests/etapa3.test.mjs
 rtk node build/smoke-hosts.mjs
@@ -241,6 +253,7 @@ rtk env npm_config_cache=/tmp/talos-npm-cache npm pack --pack-destination /tmp/t
 rtk env npm_config_cache=/tmp/talos-npm-cache npm exec --yes --package /tmp/talos-npm-pack/talos-X.Y.Z.tgz -- talos --help
 rtk env npm_config_cache=/tmp/talos-npm-cache npm exec --yes --package /tmp/talos-npm-pack/talos-X.Y.Z.tgz -- talos init opencode --dry-run --dir /tmp/talos-opencode-target
 rtk env npm_config_cache=/tmp/talos-npm-cache npm exec --yes --package /tmp/talos-npm-pack/talos-X.Y.Z.tgz -- talos init codex --dry-run
+rtk env npm_config_cache=/tmp/talos-npm-cache npm exec --yes --package /tmp/talos-npm-pack/talos-X.Y.Z.tgz -- talos init minimaxcode --dry-run
 ```
 
 Nao consultar registry npm como gate. O pacote `talos` permanece privado no
@@ -263,6 +276,12 @@ Fluxo primario:
 ```bash
 # 1) bump + CHANGELOG + Novidades ja commitados e pushados na main
 rtk git push origin main
+# 1a) se main e protected branch (caso comum no GitHub), o push direto e
+#     rejeitado. Workaround: PR temporario com o commit do bump; merge com
+#     `--admin` quando necessario. Para back-merge main→develop apos o
+#     release, abrir PR de sync (`sync/post-vX.Y.Z`) e merge similar.
+#     Branches protected NAO podem ser deletadas via push/API — apenas via
+#     Settings → Branches no GitHub UI.
 
 # 2) tag no commit final ja validado
 rtk git tag -a vX.Y.Z -m "vX.Y.Z"

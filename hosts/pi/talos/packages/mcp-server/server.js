@@ -11,7 +11,14 @@ import {
   validateSprintFileConformance,
   validateAcceptanceSeal,
   parseAcceptanceContract,
+  traceabilityMode,
 } from '../skills/_shared/scripts/document_quality.mjs';
+import {
+  traceabilityHandler,
+  readTraceabilityLedger,
+  traceabilityRequirementRows,
+  consumerRoot as traceabilityConsumerRoot,
+} from './traceability.mjs';
 
 const SERVER_NAME = 'talos';
 const RUN_DIR = path.join('.talos', 'state');
@@ -61,6 +68,10 @@ const WORKFLOW_CONFIG = {
     findings_repair: 'talos-findings-repair',
     slice_review: 'talos-slice-review',
     task_validator: 'talos-task-validator',
+    // Plano 02 (loop): sidecar serial de escalation (D7). Registro é catálogo
+    // para o G10 (preflight lista ids oficiais) — SEM exigência por mode: o
+    // sidecar é condicional a residual (fail-closed em runtime, Plano 05).
+    escalation_repair: 'talos-escalation-repair',
   },
   modes: ['full', 'direct', 'execute', 'interview-only', 'interview_only', 'audit'],
 };
@@ -149,7 +160,7 @@ const ROUTED_MODE_BY_TYPE = {
   idea: 'direct',
 };
 const BACKLOG_PRIORITY_INPUT_TYPES = new Set(['idea', 'briefing', 'roadmap', 'conversation', 'spec-macro']);
-const BACKLOG_STATES = new Set(['backlog', 'ready', 'doing', 'review', 'manual_validation_pending', 'done', 'blocked']);
+const BACKLOG_STATES = new Set(['backlog', 'ready', 'doing', 'review', 'manual_validation_pending', 'done', 'blocked', 'detached_repair']);
 const BACKLOG_MOSCOW = new Set(['Must', 'Should', 'Could', "Won't now"]);
 const BACKLOG_LEVEL = new Set(['alto', 'médio', 'baixo']);
 const BACKLOG_PRIORITY = new Set(['P0', 'P1', 'P2', 'P3']);
@@ -159,11 +170,15 @@ const TERMINAL_VALIDATOR_VERDICTS = new Set(['pass', 'pass_with_observations']);
 const SPRINT_STATUS_TRANSITIONS = {
   backlog: new Set(['ready', 'blocked']),
   ready: new Set(['doing', 'review', 'done', 'blocked']),
-  doing: new Set(['review', 'done', 'blocked']),
-  review: new Set(['manual_validation_pending', 'done', 'doing', 'blocked']),
+  // D8 (loop): doing/review → detached_repair estaciona a sprint com residual
+  // irrecuperável sem abortar a campanha; saída (P1) só para ready (reingresso
+  // após correção via drain/sidecar) ou blocked. SEM detached_repair→done direto.
+  doing: new Set(['review', 'done', 'blocked', 'detached_repair']),
+  review: new Set(['manual_validation_pending', 'done', 'doing', 'blocked', 'detached_repair']),
   manual_validation_pending: new Set(['done', 'blocked']),
   blocked: new Set(['ready', 'backlog']),
   done: new Set(['done']),
+  detached_repair: new Set(['ready', 'blocked']),
 };
 const MOSCOW_RANK = new Map([['Must', 0], ['Should', 1], ['Could', 2], ["Won't now", 3]]);
 const GAIN_RANK = new Map([['alto', 0], ['médio', 1], ['baixo', 2]]);
@@ -174,6 +189,20 @@ const PRIORITY_RANK = new Map([['P0', 0], ['P1', 1], ['P2', 2], ['P3', 3]]);
 const MANUAL_VALIDATION_DIR = '.talos/manual-validation';
 const MANUAL_VALIDATION_REPORT_STATUSES = new Set(['pending', 'in_progress', 'validated', 'waived', 'failed']);
 const MANUAL_VALIDATION_MV_ID_RE = /^MV-(S\d{2}(?:[a-z]|\.\d+)?)-(AC-\d+)$/;
+
+// ===== Plano 02 (loop) — repair por provenance, verification e PENDENCIAS =====
+// D17: provenances do slot de repair (lock de repair com procedência). Ausente
+// = 'validator' (fluxo atual, byte a byte — D18 aditivo).
+const REPAIR_ORIGINS = new Set(['validator', 'slice_review', 'escalation']);
+const REPAIR_IN_LOOP_ORIGINS = new Set(['slice_review', 'escalation']);
+// D21: veredito da verification — enum fechado, enforcement no repair_complete.
+const VERIFICATION_VERDICTS = new Set(['resolved', 'not_resolved', 'regression']);
+// D10/D20: PENDENCIAS — writer único MCP, arquivo parseável, teto de drain 3.
+const PENDENCIES_DIR = path.join('.talos', 'backlog');
+const PENDENCIES_DRAIN_THRESHOLD = 3;
+const PENDENCIES_SEVERITIES = new Set(['P0', 'P1', 'P2', 'P3']);
+const PENDENCIES_STATUSES = new Set(['open', 'closed']);
+const PENDENCIES_ID_RE = /^PD-(S\d{2}(?:[a-z]|\.\d+)?)-(\d{2,})$/;
 // D14/D24: resultado humano mapeado para o acceptance_results do state (oráculo).
 const MANUAL_VALIDATION_STATE_MAP = {
   validated: { to: 'proved', proof: 'M:validated' },
@@ -887,16 +916,9 @@ function parseWorkflowConfig() {
 }
 
 function consumerRoot(args = {}) {
-  const explicitRoot = optionalString(args, 'project_root');
-  if (explicitRoot && explicitRoot.trim() !== '') {
-    return path.resolve(explicitRoot);
-  }
-  const cwd = process.cwd();
-  if (cwd === '/' || cwd === '/var/folders') {
-    const home = process.env.HOME || process.env.USERPROFILE;
-    if (home) return path.resolve(home);
-  }
-  return path.resolve(cwd);
+  // Fonte única: a regra vive em traceability.mjs (a tool de rastreabilidade
+  // lê/grava o ledger exatamente neste root — sem divergência de fallback).
+  return traceabilityConsumerRoot(args);
 }
 
 function runRoot(args = {}) {
@@ -1460,6 +1482,12 @@ function patchDispatchResult(runId, result, args = {}) {
   });
   const data = {
     ...(previous.data ?? {}),
+    // Plano 01 (loop): `options` (flag --loop) chega no result do start passed e
+    // é projetado no nível raiz de `data` (data.options.loop) — o sink é a leitura
+    // no updateSprintStatus. Sem `options` no result, nenhum campo é criado/mutado.
+    ...(result.options !== undefined
+      ? { options: { ...(previous.data?.options ?? {}), ...result.options } }
+      : {}),
     dispatch: {
       ...currentDispatch,
       ...(result.dispatch ?? {}),
@@ -1507,9 +1535,16 @@ function normalizeValidatorCycle(cycle = {}) {
       : 0,
     status: typeof cycle.status === 'string' ? cycle.status : 'idle',
     active: cycle.active && typeof cycle.active === 'object' ? cycle.active : null,
+    slots: Array.isArray(cycle.slots) && cycle.slots.length > 0 ? cycle.slots : (cycle.active ? [cycle.active] : []),
     last_state_path: typeof cycle.last_state_path === 'string' ? cycle.last_state_path : null,
     last_verdict: typeof cycle.last_verdict === 'string' ? cycle.last_verdict : null,
     findings_packet: cycle.findings_packet && typeof cycle.findings_packet === 'object' ? cycle.findings_packet : null,
+    // Plano 02 (loop): veredito da verification (D21). Persistido pelo
+    // repair_complete quando o payload valida; default null (fluxo validator
+    // sem verification continua idêntico — AC-02.3.2).
+    verification: cycle.verification && typeof cycle.verification === 'object'
+      ? cycle.verification
+      : null,
     repair: cycle.repair && typeof cycle.repair === 'object'
       ? {
         skill: typeof cycle.repair.skill === 'string' ? cycle.repair.skill : WORKFLOW_CONFIG.skills.findings_repair,
@@ -1518,6 +1553,14 @@ function normalizeValidatorCycle(cycle = {}) {
         requested_at: typeof cycle.repair.requested_at === 'string' ? cycle.repair.requested_at : null,
         completed_at: typeof cycle.repair.completed_at === 'string' ? cycle.repair.completed_at : null,
         active: cycle.repair.active && typeof cycle.repair.active === 'object' ? cycle.repair.active : null,
+        slots: Array.isArray(cycle.repair.slots) && cycle.repair.slots.length > 0 ? cycle.repair.slots : (cycle.repair.active ? [cycle.repair.active] : []),
+        // Plano 02 (loop): procedência do slot (VC1) — S04: run.json adulterado
+        // cai no default canônico 'validator'; budget por provenance (INV5) com
+        // piso ≥0 (padrão attempts_used). Chaves fora da lista canônica somem.
+        origin: typeof cycle.repair.origin === 'string' && REPAIR_ORIGINS.has(cycle.repair.origin)
+          ? cycle.repair.origin
+          : 'validator',
+        budget_used: normalizeRepairBudget(cycle.repair.budget_used),
       }
       : {
         skill: WORKFLOW_CONFIG.skills.findings_repair,
@@ -1526,10 +1569,27 @@ function normalizeValidatorCycle(cycle = {}) {
         requested_at: null,
         completed_at: null,
         active: null,
+        slots: [],
+        origin: 'validator',
+        budget_used: normalizeRepairBudget(null),
       },
     applied: normalizeApplied(cycle.applied),
     history: Array.isArray(cycle.history) ? cycle.history : [],
   };
+}
+
+// Plano 02 (loop): contador de budget por provenance (INV5). Lista final
+// completa sobre as chaves canônicas — chaves desconhecidas são descartadas e
+// valores não-inteiro/negativo caem no piso 0 (run.json adulterado não eleva
+// nem zera o enforcement; padrão S04/attempts_used).
+function normalizeRepairBudget(budget) {
+  const source = budget && typeof budget === 'object' ? budget : {};
+  return Object.fromEntries(
+    [...REPAIR_ORIGINS].map((origin) => {
+      const value = source[origin];
+      return [origin, Number.isInteger(value) && value >= 0 ? value : 0];
+    }),
+  );
 }
 
 function patchValidatorResult(runId, result, args = {}) {
@@ -2110,6 +2170,25 @@ function verifySprintFile(args = {}) {
         ));
       }
     }
+    // Plano F (RASTREABILIDADE_MCP_GUIDE): wire de produção do grafo v1 para o
+    // gate público (CN2/CN3/INV3) — o ledger acompanha o conformance quando o
+    // caller informa o backlog; sem backlog_path o comportamento atual é
+    // preservado (chamador legado não conhece rastreabilidade). Ledger ilegível
+    // vira pendência explícita (fail-closed), nunca exceção opaca.
+    let traceabilityLedger;
+    if (backlogPath) {
+      try {
+        traceabilityLedger = readTraceabilityLedger(backlogPath, consumerRoot(args));
+      } catch (error) {
+        extraPendencies.push(conformancePending(
+          'rastreabilidade',
+          backlogPath,
+          null,
+          `Ledger de rastreabilidade ilegível em .talos/traceability/: ${error.message}`,
+          'corrigir_ledger_traceability',
+        ));
+      }
+    }
     const validation = content.trim() === ''
       ? {
         valid: false,
@@ -2122,6 +2201,10 @@ function verifySprintFile(args = {}) {
         sprintId,
         backlogPath,
         backlogMarkdown,
+        // Plano F (RASTREABILIDADE_MCP_GUIDE): ramo v1 alimentado pelo ledger
+        // lido acima (CN2/CN3/INV3 — ref inválida/órfã/ausente e marcadores
+        // inconsistentes bloqueiam o gate público).
+        ...(traceabilityLedger !== undefined ? { traceability: traceabilityLedger } : {}),
         // D5 (v0.16.0): root do consumidor para resolver `derivado:<path>`.
         root: consumerRoot(args),
       });
@@ -2459,6 +2542,8 @@ function nextActionForSelectedSprint(info, mode = 'full') {
 function derivedSprintGateStatus(status, validatorVerdict) {
   if (status === 'done') return `validator:${validatorVerdict}`;
   if (status === 'manual_validation_pending') return `validator:${validatorVerdict};manual_pending`;
+  // D8 (loop): estacionada por falha do sidecar — gate canônico `escalation:failed`.
+  if (status === 'detached_repair') return 'escalation:failed';
   if (status === 'review') return 'validator:pending';
   if (status === 'doing') return 'exec:running';
   if (status === 'blocked') return validatorVerdict === 'fail' ? 'validator:fail' : 'blocked';
@@ -2625,6 +2710,51 @@ function readStateAcceptanceResults(statePath, args) {
   return { results: Array.isArray(state?.acceptance_results) ? state.acceptance_results : null };
 }
 
+/**
+ * Plano 03 (RASTREABILIDADE_MCP_GUIDE, AC-3.1.1 / CN8 / INV8 / VC5): pendências
+ * do gate `done` v1 — cada REQ `included` atribuído à sprint (source
+ * `sprint:<id>`) exige TODOS os AC ligados (source_refs do §7.3 + `links[]` do
+ * ledger) `proved` no acceptance_results do state v3. Included sem AC ligado
+ * também bloqueia (sem proved não há cobertura). Um único irmão
+ * unproved/manual_pending/violated/ausente bloqueia o fechamento (D13/D14).
+ * Função pura de leitura: não grava nada — o caller decide o write.
+ */
+function traceabilityDonePendencies({ sprintId, sprintMarkdown, ledger, acceptanceResults }) {
+  const pendencies = [];
+  const items = parseAcceptanceContract(sprintMarkdown) ?? [];
+  // Fonte única da regra REQ→AC (source_refs §7.3 + links[] + status): mesma
+  // projeção pura consumida pelo receipt — os dois oráculos não podem divergir.
+  for (const row of traceabilityRequirementRows({
+    ledger,
+    acceptanceItems: items,
+    acceptanceResults,
+    sprintId,
+  })) {
+    if (row.ac_ids.length === 0) {
+      pendencies.push(conformancePending(
+        'rastreabilidade',
+        `${sprintId}:${row.req}`,
+        null,
+        `REQ ${row.req} (included, atribuído a ${sprintId}) sem AC ligado — done v1 exige caminho até AC no grafo (sem proved não há cobertura).`,
+        'vincular_req_a_ac',
+      ));
+      continue;
+    }
+    for (const entry of row.ac_status) {
+      if (entry.status !== 'proved') {
+        pendencies.push(conformancePending(
+          'rastreabilidade',
+          `${sprintId}:${row.req}:${entry.ac}`,
+          null,
+          `REQ ${row.req} (included) ligado a AC ${entry.ac} com status ${entry.status} — done v1 exige todos os AC ligados proved (D14; um irmão unproved bloqueia).`,
+          'resolver_aceite_ou_avancar_manual_validation_pending',
+        ));
+      }
+    }
+  }
+  return pendencies;
+}
+
 function updateSprintStatus(args = {}) {
   const runId = validateRunId(args.run_id);
   const backlogPath = requiredString(args, 'backlog_path');
@@ -2671,6 +2801,46 @@ function updateSprintStatus(args = {}) {
         pendencies.push(conformancePending('sprint_file', sprintId, null, `Linha ${sprintId} não aponta Sprint file real.`, 'preencher_sprint_file_no_backlog'));
       }
     }
+    // Plano 01 (loop): sink do VC3 — a flag `--loop` gravada no ledger pela
+    // origem (lockDispatch start, options.loop) é consumida aqui como exigência
+    // extra de fechamento (D12): done/manual_validation_pending em run de loop
+    // exigem gate `slice_review` `passed` no MESMO ledger. Fail-closed ANTES de
+    // qualquer write (mesmo padrão do throw de pré-condição abaixo). Run sem
+    // `options.loop` (campo ausente/falsey) → nenhum comportamento novo (CN7).
+    // Leitura do run: mesmo acesso de patchGateResult (readState); run ausente
+    // ou ilegível ⇒ sem flag ⇒ sem gate novo (comportamento aditivo, D18).
+    if (status === 'done' || status === 'manual_validation_pending') {
+      let loopReviewRequired = false;
+      try {
+        const runLedger = readState(runId, args);
+        loopReviewRequired = runLedger?.data?.options?.loop === true;
+      } catch {
+        loopReviewRequired = false;
+      }
+      if (loopReviewRequired) {
+        let loopReviewPassed = false;
+        try {
+          const runLedger = readState(runId, args);
+          loopReviewPassed = runLedger?.data?.gates?.slice_review?.status === 'passed';
+        } catch {
+          loopReviewPassed = false;
+        }
+        if (!loopReviewPassed) {
+          pendencies.push(conformancePending(
+            'loop_review',
+            sprintId,
+            null,
+            '--loop implica review crítica (D12): rode talos-slice-review antes de fechar.',
+            'rodar_slice_review_loop',
+          ));
+        }
+      }
+    }
+    // Sprint file lido cedo: o gate v1 de fechamento (Plano 03) cruza o
+    // metadado `Traceability` e os `source_refs` ANTES de qualquer write.
+    const sprintPath = cleanBacklogPathToken(row.sprint_file);
+    const sprintAbs = resolveConsumerPath(sprintPath, args);
+    const sprintBefore = fs.readFileSync(sprintAbs, 'utf8');
     // D5/D23 + A6 (fechamento Plano F): gate de aceite por estado.
     // acceptance_results moram no state v3 (eco do oráculo classifyAcceptanceResults —
     // VC5; o validator emite no packet e o MCP persiste o eco no complete).
@@ -2719,6 +2889,54 @@ function updateSprintStatus(args = {}) {
             ));
           }
         }
+        // Plano 03 (RASTREABILIDADE_MCP_GUIDE, AC-3.1.1 / CN8 / INV8 / VC5):
+        // ramo v1 — depois do gate de acceptance_results e antes de qualquer
+        // write (fail-closed; mesmo padrão do throw de pré-condição acima).
+        // Todo REQ `included` atribuído à sprint exige TODOS os AC ligados
+        // `proved` (D14: um irmão unproved bloqueia; N:N não fecha por um lado).
+        // Plano F (auditoria externa): o modo é decidido pelos DOIS lados do par
+        // (INV3/D15) — pré-filtrar pela marca da sprint deixava "ledger marcado
+        // sem metadado" fechar como legacy silenciosamente. Sprint legacy de
+        // backlog sem piloto nem abre o ledger de forma frágil: leitura que falha
+        // só bloqueia se a sprint está marcada (D6); caso contrário é ignorada.
+        let traceability;
+        try {
+          traceability = readTraceabilityLedger(backlogPath, consumerRoot(args));
+        } catch (error) {
+          if (/^\|\s*Traceability\s*\|\s*v1\s*\|/im.test(sprintBefore)) {
+            pendencies.push(conformancePending(
+              'rastreabilidade',
+              sprintId,
+              null,
+              `Ledger de rastreabilidade ilegível em .talos/traceability/: ${error.message} — done v1 exige ledger legível.`,
+              'corrigir_ledger_traceability',
+            ));
+          }
+          traceability = undefined;
+        }
+        if (traceability !== undefined) {
+          const traceabilityModeValue = traceabilityMode({
+            sprintMarkdown: sprintBefore,
+            ledger: traceability,
+            sprintId,
+          });
+          if (traceabilityModeValue === 'v1') {
+            pendencies.push(...traceabilityDonePendencies({
+              sprintId,
+              sprintMarkdown: sprintBefore,
+              ledger: traceability,
+              acceptanceResults: acceptance.results,
+            }));
+          } else if (traceabilityModeValue === 'inconsistent') {
+            pendencies.push(conformancePending(
+              'rastreabilidade',
+              sprintId,
+              null,
+              'Marcadores traceability v1 inconsistentes ledger↔sprint: o metadado `Traceability` da sprint e `ledger.sprints[<id>].schema` precisam vir juntos (ambos ou nenhum) — um lado só bloqueia o fechamento (INV3).',
+              'alinhar_marcadores_traceability',
+            ));
+          }
+        }
       }
       if (status === 'manual_validation_pending') {
         if (!Array.isArray(acceptance.results)) {
@@ -2757,9 +2975,6 @@ function updateSprintStatus(args = {}) {
       throw new Error('update_sprint_status_precondition_failed');
     }
 
-    const sprintPath = cleanBacklogPathToken(row.sprint_file);
-    const sprintAbs = resolveConsumerPath(sprintPath, args);
-    const sprintBefore = fs.readFileSync(sprintAbs, 'utf8');
     // D10 (Plano 5): done só avança com a flag ligada quando a revalidação foi
     // observada (todos os AC proved — gate acima); nesse caso a flag é limpa.
     const clearRevalidation = status === 'done' && row.revalidation_required === true;
@@ -2911,32 +3126,225 @@ function updateSprintStatus(args = {}) {
   return result;
 }
 
+// Plano 02 (loop): ancestrais transitivos da sprint (cone DEP) — BFS reverso
+// sobre `Depende de` (padrão propagateRevalidation, sentido origem→dependentes
+// invertido): deps diretos + deps dos deps, sem ciclos.
+function transitiveDependencyCone(rows, sprintId) {
+  const depsById = new Map(rows.map((row) => [row.id, sprintDeps(row.dependencies)]));
+  const cone = new Set();
+  const queue = [...(depsById.get(sprintId) ?? [])];
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (cone.has(current)) continue;
+    cone.add(current);
+    for (const dep of depsById.get(current) ?? []) {
+      if (!cone.has(dep)) queue.push(dep);
+    }
+  }
+  return cone;
+}
+
+// Plano 02 (loop): paths declarados no escopo do sprint file do candidato (§3
+// "Escopo da sprint"). Extração conservadora de tokens de path de arquivo
+// (`x/y.ext`) SOMENTE da seção §3 — sem tokens, o drain por overlap não dispara
+// e só teto/DEP-cone contam (GUIDE §2.5: "quando o candidato declarar paths").
+function sprintScopePaths(sprintMarkdown) {
+  if (typeof sprintMarkdown !== 'string') return [];
+  const section = /^##\s+3\.\s+Escopo da sprint\s*$/im.exec(sprintMarkdown);
+  if (!section) return [];
+  const rest = sprintMarkdown.slice(section.index + section[0].length);
+  const nextHeading = /^##\s+\d+\./im.exec(rest);
+  const body = nextHeading ? rest.slice(0, nextHeading.index) : rest;
+  return [...new Set(
+    [...body.matchAll(/(?:^|[\s(`"])([\w.-]+(?:\/[\w.-]+)+\.[A-Za-z]{1,5})(?=[\s)`".,;:]|$)/g)]
+      .map((match) => match[1]),
+  )];
+}
+
+// Plano 02 (loop): drain gate aditivo do select_next (CN4/D20). required é
+// informação para a esteira (Plano 05 decide drenar) — NUNCA bloqueia a seleção.
+// Dispara com: teto de 3 PDs abertas (reason threshold); PD open cuja sprint de
+// origem está no cone DEP do candidato (reason dep_cone); overlap entre files da
+// PD e os paths do escopo do sprint file do candidato quando declarados (reason
+// files_overlap). Backlog sem PENDENCIAS ⇒ required false, retorno idêntico.
+function drainRequiredFor(backlogPath, args, rows, candidate) {
+  const base = { required: false, reasons: [], open_pd_count: 0 };
+  const open = readOpenPendencies(backlogPath, args);
+  base.open_pd_count = open.openCount;
+  if (open.error || open.open.length === 0) return base;
+  const reasons = new Set();
+  if (open.openCount >= PENDENCIES_DRAIN_THRESHOLD) reasons.add('threshold');
+  if (candidate) {
+    const cone = transitiveDependencyCone(rows, candidate.id);
+    if (open.open.some((pd) => cone.has(pd.sprint_id))) reasons.add('dep_cone');
+    if (candidate.sprint_file) {
+      try {
+        const sprintMarkdown = fs.readFileSync(resolveConsumerPath(candidate.sprint_file, args), 'utf8');
+        const scopePaths = new Set(sprintScopePaths(sprintMarkdown));
+        if (scopePaths.size > 0
+          && open.open.some((pd) => (pd.files ?? []).some((file) => scopePaths.has(file)))) {
+          reasons.add('files_overlap');
+        }
+      } catch {
+        // Sprint file ilegível: overlap não dispara (teto e DEP-cone seguem).
+      }
+    }
+  }
+  return { ...base, required: reasons.size > 0, reasons: [...reasons] };
+}
+
 function selectNextSprint(args = {}) {
   const runId = validateRunId(args.run_id);
   const backlogPath = requiredString(args, 'backlog_path');
   const mode = typeof args.mode === 'string' && args.mode.trim() ? args.mode.trim() : 'full';
+  // `loop` é opt-in estrito para esta seleção. Não reutiliza `options.loop`
+  // do dispatch porque a seleção acontece antes de existir uma fase ativa.
+  // Ausente preserva literalmente a seleção normal (CN7).
+  if (args.loop !== undefined && typeof args.loop !== 'boolean') {
+    throw rpcError(-32602, 'invalid_params: loop deve ser boolean.');
+  }
+  const loop = args.loop === true;
   const timestamp = nowIso();
   let result;
   try {
     const index = inspectBacklogIndex(args);
     const rowsById = new Map(index.rows.map((row) => [row.id, row]));
     const candidates = [];
+    const loopMaturationCandidates = [];
     const rejected = [];
     for (const info of index.sprints) {
       const row = rowsById.get(info.id);
       const unmet = depsSatisfied(row, rowsById);
       const reasons = [];
-      if (info.state !== 'ready') reasons.push(`state=${info.state}`);
+      const loopMaturation = loop && info.state === 'backlog';
+      if (info.state !== 'ready' && !loopMaturation) reasons.push(`state=${info.state}`);
       if (unmet.length > 0) reasons.push(`unmet_dependencies=${unmet.map((dep) => `${dep.id}:${dep.state}`).join(',')}`);
       if (info.sprint_file_status !== 'valid') reasons.push(`sprint_file=${info.sprint_file_status}`);
-      if (info.dor_status !== 'verde') reasons.push(`dor=${info.dor_status ?? 'ausente'}`);
-      if (reasons.length === 0) candidates.push(info);
+      // Apenas a pré-etapa do loop pode maturar um backlog em DoR amarelo.
+      // `ready` permanece exigindo verde mesmo no loop; vermelho/ausente nunca
+      // é candidata em qualquer modo.
+      const dorAllowed = loopMaturation
+        ? (info.dor_status === 'amarelo' || info.dor_status === 'verde')
+        : info.dor_status === 'verde';
+      if (!dorAllowed) reasons.push(`dor=${info.dor_status ?? 'ausente'}`);
+      if (reasons.length === 0) {
+        if (loopMaturation) loopMaturationCandidates.push(info);
+        else candidates.push(info);
+      }
       else rejected.push({ id: info.id, reasons });
     }
     candidates.sort(compareSprintCandidates);
-    const selected = candidates[0] ?? null;
+    loopMaturationCandidates.sort(compareSprintCandidates);
+    // O loop primeiro esgota a fila de maturação. Misturar `ready` e
+    // `backlog` no mesmo ranking faria uma ready P0 pular uma entrevista
+    // pendente, quebrando a promessa de continuação automática do §7.
+    const orderedCandidates = loop
+      ? [...loopMaturationCandidates, ...candidates]
+      : candidates;
+    const candidateSelected = orderedCandidates[0] ?? null;
+
+    let ledger = null;
+    try {
+      ledger = readState(runId, args);
+    } catch (error) {
+      if (error.code !== -32004) throw error;
+    }
+
+    const liveness = ledger?.data?.dispatch?.active?.liveness;
+    const cycle = normalizeValidatorCycle(ledger?.data?.validator_cycle ?? {});
+    const slicePath = liveness?.last_commit_state_path || cycle?.last_state_path || null;
+    let diskSha = null;
+    if (slicePath) {
+      try {
+        const sliceAbs = resolveConsumerPath(slicePath, args);
+        if (fs.existsSync(sliceAbs)) diskSha = sha256HexFile(sliceAbs);
+      } catch {
+        diskSha = null;
+      }
+    }
+    const commitSha = liveness?.slice_commit_sha256 ?? null;
+    const isOrphan = Boolean(
+      slicePath &&
+      diskSha !== null &&
+      typeof commitSha === 'string' &&
+      diskSha !== commitSha
+    );
+    const isStalledOrRepairRunning = liveness?.status === 'stalled' || cycle?.status === 'repair_running';
+    const orphanBlocked = Boolean(isStalledOrRepairRunning && isOrphan);
+
+    let associatedSprintId = args.sprint_id
+      || ledger?.data?.sprint_id
+      || ledger?.sprint_id
+      || ledger?.data?.dispatch?.active?.sprint_id
+      || ledger?.data?.dispatch?.active?.liveness?.sprint_id
+      || ledger?.data?.validator_cycle?.sprint_id
+      || null;
+
+    if (!associatedSprintId && slicePath) {
+      associatedSprintId = inferSprintId(slicePath);
+      if (!associatedSprintId) {
+        try {
+          const sliceAbs = resolveConsumerPath(slicePath, args);
+          if (fs.existsSync(sliceAbs)) {
+            const parsed = JSON.parse(fs.readFileSync(sliceAbs, 'utf8'));
+            if (typeof parsed?.sprint_id === 'string') {
+              associatedSprintId = parsed.sprint_id;
+            }
+          }
+        } catch {
+          // best-effort
+        }
+      }
+    }
+    if (!associatedSprintId) {
+      const reviewSprints = index.sprints.filter((s) => s.state === 'review');
+      if (reviewSprints.length === 1) {
+        associatedSprintId = reviewSprints[0].id;
+      }
+    }
+
+    const associatedSprint = associatedSprintId ? index.sprints.find((s) => s.id === associatedSprintId) : null;
+    const associatedRow = associatedSprintId ? rowsById.get(associatedSprintId) : null;
+    const associatedSprintState = associatedSprint?.state || associatedRow?.state || associatedRow?.status;
+    const associatedSprintIsReview = associatedSprintState === 'review';
+    const isValidatorTerminal = Boolean(cycle && VALIDATOR_PASSED_STATUSES.has(cycle.status));
+    const terminalReviewBlocked = Boolean(isValidatorTerminal && associatedSprintIsReview);
+
+    let selected = candidateSelected;
     const structuralPendencies = index.pendencies.filter((p) => p.category !== 'status_drift');
-    const blocked = structuralPendencies.length > 0 || !selected;
+    let blocked = structuralPendencies.length > 0 || !selected;
+
+    let nextAction = blocked
+      ? (structuralPendencies[0]?.next_action ?? 'atualizar_sprint_file_ou_dependencias')
+      : (loop && selected.state === 'backlog' ? 'sprint_interview' : nextActionForSelectedSprint(selected, mode));
+
+    let banner = blocked
+      ? renderBanner('preflight_fail', { motivo: selected ? `backlog index: ${structuralPendencies.length} pendências` : 'nenhuma sprint executável' })
+      : renderBanner('preflight_ok', { caps: `next=${selected.id}` });
+
+    let pendenciesList = structuralPendencies.length > 0 ? structuralPendencies : (selected ? [] : [
+      conformancePending('seleção', 'next_sprint', null, 'Nenhuma sprint executável: exige state=ready, deps done ou manual_validation_pending, sprint file válido e DoR verde.', 'atualizar_sprint_file_ou_dependencias'),
+    ]);
+    let pendingCount = blocked ? (structuralPendencies.length || 1) : 0;
+
+    if (orphanBlocked) {
+      blocked = true;
+      selected = null;
+      nextAction = 'reconcile_state';
+      banner = renderBanner('preflight_fail', { motivo: 'select next sprint: slice órfã exige reconcile_state' });
+      pendenciesList = [conformancePending('seleção', 'next_sprint', null, 'Slice com sha órfão em run stalled ou repair_running: reconcilie o estado via talos_commit_state antes de prosseguir.', 'reconcile_state')];
+      pendingCount = 1;
+    } else if (terminalReviewBlocked) {
+      blocked = true;
+      selected = null;
+      nextAction = structuralPendencies[0]?.next_action ?? 'atualizar_sprint_file_ou_dependencias';
+      banner = renderBanner('preflight_fail', { motivo: `select next sprint: sprint ${associatedSprintId || 'atual'} com validator terminal ainda em review` });
+      pendenciesList = structuralPendencies.length > 0 ? structuralPendencies : [
+        conformancePending('seleção', 'next_sprint', null, `Sprint ${associatedSprintId || 'atual'} com validator terminal ainda em review: atualize o status via talos_update_sprint_status antes de avançar.`, 'atualizar_sprint_file_ou_dependencias'),
+      ];
+      pendingCount = structuralPendencies.length || 1;
+    }
+
     result = {
       gate: 'select_next_sprint',
       status: blocked ? 'blocked' : 'passed',
@@ -2951,20 +3359,19 @@ function selectNextSprint(args = {}) {
         state_path: selected.state_file,
         contrato_status: selected.contrato_status,
         contrato_sealed: selected.contrato_sealed === true,
-        reason: 'ready + deps done/manual_validation_pending + sprint file válido + DoR verde + maior prioridade determinística',
+        reason: loop && selected.state === 'backlog'
+          ? 'loop: sprint backlog maturável + deps done/manual_validation_pending + sprint file válido + DoR amarelo/verde + maior prioridade determinística'
+          : 'ready + deps done/manual_validation_pending + sprint file válido + DoR verde + maior prioridade determinística',
       } : null,
-      candidates: candidates.map((item) => item.id),
+      candidates: orderedCandidates.map((item) => item.id),
       rejected,
-      pending_count: blocked ? (structuralPendencies.length || 1) : 0,
-      pendencies: structuralPendencies.length > 0 ? structuralPendencies : (selected ? [] : [
-        conformancePending('seleção', 'next_sprint', null, 'Nenhuma sprint executável: exige state=ready, deps done ou manual_validation_pending, sprint file válido e DoR verde.', 'atualizar_sprint_file_ou_dependencias'),
-      ]),
-      banner: blocked
-        ? renderBanner('preflight_fail', { motivo: selected ? `backlog index: ${structuralPendencies.length} pendências` : 'nenhuma sprint executável' })
-        : renderBanner('preflight_ok', { caps: `next=${selected.id}` }),
-      next_action: blocked
-        ? (structuralPendencies[0]?.next_action ?? 'atualizar_sprint_file_ou_dependencias')
-        : nextActionForSelectedSprint(selected, mode),
+      pending_count: pendingCount,
+      pendencies: pendenciesList,
+      banner,
+      next_action: nextAction,
+      // Plano 02 (loop): bloco aditivo (CN4) — drain gate informativo; nenhum
+      // campo existente muda de valor (AC-02.4.3 caso negativo).
+      drain_required: drainRequiredFor(backlogPath, args, index.rows, selected),
     };
   } catch (error) {
     result = {
@@ -2981,6 +3388,7 @@ function selectNextSprint(args = {}) {
       error: `Backlog mestre ausente ou ilegível: ${backlogPath}`,
       cause: error.message,
       next_action: 'corrigir_backlog_path',
+      drain_required: { required: false, reasons: [], open_pd_count: 0 },
     };
   }
   patchGateResult(runId, 'select_next_sprint', result, args);
@@ -3039,6 +3447,244 @@ function renderManualValidationReport(slug, backlogPath, timestamp, rows) {
     body,
     '',
   ].join('\n');
+}
+
+// ===== Plano 02 (loop) — PENDENCIAS: writer/reader MCP + drain gate =====
+// D10/D20/INV7/CN4/VC2: residual P2/P3 vira `PD-<sprint>-<NN>` em
+// `.talos/backlog/PENDENCIAS_<slug>.md` (slug igual ao padrão manual-validation).
+// Único writer = MCP (escrita ABSOLUTA do documento inteiro, tmp+rename mode
+// 0o600 — padrão traceability.mjs); NN monotônico POR SPRINT derivado do parse
+// do arquivo (nunca de contador em memória) e sem reuso após `close` (a linha
+// vira `closed`, nunca é apagada — histórico preservado).
+
+function pendenciesFileRel(backlogPath) {
+  return path.join(PENDENCIES_DIR, `PENDENCIAS_${manualValidationSlug(backlogPath)}.md`);
+}
+
+// Parser determinístico: a tabela `## Pendências` (7 colunas) é o contrato;
+// restante do markdown é livre (mesmo estilo de parseManualValidationReport).
+function parsePendenciesDocument(markdown) {
+  const lines = markdown.split(/\r?\n/);
+  const heading = lines.findIndex((line) => /^##\s+Pendências\s*$/i.test(line.trim()));
+  if (heading < 0) return { rows: [], error: 'Seção ## Pendências ausente no arquivo de pendencies.' };
+  const rows = [];
+  for (let i = heading + 1; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (/^##\s+/.test(line)) break;
+    if (!/^\|.*\|\s*$/.test(line)) continue;
+    const cells = line.split('|').slice(1, -1).map((cell) => cell.trim());
+    if (cells.length === 0 || cells.every((cell) => /^-+$/.test(cell))) continue;
+    if (cells[0] === 'ID') continue;
+    rows.push(cells);
+  }
+  return { rows, error: null };
+}
+
+function renderPendenciesDocument(slug, backlogPath, timestamp, rows) {
+  const body = rows.map((row) => `| ${row.join(' | ')} |`).join('\n');
+  return [
+    `# Pendências — ${slug}`,
+    '',
+    '| Campo | Valor |',
+    '|---|---|',
+    `| Backlog | \`${backlogPath}\` |`,
+    `| Atualizado em | ${timestamp} |`,
+    '',
+    '## Pendências',
+    '',
+    '| ID | Sprint | Severidade | Files | Recomendação | Fix validation | Status |',
+    '|---|---|---|---|---|---|---|',
+    body,
+    '',
+  ].join('\n');
+}
+
+// FUNÇÃO ÚNICA de escrita do PENDENCIAS (INV7/AC-02.4.2): toda persistência do
+// arquivo passa aqui — append e close incluídos. Escrita absoluta (documento
+// inteiro regenerado), tmp+rename, mode 0o600.
+function writePendenciesDocument(absPath, content) {
+  fs.mkdirSync(path.dirname(absPath), { recursive: true, mode: 0o700 });
+  // Sufixo pid+tempo: writers cruzados (dois servidores, mesmo root) não podem
+  // sobrescrever o tmp um do outro (padrão traceability.mjs).
+  const tmp = `${absPath}.${process.pid}.${Date.now()}.tmp`;
+  fs.writeFileSync(tmp, content, { mode: 0o600 });
+  fs.renameSync(tmp, absPath);
+}
+
+function normalizePendencyRow(cells) {
+  return {
+    id: cells[0],
+    sprint_id: cells[1],
+    severity: cells[2],
+    files: (cells[3] ?? '').split(/\s+/).filter(Boolean).map((file) => file.replace(/^`|`$/g, '')),
+    recommendation: cells[4] ?? '',
+    fix_validation: cells[5] ?? '',
+    status: cells[6] ?? 'open',
+  };
+}
+
+function readPendenciesRows(backlogPath, args) {
+  const abs = resolveConsumerPath(pendenciesFileRel(backlogPath), args);
+  if (!fs.existsSync(abs)) return { rows: [], abs, error: null };
+  let markdown;
+  try {
+    markdown = fs.readFileSync(abs, 'utf8');
+  } catch (cause) {
+    return { rows: [], abs, error: `PENDENCIAS ilegível: ${cause.message}` };
+  }
+  const parsed = parsePendenciesDocument(markdown);
+  if (parsed.error) return { rows: [], abs, error: parsed.error };
+  return { rows: parsed.rows, abs, error: null };
+}
+
+function pendenciesOpenCount(rows) {
+  return rows.filter((cells) => (cells[6] ?? 'open') === 'open').length;
+}
+
+// Plano 02 (loop): PDs do backlog com status open — fonte do drain gate (CN4).
+
+// Erro de leitura/parse NÃO quebra a leitura do índice: drain é aditivo e
+// informativo; arquivo corrompido é reportado por `pendencies(list)` com recusa
+// tipada (corrigir_pendencias_file).
+function readOpenPendencies(backlogPath, args) {
+  const read = readPendenciesRows(backlogPath, args);
+  if (read.error) return { open: [], openCount: 0, error: read.error };
+  const open = read.rows.filter((cells) => (cells[6] ?? 'open') === 'open').map(normalizePendencyRow);
+  return { open, openCount: open.length, error: null };
+}
+
+function pendenciesHandler(args = {}) {
+  const backlogPath = requiredString(args, 'backlog_path');
+  const action = typeof args.action === 'string' && args.action.trim() ? args.action.trim() : 'append';
+  if (!['append', 'list', 'close'].includes(action)) {
+    throw rpcError(-32602, `Ação inválida para talos_pendencies: ${action} (append|list|close)`);
+  }
+  const timestamp = nowIso();
+  const runId = validateRunId(args.run_id);
+  const fileRel = pendenciesFileRel(backlogPath);
+
+  const blocked = (code, error, nextAction) => ({
+    gate: 'pendencies',
+    action,
+    status: 'blocked',
+    run_id: runId,
+    backlog_path: backlogPath,
+    file: fileRel,
+    code,
+    error,
+    next_action: nextAction,
+  });
+
+  if (action === 'list') {
+    const read = readPendenciesRows(backlogPath, args);
+    if (read.error) return blocked('corrigir_pendencias_file', read.error, 'corrigir_pendencias_file');
+    const pds = read.rows.map(normalizePendencyRow);
+    return {
+      gate: 'pendencies',
+      action,
+      status: 'passed',
+      run_id: runId,
+      backlog_path: backlogPath,
+      file: fileRel,
+      pds,
+      open_count: pendenciesOpenCount(read.rows),
+      next_action: 'consumir_pendencias_quando_drain_required',
+    };
+  }
+
+  // append/close exigem backlog legível (fonte do sprint_id canônico).
+  let backlogMarkdown;
+  try {
+    backlogMarkdown = fs.readFileSync(resolveConsumerPath(backlogPath, args), 'utf8');
+  } catch (cause) {
+    return blocked('backlog_ilegivel', `Backlog mestre ausente ou ilegível: ${backlogPath} (${cause.message})`, 'corrigir_backlog_path');
+  }
+  const backlogRows = parseSprintRows(backlogMarkdown);
+  const backlogIds = new Set(backlogRows.map((row) => row.id));
+
+  if (action === 'append') {
+    const sprintId = requiredString(args, 'sprint_id');
+    if (!backlogIds.has(sprintId)) {
+      return blocked('sprint_inexistente', `Sprint ${sprintId} não existe no backlog ${backlogPath}`, 'corrigir_sprint_id_da_pendency');
+    }
+    const severity = requiredString(args, 'severity');
+    if (!PENDENCIES_SEVERITIES.has(severity)) {
+      return blocked('severidade_invalida', `Severidade inválida: ${severity} (P0|P1|P2|P3)`, 'corrigir_severidade_da_pendency');
+    }
+    const recommendation = requiredString(args, 'recommendation');
+    const fixValidation = requiredString(args, 'fix_validation');
+    const files = Array.isArray(args.files)
+      ? args.files.filter((file) => typeof file === 'string' && file.trim())
+      : [];
+    const read = readPendenciesRows(backlogPath, args);
+    if (read.error) return blocked('corrigir_pendencias_file', read.error, 'corrigir_pendencias_file');
+    // VC2: NN monotônico POR SPRINT derivado do parse do arquivo (máximo
+    // existente + 1); close não recicla NN porque a linha closed permanece.
+    const prefix = `PD-${sprintId}-`;
+    const maxNn = read.rows
+      .map((cells) => (typeof cells[0] === 'string' ? PENDENCIES_ID_RE.exec(cells[0]) : null))
+      .filter((match) => match && match[1] === sprintId)
+      .map((match) => Number(match[2]))
+      .reduce((acc, value) => Math.max(acc, value), 0);
+    const pdId = `${prefix}${String(maxNn + 1).padStart(2, '0')}`;
+    const rowCells = [
+      pdId,
+      sprintId,
+      severity,
+      files.length > 0 ? files.map((file) => `\`${file}\``).join(' ') : '—',
+      recommendation,
+      fixValidation,
+      'open',
+    ];
+    // Escrita absoluta: documento inteiro regenerado com a linha nova (a lista
+    // final completa de PDs é sempre o arquivo por inteiro).
+    const nextRows = [...read.rows, rowCells];
+    writePendenciesDocument(read.abs, renderPendenciesDocument(
+      manualValidationSlug(backlogPath), backlogPath, timestamp, nextRows,
+    ));
+    return {
+      gate: 'pendencies',
+      action,
+      status: 'passed',
+      run_id: runId,
+      backlog_path: backlogPath,
+      file: fileRel,
+      pd_id: pdId,
+      open_count: pendenciesOpenCount(nextRows),
+      next_action: 'rotear_residual_p2_p3_como_pendency',
+    };
+  }
+
+  // close: marca Status `closed` na linha do pd_id (nunca apaga — histórico).
+  const pdId = requiredString(args, 'pd_id');
+  if (!PENDENCIES_ID_RE.test(pdId)) {
+    return blocked('pd_id_invalido', `ID de pendency inválido: ${pdId} (esperado PD-<sprint>-<NN>)`, 'corrigir_pd_id');
+  }
+  const read = readPendenciesRows(backlogPath, args);
+  if (read.error) return blocked('corrigir_pendencias_file', read.error, 'corrigir_pendencias_file');
+  let closed = false;
+  const nextRows = read.rows.map((cells) => {
+    if (cells[0] !== pdId) return cells;
+    closed = true;
+    return [...cells.slice(0, 6), 'closed'];
+  });
+  if (!closed) {
+    return blocked('pd_inexistente', `Pendency não encontrada: ${pdId} em ${fileRel}`, 'corrigir_pd_id');
+  }
+  writePendenciesDocument(read.abs, renderPendenciesDocument(
+    manualValidationSlug(backlogPath), backlogPath, timestamp, nextRows,
+  ));
+  return {
+    gate: 'pendencies',
+    action,
+    status: 'passed',
+    run_id: runId,
+    backlog_path: backlogPath,
+    file: fileRel,
+    pd_id: pdId,
+    open_count: pendenciesOpenCount(nextRows),
+    next_action: 'drenar_pendency_no_sidecar',
+  };
 }
 
 // Validação estrita de uma linha do relatório. Devolve o MV parseado ou uma
@@ -3831,8 +4477,29 @@ function startDispatch(args, context) {
   if (Object.prototype.hasOwnProperty.call(args, LEGACY_ROUTE_KEY)) {
     throw rpcError(-32602, `unknown_property: ${LEGACY_ROUTE_KEY}`);
   }
+  // Plano 01 (loop): origem do VC3 — flag opt-in `--loop` da esteira serial
+  // (D1/D12/D18). Normalização estrita: `options` é objeto opcional com campo
+  // único reconhecido `loop: boolean`; não-objeto/não-bool é recusa -32602.
+  // Ausente ⇒ nada é gravado e nenhum retorno muda (CN7: opt-in byte a byte).
+  let dispatchOptions;
+  if (Object.prototype.hasOwnProperty.call(args, 'options') && args.options !== undefined) {
+    if (typeof args.options !== 'object' || args.options === null || Array.isArray(args.options)) {
+      throw rpcError(-32602, 'invalid_params: options deve ser objeto (ex.: { loop: true }).');
+    }
+    const unknownOption = Object.keys(args.options).find((key) => key !== 'loop');
+    if (unknownOption !== undefined) {
+      throw rpcError(-32602, `unknown_property: options.${unknownOption}`);
+    }
+    if (args.options.loop !== undefined && typeof args.options.loop !== 'boolean') {
+      throw rpcError(-32602, 'invalid_params: options.loop deve ser boolean.');
+    }
+    if (args.options.loop !== undefined) {
+      dispatchOptions = { loop: args.options.loop };
+    }
+  }
   const timestamp = nowIso();
   let baseSha = null;
+  let worktreeBaseline = null;
   if (phase === 'plan_execute') {
     // AC-1.2.1 / P2: âncora de base da slice gravada no ledger no start. O
     // commit NÃO infere branch nem omite base_sha (VC2). Best-effort: repo sem
@@ -3842,6 +4509,7 @@ function startDispatch(args, context) {
     } catch {
       baseSha = null;
     }
+    worktreeBaseline = captureWorktreeSnapshot(consumerRoot(args));
   }
 
   if (context.dispatch.active) {
@@ -3895,11 +4563,20 @@ function startDispatch(args, context) {
     timestamp,
     current_phase: phase,
     expected_phase: expected,
+    // Flag `--loop` só no start passed: start bloqueado não inicia run e não
+    // grava a flag (patchDispatchResult projeta `options` apenas quando presente).
+    ...(dispatchOptions ? { options: dispatchOptions } : {}),
     dispatch: {
       active: {
         phase,
         started_at: timestamp,
-        ...(phase === 'plan_execute' ? { base_sha: baseSha, liveness: initialExecutorLiveness(timestamp) } : {}),
+        ...(phase === 'plan_execute' ? {
+          base_sha: baseSha,
+          liveness: {
+            ...initialExecutorLiveness(timestamp),
+            worktree_baseline: worktreeBaseline ?? [],
+          },
+        } : {}),
       },
       previous_phase: context.dispatch.previous_phase ?? null,
       next_phase: null,
@@ -3988,7 +4665,7 @@ function checkpointDispatch(args, context) {
       event,
       status: 'blocked',
       timestamp,
-      error: 'first_write já emitido: baseline do worktree já está no ledger (G12 só uma vez)',
+      error: 'first_write já emitido: heartbeat já emitido (G12 só uma vez)',
       current_phase: phase,
       expected_phase: phase,
       next_action: 'prosseguir_para_commit_state',
@@ -4004,7 +4681,6 @@ function checkpointDispatch(args, context) {
     ...(statePathValue ? { state_path: statePathValue } : {}),
     ...(detail ? { detail } : {}),
   };
-  const baseline = event === 'first_write' ? captureWorktreeSnapshot(consumerRoot(args)) : null;
   const nextLiveness = {
     ...liveness,
     status: checkpointStatus(event),
@@ -4015,7 +4691,6 @@ function checkpointDispatch(args, context) {
       ...(Array.isArray(liveness.checkpoints) ? liveness.checkpoints : []),
       checkpoint,
     ],
-    ...(baseline ? { worktree_baseline: baseline } : {}),
   };
 
   return {
@@ -4380,7 +5055,10 @@ function stateEvidenceFiles(state) {
   // de um AC cobre os arquivos que ele prova, mesmo sem task/repair associada.
   for (const ref of Object.values(state.proof_refs ?? {})) {
     if (ref && Array.isArray(ref.files)) {
-      result.push(...ref.files.map((index) => (state.files_changed ?? [])[index]).filter((file) => typeof file === 'string'));
+      result.push(...ref.files.map((index) => {
+        if (typeof index === 'string') return index;
+        return (state.files_changed ?? [])[index] ?? state.worktree_final?.[index]?.path ?? null;
+      }).filter((file) => typeof file === 'string'));
     }
   }
   return [...new Set(result.filter((item) => typeof item === 'string' && item.trim()))].sort();
@@ -4832,9 +5510,14 @@ function snapshotHash(root, rel) {
 }
 
 function captureWorktreeSnapshot(root) {
-  const raw = execFileSync('git', [
-    '-C', root, 'status', '--porcelain=v1', '-z', '--untracked-files=all',
-  ]);
+  let raw;
+  try {
+    raw = execFileSync('git', [
+      '-C', root, 'status', '--porcelain=v1', '-z', '--untracked-files=all',
+    ]);
+  } catch {
+    return [];
+  }
   const records = raw.toString('utf8').split('\0').filter(Boolean);
   const snapshot = [];
   for (let index = 0; index < records.length; index += 1) {
@@ -4899,6 +5582,47 @@ function snapshotDeltaFiles(baseline, finalSnapshot) {
     .sort();
 }
 
+function commitClaimedPaths(args = {}) {
+  const paths = new Set();
+  for (const proof of args.proofs ?? []) {
+    if (!proof || !Array.isArray(proof.files)) continue;
+    for (const file of proof.files) {
+      if (typeof file === 'string' && file.trim()) paths.add(file.trim());
+    }
+  }
+  for (const item of args.repair ?? []) {
+    if (!item || typeof item !== 'object') continue;
+    const list = Array.isArray(item.files)
+      ? item.files
+      : (Array.isArray(item.files_touched) ? item.files_touched : []);
+    for (const file of list) {
+      if (typeof file === 'string' && file.trim()) paths.add(file.trim());
+    }
+  }
+  return paths;
+}
+
+function sliceOwnedPaths(state, committed) {
+  const owned = new Set(committed ?? []);
+  for (const file of state.files_changed ?? []) {
+    if (typeof file === 'string' && file.trim()) owned.add(file);
+  }
+  for (const file of stateEvidenceFiles(state)) owned.add(file);
+  return owned;
+}
+
+function snapshotOnOwnedPaths(snapshot, owned) {
+  return (Array.isArray(snapshot) ? snapshot : []).filter((entry) => owned.has(entry.path));
+}
+
+function sliceExpectedFiles(committed, baseline, finalSnapshot, owned) {
+  const delta = snapshotDeltaFiles(baseline ?? [], finalSnapshot ?? [])
+    .filter((rel) => !rel.startsWith('.talos/') && rel !== '.talos')
+    .filter((rel) => !owned || owned.has(rel));
+  const cleanCommitted = (committed ?? []).filter((rel) => !rel.startsWith('.talos/') && rel !== '.talos');
+  return [...new Set([...cleanCommitted, ...delta])].sort();
+}
+
 function validateStateBoundary(statePathValue, args = {}) {
   let state;
   try {
@@ -4948,16 +5672,32 @@ function validateStateBoundary(statePathValue, args = {}) {
   try {
     gitOutput(root, ['rev-parse', '--verify', `${state.base_sha}^{commit}`]);
     gitOutput(root, ['rev-parse', '--verify', `${state.head_sha}^{commit}`]);
-    const currentHead = gitOutput(root, ['rev-parse', 'HEAD']);
-    if (currentHead !== state.head_sha) violations.push(`head_sha stale: state=${state.head_sha}, real=${currentHead}`);
     const committed = gitLines(root, ['diff', '--name-only', `${state.base_sha}...${state.head_sha}`]);
     const actualFinal = captureWorktreeSnapshot(root);
-    if (JSON.stringify(actualFinal) !== JSON.stringify(state.worktree_final)) {
+    const owned = sliceOwnedPaths(state, committed);
+    const currentHead = gitOutput(root, ['rev-parse', 'HEAD']);
+    if (currentHead !== state.head_sha) {
+      try {
+        gitOutput(root, ['merge-base', '--is-ancestor', state.head_sha, 'HEAD']);
+      } catch {
+        violations.push(`head_sha stale: state=${state.head_sha} não é ancestral de HEAD=${currentHead}`);
+      }
+      const ownedList = [...owned].sort();
+      if (ownedList.length > 0) {
+        const drifted = gitLines(root, ['diff', '--name-only', state.head_sha, 'HEAD', '--', ...ownedList]);
+        if (drifted.length > 0) {
+          violations.push(`head_sha drift na slice: ${JSON.stringify(drifted)}`);
+        }
+      }
+    }
+    if (JSON.stringify(snapshotOnOwnedPaths(actualFinal, owned))
+      !== JSON.stringify(snapshotOnOwnedPaths(state.worktree_final, owned))) {
       violations.push('worktree_final stale: snapshot diverge do working tree atual');
     }
-    const worktreeDelta = snapshotDeltaFiles(state.worktree_baseline, state.worktree_final);
     const claimedEvidence = stateEvidenceFiles(state);
-    const expectedFiles = [...new Set([...committed, ...worktreeDelta])].sort();
+    const expectedFiles = sliceExpectedFiles(
+      committed, state.worktree_baseline, state.worktree_final, owned,
+    );
     const declaredFiles = [...new Set((state.files_changed ?? []).filter((f) => typeof f === 'string'))].sort();
     if (JSON.stringify(expectedFiles) !== JSON.stringify(declaredFiles)) {
       violations.push(`files_changed diverge do boundary real: esperado=${JSON.stringify(expectedFiles)} recebido=${JSON.stringify(declaredFiles)}`);
@@ -5014,6 +5754,87 @@ function normalizeFindingsPacket(packet) {
     return { ...finding, msg: `${finding.failure_mode ?? ''}: ${finding.evidence ?? ''}`.trim() };
   });
   return { packet: { ...packet, findings }, violations };
+}
+
+function isFormulaDivergenceOnly(violations) {
+  if (!Array.isArray(violations) || violations.length === 0) return false;
+  const hasFilesChangedDivergence = violations.some((v) => /^files_changed diverge do boundary real/.test(v));
+  if (!hasFilesChangedDivergence) return false;
+  const formulaPatterns = [
+    /^files_changed diverge do boundary real/,
+    /^worktree_final stale: snapshot diverge do working tree atual/,
+    /^diff_stat stale:/,
+    /^evidência diverge do boundary real/,
+  ];
+  return violations.every((v) => formulaPatterns.some((p) => p.test(v)));
+}
+
+function extractProofsFromState(diskState) {
+  if (!diskState || typeof diskState !== 'object') return { proofs: [], repair: [], evalNa: [] };
+  const checkTable = Array.isArray(diskState.check_table) ? diskState.check_table : [];
+  const filesChanged = Array.isArray(diskState.files_changed) ? diskState.files_changed : [];
+  const finalFiles = (Array.isArray(diskState.worktree_final) ? diskState.worktree_final : [])
+    .map((entry) => typeof entry === 'string' ? entry : entry?.path)
+    .filter((file) => typeof file === 'string' && file.trim());
+  const resolveFileIndex = (idx) => {
+    if (typeof idx !== 'number') return idx;
+    return filesChanged[idx] || finalFiles[idx];
+  };
+  const proofs = [];
+  const evalNa = [];
+
+  if (diskState.proof_refs && typeof diskState.proof_refs === 'object') {
+    for (const [id, ref] of Object.entries(diskState.proof_refs)) {
+      if (!ref || typeof ref !== 'object') continue;
+      const checkIdx = Array.isArray(ref.checks) && ref.checks.length > 0 ? ref.checks[0] : -1;
+      const check = checkTable[checkIdx] || 'verified';
+      const files = Array.isArray(ref.files)
+        ? ref.files.map(resolveFileIndex).filter((f) => typeof f === 'string')
+        : [];
+      proofs.push({ kind: 'AC', id, check, files });
+    }
+  }
+
+  if (Array.isArray(diskState.eval_results)) {
+    for (const item of diskState.eval_results) {
+      if (!item || typeof item !== 'object') continue;
+      const id = item.id;
+      const checkIdx = Array.isArray(item.checks) && item.checks.length > 0 ? item.checks[0] : -1;
+      const check = checkTable[checkIdx] || (Array.isArray(item.evidence) ? item.evidence[0] : 'verified');
+      if (item.status === 'not_applicable') evalNa.push(id);
+      proofs.push({ kind: 'EVAL', id, check, files: [] });
+    }
+  }
+
+  if (Array.isArray(diskState.task_evidence)) {
+    for (const item of diskState.task_evidence) {
+      if (!item || typeof item !== 'object') continue;
+      const id = item.task;
+      const checkIdx = Array.isArray(item.checks) && item.checks.length > 0 ? item.checks[0] : -1;
+      const check = checkTable[checkIdx] || 'verified';
+      const files = Array.isArray(item.files)
+        ? item.files.map(resolveFileIndex).filter((f) => typeof f === 'string')
+        : [];
+      proofs.push({ kind: 'T', id, check, files });
+    }
+  }
+
+  const repair = [];
+  if (Array.isArray(diskState.repair_evidence)) {
+    for (const item of diskState.repair_evidence) {
+      if (!item || typeof item !== 'object') continue;
+      const findingId = item.finding_id;
+      const checks = Array.isArray(item.checks)
+        ? item.checks.map((idx) => typeof idx === 'number' ? checkTable[idx] : idx).filter(Boolean)
+        : [];
+      const files = Array.isArray(item.files)
+        ? item.files.map(resolveFileIndex).filter((f) => typeof f === 'string')
+        : [];
+      repair.push({ finding_id: findingId, files, checks, status: item.status || 'resolved' });
+    }
+  }
+
+  return { proofs, repair, evalNa };
 }
 
 function validatorStart(args, context) {
@@ -5077,19 +5898,8 @@ function validatorStart(args, context) {
       last_commit_state_path: commitPath,
       slice_commit_sha256: commitSha,
       next_action: orphan
-        ? 'remover_ou_recommitar_slice_orfã'
+        ? 'reconcile_state'
         : 'commitar_via_talos_commit_state_antes_do_validator',
-    };
-  }
-
-  const boundaryValidation = validateStateBoundary(statePathValue, args);
-  if (!boundaryValidation.ok) {
-    return {
-      gate: 'G4', action: 'start', status: 'blocked', timestamp,
-      state_path: statePathValue,
-      boundary_violations: boundaryValidation.violations,
-      error: `State/boundary inválido: ${boundaryValidation.violations.join('; ')}`,
-      next_action: 'regerar_state_path_com_boundary_real',
     };
   }
 
@@ -5163,6 +5973,81 @@ function validatorStart(args, context) {
     };
   }
 
+  let boundaryValidation = validateStateBoundary(statePathValue, args);
+  if (!boundaryValidation.ok) {
+    if (isFormulaDivergenceOnly(boundaryValidation.violations)) {
+      // D10: Divergência de fórmula -> MCP reprojeta e sobrescreve
+      let diskState;
+      try {
+        diskState = JSON.parse(fs.readFileSync(sliceAbs, 'utf8'));
+      } catch (err) {
+        return {
+          gate: 'G4', action: 'start', status: 'blocked', timestamp,
+          state_path: statePathValue,
+          boundary_violations: boundaryValidation.violations,
+          error: `State/boundary inválido: ${boundaryValidation.violations.join('; ')}`,
+          next_action: 'regerar_state_path_com_boundary_real',
+        };
+      }
+      const { proofs, repair, evalNa } = extractProofsFromState(diskState);
+      const projectArgs = {
+        run_id: runId,
+        slice: diskState.slice ?? path.basename(statePathValue, '.json'),
+        plan_path: diskState.plan_path,
+        sprint_file_path: diskState.sprint_file_path,
+        obligation_ids: diskState.contract_ids?.obligations ?? [],
+        eval_na: evalNa,
+        proofs,
+        repair,
+        project_root: args.project_root,
+      };
+      let projected;
+      try {
+        projected = projectCommitStateV3(projectArgs, context);
+      } catch (err) {
+        return {
+          gate: 'G4', action: 'start', status: 'blocked', timestamp,
+          state_path: statePathValue,
+          boundary_violations: boundaryValidation.violations,
+          error: `Falha na reprojeção do boundary: ${err.message}`,
+          next_action: 'regerar_state_path_com_boundary_real',
+        };
+      }
+      const tmp = `${sliceAbs}.${process.pid}.tmp`;
+      fs.writeFileSync(tmp, `${JSON.stringify(projected.state)}\n`, { mode: 0o600 });
+      fs.renameSync(tmp, sliceAbs);
+      const newSha = sha256HexFile(sliceAbs);
+      markCommitHandoff(runId, args, {
+        timestamp,
+        status: 'passed',
+        role: 'reproject',
+        next_action: 'open_validator',
+      }, statePathValue, newSha);
+
+      if (context.dispatch?.active?.liveness) {
+        context.dispatch.active.liveness.slice_commit_sha256 = newSha;
+      }
+      boundaryValidation = validateStateBoundary(statePathValue, args);
+      if (!boundaryValidation.ok) {
+        return {
+          gate: 'G4', action: 'start', status: 'blocked', timestamp,
+          state_path: statePathValue,
+          boundary_violations: boundaryValidation.violations,
+          error: `State/boundary inválido após reprojeção: ${boundaryValidation.violations.join('; ')}`,
+          next_action: 'regerar_state_path_com_boundary_real',
+        };
+      }
+    } else {
+      return {
+        gate: 'G4', action: 'start', status: 'blocked', timestamp,
+        state_path: statePathValue,
+        boundary_violations: boundaryValidation.violations,
+        error: `State/boundary inválido: ${boundaryValidation.violations.join('; ')}`,
+        next_action: 'regerar_state_path_com_boundary_real',
+      };
+    }
+  }
+
   const attempt = cycle.attempts_used + 1;
   const activeValidatorRunId = validatorRunId(runId, attempt, timestamp);
   // S04: token de dispatch monotônico — incrementa a cada dispatch aceito
@@ -5206,6 +6091,11 @@ function validatorStart(args, context) {
         requested_at: cycle.repair.requested_at,
         completed_at: cycle.repair.completed_at,
         active: null,
+        // Plano 02 (loop): o contador por provenance é enforcement do ciclo da
+        // slice (INV5) — o retry do validator NÃO pode zerá-lo (2ª abertura
+        // in-loop continua bloqueada mesmo após retry do validator).
+        origin: cycle.repair.origin,
+        budget_used: cycle.repair.budget_used,
       },
       // O retry precisa manter os findings originais: o complete do attempt 2
       // correlaciona `repaired_finding_ids` contra exatamente esse packet.
@@ -5218,7 +6108,7 @@ function validatorComplete(args, context) {
   const timestamp = nowIso();
   const cycle = normalizeValidatorCycle(context.state.data?.validator_cycle ?? {});
   const statePathValue = requiredString(args, 'state_path');
-  const activeValidatorRunId = requiredString(args, 'validator_run_id');
+  let activeValidatorRunId = optionalString(args, 'validator_run_id');
   const verdict = requiredString(args, 'verdict');
   const packetResult = normalizeFindingsPacket(optionalData(args));
   const packet = packetResult.packet;
@@ -5230,10 +6120,7 @@ function validatorComplete(args, context) {
   const validatorOutputPath = optionalString(args, 'validator_output_path');
 
   if (!cycle.active) {
-    // S10: slot já fechado. Distinguir retorno duplicado já aplicado (idempotente
-    // reconhecível) de payload sem nenhum slot conhecido. NUNCA reabrir o ciclo.
-    // A idempotência vive em `applied`, não no history curto de observabilidade.
-    const appliedCompleteEvent = appliedValidatorCompletion(cycle, activeValidatorRunId);
+    const appliedCompleteEvent = activeValidatorRunId ? appliedValidatorCompletion(cycle, activeValidatorRunId) : null;
     if (appliedCompleteEvent) {
       return {
         gate: 'G4',
@@ -5245,11 +6132,6 @@ function validatorComplete(args, context) {
         stale_discarded: true,
         reason: 'stale_duplicate_already_applied',
         last_verdict: cycle.last_verdict,
-        // S10/P3-2: ecoa o veredito real que o complete casado produziu no history
-        // (repair_required, passed, passed_with_observations,
-        // blocked_final_validator_failed). last_verdict reflete só o ciclo atual e
-        // pode divergir do estado real daquele evento — applied_validator_status
-        // evita que o consumidor leia um fail→repair como conclusão bem-sucedida.
         applied_validator_status: appliedCompleteEvent.validator_status ?? null,
         error: `Retorno duplicado do validator já aplicado (run_id ${activeValidatorRunId}); descartado de forma idempotente`,
         next_action: 'descartar_retorno_duplicado_idempotente',
@@ -5266,7 +6148,22 @@ function validatorComplete(args, context) {
     };
   }
 
-  if (cycle.active.run_id !== activeValidatorRunId) {
+  // D13 / S10 / OUT:CN8: slot único é frouxo — `validator_run_id` omitido OU
+  // não-canônico fecha o slot ativo. Um id CANÔNICO (`<run>:validator:<n>:<ts>`)
+  // que diverge é stale real e continua `blocked`; com dois slots ativos o id
+  // exato permanece obrigatório. Mesma régua já aplicada em
+  // `validatorRepairComplete` (simetria D13 entre complete e repair_complete).
+  // `cycle.slots` persiste slots de attempts anteriores; só é multi-slot real
+  // quando tem mais de uma entrada E uma delas é o slot ativo corrente. Fora
+  // disso o slot autoritativo é `cycle.active` (régua do código pré-0.21).
+  const persistedSlots = Array.isArray(cycle.slots) ? cycle.slots : [];
+  const activeValidatorSlots = (persistedSlots.length > 1
+    && persistedSlots.some((slot) => slot && slot.run_id === cycle.active.run_id))
+    ? persistedSlots
+    : [cycle.active];
+  const isCanonicalValidatorId = typeof activeValidatorRunId === 'string'
+    && /:validator:\d+:/.test(activeValidatorRunId);
+  if (isCanonicalValidatorId && activeValidatorRunId !== cycle.active.run_id) {
     return {
       gate: 'G4',
       action: 'complete',
@@ -5280,17 +6177,39 @@ function validatorComplete(args, context) {
     };
   }
 
-  if (cycle.active.state_path !== statePathValue) {
+  let matchedValidatorSlot = activeValidatorRunId
+    ? activeValidatorSlots.find((slot) => slot && slot.run_id === activeValidatorRunId)
+    : null;
+  if (!matchedValidatorSlot) {
+    if (activeValidatorSlots.length === 1) {
+      matchedValidatorSlot = activeValidatorSlots[0];
+    } else {
+      return {
+        gate: 'G4',
+        action: 'complete',
+        status: 'blocked',
+        timestamp,
+        validator_attempt: cycle.active.attempt,
+        validator_run_id: activeValidatorRunId ?? null,
+        stale_discarded: true,
+        error: `validator_run_id não corresponde a nenhum validator ativo com múltiplos slots: recebido ${activeValidatorRunId}`,
+        next_action: 'aguardar_ou_descartar_retorno_stale_do_validator',
+      };
+    }
+  }
+  activeValidatorRunId = matchedValidatorSlot.run_id;
+
+  if (matchedValidatorSlot.state_path !== statePathValue) {
     return {
       gate: 'G4',
       action: 'complete',
       status: 'blocked',
       timestamp,
-      validator_attempt: cycle.active.attempt,
+      validator_attempt: matchedValidatorSlot.attempt,
       validator_run_id: activeValidatorRunId,
       state_path: statePathValue,
       stale_discarded: true,
-      error: `state_path do validator ativo diverge: esperado ${cycle.active.state_path}, recebido ${statePathValue}`,
+      error: `state_path do validator ativo diverge: esperado ${matchedValidatorSlot.state_path}, recebido ${statePathValue}`,
       next_action: 'corrigir_payload_do_validator',
     };
   }
@@ -5301,7 +6220,7 @@ function validatorComplete(args, context) {
       action: 'complete',
       status: 'blocked',
       timestamp,
-      validator_attempt: cycle.active.attempt,
+      validator_attempt: matchedValidatorSlot.attempt,
       validator_run_id: activeValidatorRunId,
       state_path: statePathValue,
       stale_discarded: true,
@@ -5314,27 +6233,27 @@ function validatorComplete(args, context) {
   // Divergência → blocked SEM fechar o slot (não retorna validator_cycle, então
   // active é preservado pelo merge).
   // S10: marca stale_discarded para o orquestrador distinguir stale de erro real.
-  if (cycle.active.dispatch_token !== dispatchToken) {
+  if (matchedValidatorSlot.dispatch_token !== dispatchToken) {
     return {
       gate: 'G4',
       action: 'complete',
       status: 'blocked',
       timestamp,
-      validator_attempt: cycle.active.attempt,
+      validator_attempt: matchedValidatorSlot.attempt,
       validator_run_id: activeValidatorRunId,
       state_path: statePathValue,
       stale_discarded: true,
-      error: `token de dispatch divergente: esperado ${cycle.active.dispatch_token}, recebido ${dispatchToken}`,
+      error: `token de dispatch divergente: esperado ${matchedValidatorSlot.dispatch_token}, recebido ${dispatchToken}`,
       next_action: 'aguardar_ou_descartar_retorno_stale_do_validator',
     };
   }
 
-  // P1.1: proof-of-work. Só vale se o start emitiu challenge (cycle.active.challenge).
+  // P1.1: proof-of-work. Só vale se o start emitiu challenge (matchedValidatorSlot.challenge).
   // Falha (resposta ausente/hash divergente) NÃO fecha o slot — igual stale: active é
   // preservado (não retornamos validator_cycle), o orquestrador re-despacha o MESMO
   // validador (mesmo attempt) que lê o boundary e reenvia o hash correto. Não consome
   // attempt nem reabre terminal. Arquivo sumido/ilegível consome o mesmo orçamento bounded.
-  const challengeCheck = verifyValidatorChallenge(cycle.active.challenge, challengeResponse, args);
+  const challengeCheck = verifyValidatorChallenge(matchedValidatorSlot.challenge, challengeResponse, args);
   if (!challengeCheck.ok) {
     // P2-1: falhas de challenge são bounded por attempt. O contador vive em
     // `applied.challenge_failures`; history pode ser truncado sem reabrir loop.
@@ -5345,12 +6264,12 @@ function validatorComplete(args, context) {
         action: 'complete',
         status: 'blocked',
         timestamp,
-        validator_attempt: cycle.active.attempt,
+        validator_attempt: matchedValidatorSlot.attempt,
         validator_run_id: activeValidatorRunId,
         state_path: statePathValue,
         validator_status: 'challenge_exhausted',
-        challenge_file: cycle.active.challenge.file,
-        error: `Proof-of-work do validador falhou ${priorChallengeFailures + 1}x (máximo=${VALIDATOR_CHALLENGE_MAX_FAILURES}) para ${cycle.active.challenge.file}; re-dispatch encerrado`,
+        challenge_file: matchedValidatorSlot.challenge.file,
+        error: `Proof-of-work do validador falhou ${priorChallengeFailures + 1}x (máximo=${VALIDATOR_CHALLENGE_MAX_FAILURES}) para ${matchedValidatorSlot.challenge.file}; re-dispatch encerrado`,
         cause: 'validator_proof_of_work_exhausted',
         impact: 'validador_nao_comprovou_leitura_do_boundary_apos_teto_de_tentativas',
         next_action: 'encerrar_com_blocked_e_investigar_resolucao_de_path_do_challenge_no_host',
@@ -5368,7 +6287,7 @@ function validatorComplete(args, context) {
             validator_status: 'challenge_exhausted',
             status: 'blocked',
             state_path: statePathValue,
-            attempt: cycle.active.attempt,
+            attempt: matchedValidatorSlot.attempt,
             timestamp,
           }),
         },
@@ -5379,14 +6298,14 @@ function validatorComplete(args, context) {
       action: 'complete',
       status: 'blocked',
       timestamp,
-      validator_attempt: cycle.active.attempt,
+      validator_attempt: matchedValidatorSlot.attempt,
       validator_run_id: activeValidatorRunId,
       state_path: statePathValue,
       validator_status: 'challenge_failed',
-      challenge_file: cycle.active.challenge.file,
+      challenge_file: matchedValidatorSlot.challenge.file,
       challenge_failures: priorChallengeFailures + 1,
       challenge_failures_max: VALIDATOR_CHALLENGE_MAX_FAILURES,
-      error: `Proof-of-work do validador falhou (${challengeCheck.reason}): o veredito não comprovou leitura de ${cycle.active.challenge.file}`,
+      error: `Proof-of-work do validador falhou (${challengeCheck.reason}): o veredito não comprovou leitura de ${matchedValidatorSlot.challenge.file}`,
       cause: 'validator_proof_of_work_failed',
       impact: 'sem_prova_de_leitura_do_boundary_o_veredito_pode_nao_ter_lido_o_codigo',
       next_action: 'redespachar_o_mesmo_validador_irmao_que_le_o_boundary_e_reenvia_challenge_response',
@@ -5395,7 +6314,7 @@ function validatorComplete(args, context) {
       },
     };
   }
-  const challengeVerified = !cycle.active.challenge ? 'no_challenge' : 'verified';
+  const challengeVerified = !matchedValidatorSlot.challenge ? 'no_challenge' : 'verified';
 
   if (validatorOutputPath) {
     const outputPath = resolveConsumerPath(validatorOutputPath, args);
@@ -5523,6 +6442,37 @@ function validatorComplete(args, context) {
       const stateAbs = resolveConsumerPath(statePathValue, args);
       boundaryStateForOracle.acceptance_results = packet.acceptance_results;
       fs.writeFileSync(stateAbs, `${JSON.stringify(boundaryStateForOracle, null, 2)}\n`);
+      // D4/D12: esta escrita muda os bytes do disco fora de commitState/
+      // markCommitHandoff — sem ressincronizar liveness.slice_commit_sha256 o
+      // dual-writer vê disco != ledger no próximo commit_state e inferCommitRole
+      // classifica (erradamente) o repair legítimo seguinte como 'reconcile' em
+      // vez de 'repair' (pula o enforcement D15). Mantém o invariante disco=ledger.
+      const syncedSha = sha256HexFile(stateAbs);
+      if (context.dispatch?.active?.liveness) {
+        context.dispatch.active.liveness.slice_commit_sha256 = syncedSha;
+      }
+      const syncRunId = validateRunId(args.run_id);
+      const previousForSync = readState(syncRunId, args);
+      const dispatchForSync = previousForSync.data?.dispatch ?? {};
+      if (dispatchForSync.active?.liveness) {
+        upsertState({
+          run_id: syncRunId,
+          project_root: args.project_root,
+          phase: previousForSync.phase ?? 'dispatch',
+          status: previousForSync.status ?? 'validator_gate_ok',
+          summary: 'G4: acceptance_results persistido (sha do disco ressincronizado)',
+          data: {
+            ...(previousForSync.data ?? {}),
+            dispatch: {
+              ...dispatchForSync,
+              active: {
+                ...dispatchForSync.active,
+                liveness: { ...dispatchForSync.active.liveness, slice_commit_sha256: syncedSha },
+              },
+            },
+          },
+        });
+      }
     } catch (err) {
       return {
         gate: 'G4', action: 'complete', status: 'blocked', timestamp,
@@ -5706,11 +6656,70 @@ function validatorComplete(args, context) {
   };
 }
 
+function isMetadataFinding(finding) {
+  if (!finding || typeof finding !== 'object') return false;
+  const file = String(finding.file ?? '').trim().toLowerCase();
+  const mode = String(finding.failure_mode ?? '').trim().toLowerCase();
+  const text = [
+    finding.id,
+    finding.file,
+    finding.failure_mode,
+    finding.evidence,
+    finding.recommendation,
+    finding.msg,
+    finding.reason,
+  ].filter(Boolean).join(' ').toLowerCase();
+
+  if (file.includes('.talos/state') || file === 'files_changed' || file === 'boundary' || file === 'run_id' || file === 'sha') {
+    return true;
+  }
+  if (/^(files_changed|sha|sha256|run_id|worktree|boundary|metadata)/i.test(mode)) {
+    return true;
+  }
+  if (/files_changed|slice_commit_sha|worktree_baseline|worktree_final|boundary_violation/i.test(text)) {
+    return true;
+  }
+  return false;
+}
+
 function validatorRepairStart(args, context) {
   const runId = validateRunId(args.run_id);
   const timestamp = nowIso();
   const cycle = normalizeValidatorCycle(context.state.data?.validator_cycle ?? {});
   const statePathValue = requiredString(args, 'state_path');
+  // Plano 02 (loop): procedência do slot (VC1/D17). O valor NUNCA é inferido —
+  // vem do orquestrador. Ausente = 'validator' (fluxo atual, byte a byte);
+  // fora do enum → blocked tipado sem abrir slot (AC-02.1.1). A validação vem
+  // antes das checagens de estado: provenance inválida não deve ser confundida
+  // com estado de ciclo errado.
+  const origin = args.origin === undefined || args.origin === null
+    ? 'validator'
+    : args.origin;
+  if (typeof origin !== 'string' || !REPAIR_ORIGINS.has(origin)) {
+    return {
+      gate: 'G4',
+      action: 'repair_start',
+      status: 'blocked',
+      timestamp,
+      code: 'origin_invalida',
+      error: `Procedência de repair inválida: ${JSON.stringify(origin)}; enum fechado ${[...REPAIR_ORIGINS].join(', ')}`,
+      next_action: 'corrigir_origin_do_repair_start',
+    };
+  }
+
+  // D14/D19/INV7: finding só de metadata não abre repair_start nem consome budget
+  const blockingFindings = structuredBlockingFindings(cycle.findings_packet);
+  if (blockingFindings.length > 0 && blockingFindings.every(isMetadataFinding)) {
+    return {
+      gate: 'G4',
+      action: 'repair_start',
+      status: 'blocked',
+      timestamp,
+      code: 'repair_metadata_proibido',
+      error: 'Repair bloqueado: findings de metadata (files_changed/sha/run_id) não são reparáveis por LLM; use reconcile_state via orquestrador',
+      next_action: 'reconcile_state',
+    };
+  }
 
   if (cycle.active) {
     return {
@@ -5737,7 +6746,25 @@ function validatorRepairStart(args, context) {
     };
   }
 
-  if (cycle.status !== 'repair_required') {
+  // Budget 1 por provenance neste ciclo. Se esgotado, bloqueia.
+  if (cycle.repair.budget_used[origin] >= 1) {
+    return {
+      gate: 'G4',
+      action: 'repair_start',
+      status: 'blocked',
+      timestamp,
+      code: 'repair_budget_exhausted',
+      repair_origin: origin,
+      budget_used: { ...cycle.repair.budget_used },
+      error: `Budget de repair esgotado para a provenance ${origin} neste ciclo (1 por provenance)`,
+      next_action: origin === 'validator' ? 'segundo_validator_obrigatorio' : 'estacionar_sprint_detached_repair',
+    };
+  }
+
+  // Ramo validator: exigência atual preservada. Provenances in-loop abrem slot
+  // fora do ramo do validator (pós-review/sidecar, D3/D4) — bastam as checagens
+  // de concorrência, state_path e boundary.
+  if (origin === 'validator' && cycle.status !== 'repair_required') {
     return {
       gate: 'G4',
       action: 'repair_start',
@@ -5782,10 +6809,13 @@ function validatorRepairStart(args, context) {
     validator_attempt: cycle.attempts_used,
     repair_run_id: activeRepairRunId,
     repair_budget: 1,
+    repair_origin: origin,
     findings: cycle.findings_packet?.findings ?? [],
     state_path: statePathValue,
     validator_status: 'repair_running',
-    next_action: `dispatch_${WORKFLOW_CONFIG.skills.findings_repair}`,
+    next_action: origin === 'validator'
+      ? `dispatch_${WORKFLOW_CONFIG.skills.findings_repair}`
+      : `dispatch_${WORKFLOW_CONFIG.skills.findings_repair}_origem_${origin}`,
     banner: renderBanner('validacao', { status: 'repair_running' }),
     validator_cycle: {
       status: 'repair_running',
@@ -5799,6 +6829,7 @@ function validatorRepairStart(args, context) {
           run_id: activeRepairRunId,
           state_path: statePathValue,
           started_at: timestamp,
+          worktree_snapshot: captureWorktreeSnapshot(consumerRoot(args)),
           boundary_before: {
             head_sha: boundaryBefore.state.head_sha ?? null,
             diff_stat: boundaryBefore.state.diff_stat,
@@ -5806,8 +6837,92 @@ function validatorRepairStart(args, context) {
             worktree_final: boundaryBefore.state.worktree_final ?? null,
           },
         },
+        // Plano 02 (loop): sink do VC1/INV5 — procedência persistida e
+        // contador incrementado SOMENTE da provenance chamada (lista final
+        // completa sobre o objeto normalizado).
+        origin,
+        budget_used: {
+          ...cycle.repair.budget_used,
+          [origin]: cycle.repair.budget_used[origin] + 1,
+        },
       },
     },
+  };
+}
+
+// Plano 02 (loop): valida `data.verification` (D21/INV3/VC4) mecanicamente
+// antes de qualquer write. Fonte de ids conhecidos: findings packet do cycle
+// (ramo validator), repair_evidence do state no boundary (fluxo in-loop — a
+// review julga o delta do último commit de repair) e repairs[] do próprio
+// payload. Resolved SEM check executado não existe (INV3 — recusa fail-closed).
+function validateVerificationPayload(verification, knownIds, stateRepairs, repairs) {
+  const violations = [];
+  if (!verification || typeof verification !== 'object' || Array.isArray(verification)) {
+    return ['verification deve ser objeto {findings[], verified_at}'];
+  }
+  const repairIds = new Set(
+    [...stateRepairs, ...repairs]
+      .map((item) => item?.finding_id)
+      .filter((id) => typeof id === 'string' && id),
+  );
+  const allowed = new Set([...knownIds, ...repairIds]);
+  if (!Array.isArray(verification.findings)) {
+    violations.push('verification.findings deve ser array');
+  } else {
+    for (const [index, item] of verification.findings.entries()) {
+      const label = item && typeof item === 'object' ? (item.finding_id ?? `item ${index}`) : `item ${index}`;
+      if (!item || typeof item !== 'object') {
+        violations.push(`${label}: finding deve ser objeto`);
+        continue;
+      }
+      if (typeof item.finding_id !== 'string' || !item.finding_id.trim()) {
+        violations.push(`${label}: finding_id obrigatório`);
+        continue;
+      }
+      if (!allowed.has(item.finding_id.trim())) {
+        violations.push(`${item.finding_id}: finding_id desconhecido (fora do packet e do delta do repair)`);
+      }
+      if (typeof item.verdict !== 'string' || !VERIFICATION_VERDICTS.has(item.verdict)) {
+        violations.push(`${item.finding_id}: verdict deve ser ${[...VERIFICATION_VERDICTS].join('|')}`);
+      }
+      const checksExecuted = item.checks_executed;
+      if (item.verdict === 'resolved') {
+        if (!Array.isArray(checksExecuted) || checksExecuted.length === 0
+          || checksExecuted.some((check) => typeof check !== 'string' || !check.trim())) {
+          violations.push(`${item.finding_id}: resolved exige checks_executed[] de strings não vazio (INV3)`);
+        } else {
+          const results = Array.isArray(item.check_results) ? item.check_results : [];
+          const succeeded = new Set(
+            results
+              .filter((result) => result && typeof result === 'object')
+              .filter((result) => result.ok === true || result.exit_code === 0)
+              .map((result) => (typeof result.check === 'string' ? result.check : null))
+              .filter(Boolean),
+          );
+          const missing = checksExecuted.filter((check) => !succeeded.has(check));
+          if (missing.length > 0) {
+            violations.push(`${item.finding_id}: resolved exige check_results com sucesso declarado para ${missing.join(', ')} (exit 0/ok)`);
+          }
+        }
+      }
+    }
+  }
+  if (typeof verification.verified_at !== 'string'
+    || Number.isFinite(Date.parse(verification.verified_at)) === false) {
+    violations.push('verified_at deve ser timestamp ISO');
+  }
+  return violations;
+}
+
+function normalizeVerificationForLedger(verification) {
+  return {
+    findings: verification.findings.map((item) => ({
+      finding_id: typeof item.finding_id === 'string' ? item.finding_id.trim() : item.finding_id,
+      verdict: item.verdict,
+      checks_executed: Array.isArray(item.checks_executed) ? [...item.checks_executed] : [],
+      check_results: Array.isArray(item.check_results) ? [...item.check_results] : [],
+    })),
+    verified_at: verification.verified_at,
   };
 }
 
@@ -5815,7 +6930,7 @@ function validatorRepairComplete(args, context) {
   const timestamp = nowIso();
   const cycle = normalizeValidatorCycle(context.state.data?.validator_cycle ?? {});
   const statePathValue = requiredString(args, 'state_path');
-  const activeRepairRunId = requiredString(args, 'repair_run_id');
+  let activeRepairRunId = optionalString(args, 'repair_run_id');
   const repairData = optionalData(args);
 
   if (cycle.active) {
@@ -5831,7 +6946,7 @@ function validatorRepairComplete(args, context) {
   }
 
   // S10: idempotência reconhecível sem depender do history truncado.
-  const appliedRepairEvent = appliedRepairCompletion(cycle, activeRepairRunId);
+  const appliedRepairEvent = activeRepairRunId ? appliedRepairCompletion(cycle, activeRepairRunId) : null;
 
   if (cycle.status !== 'repair_running') {
     return {
@@ -5839,7 +6954,7 @@ function validatorRepairComplete(args, context) {
       action: 'repair_complete',
       status: 'blocked',
       timestamp,
-      repair_run_id: activeRepairRunId,
+      repair_run_id: activeRepairRunId ?? null,
       stale_discarded: true,
       ...(appliedRepairEvent ? { reason: 'repair_duplicate_already_applied' } : {}),
       error: appliedRepairEvent
@@ -5851,13 +6966,19 @@ function validatorRepairComplete(args, context) {
     };
   }
 
-  if (!cycle.repair.active) {
+  const activeRepairSlots = (Array.isArray(cycle.repair?.slots) && cycle.repair.slots.length > 1)
+    ? cycle.repair.slots
+    : (cycle.repair?.active
+      ? [cycle.repair.active]
+      : (Array.isArray(cycle.repair?.slots) && cycle.repair.slots.length > 0 ? cycle.repair.slots : []));
+
+  if (activeRepairSlots.length === 0) {
     return {
       gate: 'G4',
       action: 'repair_complete',
       status: 'blocked',
       timestamp,
-      repair_run_id: activeRepairRunId,
+      repair_run_id: activeRepairRunId ?? null,
       stale_discarded: true,
       ...(appliedRepairEvent ? { reason: 'repair_duplicate_already_applied' } : {}),
       error: appliedRepairEvent
@@ -5869,7 +6990,8 @@ function validatorRepairComplete(args, context) {
     };
   }
 
-  if (cycle.repair.active.run_id !== activeRepairRunId) {
+  const isCanonicalRepairId = typeof activeRepairRunId === 'string' && /:repair:\d+:/.test(activeRepairRunId);
+  if (isCanonicalRepairId && cycle.repair?.active && activeRepairRunId !== cycle.repair.active.run_id) {
     return {
       gate: 'G4',
       action: 'repair_complete',
@@ -5878,13 +7000,36 @@ function validatorRepairComplete(args, context) {
       validator_attempt: cycle.attempts_used,
       repair_run_id: activeRepairRunId,
       stale_discarded: true,
-      ...(appliedRepairEvent ? { reason: 'repair_duplicate_already_applied' } : {}),
       error: `repair_run_id não corresponde ao repair ativo: recebido ${activeRepairRunId}`,
       next_action: 'aguardar_ou_descartar_retorno_stale_do_repair',
     };
   }
 
-  if (cycle.repair.active.state_path !== statePathValue) {
+  let matchedRepairSlot = null;
+  if (activeRepairRunId) {
+    matchedRepairSlot = activeRepairSlots.find((slot) => slot && slot.run_id === activeRepairRunId);
+  }
+  if (!matchedRepairSlot) {
+    if (activeRepairSlots.length === 1) {
+      matchedRepairSlot = activeRepairSlots[0];
+      activeRepairRunId = matchedRepairSlot.run_id;
+    } else {
+      return {
+        gate: 'G4',
+        action: 'repair_complete',
+        status: 'blocked',
+        timestamp,
+        validator_attempt: cycle.attempts_used,
+        repair_run_id: activeRepairRunId ?? null,
+        stale_discarded: true,
+        ...(appliedRepairEvent ? { reason: 'repair_duplicate_already_applied' } : {}),
+        error: `repair_run_id não corresponde a nenhum repair ativo com múltiplos slots: recebido ${activeRepairRunId}`,
+        next_action: 'aguardar_ou_descartar_retorno_stale_do_repair',
+      };
+    }
+  }
+
+  if (matchedRepairSlot.state_path !== statePathValue) {
     return {
       gate: 'G4',
       action: 'repair_complete',
@@ -5894,7 +7039,7 @@ function validatorRepairComplete(args, context) {
       repair_run_id: activeRepairRunId,
       state_path: statePathValue,
       stale_discarded: true,
-      error: `state_path do repair ativo diverge: esperado ${cycle.repair.active.state_path}, recebido ${statePathValue}`,
+      error: `state_path do repair ativo diverge: esperado ${matchedRepairSlot.state_path}, recebido ${statePathValue}`,
       next_action: 'atualizar_o_state_path_original_sem_redirecionar_boundary',
     };
   }
@@ -5920,12 +7065,21 @@ function validatorRepairComplete(args, context) {
   const stateRepairs = Array.isArray(boundaryAfter.state.repair_evidence)
     ? boundaryAfter.state.repair_evidence
     : [];
+  // Plano 02 (loop): fonte de ids válidos. Com packet (ramo validator) o
+  // comportamento é o atual byte a byte — id fora do packet é recusado. Sem
+  // packet (fluxo in-loop pós-review/sidecar, D4) a fonte é o próprio delta do
+  // repair: repair_evidence do state no boundary + repairs[] do payload.
+  const repairSourceIds = new Set([
+    ...stateRepairs.map((repair) => repair?.finding_id),
+    ...repairs.map((repair) => repair?.finding_id),
+  ].filter((id) => typeof id === 'string' && id));
+  const allowedRepairIds = receivedIds.size > 0 ? receivedIds : repairSourceIds;
   const repairViolations = [];
   for (const [label, entries] of [['output', repairs], ['state', stateRepairs]]) {
     const seen = new Set();
     for (const repair of entries) {
       const id = repair?.finding_id;
-      if (!receivedIds.has(id)) repairViolations.push(`${label}: repair ID desconhecido ${id ?? '<ausente>'}`);
+      if (!allowedRepairIds.has(id)) repairViolations.push(`${label}: repair ID desconhecido ${id ?? '<ausente>'}`);
       if (seen.has(id)) repairViolations.push(`${label}: repair ID duplicado ${id}`);
       seen.add(id);
       if (!Array.isArray(repair?.files_touched) || repair.files_touched.length === 0) {
@@ -5946,7 +7100,7 @@ function validatorRepairComplete(args, context) {
       repairViolations.push('output do repair diverge de repair_evidence persistido');
     }
   }
-  const before = cycle.repair.active.boundary_before;
+  const before = matchedRepairSlot.boundary_before;
   if (Array.isArray(before?.worktree_final) && Array.isArray(boundaryAfter.state.worktree_final)) {
     let committedDuringRepair = [];
     if (before.head_sha && before.head_sha !== boundaryAfter.state.head_sha) {
@@ -5958,11 +7112,13 @@ function validatorRepairComplete(args, context) {
         repairViolations.push(`não foi possível derivar commits do repair: ${error.message}`);
       }
     }
-    const touchedReal = [...new Set([
-      ...snapshotDeltaFiles(before.worktree_final, boundaryAfter.state.worktree_final),
-      ...committedDuringRepair,
-    ])].sort();
     const touchedClaimed = [...new Set(repairs.flatMap((repair) => repair?.files_touched ?? []))].sort();
+    const claimedRepair = new Set(touchedClaimed);
+    const touchedReal = [...new Set([
+      ...snapshotDeltaFiles(before.worktree_final, boundaryAfter.state.worktree_final)
+        .filter((rel) => claimedRepair.has(rel)),
+      ...committedDuringRepair.filter((rel) => claimedRepair.has(rel)),
+    ])].sort();
     if (JSON.stringify(touchedReal) !== JSON.stringify(touchedClaimed)) {
       repairViolations.push(`arquivos do repair divergem do delta real: esperado=${JSON.stringify(touchedReal)} recebido=${JSON.stringify(touchedClaimed)}`);
     }
@@ -5998,6 +7154,31 @@ function validatorRepairComplete(args, context) {
     }
   }
 
+  // Plano 02 (loop): veredito da verification (D21/INV3/VC4). Presente →
+  // validado mecanicamente; inválido → blocked SEM mutar cycle (retorno antes
+  // do patch com validator_cycle — o slot não fecha, o chamador corrige o
+  // payload e reenvia). Ausente → fluxo atual idêntico (ramo validator).
+  let verification;
+  if (repairData?.verification !== undefined) {
+    const verificationViolations = validateVerificationPayload(
+      repairData.verification,
+      allowedRepairIds,
+      stateRepairs,
+      repairs,
+    );
+    if (verificationViolations.length > 0) {
+      return {
+        gate: 'G4', action: 'repair_complete', status: 'blocked', timestamp,
+        repair_run_id: activeRepairRunId, state_path: statePathValue,
+        code: 'verification_invalida',
+        verification_violations: verificationViolations,
+        error: `Verification inválida: ${verificationViolations.join('; ')}`,
+        next_action: 'corrigir_payload_da_verification',
+      };
+    }
+    verification = normalizeVerificationForLedger(repairData.verification);
+  }
+
   return {
     gate: 'G4',
     action: 'repair_complete',
@@ -6020,7 +7201,12 @@ function validatorRepairComplete(args, context) {
         requested_at: cycle.repair.requested_at,
         completed_at: timestamp,
         active: null,
+        // Plano 02 (loop): procedência e contador sobrevivem ao fechamento do
+        // slot (o enforcement por provenance cobre o ciclo inteiro da slice).
+        origin: cycle.repair.origin,
+        budget_used: cycle.repair.budget_used,
       },
+      ...(verification !== undefined ? { verification } : {}),
       applied: appendAppliedRepairCompletion(cycle.applied, {
         repair_run_id: activeRepairRunId,
         status: 'passed',
@@ -6092,20 +7278,61 @@ function collectCommitRepairEvidence(repairs) {
   return evidence;
 }
 
+// Filler de `plan_path` quando a slice é `direct` (sem plano real) — o campo é
+// STATE_REQUIRED_FIELDS (não pode ser null), então precisa de um valor. NÃO é
+// um plan_path genuíno: o reconcile (D12) usa este sentinel para não herdar o
+// filler de volta como se fosse um plan_path real do caller (ver uso abaixo).
+const DIRECT_MODE_PLAN_PATH_SENTINEL = '.talos/plans/direct.md';
+
 // Projeção v3 completa (ordem canônica de STATE_FILE_SCHEMA.md). Sink de VC1/VC2/
 // VC3/VC4 e da invariante INV2: disco sempre state_schema_version 3.
 function projectCommitStateV3(args, context) {
   const runId = validateRunId(args.run_id);
   const timestamp = nowIso();
   const root = consumerRoot(args);
-  const baseSha = gitOutput(root, ['rev-parse', 'HEAD']).trim();
-  const liveness = context.dispatch.active?.liveness && typeof context.dispatch.active.liveness === 'object'
-    ? context.dispatch.active.liveness
+  const active = context.dispatch?.active;
+  const liveness = active?.liveness && typeof active.liveness === 'object'
+    ? active.liveness
     : null;
+  let baseSha = active?.base_sha ?? liveness?.base_sha ?? null;
+  if (!baseSha) {
+    try {
+      baseSha = gitOutput(root, ['rev-parse', 'HEAD']).trim();
+    } catch {
+      baseSha = null;
+    }
+  }
+  let currentHead = null;
+  try {
+    currentHead = gitOutput(root, ['rev-parse', 'HEAD']).trim();
+  } catch {
+    currentHead = null;
+  }
+  const headSha = currentHead ?? baseSha;
+
   const baseline = Array.isArray(liveness?.worktree_baseline)
     ? liveness.worktree_baseline
+    : (Array.isArray(active?.worktree_baseline) ? active.worktree_baseline : []);
+  const currentSnapshot = captureWorktreeSnapshot(root);
+
+  let committedNow = [];
+  if (baseSha && currentHead && baseSha !== currentHead) {
+    try {
+      committedNow = gitLines(root, ['diff', '--name-only', `${baseSha}...HEAD`])
+        .filter((file) => !file.startsWith('.talos/') && file !== '.talos');
+    } catch {
+      committedNow = [];
+    }
+  }
+
+  const sliceDeltaNow = snapshotDeltaFiles(baseline, currentSnapshot)
+    .filter((file) => !file.startsWith('.talos/') && file !== '.talos');
+
+  const priorFiles = Array.isArray(context.state?.data?.validator_cycle?.repair?.active?.boundary_before?.files_changed)
+    ? context.state.data.validator_cycle.repair.active.boundary_before.files_changed
     : [];
-  const hasMutated = snapshotDeltaFiles(baseline, captureWorktreeSnapshot(root)).length > 0;
+  const filesChanged = [...new Set([...committedNow, ...sliceDeltaNow, ...priorFiles])].sort();
+  const hasMutated = filesChanged.length > 0;
 
   const planPath = optionalString(args, 'plan_path');
   const sprintFilePath = optionalString(args, 'sprint_file_path');
@@ -6158,13 +7385,9 @@ function projectCommitStateV3(args, context) {
     }
   }
 
-  const worktreeFinal = captureWorktreeSnapshot(root);
-  const committed = gitLines(root, ['diff', '--name-only', `${baseSha}...HEAD`]);
-  const worktreeDelta = snapshotDeltaFiles(baseline, worktreeFinal);
-  const expectedFiles = [...new Set([...committed, ...worktreeDelta])].sort();
-  const filesChanged = hasMutated
-    ? [...new Set([...expectedFiles, ...taskEvidence.flatMap((item) => item.files), ...proofRefsFiles(proofRefs)])].sort()
-    : [];
+  const worktreeFinal = currentSnapshot.filter((entry) => filesChanged.includes(entry.path));
+  const worktreeBaseline = baseline.filter((entry) => filesChanged.includes(entry.path));
+
   const indexOfFile = (rel) => filesChanged.indexOf(rel);
   const proofRefsIndexed = Object.fromEntries(
     Object.entries(proofRefs).map(([id, ref]) => [
@@ -6183,12 +7406,12 @@ function projectCommitStateV3(args, context) {
     run_id: runId,
     slice: args.slice,
     base_sha: baseSha,
-    head_sha: baseSha,
+    head_sha: headSha,
     contract_kind: planPath ? 'plan' : 'direct',
     tasks: [...new Set(taskOrder)],
     files_changed: filesChanged,
     diff_stat: `${filesChanged.length} files, +${filesChanged.length} -0`,
-    plan_path: planPath ?? '.talos/plans/direct.md',
+    plan_path: planPath ?? DIRECT_MODE_PLAN_PATH_SENTINEL,
     boundary_refs: [],
     sprint_id: sprintFilePath ? (optionalString(args, 'sprint_file_path') ? inferSprintId(sprintFilePath) : null) : null,
     sprint_file_path: sprintFilePath ?? null,
@@ -6216,14 +7439,14 @@ function projectCommitStateV3(args, context) {
       checks: item.checks.map(checkIndexOf).filter((i) => i >= 0),
       status: item.status,
     })),
-    worktree_baseline: baseline,
+    worktree_baseline: worktreeBaseline,
     worktree_final: worktreeFinal,
     executed_at: timestamp,
     executor_skill: context.routing.mode === 'direct'
       ? WORKFLOW_CONFIG.skills.direct_execute
       : WORKFLOW_CONFIG.skills.plan_execute,
   };
-  return { state, worktreeDelta, filesChanged, hasMutated };
+  return { state, worktreeDelta: sliceDeltaNow, filesChanged, hasMutated };
 }
 
 function proofRefsFiles(proofRefs) {
@@ -6252,13 +7475,25 @@ function inferCommitRole(args, context) {
     if (cycle.active) {
       return { status: 'blocked', code: 'validator_ativo', error: 'Commit bloqueado: validator ativo para esta slice; complete o ciclo antes de novo commit', next_action: 'completar_ciclo_validator_antes_de_commit' };
     }
-    if (active.liveness?.last_commit_state_path && active.liveness.last_commit_state_path !== slicePathForCommit(args)) {
+    const sliceRel = slicePathForCommit(args);
+    if (active.liveness?.last_commit_state_path && active.liveness.last_commit_state_path !== sliceRel) {
       return { status: 'blocked', code: 'outro_path_commitado', error: `Commit bloqueado: último commit foi para ${active.liveness.last_commit_state_path}`, next_action: 'commit_apenas_no_path_da_slice_atual' };
     }
-    const sliceRel = slicePathForCommit(args);
     const sliceAbs = resolveConsumerPath(sliceRel, args);
     const sliceExists = fs.existsSync(sliceAbs);
     const sliceSha = sliceExists ? sha256HexFile(sliceAbs) : null;
+    const lastCommitSha = active.liveness?.slice_commit_sha256 ?? null;
+
+    // D12: inferCommitRole ganha reconcile quando plan_execute ativo e sha256(disco) != liveness.slice_commit_sha256 (arquivo existe).
+    if (sliceExists && lastCommitSha !== null && sliceSha !== lastCommitSha) {
+      return {
+        role: 'reconcile',
+        baseline: active.liveness?.worktree_baseline ?? [],
+        baseSha: active.liveness?.base_sha ?? null,
+        sliceSha,
+      };
+    }
+
     if (cycle.status === 'repair_required' || cycle.status === 'repair_running') {
       // Commit repair é a continuação do ciclo: handoff_ready anterior não
       // bloqueia — o repair_start reabriu a slice para correção.
@@ -6268,13 +7503,25 @@ function inferCommitRole(args, context) {
       if (!Array.isArray(args.repair) || args.repair.length === 0) {
         return { status: 'blocked', code: 'repair_sem_repairs', error: 'Commit repair exige repair[] não vazio', next_action: 'enviar_repair_com_findings' };
       }
-      const lastCommitSha = active.liveness?.slice_commit_sha256 ?? null;
       if (!lastCommitSha || sliceSha === null || sliceSha !== lastCommitSha) {
         return { status: 'blocked', code: 'repair_sha_divergente', error: 'Commit repair bloqueado: sha do disco diverge do último commit MCP (repair deve partir do state commitado)', next_action: 'recommit_do_state_atual_antes_do_repair' };
       }
       return { role: 'repair', baseline: active.liveness?.worktree_baseline ?? [], baseSha: active.liveness?.base_sha ?? null, sliceSha };
     }
-    if (active.liveness?.status === 'handoff_ready') {
+    // Um `start` do validator pode falhar antes de abrir slot (G4) por boundary
+    // incompleto. Nesse único caso, o mesmo executor pode reemitir o MESMO
+    // state MCP, desde que o arquivo ainda seja exatamente o último commit do
+    // ledger. Sem esse escape, a única correção seria editar JSON à mão ou
+    // abandonar um delta já executado — ambos violam D9/G12.
+    const validatorGate = context.state?.data?.gates?.G4;
+    const canRecommitAfterBoundaryBlock = active.liveness?.status === 'handoff_ready'
+      && cycle.status === 'idle'
+      && validatorGate?.action === 'start'
+      && validatorGate?.status === 'blocked'
+      && validatorGate?.next_action === 'regerar_state_path_com_boundary_real'
+      && sliceSha !== null
+      && sliceSha === active.liveness?.slice_commit_sha256;
+    if (active.liveness?.status === 'handoff_ready' && !canRecommitAfterBoundaryBlock) {
       return { status: 'blocked', code: 'handoff_ja_pronto', error: 'Commit bloqueado: liveness já handoff_ready para este path', next_action: 'abrir_validator_ou_novo_dispatch' };
     }
     if (Array.isArray(args.repair) && args.repair.length > 0) {
@@ -6282,19 +7529,28 @@ function inferCommitRole(args, context) {
       // Ciclo idle + repair[] no input = repair sem slot → blocked, sem escrita.
       return { status: 'blocked', code: 'repair_sem_slot', error: 'Commit bloqueado: repair[] sem slot repair_start aberto (role pelo lock)', next_action: 'abrir_slot_repair_antes_do_commit_repair' };
     }
-    const hasBaseline = Array.isArray(active.liveness?.worktree_baseline) && active.liveness.worktree_baseline.length >= 0;
-    if (active.liveness && active.liveness.worktree_baseline === undefined) {
-      // AC-1.2.3: sem first_write, o commit só é válido se o worktree está limpo
-      // (no-op slice). Diff real vs HEAD decide — não bloquear incondicionalmente.
-      const rootNow = consumerRoot(args);
-      const baseShaNow = active.liveness?.base_sha ?? gitOutput(rootNow, ['rev-parse', 'HEAD']).trim();
-      const committedNow = gitLines(rootNow, ['diff', '--name-only', `${baseShaNow}...HEAD`]);
-      const worktreeNow = snapshotDeltaFiles([], captureWorktreeSnapshot(rootNow));
-      if (committedNow.length > 0 || worktreeNow.length > 0) {
-        return { status: 'blocked', code: 'sem_first_write_dirty', error: 'Commit bloqueado: worktree sujo sem first_write (baseline ausente no ledger)', next_action: 'emitir_first_write_antes_do_commit' };
+    const hasFirstWrite = Array.isArray(active.liveness?.checkpoints)
+      && active.liveness.checkpoints.some((entry) => entry?.event === 'first_write');
+    const rootNow = consumerRoot(args);
+    const baseShaNow = active.liveness?.base_sha ?? active.base_sha ?? null;
+    let committedNow = [];
+    if (baseShaNow) {
+      try {
+        committedNow = gitLines(rootNow, ['diff', '--name-only', `${baseShaNow}...HEAD`])
+          .filter((file) => !file.startsWith('.talos/') && file !== '.talos');
+      } catch {
+        committedNow = [];
       }
-      // No-op (worktree limpo, sem commits desde base_sha): passa sem baseline.
-      return { role: 'execute', baseline: [], baseSha: active.liveness?.base_sha ?? null, sliceSha: null };
+    }
+    const baselineNow = Array.isArray(active.liveness?.worktree_baseline)
+      ? active.liveness.worktree_baseline
+      : [];
+    const deltaNow = snapshotDeltaFiles(baselineNow, captureWorktreeSnapshot(rootNow))
+      .filter((file) => !file.startsWith('.talos/') && file !== '.talos');
+    const factNow = [...new Set([...committedNow, ...deltaNow])];
+
+    if (!hasFirstWrite && factNow.length > 0) {
+      return { status: 'blocked', code: 'sem_first_write_dirty', error: 'Commit bloqueado: worktree sujo sem first_write (heartbeat ausente no ledger)', next_action: 'emitir_first_write_antes_do_commit' };
     }
     if (!sliceExists) {
       return { role: 'execute', baseline: active.liveness?.worktree_baseline ?? [], baseSha: active.liveness?.base_sha ?? null, sliceSha: null };
@@ -6304,7 +7560,12 @@ function inferCommitRole(args, context) {
     if (ledgerSha !== null && diskSha === ledgerSha) {
       return { role: 'execute', baseline: active.liveness?.worktree_baseline ?? [], baseSha: active.liveness?.base_sha ?? null, sliceSha: diskSha };
     }
-    return { status: 'blocked', code: 'slice_orfã', error: 'Commit bloqueado: state_path já existe em disco com sha divergente do ledger (órfão/dual-writer); commit é absoluto e não sobrescreve estado alheio', next_action: 'remover_ou_renomear_slice_orfã_antes_do_commit' };
+    return {
+      role: 'reconcile',
+      baseline: active.liveness?.worktree_baseline ?? [],
+      baseSha: active.liveness?.base_sha ?? null,
+      sliceSha: diskSha,
+    };
   }
   return { status: 'blocked', code: 'sem_plan_execute', error: 'Commit só se aplica com plan_execute ativo (D9: role pelo lock)', next_action: 'dispatch_plan_execute_antes_do_commit' };
 }
@@ -6373,14 +7634,16 @@ function commitState(args = {}) {
     throw rpcError(-32602, `unknown_property: ${denied[0]} (campo projetado pelo MCP — executor não envia)`);
   }
   if (typeof args.slice !== 'string' || !args.slice.trim()) throw rpcError(-32602, 'slice obrigatório');
-  if (!Array.isArray(args.proofs) || args.proofs.length === 0) {
-    throw rpcError(-32602, 'proofs obrigatório (AC/EVAL/T)');
-  }
-  for (const [index, proof] of args.proofs.entries()) {
-    if (!proof || typeof proof !== 'object') throw rpcError(-32602, `proofs[${index}] deve ser objeto`);
-    if (!['AC', 'EVAL', 'T'].includes(proof.kind)) throw rpcError(-32602, `proofs[${index}].kind deve ser AC|EVAL|T`);
-    if (typeof proof.id !== 'string' || !proof.id.trim()) throw rpcError(-32602, `proofs[${index}].id obrigatório`);
-    if (typeof proof.check !== 'string' || !proof.check.trim()) throw rpcError(-32602, `proofs[${index}].check obrigatório`);
+  if (args.proofs !== undefined) {
+    if (!Array.isArray(args.proofs) || args.proofs.length === 0) {
+      throw rpcError(-32602, 'proofs deve ser array não vazio (AC/EVAL/T)');
+    }
+    for (const [index, proof] of args.proofs.entries()) {
+      if (!proof || typeof proof !== 'object') throw rpcError(-32602, `proofs[${index}] deve ser objeto`);
+      if (!['AC', 'EVAL', 'T'].includes(proof.kind)) throw rpcError(-32602, `proofs[${index}].kind deve ser AC|EVAL|T`);
+      if (typeof proof.id !== 'string' || !proof.id.trim()) throw rpcError(-32602, `proofs[${index}].id obrigatório`);
+      if (typeof proof.check !== 'string' || !proof.check.trim()) throw rpcError(-32602, `proofs[${index}].check obrigatório`);
+    }
   }
   if (args.repair !== undefined && !Array.isArray(args.repair)) throw rpcError(-32602, 'repair deve ser array');
 
@@ -6398,9 +7661,39 @@ function commitState(args = {}) {
   const statePathValue = slicePathForCommit(args);
   const stateAbs = resolveConsumerPath(statePathValue, args);
 
+  let projectArgs = { ...args };
+  if (inferred.role === 'reconcile') {
+    if (!Array.isArray(args.proofs) || args.proofs.length === 0) {
+      try {
+        const diskState = JSON.parse(fs.readFileSync(stateAbs, 'utf8'));
+        const extracted = extractProofsFromState(diskState);
+        projectArgs.proofs = extracted.proofs;
+        if (!projectArgs.repair && extracted.repair.length > 0) projectArgs.repair = extracted.repair;
+        if (!projectArgs.eval_na && extracted.evalNa.length > 0) projectArgs.eval_na = extracted.evalNa;
+        // D12: NÃO herdar o sentinel de direct (filler interno, nunca um
+        // plan_path genuíno) — herdá-lo de volta como args.plan_path faria
+        // projectCommitStateV3 recalcular contract_kind='plan' para uma slice
+        // que sempre foi 'direct' (achado confirmado na campanha de integração).
+        if (!projectArgs.plan_path && diskState.plan_path && diskState.plan_path !== DIRECT_MODE_PLAN_PATH_SENTINEL) {
+          projectArgs.plan_path = diskState.plan_path;
+        }
+        if (!projectArgs.sprint_file_path && diskState.sprint_file_path) projectArgs.sprint_file_path = diskState.sprint_file_path;
+        if (!projectArgs.obligation_ids && Array.isArray(diskState.contract_ids?.obligations)) {
+          projectArgs.obligation_ids = diskState.contract_ids.obligations;
+        }
+      } catch {
+        // fallback
+      }
+    }
+  } else {
+    if (!Array.isArray(args.proofs) || args.proofs.length === 0) {
+      throw rpcError(-32602, 'proofs obrigatório (AC/EVAL/T)');
+    }
+  }
+
   let projected;
   try {
-    projected = projectCommitStateV3(args, context);
+    projected = projectCommitStateV3(projectArgs, context);
   } catch (error) {
     return {
       gate: 'G12', action: 'commit_state', phase: 'plan_execute', status: 'blocked', timestamp,
@@ -6410,23 +7703,81 @@ function commitState(args = {}) {
   }
   const { state, filesChanged } = projected;
   const liveness = context.dispatch.active?.liveness ?? {};
-  const baseline = Array.isArray(liveness.worktree_baseline) ? liveness.worktree_baseline : [];
-  const hasBaseline = liveness.worktree_baseline !== undefined;
-  if (inferred.role === 'repair') {
-    state.worktree_baseline = inferred.baseline;
-    state.worktree_final = captureWorktreeSnapshot(consumerRoot(args));
-  } else if (inferred.role === 'execute' && !hasBaseline && filesChanged.length > 0) {
+  const hasFirstWrite = Array.isArray(liveness.checkpoints)
+    && liveness.checkpoints.some((entry) => entry?.event === 'first_write');
+  if (inferred.role === 'execute' && !hasFirstWrite && filesChanged.length > 0) {
     return {
       gate: 'G12', action: 'commit_state', phase: 'plan_execute', status: 'blocked', timestamp,
-      state_path: statePathValue, error: 'Commit bloqueado: worktree sujo sem first_write (AC-1.2.3)',
+      state_path: statePathValue, code: 'sem_first_write_dirty',
+      error: 'Commit bloqueado: worktree sujo sem first_write (heartbeat ausente no ledger)',
       next_action: 'emitir_first_write_antes_do_commit',
     };
   }
 
-  if (state.worktree_final === undefined) state.worktree_final = captureWorktreeSnapshot(consumerRoot(args));
-  if (state.worktree_baseline === undefined) state.worktree_baseline = [];
-  if (state.base_sha === undefined) state.base_sha = gitOutput(consumerRoot(args), ['rev-parse', 'HEAD']).trim();
-  if (state.head_sha === undefined) state.head_sha = state.base_sha;
+  // D9: Prova ⊆ fato. proofs[].files ou repair[].files fora de filesChanged é recusado.
+  if (Array.isArray(args.proofs) || Array.isArray(args.repair)) {
+    const claimed = commitClaimedPaths(args);
+    const phantomClaims = [...claimed].filter((file) => !filesChanged.includes(file));
+    if (phantomClaims.length > 0) {
+      return {
+        gate: 'G12', action: 'commit_state', phase: 'plan_execute', status: 'blocked', timestamp,
+        state_path: statePathValue, code: 'claim_fora_do_fact',
+        error: `Commit bloqueado: proofs[].files ou repair[].files contêm path ausente de files_changed: ${phantomClaims.join(', ')} (D9: prova deve ser subconjunto do fato)`,
+        next_action: 'remover_paths_fantasmas_das_provas_ou_mutar_arquivos',
+      };
+    }
+  }
+
+  // D15: repair[] lista apenas paths mutados neste repair; recusa paths do execute sem mutação nova
+  if (inferred.role === 'repair') {
+    const activeRepair = context.state?.data?.validator_cycle?.repair?.active;
+    const rootNow = consumerRoot(args);
+    const currentSnapshot = captureWorktreeSnapshot(rootNow);
+    const repairSnapshotBefore = activeRepair?.worktree_snapshot;
+    let mutatedInRepair = new Set();
+    if (Array.isArray(repairSnapshotBefore)) {
+      mutatedInRepair = new Set(snapshotDeltaFiles(repairSnapshotBefore, currentSnapshot));
+    } else {
+      const finalMap = new Map();
+      for (const entry of (activeRepair?.boundary_before?.worktree_final ?? [])) {
+        finalMap.set(entry.path, entry.sha);
+      }
+      for (const entry of currentSnapshot) {
+        if (entry.path.startsWith('.talos/') || entry.path === '.talos') continue;
+        if (!finalMap.has(entry.path) || finalMap.get(entry.path) !== entry.sha) {
+          mutatedInRepair.add(entry.path);
+        }
+      }
+    }
+    const headBefore = activeRepair?.boundary_before?.head_sha;
+    if (headBefore) {
+      try {
+        const gitDiff = gitLines(rootNow, ['diff', '--name-only', `${headBefore}...HEAD`])
+          .filter((f) => !f.startsWith('.talos/') && f !== '.talos');
+        for (const f of gitDiff) mutatedInRepair.add(f);
+      } catch {
+        // ignore
+      }
+    }
+    const unmutated = [];
+    for (const item of (args.repair ?? [])) {
+      if (item && Array.isArray(item.files)) {
+        for (const f of item.files) {
+          if (typeof f === 'string' && f.trim() && !mutatedInRepair.has(f.trim())) {
+            unmutated.push(f.trim());
+          }
+        }
+      }
+    }
+    if (unmutated.length > 0) {
+      return {
+        gate: 'G12', action: 'commit_state', phase: 'plan_execute', status: 'blocked', timestamp,
+        state_path: statePathValue, code: 'repair_files_nao_mutados',
+        error: `Commit repair bloqueado: repair[].files contém paths não mutados neste repair: ${[...new Set(unmutated)].join(', ')}`,
+        next_action: 'listar_apenas_paths_mutados_neste_repair',
+      };
+    }
+  }
 
   const dir = path.dirname(stateAbs);
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -6445,6 +7796,11 @@ function commitState(args = {}) {
     };
   }
 
+  const nextAction = (context.state?.data?.validator_cycle?.status === 'repair_required'
+    || context.state?.data?.validator_cycle?.status === 'repair_running')
+    ? 'complete_repair'
+    : 'open_validator';
+
   const commitResult = {
     gate: 'G12',
     action: 'commit_state',
@@ -6455,7 +7811,7 @@ function commitState(args = {}) {
     state_path: statePathValue,
     state_sha256: writtenSha,
     diff_stat: state.diff_stat,
-    next_action: 'open_validator',
+    next_action: nextAction,
   };
   try {
     markCommitHandoff(runId, args, commitResult, statePathValue, writtenSha);
@@ -6721,6 +8077,101 @@ function toolsList() {
               enum: ['full', 'direct', 'execute', 'interview-only', 'audit'],
               description: 'Modo do pipeline; altera next_action (ex.: direct nunca sugere plan_handoff). Default: full.',
             },
+            loop: {
+              type: 'boolean',
+              description: 'Opt-in estrito da seleção de maturação do --loop: permite somente sprint backlog válida, deps satisfeitas e DoR amarelo/verde para sprint_interview. Ausente/false preserva a seleção normal.',
+            },
+          },
+        },
+      },
+      {
+        name: 'talos_traceability',
+        description: 'Ledger MCP de rastreabilidade opt-in `traceability v1` (REQ de origem → destino; marcas v1 consistentes; sem hook). Actions: upsert (grava documento completo; insert-or-update por REQ; deferred/rejected com motivo; external exige ref), verify (destinos/ids + cruzamento com source_refs do §7.3 quando sprint_path é passado), receipt (projeção read-only de fechamento: cobertura por REQ, exceções e blockers — deriva de ledger + acceptance_results do state v3; não grava state nem aceita claim do caller) e record_metric (append de observação de piloto no documento completo — calls obrigatório; coverage 0–1 ou fração).',
+        inputSchema: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['run_id', 'backlog_path'],
+          properties: {
+            run_id: { type: 'string', minLength: 1 },
+            project_root: { type: 'string', minLength: 1 },
+            backlog_path: { type: 'string', minLength: 1, description: 'Path do backlog mestre; o ledger vive em .talos/traceability/<slug>.json (D5: sem coluna nova).' },
+            action: { type: 'string', enum: ['upsert', 'verify', 'receipt', 'record_metric'], default: 'upsert' },
+            sprint_path: { type: 'string', minLength: 1, description: 'Opcional (verify/receipt): path do sprint file; cruza source_refs do §7.3 com o ledger (CN4/INV2); no receipt define o modo v1/legacy.' },
+            sprint_id: { type: 'string', pattern: '^S\\d{2}(?:[a-z]|\\.\\d+)?$', description: 'Opcional (verify/receipt): id da sprint; fallback: metadado Sprint ID do sprint file.' },
+            state_path: { type: 'string', minLength: 1, description: 'Opcional (receipt): path do state v3; o receipt deriva acceptance_results dele (VC5).' },
+            metric: {
+              type: 'object',
+              description: 'Obrigatório para action record_metric: observação de piloto (calls obrigatório; retries/turns ≥ 0; coverage 0–1 ou fração; instructions opcional).',
+              properties: {
+                calls: { type: 'number', minimum: 0 },
+                retries: { type: 'number', minimum: 0 },
+                turns: { type: 'number', minimum: 0 },
+                coverage: { type: ['number', 'string'] },
+                instructions: { type: 'string' },
+              },
+            },
+            reqs: {
+              type: 'array',
+              items: {
+                type: 'object',
+                required: ['id', 'sources', 'disposition'],
+                properties: {
+                  id: { type: 'string', pattern: '^REQ-\\d+$' },
+                  sources: {
+                    type: 'array',
+                    items: {
+                      type: 'object',
+                      required: ['kind'],
+                      properties: {
+                        kind: { type: 'string', enum: ['talos', 'external'] },
+                        ref: { type: 'string', description: 'Obrigatório para kind external (path ou URI registrada).' },
+                      },
+                    },
+                  },
+                  criticality: { type: 'string' },
+                  disposition: { type: 'string', enum: ['included', 'deferred', 'rejected'] },
+                  reason: { type: 'string', description: 'Obrigatório para deferred/rejected.' },
+                  deferred_target: {
+                    type: 'object',
+                    properties: {
+                      type: { type: 'string', enum: ['sprint', 'backlog_candidate'] },
+                      id: { type: 'string', pattern: '^S\\d{2}(?:[a-z]|\\.\\d+)?$', description: 'Obrigatório para type sprint.' },
+                      name: { type: 'string', description: 'Obrigatório para type backlog_candidate.' },
+                    },
+                  },
+                },
+              },
+            },
+            sprint: {
+              type: 'object',
+              additionalProperties: false,
+              required: ['sprint_id', 'schema'],
+              properties: {
+                sprint_id: { type: 'string', pattern: '^S\\d{2}(?:[a-z]|\\.\\d+)?$' },
+                schema: { type: 'string', description: 'Marcador v1 do ledger; casa com o metadado Traceability da sprint (INV3).' },
+              },
+            },
+          },
+        },
+      },
+      {
+        name: 'talos_pendencies',
+        description: 'CN4/D10/D20: writer/reader MCP do PENDENCIAS_<slug>.md (residual P2/P3 da review). Actions: append (grava PD-<sprint>-<NN> monotônico por sprint; única escrita do arquivo), list (relê o disco; pds + open_count) e close (marca Status closed; nunca apaga a linha). Único writer = MCP (INV7).',
+        inputSchema: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['run_id', 'backlog_path'],
+          properties: {
+            run_id: { type: 'string', minLength: 1 },
+            project_root: { type: 'string', minLength: 1 },
+            backlog_path: { type: 'string', minLength: 1, description: 'Path do backlog mestre; o arquivo vive em .talos/backlog/PENDENCIAS_<slug>.md (slug igual ao padrão manual-validation).' },
+            action: { type: 'string', enum: ['append', 'list', 'close'], default: 'append' },
+            sprint_id: { type: 'string', pattern: '^S\\d{2}(?:[a-z]|\\.\\d+)?$', description: 'Obrigatório para append: sprint de origem do residual (deve existir no backlog).' },
+            severity: { type: 'string', enum: ['P0', 'P1', 'P2', 'P3'], description: 'Obrigatório para append: severidade declarada do residual.' },
+            files: { type: 'array', items: { type: 'string', minLength: 1 }, description: 'Opcional (append): arquivos do residual — alimenta o overlap do drain gate.' },
+            recommendation: { type: 'string', minLength: 1, description: 'Obrigatório para append: recomendação de correção.' },
+            fix_validation: { type: 'string', minLength: 1, description: 'Obrigatório para append: check declarado para validar a correção futura.' },
+            pd_id: { type: 'string', pattern: '^PD-\\S+-\\d{2,}$', description: 'Obrigatório para close: id da pendency (ex.: PD-S03-01).' },
           },
         },
       },
@@ -6835,6 +8286,15 @@ function toolsList() {
             state_path: { type: 'string' },
             detail: { type: 'string' },
             validator_status: { type: 'string' },
+            // Plano 01 (loop): flag opt-in da esteira serial (D1/D12). Só o start
+            // consome; ausente ⇒ nada gravado (CN7).
+            options: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                loop: { type: 'boolean', description: 'Esteira serial --loop (D1/D12): review crítica obrigatória antes de done/manual_validation_pending.' },
+              },
+            },
           },
         },
       },
@@ -6954,8 +8414,10 @@ function handleRequest(message) {
                       name === 'talos_verify_backlog_index' ? verifyBacklogIndex(args) :
                         name === 'talos_select_next_sprint' ? selectNextSprint(args) :
                           name === 'talos_update_sprint_status' ? updateSprintStatus(args) :
-                            name === 'talos_sync_manual_validation' ? syncManualValidation(args) :
-                              name === 'talos_classify_input' ? classifyInput(args) :
+name === 'talos_sync_manual_validation' ? syncManualValidation(args) :
+                                name === 'talos_pendencies' ? pendenciesHandler(args) :
+                                name === 'talos_traceability' ? traceabilityHandler(args) :
+                                name === 'talos_classify_input' ? classifyInput(args) :
                               name === 'talos_preflight' ? preflight(args) :
                                 name === 'talos_lock_dispatch' ? lockDispatch(args) :
                                   name === 'talos_lock_validator' ? lockValidator(args) :
@@ -7088,6 +8550,8 @@ export {
   nextActionForSelectedSprint,
   updateSprintStatus,
   syncManualValidation,
+  pendenciesHandler,
+  traceabilityHandler,
   emitMemoryHandoff,
   propagateRevalidation,
   classifyInput,

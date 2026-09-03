@@ -32,7 +32,7 @@ npx github:pauloborini/talos init vscode --global
 
 ```
 
-Smoke pós-update: `talos_ping` → `version: 0.18.2`; `talos_capabilities` → `schema_version: 5` (sibling-only).
+Smoke pós-update: `talos_ping` → `version: 0.21.1`; `talos_capabilities` → `schema_version: 5` (sibling-only).
 Após sprint com smoke humano: relatório em `.talos/manual-validation/` → `talos_sync_manual_validation` (promove `done` ou bloqueia origem).
 
 ---
@@ -67,6 +67,10 @@ npx github:pauloborini/talos init pi --yes
 # vscode  — global (recomendado) ou por-projeto
 npx github:pauloborini/talos init vscode --global
 npx github:pauloborini/talos init vscode
+
+# MinimaxCode (MinimaxCode) — global por natureza (Plugin V1 em ~/.minimax/plugins/talos/)
+npx github:pauloborini/talos init minimaxcode
+# aceita os aliases: mavis | minimaxcode | minimax-code | mmc
 ```
 
 ## Desinstalar
@@ -92,6 +96,9 @@ npx github:pauloborini/talos uninstall pi
 # vscode — global (recomendado) ou por-projeto
 npx github:pauloborini/talos uninstall vscode --global
 npx github:pauloborini/talos uninstall vscode
+
+# MinimaxCode (MinimaxCode) — remove plugin + 5 custom agents + sibling _shared
+npx github:pauloborini/talos uninstall minimaxcode
 ```
 
 Remove **só** os artefatos do Talos. Preserva config, skills e outros MCP servers do usuário.
@@ -121,6 +128,7 @@ Remove **só** os artefatos do Talos. Preserva config, skills e outros MCP serve
 | opencode | `~/.config/opencode/` (Win: `%APPDATA%\opencode`; honra `XDG_CONFIG_HOME`) | `opencode.json` |
 | pi | `~/.pi/agent/` (honra `PI_CODING_AGENT_DIR`) | `mcp.json` |
 | vscode | `~/.vscode-talos/` (runtime) + `~/Library/Application Support/Code/User/prompts/` (agents/skills) | `settings.json` (`github.copilot.chat.mcpServers`) |
+| minimaxcode | `~/.minimax/plugins/talos/` (Plugin V1: MCP + skills) + `~/.minimax/agents/talos-*/` (5 custom agents) | `servers/mcp.json` (dentro do Plugin V1; auto-load) |
 
 ---
 
@@ -128,7 +136,7 @@ Remove **só** os artefatos do Talos. Preserva config, skills e outros MCP serve
 
 Abra a CLI no host e chame as tools:
 
-- `talos_ping` → deve retornar `host=<claude|codex|antigravity|zcode|opencode|pi|vscode>` e `version: 0.18.2`
+- `talos_ping` → deve retornar `host=<claude|codex|antigravity|zcode|opencode|pi|vscode|mavis>` e `version: 0.21.1`
 - `talos_capabilities` → descritores + `prereq_policy` (`schema_version: 5`)
 
 > **Não** dispare o `talos-task-validator` à mão: ele roda automaticamente dentro do

@@ -3,11 +3,11 @@
   <img src="docs/assets/talos-logo.png" alt="Talos" width="200" height="200">
 </p>
 
-# Talos v0.18.2
+# Talos v0.21.1
 
-**Talos** is a deterministic development pipeline: product contract (§7) → plan → isolated execution → cold validation. It ships as one public, free plugin for Claude Code, Cursor, Codex App, Antigravity, ZCode, OpenCode, Pi CLI, and VS Code.
+**Talos** is a deterministic development pipeline: product contract (§7) → plan → isolated execution → cold validation. It ships as one public, free plugin for Claude Code, Cursor, Codex App, Antigravity, ZCode, OpenCode, Pi CLI, VS Code, and MinimaxCode.
 
-**Version:** [`VERSION`](VERSION) (`0.18.2`) · **Command reference:** [COMMANDS.md](COMMANDS.md) · **Portuguese guide:** [README.pt-BR.md](README.pt-BR.md)
+**Version:** [`VERSION`](VERSION) (`0.21.1`) · **Command reference:** [COMMANDS.md](COMMANDS.md) · **Portuguese guide:** [README.pt-BR.md](README.pt-BR.md)
 
 ## Install
 
@@ -21,6 +21,7 @@ npx github:pauloborini/talos init zcode
 npx github:pauloborini/talos init opencode --global
 npx github:pauloborini/talos init pi --global --yes
 npx github:pauloborini/talos init vscode --global
+npx github:pauloborini/talos init minimaxcode   # also: mavis | minimax-code | mmc
 ```
 
 `--global` is recommended for OpenCode, Pi, and VS Code. For a project-only installation, omit it. Pi requires `pi-mcp-adapter` and `pi-subagents`; `--yes` installs missing dependencies.
@@ -44,6 +45,14 @@ talos_capabilities
 ```
 
 `talos_ping` must report the expected host and current version. `talos_capabilities` reports the host adapter and required dispatch/validation capabilities. A host missing required subagent or MCP support fails preflight instead of silently degrading.
+
+## What's new in v0.21.1
+
+Talos `0.21.1` hardens the deterministic slice model introduced in `0.21.0`:
+
+- Direct-mode `reconcile` no longer promotes the internal sentinel `.talos/plans/direct.md` into a real `plan_path`, so a recovered direct slice keeps `contract_kind: direct`.
+- Validator completion now resyncs `liveness.slice_commit_sha256` after persisting `acceptance_results`, which keeps the next post-fail commit on the real `repair` path instead of accidentally downgrading it to `reconcile`.
+- Public and operational documentation now describe the hardened boundary/repair model explicitly, so release notes, install docs, and orchestrator docs stay aligned with the shipped behavior.
 
 ## Use Talos
 
@@ -78,13 +87,14 @@ The pipeline stores consumer-project artifacts under `.talos/`:
 - `backlog/` — strategic index and sprint files;
 - `plans/` — executable plans;
 - `state/<run_id>/` — execution proof and acceptance results;
-- `manual-validation/` — human smoke checks when automation is insufficient.
+- `manual-validation/` — human smoke checks when automation is insufficient;
+- `traceability/` — optional opt-in requirements ledger (traceability v1).
 
 Automated proof can end at `manual_validation_pending` when a human smoke check remains. Only the human sync flow can validate or waive that check and promote the sprint to `done`.
 
 ## Contract, acceptance, and manual validation
 
-Talos v0.18.2 rejects pre-v0.16 artifacts: start a new backlog and sprint rather than migrating an incomplete legacy contract. A sprint's §7 is the frozen product contract. Each acceptance criterion (`AC-*`) has an `origin` (`usuario`, `derivado:<path>`, or `premissa`); an assumption cannot support a Must/P0 acceptance criterion.
+Talos v0.21.1 rejects pre-v0.16 artifacts: start a new backlog and sprint rather than migrating an incomplete legacy contract. A sprint's §7 is the frozen product contract. Each acceptance criterion (`AC-*`) has an `origin` (`usuario`, `derivado:<path>`, or `premissa`); an assumption cannot support a Must/P0 acceptance criterion.
 
 An execution state uses schema v3. `done` requires every `AC-*` to be proved and no pending manual check. When automated proof is complete but a human smoke check remains, Talos records `manual_validation_pending`: dependencies may proceed, but no handoff is emitted. Complete the report in `.talos/manual-validation/` with `talos_sync_manual_validation`; it either promotes the sprint to `done` or blocks the source when the smoke check fails.
 
@@ -94,11 +104,19 @@ validator pass → manual_validation_pending
 → done + HANDOFF_*.md
 ```
 
+### Requirements traceability (opt-in, traceability v1)
+
+A sprint can opt into requirements traceability by setting `Traceability: v1` in its metadata. Each requirement (`REQ-*`) is then recorded in the ledger `.talos/traceability/<backlog-slug>.json` through the single `talos_traceability` MCP tool (`upsert`, `verify`, `receipt`, `record_metric`), and each `AC-*` may declare `source_refs` pointing back to its requirements.
+
+Closing a v1 sprint as `done` is gated: every requirement marked `included` must be linked to proved acceptance criteria, and the ledger markers must match the sprint markers in both directions. The closure receipt (coverage per requirement, exceptions, blockers) is a read-only projection returned by `talos_traceability receipt` — the orchestrator echoes it and never claims coverage itself. Sprints without the marker (legacy) keep the previous behavior unchanged.
+
 ## Backlog and execution model
 
 Talos separates a concise strategic `BACKLOG_MESTRE_*.md` from live sprint files. The sprint file contains scope and its §7 contract; the MCP validates both artifacts, resolves dependencies, and selects the next action deterministically.
 
 The normal chain is `talos-sprint-interview` → `talos-plan-handoff` → executor → `talos-task-validator`; `talos-findings-repair` runs only after a failed validator, and `talos-slice-review` runs with `--review` or when `critical_review.required` is set. The primary orchestrator authors the contract and plan, but never implementation code: mutations happen only in an isolated executor, then a sibling validator performs cold validation.
+
+With `--loop`, sprints are pulled serially and review residuals self-correct in-loop (introduced in `0.20.0`, hardened in `0.21.1`): P0/P1 opens a repair with origin `slice_review`, a punctual verification executes the declared checks before judging and echoes a per-finding verdict (`resolved`/`not_resolved`/`regression`); persistent residuals go to the `talos-escalation-repair` sidecar (origin `escalation`), P2/P3 becomes a `PD-<sprint>-<NN>` entry in `PENDENCIAS_<slug>.md` (MCP-only writer) drained on demand, and an unrecoverable sprint is parked as `detached_repair`. There is never a second validator or a full re-review on the review branch.
 
 Use direct skills only for their narrow purpose: `talos-backlog-generator` organizes demand; `talos-sprint-interview` seals §7; `talos-plan-handoff` creates a plan; `talos-audit` diagnoses without patching (and may write a handoff with `--handoff`); `talos-memory-promote` is an explicit post-`done` action. Never invoke `talos-task-validator` manually.
 
@@ -106,11 +124,11 @@ Use direct skills only for their narrow purpose: `talos-backlog-generator` organ
 
 The preflight verifies required subagent, MCP, synchronous validator join, mutable dispatch, version consistency, and lock availability. Additional gates validate the input, backlog, sprint file, dependencies, templates, acceptance scan, and execution order. A blocked gate stops the pipeline; Talos does not replace a missing deterministic result with prose.
 
-The sibling validation loop is bounded: executor writes a state path, the orchestrator dispatches a cold sibling validator, and a P0/P1/P2 failure allows one repair and one final validator. A second failure ends as blocked. `critical_review` requires a green slice review before any sprint status can close.
+The sibling validation loop is bounded: executor writes a state path, the orchestrator dispatches a cold sibling validator, and a P0/P1/P2 failure allows one repair and one final validator. A second failure ends as blocked. `critical_review` requires a green slice review before any sprint status can close. The review branch keeps its own bounded correction chain (repair with provenance → verification → escalation sidecar → `detached_repair` parking under `--loop`), with budget 1 per provenance enforced by the MCP.
 
 ## References
 
-The MCP exposes 16 tools for preflight, artifacts, contracts, locks, state, sprint status, and manual-validation sync. The detailed adapter contract is in [host adapters](packages/orchestrator/references/host-adapters.md); implementation-level references remain in Portuguese while the public installation and operational path is fully covered here and in [COMMANDS.md](COMMANDS.md).
+The MCP exposes 18 tools for preflight, artifacts, contracts, locks, state, sprint status, manual-validation sync, and requirements traceability. The detailed adapter contract is in [host adapters](packages/orchestrator/references/host-adapters.md); implementation-level references remain in Portuguese while the public installation and operational path is fully covered here and in [COMMANDS.md](COMMANDS.md).
 
 ## Hosts
 
@@ -123,6 +141,7 @@ The MCP exposes 16 tools for preflight, artifacts, contracts, locks, state, spri
 | OpenCode | `init opencode --global` | — |
 | Pi CLI | `init pi --global --yes` | `pi-mcp-adapter`, `pi-subagents` |
 | VS Code | `init vscode --global` | — |
+| MinimaxCode | `init minimaxcode` | — |
 
 Host adapters describe native differences; the pipeline contract stays portable. See [host adapters](packages/orchestrator/references/host-adapters.md).
 

@@ -1,6 +1,12 @@
 # Talos MCP Server
 
-Servidor MCP do plugin Talos v0.18.2.
+Servidor MCP do plugin Talos v0.21.1.
+
+## Destaques v0.21.1
+
+- **Hardening de `reconcile` para slices `direct`.** O MCP ignora o sentinel interno `.talos/plans/direct.md` ao reidratar `plan_path` a partir do state em disco; uma slice `direct` recuperada continua `contract_kind=direct`.
+- **Ledger e disco voltam a falar a mesma verdade após o validator.** Quando o complete do validador persiste `acceptance_results`, o MCP ressincroniza `liveness.slice_commit_sha256`; o próximo commit pós-fail continua sendo `role=repair`, preservando o enforcement de subconjunto sobre `repair[].files`.
+- **Testes mais robustos.** A suíte do MCP ganhou regressões para esses dois cenários e deixa de depender do cwd da raiz do repo para resolver fixtures.
 
 ## Tools
 
@@ -12,7 +18,7 @@ Servidor MCP do plugin Talos v0.18.2.
 - `talos_verify_template_conformance`: Gate TC; PLAN só avança com template conforme e `pending_count: 0`; em fluxo de sprint use `require_sprint_file:true` para exigir referências `EVAL-*`/`Eval/Policy`.
 - `talos_verify_sprint_file`: Gate de sprint viva; valida `SPRINT_S<NN>_*.md`, `eval_manifest`, `policy_manifest`, evidence-to-claim, contrato §7 e vínculo com backlog quando fornecido.
 - `talos_verify_backlog_index`: Gate de backlog enxuto; valida `BACKLOG_MESTRE_*.md` como índice macro, sprint files linkados, deps internas, ciclo e status espelhado backlog↔sprint.
-- `talos_select_next_sprint`: Gate de seleção; escolhe a próxima sprint executável com `state=ready`, deps internas `done` **ou** `manual_validation_pending`, sprint file válido e DoR verde. Arg opcional `mode` (`full`/`direct`/`execute`/`interview-only`). Em `passed`, `next_action` é mode-aware: §7 draft → `sprint_interview`; `direct` + §7 selado → `plan_execute`; `full` + §7 selado sem PLAN → `plan_handoff`; PLAN real → `plan_execute`. Campo `selected.prd_path` é legado posicional do backlog (null/`—` esperado).
+- `talos_select_next_sprint`: Gate de seleção; por padrão escolhe a próxima sprint executável com `state=ready`, deps internas `done` **ou** `manual_validation_pending`, sprint file válido e DoR verde. O arg estritamente booleano `loop:true` é opt-in: antes de qualquer `ready`, prioriza somente uma sprint `backlog` maturável (deps satisfeitas, sprint file válido e DoR amarelo/verde) e devolve `next_action:sprint_interview`; só sem backlog maturável retorna à seleção normal. Nunca abre exceção para `blocked`, `detached_repair`, DoR vermelho/ausente ou dependência pendente. Sem a flag, o comportamento normal não muda. Arg opcional `mode` (`full`/`direct`/`execute`/`interview-only`). Em `passed`, `next_action` é mode-aware: §7 draft → `sprint_interview`; `direct` + §7 selado → `plan_execute`; `full` + §7 selado sem PLAN → `plan_handoff`; PLAN real → `plan_execute`. Campo `selected.prd_path` é legado posicional do backlog (null/`—` esperado).
 - `talos_update_sprint_status`: Gate pós-validação; sincroniza status no `BACKLOG_MESTRE` e no `SPRINT_SNN`, exigindo `state_path` + veredito frio terminal para `done` **ou** `manual_validation_pending`. `done` exige `acceptance_results` com todos os `AC-*` `proved` (sem M aberto) e emite `HANDOFF_*`; MVP satisfaz DEP mas não emite handoff. Arg `prd_path` é legado (só coluna do backlog); não gera artefato PRD.
 - `talos_sync_manual_validation`: Sync do relatório humano `.talos/manual-validation/<backlog-slug>.md` com lock por backlog (D15). Valida IDs `MV-<sprint>-<ac>`, status e justificativa de waiver (relatório inválido/dirty → `blocked` com `next_action=fix_manual_validation_report`); item fantasma (MV sem `AC.manual` no §7.3) bloqueia; sincroniza `acceptance_results` no state (D24), histórico no sprint e ledger append-only no run state; todos os M `validated`/`waived` → promove `done` com `HANDOFF_*` (CN3); algum `failed` → origem `blocked` (cone de revalidação no Plano 5). Relatório sem pendências é removido (D12).
 - `talos_scan_acceptance`: Gate G5; escaneia o contrato §7 do sprint file por padrões determinísticos de ambiguidade bloqueante.
@@ -31,6 +37,7 @@ Servidor MCP do plugin Talos v0.18.2.
 - Roteamento: lock persistido em `data.routing`.
 - Dispatch: fase ativa, próxima ação e histórico persistidos em `data.dispatch`.
 - Liveness: `plan_execute` persiste `data.dispatch.active.liveness`; antes do handoff, bootstrap vencido sem checkpoint ou checkpoint antigo sem progresso vira `executor_liveness.status = stalled` e `next_action: retry_plan_execute`; `state_path_created` põe `executor_liveness.status = handoff_ready` e não expira enquanto aguarda `talos_lock_validator(start)`, que só abre quando o checkpoint corresponde ao mesmo `state_path`.
+- Reconcile/repair: `reconcile` pode recuperar state adulterado/órfão sem transformar slice `direct` em `plan`; após o complete do validador gravar `acceptance_results`, a sha persistida no ledger é ressincronizada antes do próximo commit.
 - State de sprint: quando `.talos/state/<run_id>/<slice>.json` declara `sprint_file_path`, o boundary exige `eval_results`, `policy_scope` e `proof_refs`; em schema v3, `eval_results` é a fonte única e `evidence_to_claim` não é persistido. Todo `EVAL-*` do sprint file precisa estar `passed` com evidência, e `policy_scope.forbidden_scope` bloqueia arquivo tocado. O validator emit `acceptance_results[]` no complete quando `sprint_file_path` presente (shape estrito; v1/v2 hard-fail).
 - Validação manual: `talos_sync_manual_validation` grava o resultado humano de `M` no state (`acceptance_results` com `M:validated`/`M:waived`/`M:failed` + `manual_validation_report`), no sprint (histórico) e no ledger `data.manual_validation` do run state (append-only; re-run não apaga). Relatório: `.talos/manual-validation/<slug>.md` (template `MANUAL_VALIDATION_REPORT_TEMPLATE.md`).
 - Erro bloqueante: entradas inválidas, run inexistente ou falha de estado retornam erro JSON-RPC; gate bloqueado retorna `status: "blocked"` e `next_action`.
