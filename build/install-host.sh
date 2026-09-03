@@ -182,6 +182,8 @@ EOF
   # Sem isso o plugin inteiro falha validação e nem aparece como instalado —
   # por consequência as 10 skills também não carregam.
   cp "$ROOT/packages/mcp-server/server.js" "$PLUGIN_DIR/server.js"
+  cp "$ROOT/packages/mcp-server/traceability.mjs" "$PLUGIN_DIR/traceability.mjs"
+  cp "$ROOT/packages/mcp-server/package.json" "$PLUGIN_DIR/package.json"
   # O server.js importa '../skills/_shared/scripts/document_quality.mjs' (relativo
   # à sua posição original no repo). Quando copiado pra <plugin>/server.js, o
   # import resolve para <plugins_root>/skills/_shared/scripts/... (sibling do

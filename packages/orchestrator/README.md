@@ -253,9 +253,16 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `talos-*` para o
 
 ---
 
-**Plugin version:** 0.21.1
+**Plugin version:** 0.21.2
 **Author:** Paulo Borini
 **Last updated:** 2026-09-03
+
+### Novidades v0.21.2 — fix do instalador MinimaxCode em npx/tarball
+
+- **Instalação do MinimaxCode resiliente a npx/tarball.** O instalador `installMavis` passa a resolver `server.js`, `traceability.mjs`, `package.json`, `_shared`, `skills` e `agents` a partir do bundle `plugins/talos/` quando `packages/` e `agents/` da raiz estiverem excluídos pelo `.npmignore` do tarball.
+- **Dependências do runtime Mavis empacotadas.** `traceability.mjs` (import obrigatório do `server.js` desde a v0.19.0) e `package.json` passam a ser copiados para o diretório do plugin (`~/.minimax/plugins/talos/`), garantindo boot do MCP e resposta correta do `talos_ping`.
+- **Prevenção de cache temporário no agent config.** O `config.yaml` dos custom agents do MinimaxCode não grava mais o diretório temporário do cache do npx como `defaultWorkspaceDir`.
+- **Cobertura em smoke-install.** `build/smoke-install.mjs` ganha suite completa de validação de install e uninstall do MinimaxCode.
 
 ### Novidades v0.21.1 — hardening pós-0.21.0 no reconcile e no repair
 
