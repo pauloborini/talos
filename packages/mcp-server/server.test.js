@@ -6261,7 +6261,16 @@ function initGitFixture() {
 }
 
 function fixtureState(name, replacements = {}) {
-  let raw = fs.readFileSync(path.resolve('packages/mcp-server/fixtures', name), 'utf8');
+  // F-003: fixture resolvida contra o PRÓPRIO arquivo de teste, não contra o
+  // cwd. Com `path.resolve('packages/mcp-server/fixtures', ...)` a suite só
+  // rodava da raiz do repo; `npm test --prefix packages/mcp-server` (cwd =
+  // packages/mcp-server) dobrava o path e quebrava 22 testes com ENOENT.
+  // Mesmo padrão de `fileURLToPath(import.meta.url)` já usado no topo do arquivo.
+  let raw = fs.readFileSync(path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    'fixtures',
+    name,
+  ), 'utf8');
   for (const [token, value] of Object.entries(replacements)) raw = raw.replaceAll(token, value);
   return JSON.parse(raw);
 }
@@ -6723,6 +6732,139 @@ test('talos_lock_validator complete: sprint_file_path exige acceptance_results (
   });
   assert.equal(done.status, 'passed');
   assert.equal(done.validator_status, 'passed');
+});
+
+// Achado da campanha de integração stdio (2026-09-03, build/integration-loop-
+// campaign.mjs): commitState role=reconcile SEM proofs herdava diskState.plan_path
+// mesmo quando esse valor era só o filler interno de contract_kind=direct
+// (`.talos/plans/direct.md`, nunca um plan_path genuíno do caller) — flipando
+// contract_kind de 'direct' para 'plan' e quebrando validateStateBoundary
+// ("talos-direct-execute exige contract_kind=direct") em qualquer reconcile de
+// slice direct sem proofs re-supridas. Fix: DIRECT_MODE_PLAN_PATH_SENTINEL.
+test('reconcile sem proofs preserva contract_kind=direct (regressão campanha 2026-09-03)', () => {
+  const runId = 'reconcile-direct-kind';
+  const { root } = initGitFixture();
+  preflight({
+    run_id: runId, project_root: root, mode: 'direct',
+    host: 'claude', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: runId, project_root: root, action: 'start', phase: 'plan_execute' });
+  lockDispatch({ run_id: runId, project_root: root, action: 'checkpoint', phase: 'plan_execute', event: 'first_write' });
+  fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'src/d.js'), 'export const d = 1;\n');
+  const commit = commitState({
+    run_id: runId, project_root: root, slice: 'A', obligation_ids: ['O1'],
+    proofs: [{ kind: 'AC', id: 'AC-001', check: 'node --test', files: ['src/d.js'] }],
+  });
+  assert.equal(commit.status, 'passed');
+  const diskBefore = JSON.parse(fs.readFileSync(path.join(root, commit.state_path), 'utf8'));
+  assert.equal(diskBefore.contract_kind, 'direct');
+
+  // Falsificador: reverter DIRECT_MODE_PLAN_PATH_SENTINEL e a checagem de
+  // exclusão em commitState (role reconcile) faz este assert falhar de novo
+  // (contract_kind volta a virar 'plan').
+  const abs = path.join(root, commit.state_path);
+  const tampered = JSON.parse(fs.readFileSync(abs, 'utf8'));
+  tampered.diff_stat = 'adulterado à mão';
+  fs.writeFileSync(abs, `${JSON.stringify(tampered, null, 2)}\n`);
+
+  const reconciled = commitState({ run_id: runId, project_root: root, slice: 'A' });
+  assert.equal(reconciled.status, 'passed');
+  assert.equal(reconciled.role, 'reconcile');
+  const diskAfter = JSON.parse(fs.readFileSync(path.join(root, reconciled.state_path), 'utf8'));
+  assert.equal(diskAfter.contract_kind, 'direct', 'reconcile sem proofs não deve flipar contract_kind para plan');
+  assert.equal(diskAfter.executor_skill, 'talos-direct-execute');
+
+  const start = lockValidatorCore({ run_id: runId, project_root: root, action: 'start', state_path: reconciled.state_path });
+  assert.equal(start.status, 'passed', `boundary deve validar após reconcile: ${JSON.stringify(start)}`);
+});
+
+// Achado da campanha de integração stdio (2026-09-03): validatorComplete
+// persiste acceptance_results direto no disco (fs.writeFileSync fora de
+// commitState/markCommitHandoff) sem ressincronizar liveness.slice_commit_sha256
+// no ledger — quebrando o invariante disco=ledger (D4). O próximo commitState
+// legítimo do repair via a sha divergente e inferCommitRole (checagem de
+// reconcile por sha ANTES da checagem de cycle.status===repair_required)
+// classifica role='reconcile' em vez de 'repair', pulando o enforcement D15
+// (repair[].files deve ser subconjunto do que foi mutado NESTE repair). Fix:
+// validatorComplete ressincroniza a sha do ledger após a escrita.
+test('repair pós-fail com sprint_file_path é classificado role=repair, não reconcile (regressão campanha 2026-09-03)', () => {
+  const runId = 'repair-not-reconcile';
+  const { root } = initGitFixture();
+  preflight({
+    run_id: runId, project_root: root, mode: 'execute',
+    host: 'codex', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: runId, project_root: root, action: 'start', phase: 'plan_execute' });
+  lockDispatch({ run_id: runId, project_root: root, action: 'checkpoint', phase: 'plan_execute', event: 'first_write' });
+  const stateRel = `.talos/state/${runId}/slice.json`;
+  fs.mkdirSync(path.join(root, '.talos/backlog/sprints'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md'), sprintDoc());
+  fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'tests'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'src/initial.js'), 'export const initial = true;\n');
+  fs.writeFileSync(
+    path.join(root, 'tests/outcome.test.js'),
+    "import assert from 'node:assert/strict';\nimport { initial } from '../src/initial.js';\nassert.equal(initial, true);\n",
+  );
+  const commit = commitState({
+    run_id: runId, project_root: root, slice: 'slice',
+    plan_path: '.talos/plans/PLAN_S01_runtime.md',
+    sprint_file_path: '.talos/backlog/sprints/SPRINT_S01_runtime.md',
+    proofs: [
+      { kind: 'AC', id: 'AC-001', check: 'node --test tests/outcome.test.js', files: ['src/initial.js', 'tests/outcome.test.js'] },
+      { kind: 'AC', id: 'AC-002', check: 'node --test tests/outcome.test.js', files: ['src/initial.js'] },
+      { kind: 'EVAL', id: 'EVAL-001', check: 'node --test tests/outcome.test.js' },
+    ],
+  });
+  assert.equal(commit.status, 'passed');
+  assert.equal(commit.state_path, stateRel);
+
+  const start = lockValidatorCore({ run_id: runId, project_root: root, action: 'start', state_path: stateRel });
+  assert.equal(start.status, 'passed');
+
+  // fail com finding de PRODUTO (não metadata) + acceptance_results ecoando o
+  // oráculo — este complete é o que grava acceptance_results direto no disco.
+  const fail = lockValidatorCore({
+    run_id: runId, project_root: root, action: 'complete', state_path: stateRel,
+    validator_run_id: start.validator_run_id, dispatch_token: start.dispatch_token,
+    challenge_response: start.challenge ? sha256File(root, start.challenge.file) : null, verdict: 'fail',
+    data: {
+      findings: [finding({ id: 'F-001', severity: 'P1', file: 'src/initial.js' })],
+      acceptance_results: [
+        { id: 'AC-001', status: 'proved', proof_types: ['T-outcome:proved', 'I:present'] },
+        { id: 'AC-002', status: 'proved', proof_types: ['T-outcome:proved', 'I:present'] },
+      ],
+    },
+  });
+  assert.equal(fail.status, 'passed');
+  assert.equal(fail.validator_status, 'repair_required');
+  const diskAfterFail = JSON.parse(fs.readFileSync(path.join(root, stateRel), 'utf8'));
+  assert.ok(Array.isArray(diskAfterFail.acceptance_results), 'validatorComplete persistiu acceptance_results no disco');
+  const ledgerAfterFail = readRunJson(root, runId);
+  assert.equal(
+    ledgerAfterFail.data.dispatch.active.liveness.slice_commit_sha256,
+    sha256File(root, stateRel),
+    'liveness.slice_commit_sha256 deve casar com o disco após validatorComplete persistir acceptance_results (D4)',
+  );
+
+  const repairStart = lockValidatorCore({ run_id: runId, project_root: root, action: 'repair_start', state_path: stateRel, origin: 'validator' });
+  assert.equal(repairStart.status, 'passed');
+
+  fs.writeFileSync(path.join(root, 'src/initial.js'), 'export const initial = false;\n');
+  const repairCommit = commitState({
+    run_id: runId, project_root: root, slice: 'slice',
+    plan_path: '.talos/plans/PLAN_S01_runtime.md',
+    sprint_file_path: '.talos/backlog/sprints/SPRINT_S01_runtime.md',
+    proofs: [
+      { kind: 'AC', id: 'AC-001', check: 'node --test tests/outcome.test.js', files: ['src/initial.js'] },
+      { kind: 'AC', id: 'AC-002', check: 'node --test tests/outcome.test.js', files: ['src/initial.js'] },
+      { kind: 'EVAL', id: 'EVAL-001', check: 'node --test tests/outcome.test.js' },
+    ],
+    repair: [{ finding_id: 'F-001', files: ['src/initial.js'], checks: ['node --test'], status: 'resolved' }],
+  });
+  assert.equal(repairCommit.status, 'passed', JSON.stringify(repairCommit));
+  assert.equal(repairCommit.role, 'repair', 'commit pós-fail com repair[] deve ser role=repair, não reconcile (D15 fica sem checagem se cair em reconcile)');
 });
 
 // D22: shape estrito de acceptance_results. Status fora do enum, id fora de

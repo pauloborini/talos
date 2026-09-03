@@ -6442,6 +6442,37 @@ function validatorComplete(args, context) {
       const stateAbs = resolveConsumerPath(statePathValue, args);
       boundaryStateForOracle.acceptance_results = packet.acceptance_results;
       fs.writeFileSync(stateAbs, `${JSON.stringify(boundaryStateForOracle, null, 2)}\n`);
+      // D4/D12: esta escrita muda os bytes do disco fora de commitState/
+      // markCommitHandoff — sem ressincronizar liveness.slice_commit_sha256 o
+      // dual-writer vê disco != ledger no próximo commit_state e inferCommitRole
+      // classifica (erradamente) o repair legítimo seguinte como 'reconcile' em
+      // vez de 'repair' (pula o enforcement D15). Mantém o invariante disco=ledger.
+      const syncedSha = sha256HexFile(stateAbs);
+      if (context.dispatch?.active?.liveness) {
+        context.dispatch.active.liveness.slice_commit_sha256 = syncedSha;
+      }
+      const syncRunId = validateRunId(args.run_id);
+      const previousForSync = readState(syncRunId, args);
+      const dispatchForSync = previousForSync.data?.dispatch ?? {};
+      if (dispatchForSync.active?.liveness) {
+        upsertState({
+          run_id: syncRunId,
+          project_root: args.project_root,
+          phase: previousForSync.phase ?? 'dispatch',
+          status: previousForSync.status ?? 'validator_gate_ok',
+          summary: 'G4: acceptance_results persistido (sha do disco ressincronizado)',
+          data: {
+            ...(previousForSync.data ?? {}),
+            dispatch: {
+              ...dispatchForSync,
+              active: {
+                ...dispatchForSync.active,
+                liveness: { ...dispatchForSync.active.liveness, slice_commit_sha256: syncedSha },
+              },
+            },
+          },
+        });
+      }
     } catch (err) {
       return {
         gate: 'G4', action: 'complete', status: 'blocked', timestamp,
@@ -7247,6 +7278,12 @@ function collectCommitRepairEvidence(repairs) {
   return evidence;
 }
 
+// Filler de `plan_path` quando a slice é `direct` (sem plano real) — o campo é
+// STATE_REQUIRED_FIELDS (não pode ser null), então precisa de um valor. NÃO é
+// um plan_path genuíno: o reconcile (D12) usa este sentinel para não herdar o
+// filler de volta como se fosse um plan_path real do caller (ver uso abaixo).
+const DIRECT_MODE_PLAN_PATH_SENTINEL = '.talos/plans/direct.md';
+
 // Projeção v3 completa (ordem canônica de STATE_FILE_SCHEMA.md). Sink de VC1/VC2/
 // VC3/VC4 e da invariante INV2: disco sempre state_schema_version 3.
 function projectCommitStateV3(args, context) {
@@ -7374,7 +7411,7 @@ function projectCommitStateV3(args, context) {
     tasks: [...new Set(taskOrder)],
     files_changed: filesChanged,
     diff_stat: `${filesChanged.length} files, +${filesChanged.length} -0`,
-    plan_path: planPath ?? '.talos/plans/direct.md',
+    plan_path: planPath ?? DIRECT_MODE_PLAN_PATH_SENTINEL,
     boundary_refs: [],
     sprint_id: sprintFilePath ? (optionalString(args, 'sprint_file_path') ? inferSprintId(sprintFilePath) : null) : null,
     sprint_file_path: sprintFilePath ?? null,
@@ -7633,7 +7670,13 @@ function commitState(args = {}) {
         projectArgs.proofs = extracted.proofs;
         if (!projectArgs.repair && extracted.repair.length > 0) projectArgs.repair = extracted.repair;
         if (!projectArgs.eval_na && extracted.evalNa.length > 0) projectArgs.eval_na = extracted.evalNa;
-        if (!projectArgs.plan_path && diskState.plan_path) projectArgs.plan_path = diskState.plan_path;
+        // D12: NÃO herdar o sentinel de direct (filler interno, nunca um
+        // plan_path genuíno) — herdá-lo de volta como args.plan_path faria
+        // projectCommitStateV3 recalcular contract_kind='plan' para uma slice
+        // que sempre foi 'direct' (achado confirmado na campanha de integração).
+        if (!projectArgs.plan_path && diskState.plan_path && diskState.plan_path !== DIRECT_MODE_PLAN_PATH_SENTINEL) {
+          projectArgs.plan_path = diskState.plan_path;
+        }
         if (!projectArgs.sprint_file_path && diskState.sprint_file_path) projectArgs.sprint_file_path = diskState.sprint_file_path;
         if (!projectArgs.obligation_ids && Array.isArray(diskState.contract_ids?.obligations)) {
           projectArgs.obligation_ids = diskState.contract_ids.obligations;
