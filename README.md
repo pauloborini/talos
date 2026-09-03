@@ -128,7 +128,7 @@ The sibling validation loop is bounded: executor writes a state path, the orches
 
 ## References
 
-The MCP exposes 18 tools for preflight, artifacts, contracts, locks, state, sprint status, manual-validation sync, and requirements traceability. The detailed adapter contract is in [host adapters](packages/orchestrator/references/host-adapters.md); implementation-level references remain in Portuguese while the public installation and operational path is fully covered here and in [COMMANDS.md](COMMANDS.md).
+The MCP exposes 19 tools for preflight, artifacts, contracts, locks, state, sprint status, manual-validation sync, review pendencies (`talos_pendencies`: append/list/close), and requirements traceability. The detailed adapter contract is in [host adapters](packages/orchestrator/references/host-adapters.md); implementation-level references remain in Portuguese while the public installation and operational path is fully covered here and in [COMMANDS.md](COMMANDS.md).
 
 ## Hosts
 
