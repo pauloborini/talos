@@ -4,6 +4,33 @@
 
 - Sem entradas no momento.
 
+## 0.21.2 - 2026-09-03
+
+Tipo: **packaging/tooling**. **Sem breaking**. Schema MCP: v5 (inalterado). Disco: v3 (inalterado).
+
+Resumo: Corrige a instalação do Talos para o MinimaxCode (`npx github:pauloborini/talos init minimaxcode` e `init all`) sob npx/tarball. O `.npmignore` exclui `/packages/` e `/agents/` da raiz do pacote publicado; o instalador `installMavis` passa a resolver os assets a partir do bundle `plugins/talos/` (paridade com Antigravity e Codex), além de incluir `traceability.mjs` (import obrigatório do `server.js` desde v0.19.0) e `package.json` no diretório do plugin.
+
+Mudanças:
+- **`build/cli/talos-init.mjs`** — `installMavis` resolve `server.js`, `traceability.mjs`, `package.json`, `_shared`, `skills` e `agents` a partir de `plugins/talos/` quando `packages/` ou `agents/` não existirem (cenário npx); copia `traceability.mjs` e `package.json` para dentro de `~/.minimax/plugins/talos/`; no `config.yaml` dos custom agents, evita gravar caminho temporário do cache do npx como `defaultWorkspaceDir`.
+- **`build/install-host.sh`** — rotina `mavis` copia `traceability.mjs` e `package.json` junto com `server.js`.
+- **`build/smoke-install.mjs`** — adiciona teste de cobertura de install/uninstall do MinimaxCode (valida presença de `server.js`, `traceability.mjs`, `package.json`, manifest, skills e custom agents).
+
+Impacto:
+- `npx github:pauloborini/talos init all` e `npx github:pauloborini/talos init minimaxcode` completam com sucesso 100% dos 9 hosts suportados, sem erro de `server.js ausente`.
+- O servidor MCP do Talos no MinimaxCode sobe e responde a `talos_ping` com `status: alive` e versão correta.
+
+Arquivos/artefatos:
+- `build/cli/talos-init.mjs`, `build/install-host.sh`, `build/smoke-install.mjs`.
+- Bump: `VERSION`, `package.json`, `packages/mcp-server/package.json`, `.claude-plugin/plugin.json`, READMEs, COMMANDS, CLAUDE, AGENTS, bundles e catálogos em `plugins/` e `hosts/`.
+
+Validação:
+- `node build/check-consistency.mjs`
+- `node build/check-public-docs.mjs`
+- `node build/smoke-install.mjs`
+- `node build/smoke-hosts.mjs`
+- `node build/conformance-matrix.mjs`
+- `npm pack` + `npx` real de instalação em `/tmp`
+
 ## 0.21.1 - 2026-09-03
 
 Tipo: **runtime + docs**. **Sem breaking**. Schema MCP: v5 (inalterado). Disco: v3 (inalterado).

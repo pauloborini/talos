@@ -564,11 +564,27 @@ function installMavis(opts) {
 
   // Bundle do server.js dentro do Plugin V1 (path absoluto é rejeitado pelo
   // reader oficial do Mavis; ver install-host.sh mavis para histórico).
-  const serverSrc = path.join(ROOT, 'packages', 'mcp-server', 'server.js');
-  if (!fs.existsSync(serverSrc)) {
-    fail(`server.js ausente: ${serverSrc} (rode build/build-plugins.sh e commite)`);
+  // Sob npx (tarball npm), `packages/` e `agents/` raiz são excluídos pelo .npmignore;
+  // o bundle distribuído vive em `plugins/talos/` (paridade com Antigravity/Codex).
+  const serverDir = [
+    path.join(ROOT, 'packages', 'mcp-server'),
+    path.join(ROOT, 'plugins', 'talos', 'packages', 'mcp-server'),
+  ].find((d) => fs.existsSync(path.join(d, 'server.js')));
+  if (!serverDir) {
+    fail('server.js ausente: rode build/build-plugins.sh e commite');
   }
-  fs.copyFileSync(serverSrc, path.join(pluginDir, 'server.js'));
+  fs.copyFileSync(path.join(serverDir, 'server.js'), path.join(pluginDir, 'server.js'));
+
+  // Copia traceability.mjs (import obrigatório do server.js desde v0.19.0)
+  const traceSrc = path.join(serverDir, 'traceability.mjs');
+  if (fs.existsSync(traceSrc)) {
+    fs.copyFileSync(traceSrc, path.join(pluginDir, 'traceability.mjs'));
+  }
+  // Copia package.json para talos_ping resolver a versão local corretamente
+  const pkgSrc = path.join(serverDir, 'package.json');
+  if (fs.existsSync(pkgSrc)) {
+    fs.copyFileSync(pkgSrc, path.join(pluginDir, 'package.json'));
+  }
 
   // Sibling plugins/skills/_shared/ — resolve o import relativo
   // '../skills/_shared/scripts/document_quality.mjs' do server.js.
@@ -576,8 +592,11 @@ function installMavis(opts) {
   // (package-readers.js:scanLocalPluginCandidates), então _shared é inerte
   // pro scan e existe só pra resolver o import.
   const skillsRoot = path.join(pluginsRoot, 'skills');
-  const sharedSrc = path.join(ROOT, 'packages', 'skills', '_shared');
-  if (fs.existsSync(sharedSrc)) {
+  const sharedSrc = [
+    path.join(ROOT, 'packages', 'skills', '_shared'),
+    path.join(ROOT, 'plugins', 'talos', 'packages', 'skills', '_shared'),
+  ].find(fs.existsSync);
+  if (sharedSrc) {
     const sharedDst = path.join(skillsRoot, '_shared');
     if (fs.existsSync(sharedDst)) fs.rmSync(sharedDst, { recursive: true, force: true });
     fs.mkdirSync(skillsRoot, { recursive: true });
@@ -605,10 +624,14 @@ function installMavis(opts) {
     JSON.stringify(mcpServers, null, 2) + '\n',
   );
 
-  // Skills — copia SKILL.md de cada packages/skills/<talos-*>/
-  const skillsSrc = path.join(ROOT, 'packages', 'skills');
+  // Skills — copia SKILL.md de cada packages/skills/<talos-*>/ (ou plugins/talos/skills/)
+  const skillsSrc = [
+    path.join(ROOT, 'packages', 'skills'),
+    path.join(ROOT, 'plugins', 'talos', 'packages', 'skills'),
+    path.join(ROOT, 'plugins', 'talos', 'skills'),
+  ].find(fs.existsSync);
   let skillCount = 0;
-  if (fs.existsSync(skillsSrc)) {
+  if (skillsSrc) {
     for (const name of fs.readdirSync(skillsSrc)) {
       if (!name.startsWith('talos-')) continue;
       const skillMd = path.join(skillsSrc, name, 'SKILL.md');
@@ -620,13 +643,16 @@ function installMavis(opts) {
     }
   }
 
-  // Custom agents — 1 por agents/talos-*.md.
+  // Custom agents — 1 por agents/talos-*.md (ou plugins/talos/agents/).
   // Formato: <dir>/agent.md (system_prompt puro) + <dir>/config.yaml (defaultWorkspaceDir).
   // NÃO escrever name/description/systemPrompt em config.yaml — o MinimaxCode
   // não reconhece esse formato; só lê o system_prompt de agent.md.
-  const agentsSrc = path.join(ROOT, 'agents');
+  const agentsSrc = [
+    path.join(ROOT, 'agents'),
+    path.join(ROOT, 'plugins', 'talos', 'agents'),
+  ].find(fs.existsSync);
   let agentCount = 0;
-  if (fs.existsSync(agentsSrc)) {
+  if (agentsSrc) {
     for (const name of fs.readdirSync(agentsSrc)) {
       if (!name.startsWith('talos-') || !name.endsWith('.md')) continue;
       const agentMd = path.join(agentsSrc, name);
@@ -636,7 +662,8 @@ function installMavis(opts) {
       fs.mkdirSync(agentDir, { recursive: true });
       const systemPrompt = readAgentSystemPrompt(agentMd);
       fs.writeFileSync(path.join(agentDir, 'agent.md'), systemPrompt.endsWith('\n') ? systemPrompt : `${systemPrompt}\n`);
-      const yaml = `defaultWorkspaceDir: ${ROOT}\n`;
+      const isNpx = ROOT.includes('node_modules');
+      const yaml = isNpx ? '{}\n' : `defaultWorkspaceDir: ${ROOT}\n`;
       fs.writeFileSync(path.join(agentDir, 'config.yaml'), yaml);
       agentCount += 1;
     }
