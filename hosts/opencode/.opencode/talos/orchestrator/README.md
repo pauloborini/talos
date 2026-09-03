@@ -253,9 +253,18 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `talos-*` para o
 
 ---
 
-**Plugin version:** 0.20.0
+**Plugin version:** 0.21.0
 **Author:** Paulo Borini
-**Last updated:** 2026-08-26
+**Last updated:** 2026-09-03
+
+### Novidades v0.21.0 — determinismo mecânico de boundary na slice e fechamento de sprint (BREAKING 0.21)
+
+- **Boundary mecânico via git (`files_changed`).** `files_changed` passa a ser derivado deterministicamente pelo MCP como o git fact real (porcelain atual Δ baseline t0 do start ∪ commits desde base_sha minus `.talos/`), sem filtragem por `proofs[].files` vazios ou parciais.
+- **Baseline t0 no start.** Capturado em `talos_lock_dispatch(start, phase=plan_execute)`; `first_write` vira heartbeat G12 puro (não sobrescreve baseline).
+- **Reprojeção no G4.** Divergência de fórmula é corrigida pelo MCP via reproject overwrite antes de abrir o slot, sem falso repair de metadata; JSON com sha divergente recupera com role `reconcile` (não rename).
+- **Validador frio focado em produto.** Não litiga metadata; repair foca exclusivamente em findings de produto (budget 1 por finding).
+- **Fechamento no `--loop` (D17/D18).** `talos_update_sprint_status` roda no mesmo turno antes de `talos_select_next_sprint`; `select_next` bloqueia avanço com `next_action: reconcile_state` quando há slice órfã em run stalled ou repair_running.
+- **BREAKING (DEC-039).** Skills 0.20 que ensinam baseline no `first_write` ou filtro de `files_changed` por proofs são rejeitadas pelo guard `DR05`.
 
 ### Novidades v0.20.0 — esteira `--loop` de sprints com auto-correção (minor aditiva, D18)
 

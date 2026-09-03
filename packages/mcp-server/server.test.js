@@ -7150,13 +7150,20 @@ test('Plano 01: commit exige first_write se worktree sujo; no-op passa (AC-1.2.3
   assert.equal(blocked.code, 'sem_first_write_dirty');
   assert.equal(blocked.next_action, 'emitir_first_write_antes_do_commit');
 
-  const { root: foreignRoot } = planCommitSetup('commit-foreign-dirty', {});
-  fs.writeFileSync(path.join(foreignRoot, 'AgentsView.tsx'), 'wip alheio\n');
+  const { root: foreignRoot } = initGitFixture();
+  fs.writeFileSync(path.join(foreignRoot, 'AgentsView.tsx'), 'wip alheio preexistente\n');
+  preflight({
+    run_id: 'commit-foreign-dirty', project_root: foreignRoot, mode: 'execute',
+    host: 'claude', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: 'commit-foreign-dirty', project_root: foreignRoot, action: 'start', phase: 'plan_execute' });
   const foreign = commitState({
     run_id: 'commit-foreign-dirty', project_root: foreignRoot, slice: 'A',
     proofs: [{ kind: 'AC', id: 'AC-001', check: 'node --test' }],
   });
   assert.equal(foreign.status, 'passed');
+  const diskForeign = JSON.parse(fs.readFileSync(path.join(foreignRoot, foreign.state_path), 'utf8'));
+  assert.deepEqual(diskForeign.files_changed, [], 'dirty preexistente não entra em files_changed');
 
   // No-op slice (worktree limpo) sem first_write → passed.
   const { root: root2 } = planCommitSetup('commit-clean', {});
@@ -7209,7 +7216,117 @@ test('Plano 01: g12 checkpoint desconhecido para events antigos (AC-1.2.5)', () 
   }
 });
 
-// AC-1.3.1 (CN5/VC1/INV2): commit → lock_validator(start) passa e boundary aceita.
+// AC-1.1.1 / AC-1.1.2 (CN4): t0 gravado no start; first_write não redefine t0.
+test('CN4 first_write não redefine t0', () => {
+  const { root } = initGitFixture();
+  preflight({
+    run_id: 'cn4-t0', project_root: root, mode: 'execute',
+    host: 'claude', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  const start = lockDispatch({ run_id: 'cn4-t0', project_root: root, action: 'start', phase: 'plan_execute' });
+  assert.equal(start.status, 'passed');
+  const t0Baseline = start.dispatch.active.liveness.worktree_baseline;
+  assert.ok(Array.isArray(t0Baseline), 't0 gravado no start');
+  assert.equal(t0Baseline.length, 0, 'worktree limpo em t0');
+
+  fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'src/dirty.js'), 'export const dirty = 1;\n');
+
+  const fw = lockDispatch({
+    run_id: 'cn4-t0', project_root: root, action: 'checkpoint', phase: 'plan_execute', event: 'first_write',
+  });
+  assert.equal(fw.status, 'passed');
+  const ledger = readRunJson(root, 'cn4-t0');
+  assert.deepEqual(ledger.data.dispatch.active.liveness.worktree_baseline, t0Baseline, 'worktree_baseline é byte-idêntico ao t0');
+
+  const commit = commitState({
+    run_id: 'cn4-t0', project_root: root, slice: 'A',
+    proofs: [{ kind: 'AC', id: 'AC-001', check: 'node --test', files: ['src/dirty.js'] }],
+  });
+  assert.equal(commit.status, 'passed');
+  const disk = JSON.parse(fs.readFileSync(path.join(root, commit.state_path), 'utf8'));
+  assert.deepEqual(disk.files_changed, ['src/dirty.js'], 'files_changed não zera após first_write tardio');
+});
+
+// AC-1.2.1 (CN1): files_changed dirty sem proofs.files.
+test('CN1 files_changed dirty sem proofs.files', () => {
+  const { root } = initGitFixture();
+  preflight({
+    run_id: 'cn1-dirty', project_root: root, mode: 'execute',
+    host: 'claude', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: 'cn1-dirty', project_root: root, action: 'start', phase: 'plan_execute' });
+  lockDispatch({ run_id: 'cn1-dirty', project_root: root, action: 'checkpoint', phase: 'plan_execute', event: 'first_write' });
+
+  fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'src/one.js'), 'one\n');
+  fs.writeFileSync(path.join(root, 'src/two.js'), 'two\n');
+
+  const commit = commitState({
+    run_id: 'cn1-dirty', project_root: root, slice: 'A',
+    proofs: [
+      { kind: 'AC', id: 'AC-001', check: 'node --test', files: [] },
+    ],
+  });
+  assert.equal(commit.status, 'passed');
+  const disk = JSON.parse(fs.readFileSync(path.join(root, commit.state_path), 'utf8'));
+  assert.deepEqual(disk.files_changed, ['src/one.js', 'src/two.js'], 'files_changed contém os paths reais do git fact');
+});
+
+// AC-1.2.2 (CN6): proofs.files fora do fact recusa.
+test('CN6 proofs.files fora do fact recusa', () => {
+  const { root } = initGitFixture();
+  preflight({
+    run_id: 'cn6-phantom', project_root: root, mode: 'execute',
+    host: 'claude', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: 'cn6-phantom', project_root: root, action: 'start', phase: 'plan_execute' });
+  lockDispatch({ run_id: 'cn6-phantom', project_root: root, action: 'checkpoint', phase: 'plan_execute', event: 'first_write' });
+
+  fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'src/real.js'), 'real\n');
+
+  const commit = commitState({
+    run_id: 'cn6-phantom', project_root: root, slice: 'A',
+    proofs: [
+      { kind: 'AC', id: 'AC-001', check: 'node --test', files: ['src/real.js', 'src/phantom.js'] },
+    ],
+  });
+  assert.equal(commit.status, 'blocked');
+  assert.equal(commit.code, 'claim_fora_do_fact');
+  assert.equal(fs.existsSync(path.join(root, '.talos/state/cn6-phantom/A.json')), false, 'disco não grava fact encolhido');
+});
+
+// AC-1.2.3 (CN1/D16): JSON magro hashes só de files_changed.
+test('JSON magro hashes só de files_changed', () => {
+  const { root } = initGitFixture();
+  fs.writeFileSync(path.join(root, 'unrelated.txt'), 'unrelated dirt\n');
+
+  preflight({
+    run_id: 'json-magro', project_root: root, mode: 'execute',
+    host: 'claude', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: 'json-magro', project_root: root, action: 'start', phase: 'plan_execute' });
+  lockDispatch({ run_id: 'json-magro', project_root: root, action: 'checkpoint', phase: 'plan_execute', event: 'first_write' });
+
+  fs.writeFileSync(path.join(root, 'slice.txt'), 'slice content\n');
+
+  const commit = commitState({
+    run_id: 'json-magro', project_root: root, slice: 'A',
+    proofs: [{ kind: 'AC', id: 'AC-001', check: 'node --test', files: ['slice.txt'] }],
+  });
+  assert.equal(commit.status, 'passed');
+
+  const disk = JSON.parse(fs.readFileSync(path.join(root, commit.state_path), 'utf8'));
+  assert.deepEqual(disk.files_changed, ['slice.txt']);
+
+  const finalPaths = disk.worktree_final.map((entry) => Array.isArray(entry) ? entry[0] : entry.path);
+  assert.deepEqual(finalPaths, ['slice.txt'], 'worktree_final só contém paths de files_changed');
+  const baselinePaths = disk.worktree_baseline.map((entry) => Array.isArray(entry) ? entry[0] : entry.path);
+  assert.deepEqual(baselinePaths, [], 'baseline persistida no JSON não contém paths fora de files_changed');
+});
+
+
 test('Plano 01: commit alimenta validateStateBoundary e start passed (AC-1.3.1)', () => {
   const { root } = planCommitSetup('commit-start', { mutar: true });
   const commit = commitState({
@@ -8908,4 +9025,452 @@ test('Plano 02: catálogo escalation sem exigência por mode (AC-02.5.2)', () =>
   assert.ok(!JSON.stringify(pf.gates ?? {}).includes('escalation'), 'nenhum gate do preflight exige o sidecar');
   const exigencias = JSON.stringify(pf.routing?.skills_exigidos ?? pf.required_skills ?? []);
   assert.ok(!exigencias.includes('escalation-repair'), 'skills exigidas não incluem o sidecar');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Plano 2 (FSM_BOUNDARY_MINIMAL_GUIDE) — G4 reproject, reconcile, slot único
+// (CN2, CN7, CN8; VC1, VC3; LEG3, LEG4; INV3, INV6, INV8)
+// ═══════════════════════════════════════════════════════════════════════════
+
+// AC-2.1.1 (OUT:CN1, TECH:VC1, TECH:LEG4, INT:D10): G4 reproject
+test('G4 reproject: fórmula divergente é sobrescrita pelo MCP e start passa (AC-2.1.1)', () => {
+  const { root } = planCommitSetup('g4-reproject', { mutar: true });
+  const commit = commitState({
+    run_id: 'g4-reproject', project_root: root, slice: 'A',
+    plan_path: '.talos/plans/PLAN_S41.md',
+    proofs: [
+      { kind: 'AC', id: 'AC-001', check: 'node --test', files: ['src/a.js'] },
+    ],
+  });
+  assert.equal(commit.status, 'passed');
+
+  // Simula divergência de fórmula pura: files_changed=[] com worktree dirty desde t0,
+  // mas com sha do disco sincronizado no ledger.
+  const sliceAbs = path.join(root, commit.state_path);
+  const disk = JSON.parse(fs.readFileSync(sliceAbs, 'utf8'));
+  disk.files_changed = [];
+  disk.diff_stat = '0 files';
+  fs.writeFileSync(sliceAbs, `${JSON.stringify(disk, null, 2)}\n`);
+  const formulaDivergentSha = crypto.createHash('sha256').update(fs.readFileSync(sliceAbs)).digest('hex');
+  const ledger = runState({ action: 'get', run_id: 'g4-reproject', project_root: root });
+  ledger.data.dispatch.active.liveness.slice_commit_sha256 = formulaDivergentSha;
+  runState({ action: 'upsert', run_id: 'g4-reproject', project_root: root, data: ledger.data });
+
+  // lockValidator start deve detectar a divergência de fórmula, reprojectar,
+  // atualizar files_changed e sha no disco e no ledger, e passar (passed).
+  const start = lockValidatorCore({ run_id: 'g4-reproject', project_root: root, action: 'start', state_path: commit.state_path });
+  assert.equal(start.status, 'passed');
+  assert.equal(start.validator_status, 'running');
+
+  const reprojected = JSON.parse(fs.readFileSync(sliceAbs, 'utf8'));
+  assert.deepEqual(reprojected.files_changed, ['src/a.js'], 'JSON no disco foi reprojetado com fact git real');
+});
+
+// AC-2.2.1 (OUT:CN2, TECH:INV8, TECH:LEG3, INT:D12): CN2 reconcile reabre G4
+test('CN2 reconcile reabre G4 após edição manual do JSON (AC-2.2.1)', () => {
+  const { root } = planCommitSetup('cn2-rec', { mutar: true });
+  const commit = commitState({
+    run_id: 'cn2-rec', project_root: root, slice: 'A',
+    plan_path: '.talos/plans/PLAN_S41.md',
+    proofs: [{ kind: 'AC', id: 'AC-001', check: 'node --test', files: ['src/a.js'] }],
+  });
+  assert.equal(commit.status, 'passed');
+  const sliceAbs = path.join(root, commit.state_path);
+  const oldSha = commit.state_sha256;
+
+  // Altera bytes do JSON no disco
+  const content = JSON.parse(fs.readFileSync(sliceAbs, 'utf8'));
+  content.diff_stat = 'modificado a mao';
+  fs.writeFileSync(sliceAbs, `${JSON.stringify(content, null, 2)}\n`);
+
+  // Sem reconcile, validatorStart é bloqueado (G12 órfão) com next_action reconcile_state
+  const startBlocked = lockValidatorCore({ run_id: 'cn2-rec', project_root: root, action: 'start', state_path: commit.state_path });
+  assert.equal(startBlocked.status, 'blocked');
+  assert.equal(startBlocked.gate, 'G12');
+  assert.equal(startBlocked.next_action, 'reconcile_state');
+
+  // Chama talos_commit_state (sem campo role)
+  const rec = commitState({
+    run_id: 'cn2-rec', project_root: root, slice: 'A',
+  });
+  assert.equal(rec.status, 'passed');
+  assert.equal(rec.role, 'reconcile');
+  assert.equal(rec.next_action, 'open_validator');
+  assert.notEqual(rec.state_sha256, oldSha);
+
+  // G4 agora abre com sucesso
+  const startPassed = lockValidatorCore({ run_id: 'cn2-rec', project_root: root, action: 'start', state_path: commit.state_path });
+  assert.equal(startPassed.status, 'passed');
+  assert.equal(startPassed.validator_status, 'running');
+});
+
+// AC-2.1.2 (OUT:CN7, TECH:VC3, TECH:INV6): CN7 órfão sem reconcile continua blocked
+test('CN7 órfão sem reconcile continua blocked com next_action reconcile_state (AC-2.1.2)', () => {
+  const { root } = planCommitSetup('cn7-orphan', { mutar: true });
+  const commit = commitState({
+    run_id: 'cn7-orphan', project_root: root, slice: 'A',
+    plan_path: '.talos/plans/PLAN_S41.md',
+    proofs: [{ kind: 'AC', id: 'AC-001', check: 'node --test', files: ['src/a.js'] }],
+  });
+  assert.equal(commit.status, 'passed');
+  const sliceAbs = path.join(root, commit.state_path);
+
+  // Altera bytes no disco à mão
+  fs.appendFileSync(sliceAbs, '\n/* adulterado */\n');
+
+  // validatorStart sem reconcile continua blocked com next_action: reconcile_state
+  const start = lockValidatorCore({ run_id: 'cn7-orphan', project_root: root, action: 'start', state_path: commit.state_path });
+  assert.equal(start.status, 'blocked');
+  assert.equal(start.gate, 'G12');
+  assert.equal(start.next_action, 'reconcile_state');
+  assert.match(start.error, /órfão\/dual-writer/);
+});
+
+// AC-2.3.1 (OUT:CN8, INT:D13): CN8 slot único aceita id frouxo
+test('CN8 slot único aceita id frouxo; dois slots exigem id exato (AC-2.3.1)', () => {
+  const { root } = planCommitSetup('cn8-slot', { mutar: true });
+  const commit = commitState({
+    run_id: 'cn8-slot', project_root: root, slice: 'A',
+    plan_path: '.talos/plans/PLAN_S41.md',
+    proofs: [{ kind: 'AC', id: 'AC-001', check: 'node --test', files: ['src/a.js'] }],
+  });
+  assert.equal(commit.status, 'passed');
+
+  // Coloca ciclo em repair_required para abrir repair_start
+  const pre = runState({ action: 'get', run_id: 'cn8-slot', project_root: root });
+  pre.data = pre.data ?? {};
+  pre.data.validator_cycle = {
+    status: 'repair_required',
+    last_state_path: commit.state_path,
+    repair: { origin: 'validator', budget_used: {} },
+  };
+  runState({ action: 'upsert', run_id: 'cn8-slot', project_root: root, data: pre.data });
+
+  const rStart = lockValidatorCore({
+    run_id: 'cn8-slot', project_root: root, action: 'repair_start',
+    state_path: commit.state_path, origin: 'validator',
+  });
+  assert.equal(rStart.status, 'passed');
+  const canonicalId = rStart.repair_run_id;
+  assert.match(canonicalId, /repair/);
+
+  // Cenário 1: slot único com repair_run_id='repair-001' (frouxo) fecha o slot
+  const completeFrouxo = lockValidatorCore({
+    run_id: 'cn8-slot', project_root: root, action: 'repair_complete',
+    state_path: commit.state_path, repair_run_id: 'repair-001',
+    data: { repairs: [] },
+  });
+  assert.equal(completeFrouxo.status, 'passed');
+  assert.equal(completeFrouxo.validator_status, 'ready_for_retry');
+  assert.equal(completeFrouxo.validator_status, 'ready_for_retry');
+
+  // Cenário 2: com 2 slots ativos, id errado continua blocked
+  const slotA = { run_id: 'repair-slot-A', state_path: commit.state_path, started_at: new Date().toISOString() };
+  const slotB = { run_id: 'repair-slot-B', state_path: commit.state_path, started_at: new Date().toISOString() };
+  const current = runState({ action: 'get', run_id: 'cn8-slot', project_root: root });
+  current.data.validator_cycle.status = 'repair_running';
+  current.data.validator_cycle.repair = {
+    ...current.data.validator_cycle.repair,
+    status: 'running',
+    slots: [slotA, slotB],
+    active: slotA,
+  };
+  runState({ action: 'upsert', run_id: 'cn8-slot', project_root: root, data: current.data });
+
+  const completeWrongDual = lockValidatorCore({
+    run_id: 'cn8-slot', project_root: root, action: 'repair_complete',
+    state_path: commit.state_path, repair_run_id: 'repair-unknown',
+    data: { repairs: [] },
+  });
+  assert.equal(completeWrongDual.status, 'blocked');
+  assert.equal(completeWrongDual.stale_discarded, true);
+
+  // Fechar com o id exato slotA fecha
+  const completeSlotA = lockValidatorCore({
+    run_id: 'cn8-slot', project_root: root, action: 'repair_complete',
+    state_path: commit.state_path, repair_run_id: 'repair-slot-A',
+    data: { repairs: [] },
+  });
+  assert.equal(completeSlotA.status, 'passed');
+});
+
+// AC-2.3.1 (OUT:CN8, INT:D13): a mesma régua de slot frouxo vale para
+// `complete`, não só para `repair_complete`. CN8 nomeia os dois sinks.
+test('CN8 slot único aceita validator_run_id frouxo no complete; id canônico divergente e dois slots continuam blocked (AC-2.3.1)', () => {
+  const root = tmpRoot();
+  preflight({
+    run_id: 'cn8-vc', project_root: root, mode: 'execute',
+    host: 'codex', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: 'cn8-vc', project_root: root, action: 'start', phase: 'plan_execute' });
+
+  const start = lockValidator({
+    run_id: 'cn8-vc', project_root: root, host: 'codex',
+    action: 'start', state_path: '.talos/state/cn8-vc/slice.json',
+  });
+  assert.equal(start.status, 'passed');
+  assert.match(start.validator_run_id, /^cn8-vc:validator:1:/);
+
+  // Cenário 1: id canônico que diverge do slot ativo é stale real -> blocked.
+  const canonicalStale = lockValidator({
+    run_id: 'cn8-vc', project_root: root, host: 'codex', action: 'complete',
+    state_path: '.talos/state/cn8-vc/slice.json',
+    validator_run_id: 'cn8-vc:validator:9:stale', verdict: 'pass',
+  });
+  assert.equal(canonicalStale.status, 'blocked');
+  assert.equal(canonicalStale.stale_discarded, true);
+
+  // Cenário 2: slot único com id NÃO-canônico ('validator-001') fecha o slot.
+  const frouxo = lockValidator({
+    run_id: 'cn8-vc', project_root: root, host: 'codex', action: 'complete',
+    state_path: '.talos/state/cn8-vc/slice.json',
+    validator_run_id: 'validator-001', verdict: 'pass',
+  });
+  assert.equal(frouxo.status, 'passed');
+  assert.equal(frouxo.validator_run_id, start.validator_run_id, 'fecha usando o id canônico do slot ativo');
+
+  // Cenário 3: com dois slots ativos, id frouxo não escolhe slot -> blocked.
+  const root2 = tmpRoot();
+  preflight({
+    run_id: 'cn8-vc2', project_root: root2, mode: 'execute',
+    host: 'codex', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: 'cn8-vc2', project_root: root2, action: 'start', phase: 'plan_execute' });
+  const start2 = lockValidator({
+    run_id: 'cn8-vc2', project_root: root2, host: 'codex',
+    action: 'start', state_path: '.talos/state/cn8-vc2/slice.json',
+  });
+  assert.equal(start2.status, 'passed');
+  const cur = runState({ action: 'get', run_id: 'cn8-vc2', project_root: root2 });
+  cur.data.validator_cycle.slots = [
+    cur.data.validator_cycle.active,
+    { ...cur.data.validator_cycle.active, run_id: 'cn8-vc2:validator:1:outro' },
+  ];
+  runState({ action: 'upsert', run_id: 'cn8-vc2', project_root: root2, data: cur.data });
+
+  const dualFrouxo = lockValidator({
+    run_id: 'cn8-vc2', project_root: root2, host: 'codex', action: 'complete',
+    state_path: '.talos/state/cn8-vc2/slice.json',
+    validator_run_id: 'validator-001', verdict: 'pass',
+  });
+  assert.equal(dualFrouxo.status, 'blocked');
+  assert.equal(dualFrouxo.stale_discarded, true);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Plano 03 — Frio sem metadata; repair só produto (CN1/CN5; LEG5; INV2/INV7)
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('Plano 03: validator skill não instrui finding P1 por boundary (AC-3.1.1 / LEG5 / INV7)', () => {
+  const validatorSkill = fs.readFileSync(path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    '../skills/talos-task-validator/SKILL.md',
+  ), 'utf8');
+  assert.doesNotMatch(validatorSkill, /Divergência (?:\*\*na slice\*\*|na slice) gera `?boundary_violations`? e finding P1/i, 'não instrui finding P1 de boundary');
+  assert.match(validatorSkill, /G4/i, 'menciona G4 como garantia de metadata');
+});
+
+test('Plano 03: sibling topology orquestrador G4 despacha validator (AC-3.1.2 / INV2)', () => {
+  const orchestrator = fs.readFileSync(ORCHESTRATOR_SKILL_PATH, 'utf8');
+  assert.match(orchestrator, /talos-task-validator/, 'orquestrador despacha validator');
+  for (const skillPath of [PLAN_EXECUTE_SKILL_PATH, DIRECT_EXECUTE_SKILL_PATH, FINDINGS_REPAIR_SKILL_PATH]) {
+    const skill = fs.readFileSync(skillPath, 'utf8');
+    assert.doesNotMatch(skill, /spawn_agent\s*\([^)]*talos-task-validator/, 'executor/repair não despacha validator');
+    assert.doesNotMatch(skill, /subagent_type\s*:\s*talos-task-validator/, 'executor/repair não despacha validator');
+  }
+});
+
+test('Plano 03: first_write é heartbeat G12 e baseline t0 vem do start (AC-3.3.1 / CN1 / INV2 / D21)', () => {
+  for (const skillPath of [PLAN_EXECUTE_SKILL_PATH, DIRECT_EXECUTE_SKILL_PATH]) {
+    const skill = fs.readFileSync(skillPath, 'utf8');
+    assert.match(skill, /first_write.*heartbeat G12/i, 'menciona first_write como heartbeat G12');
+    assert.match(skill, /baseline t0/i, 'menciona baseline t0 capturado no start');
+    assert.doesNotMatch(skill, /first_write.*captura.*snapshot inicial/i, 'não ensina que first_write captura snapshot inicial');
+  }
+});
+
+// AC-3.2.1 (CN5/INV7/D14/D15/D19): repair[] só aceita files mutados neste repair;
+// união mecânica em files_changed; F-metadata não abre repair_start nem consome budget;
+// retry após budget 1 é recusado.
+test('CN5 repair[] só deste repair', () => {
+  const { root } = planCommitSetup('cn5-repair', { mutar: true });
+  fs.writeFileSync(path.join(root, 'src/b.js'), 'export const b = 1;\n');
+
+  const first = commitState({
+    run_id: 'cn5-repair', project_root: root, slice: 'A',
+    plan_path: '.talos/plans/PLAN_S41.md',
+    proofs: [{ kind: 'AC', id: 'AC-001', check: 'node --test', files: ['src/a.js', 'src/b.js'] }],
+  });
+  assert.equal(first.status, 'passed');
+  const stateRel = first.state_path;
+
+  // 1. Validator attempt 1 falha com F-metadata:
+  const start = lockValidator({ run_id: 'cn5-repair', project_root: root, action: 'start', state_path: stateRel });
+  assert.equal(start.status, 'passed');
+
+  const comp = lockValidator({
+    run_id: 'cn5-repair', project_root: root, action: 'complete', state_path: stateRel,
+    validator_run_id: start.validator_run_id, dispatch_token: start.dispatch_token,
+    challenge_response: start.challenge ? sha256File(root, start.challenge.file) : null, verdict: 'fail',
+    data: {
+      findings: [finding({
+        id: 'F-099', severity: 'P1', file: 'files_changed',
+        failure_mode: 'files_changed', evidence: 'files_changed diverge da worktree',
+      })],
+    },
+  });
+  assert.equal(comp.status, 'passed');
+
+  // repair_start com apenas F-metadata é bloqueado e NÃO consome budget
+  const repairStartMeta = lockValidator({ run_id: 'cn5-repair', project_root: root, action: 'repair_start', state_path: stateRel });
+  assert.equal(repairStartMeta.status, 'blocked');
+  assert.equal(repairStartMeta.code, 'repair_metadata_proibido');
+  assert.equal(repairStartMeta.next_action, 'reconcile_state');
+  const cycleMeta = readRunJson(root, 'cn5-repair').data.validator_cycle;
+  assert.equal(cycleMeta.repair.budget_used.validator, 0, 'budget não foi consumido por F-metadata');
+
+  // 2. Agora com finding de produto (código):
+  const runData = readRunJson(root, 'cn5-repair');
+  runData.data.validator_cycle.findings_packet = {
+    findings: [finding({
+      id: 'F-001', severity: 'P1', file: 'src/a.js',
+      failure_mode: 'logic_bug', evidence: 'broken logic in a.js',
+    })],
+  };
+  runState({ action: 'upsert', run_id: 'cn5-repair', project_root: root, data: runData.data });
+
+  // repair_start para produto passa e consome budget 1
+  const repairStartProduct = lockValidator({ run_id: 'cn5-repair', project_root: root, action: 'repair_start', state_path: stateRel });
+  assert.equal(repairStartProduct.status, 'passed');
+  assert.equal(repairStartProduct.repair_budget, 1);
+  const cycleAfterStart = readRunJson(root, 'cn5-repair').data.validator_cycle;
+  assert.equal(cycleAfterStart.repair.budget_used.validator, 1);
+
+  // 3. Retry/reopen do mesmo finding de produto após budget 1 recusa:
+  const cycleData = readRunJson(root, 'cn5-repair');
+  cycleData.data.validator_cycle.repair.active = null;
+  cycleData.data.validator_cycle.status = 'repair_required';
+  runState({ action: 'upsert', run_id: 'cn5-repair', project_root: root, data: cycleData.data });
+
+  // Segundo repair_start com budget já esgotado recusa
+  const secondRepairStart = lockValidator({ run_id: 'cn5-repair', project_root: root, action: 'repair_start', state_path: stateRel });
+  assert.equal(secondRepairStart.status, 'blocked');
+  assert.equal(secondRepairStart.code, 'repair_budget_exhausted');
+
+  // 4. Testar verificação de repair[].files no commitState:
+  // Reabre slot de repair manualmente no ledger para testar o commit
+  runData.data.validator_cycle.status = 'repair_running';
+  runData.data.validator_cycle.repair.status = 'running';
+  runData.data.validator_cycle.repair.active = {
+    run_id: 'repair-test-slot',
+    state_path: stateRel,
+    started_at: new Date().toISOString(),
+    worktree_snapshot: captureWorktreeSnapshot(root),
+    boundary_before: {
+      head_sha: execFileSync('git', ['-C', root, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
+      files_changed: ['src/a.js', 'src/b.js'],
+      worktree_final: captureWorktreeSnapshot(root).filter((e) => ['src/a.js', 'src/b.js'].includes(e.path)),
+    },
+  };
+  runState({ action: 'upsert', run_id: 'cn5-repair', project_root: root, data: runData.data });
+
+  // repair[] lista src/b.js que NÃO foi mutado neste repair → blocked
+  const blockedCommit = commitState({
+    run_id: 'cn5-repair', project_root: root, slice: 'A',
+    plan_path: '.talos/plans/PLAN_S41.md',
+    proofs: [{ kind: 'AC', id: 'AC-001', check: 'node --test', files: ['src/a.js', 'src/b.js'] }],
+    repair: [{ finding_id: 'F-001', files: ['src/b.js'], checks: ['node --test'], status: 'resolved' }],
+  });
+  assert.equal(blockedCommit.status, 'blocked');
+  assert.equal(blockedCommit.code, 'repair_files_nao_mutados');
+
+  // 5. Agora realmente muta src/a.js neste repair:
+  fs.writeFileSync(path.join(root, 'src/a.js'), 'export const a = 2;\n');
+  const passedCommit = commitState({
+    run_id: 'cn5-repair', project_root: root, slice: 'A',
+    plan_path: '.talos/plans/PLAN_S41.md',
+    proofs: [{ kind: 'AC', id: 'AC-001', check: 'node --test', files: ['src/a.js', 'src/b.js'] }],
+    repair: [{ finding_id: 'F-001', files: ['src/a.js'], checks: ['node --test'], status: 'resolved' }],
+  });
+  assert.equal(passedCommit.status, 'passed');
+  assert.equal(passedCommit.role, 'repair');
+  const diskState = JSON.parse(fs.readFileSync(path.join(root, stateRel), 'utf8'));
+  assert.deepEqual(diskState.files_changed, ['src/a.js', 'src/b.js'], 'união mecânica execute ∪ repair');
+  assert.equal(diskState.repair_evidence.length, 1);
+  assert.equal(diskState.repair_evidence[0].finding_id, 'F-001');
+});
+
+test('CN3 select_next recusa sprint review com validator terminal', () => {
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S02', { status: 'review', dorStatus: 'verde', contratoStatus: 'aprovado' });
+  writeSprintFixture(root, 'S03', { status: 'ready', dorStatus: 'verde', contratoStatus: 'draft' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S02 | Sprint anterior | F0 | objetivo | Must | Alto | Baixo | P0 | — | — | review | — | `.talos/backlog/sprints/SPRINT_S02_runtime.md` | pendente | pendente |',
+    '| S03 | Próxima candidata | F0 | objetivo | Must | Alto | Baixo | P0 | — | — | ready | — | `.talos/backlog/sprints/SPRINT_S03_runtime.md` | pendente | pendente |',
+  ]));
+
+  const runId = 'r-cn3-terminal';
+  runState({
+    action: 'upsert',
+    run_id: runId,
+    project_root: root,
+    phase: 'plan_execute',
+    data: {
+      sprint_id: 'S02',
+      validator_cycle: {
+        status: 'passed',
+        sprint_id: 'S02',
+      },
+    },
+  });
+
+  const r = selectNextSprint({ run_id: runId, project_root: root, backlog_path: 'BACKLOG.md', loop: true });
+  assert.equal(r.status, 'blocked');
+  assert.equal(r.selected, null);
+});
+
+test('select_next reconcile_state em órfão', () => {
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S02', { status: 'ready', dorStatus: 'verde', contratoStatus: 'draft' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S02 | Candidata | F0 | objetivo | Must | Alto | Baixo | P0 | — | — | ready | — | `.talos/backlog/sprints/SPRINT_S02_runtime.md` | pendente | pendente |',
+  ]));
+
+  const runId = 'r-reconcile-orphan';
+  const stateRel = '.talos/state/r-reconcile-orphan/slice-01.json';
+  const stateAbs = path.join(root, stateRel);
+  fs.mkdirSync(path.dirname(stateAbs), { recursive: true });
+  fs.writeFileSync(stateAbs, JSON.stringify({ files_changed: ['src/foo.js'] }, null, 2));
+
+  runState({
+    action: 'upsert',
+    run_id: runId,
+    project_root: root,
+    phase: 'plan_execute',
+    data: {
+      dispatch: {
+        active: {
+          phase: 'plan_execute',
+          liveness: {
+            status: 'stalled',
+            last_commit_state_path: stateRel,
+            slice_commit_sha256: 'deadbeef1234',
+          },
+        },
+      },
+    },
+  });
+
+  const r = selectNextSprint({ run_id: runId, project_root: root, backlog_path: 'BACKLOG.md', loop: true });
+  assert.equal(r.status, 'blocked');
+  assert.equal(r.selected, null);
+  assert.equal(r.next_action, 'reconcile_state');
+});
+
+test('Plano 04: orquestrador update_sprint_status no mesmo turno do terminal antes do select_next (AC-4.2.1 / CN3 / INV1 / D17)', () => {
+  const orchestrator = fs.readFileSync(ORCHESTRATOR_SKILL_PATH, 'utf8');
+  assert.match(orchestrator, /talos_update_sprint_status/i);
+  assert.match(orchestrator, /mesmo turno.*talos_update_sprint_status|talos_update_sprint_status.*(?:mesmo turno|neste turno)/i, 'exige update_sprint_status no mesmo turno');
+  assert.match(orchestrator, /antes d[oe].*talos_select_next_sprint|talos_update_sprint_status.*antes d[oe].*select/i, 'exige update_sprint_status antes de select_next');
+  assert.match(orchestrator, /reconcile_state.*não avançar/i, 'reconcile_state bloqueia avanço de sprint');
 });

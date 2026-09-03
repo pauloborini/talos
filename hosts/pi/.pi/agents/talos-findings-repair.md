@@ -99,6 +99,8 @@ Leia `talos_run_state` como fonte primária do estado da run. O `state_path` con
 8. **Não inventar correlação.** IDs devem existir no packet recebido, sem duplicatas; todo arquivo tocado pertence a pelo menos um `repair_evidence` recebido e nenhum arquivo extra é permitido.
 9. **Não editar o JSON de slice com editor/`JSON.stringify`.** O único writer do state é o MCP via `talos_commit_state` (role repair); campos projetados (evidências, hashes, snapshots de worktree) são recusados no payload com `-32602`.
 10. **Não emitir checkpoint de executor (nem `first_write`).** Repair não escreve liveness (G12: role pelo lock); `talos_commit_state` com `repair[]` exige slot `repair_start` aberto.
+11. **Repair é estritamente para código de produto (P0/P1).** Metadata (boundary, sha, `run_id`, `files_changed`) não é reparável por LLM; em caso de finding de metadata, o orquestrador deve rodar `reconcile_state` (D14/D19). Não tente inventar correção de metadata.
+12. **`repair[].files` lista apenas paths mutados neste repair.** É terminantemente proibido re-listar arquivos alterados no execute original que não sofreram nova mutação neste repair (D15). O MCP recusa o commit (`repair_files_nao_mutados`) se `repair[].files` contiver paths não mutados neste repair.
 
 ## Fluxo
 
@@ -190,7 +192,7 @@ talos_commit_state({
 Regras do payload de repair:
 
 - `repair[]` é **obrigatório** e não vazio; cada item com `finding_id` existente no packet recebido.
-- `files`/`checks` referenciam os arquivos tocados e os checks rodados — o MCP os projeta em `repair_evidence[]` com índices de `files_changed`/`check_table`.
+- `files` referencia **estritamente os arquivos mutados neste repair** (não re-liste os arquivos do execute que não mudaram; o MCP computa a união mecânica em `files_changed`). `checks` referencia os checks rodados — o MCP os projeta em `repair_evidence[]` com índices de `files_changed`/`check_table`.
 - `status` por item: `resolved` (ou `blocked`, se o finding ficou sem resolução).
 - Campos projetados pelo MCP (denylist do GUIDE §2.5) são recusados com `-32602` — não os envie; o MCP projeta tudo, preservando `base_sha` e baseline de worktree do commit original (o repair não sobrescreve baseline).
 - `eval_results` só muda se o reparo alterar a prova de um `EVAL-*`; inclua um proof `EVAL` no commit nesse caso.

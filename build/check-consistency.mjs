@@ -523,16 +523,17 @@ for (const [english, portuguese] of [['README.md', 'README.pt-BR.md'], ['COMMAND
   }
 }
 
-// DR01–04 (onda 1 enxugar-state, design spec 2026-08-19 §6.1): skills de execução
+// DR01–05 (onda 1 enxugar-state + v0.21.0 DEC-039): skills de execução
 // (plan-execute / direct-execute / findings-repair) — canônicas e espelhos
 // hosts/**/plugins/** — não podem reensinar o blob (schema de state, snapshots de
 // worktree como instrução de escrita, checkpoints mortos, `acceptance_results` no
-// payload do executor). Allowlist: STATE_FILE_SCHEMA.md, packages/mcp-server/**,
+// payload do executor) nem âncoras 0.20 (baseline no first_write / filtro de
+// files_changed por proofs). Allowlist: STATE_FILE_SCHEMA.md, packages/mcp-server/**,
 // talos-task-validator/** e testes ficam fora dos globs varridos. A mensagem cita
-// o DR* (CN7 / AC-3.1.1).
+// o DR* (CN7 / AC-3.1.1 / AC-4.3.1).
 for (const dir of collectExecuteSkillDirs(ROOT)) {
   for (const { rel, dr } of scanDirDr(ROOT, dir)) {
-    errors.push(`${dr} drift: ${rel} reensina âncora morta do blob (onda 1 enxugar-state — execute/repair não ensinam Write/schema/events/acceptance_results)`);
+    errors.push(`${dr} drift: ${rel} reensina âncora morta (execute/repair não ensinam Write/schema/events/acceptance_results nem baseline no first_write/filtro proofs)`);
   }
 }
 

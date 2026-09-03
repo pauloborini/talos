@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.21.0 - 2026-09-03
+
+Tipo: **runtime**. **Com breaking (skills 0.20)**. Schema MCP: v5 (inalterado). Disco: v3 (inalterado).
+
+Resumo: máquina de evidência e determinismo de boundary na slice — git + ledger são a verdade mecânica; o JSON de slice vira cache projetado pelo MCP (`talos_commit_state`). Corrige o contrato v0.18 em que o LLM filtrava `files_changed` por proofs: `files_changed` passa a ser a união git real (porcelain atual Δ baseline t0 do start ∪ commits desde base_sha minus `.talos/`), desacoplada de `proofs[].files` vazios ou parciais (incidente S02). Baseline t0 é capturada no `talos_lock_dispatch(start, phase=plan_execute)`; `first_write` vira heartbeat G12 puro (não redefine baseline). Reprojeção mecânica no G4 (`talos_lock_validator(start)`): divergência de fórmula é corrigida pelo MCP (reproject overwrite) sem abrir falso repair de metadata; JSON adulterado à mão (sha divergente) recupera via role `reconcile` (não rename). Validador frio não litiga metadata; repair foca exclusivamente em findings de produto (budget 1 por finding; complete sem mutação não inventa paths). Fechamento de sprint no `--loop` roda no mesmo turno antes do `select_next` (D17); `select_next` bloqueia seleção com `next_action: reconcile_state` se houver run stalled/repair_running com sha órfão (D18). BREAKING 0.21.0 (DEC-039): skills 0.20 que ensinam baseline no `first_write` ou filtro de `files_changed` por proofs não servem; disco v3 e schema MCP v5 permanecem.
+
+Mudanças:
+- **`packages/mcp-server/server.js`** — (Plano 01) t0 capturado no `startDispatch` (`phase=plan_execute`); `first_write` mantido apenas como heartbeat G12 (uma vez antes da primeira mutação; não altera baseline); `projectCommitStateV3` calcula `files_changed` como git fact real sem filtrar por `proofs[].files`; valida prova ⊆ fato (`proofs[].files` fora do fato é recusado); JSON de slice magro (hashes e `worktree_final` restritos aos paths de `files_changed`, D16); remoção de refills de porcelain completo em `commitState`. (Plano 02) G4 reprojeta e sobrescreve formula divergente automaticamente antes de abrir o slot; inferência de role `reconcile` para recuperar JSON adulterado ou órfão com `open_validator`/`complete_repair`; `lock_validator` afrouxa IDs de slot quando há slot único ativo (D13). (Plano 04) `selectNextSprint` recusa seleção da próxima sprint se a run atual tem veredito terminal do validator e a sprint associada permanece em `review` no backlog (D17); expõe `next_action: reconcile_state` em runs stalled ou repair_running com sha órfão (D18).
+- **`packages/skills/`** — `talos-task-validator` deixa de emitir findings P1 de boundary/metadata quando G4 passou; `talos-findings-repair` foca em findings P0/P1 de produto e envia `repair[]` apenas dos arquivos mutados no repair; `talos-plan-execute` e `talos-direct-execute` documentam t0 no start e `first_write` como heartbeat.
+- **`packages/orchestrator/skills/talos/SKILL.md`** — `SPRINT_STATUS_SYNC` e seção `--loop` explicitam chamada a `talos_update_sprint_status` no mesmo turno do validator terminal antes do `talos_select_next_sprint`; bloqueio de avanço com `next_action: reconcile_state`.
+- **`build/dr-guard.mjs` + `build/check-consistency.mjs` + `build/check-consistency.guard.test.mjs`** — guard `DR05` falha skills execute/repair que reensinem baseline no `first_write` ou filtro de `files_changed` por proofs (INV4).
+- **Bump minor `0.21.0`** via `build/bump-version.mjs` (bundles `plugins/`/`hosts/` regenerados; `VERSION`/manifests/READMEs sincronizados).
+
+Impacto:
+- Executor entrega slice dirty com `proofs[].files` vazio e `files_changed` lista os paths reais; G4 abre sem fail de metadata.
+- JSON órfão ou adulterado recupera deterministicamente via MCP `reconcile` sem edição manual.
+- `--loop` não pula sprint em review para selecionar a próxima.
+- Skills de execução da versão 0.20 devem ser atualizadas para 0.21.0.
+
+Arquivos/artefatos:
+- `packages/mcp-server/server.js`, `packages/mcp-server/server.test.js`.
+- `packages/skills/talos-plan-execute/SKILL.md`, `packages/skills/talos-direct-execute/SKILL.md`, `packages/skills/talos-task-validator/SKILL.md`, `packages/skills/talos-findings-repair/SKILL.md`.
+- `packages/orchestrator/skills/talos/SKILL.md`.
+- `packages/templates/STATE_FILE_SCHEMA.md`.
+- `build/dr-guard.mjs`, `build/check-consistency.mjs`, `build/check-consistency.guard.test.mjs`.
+- Bump: `VERSION`, `package.json`, `packages/mcp-server/package.json`, `.claude-plugin/plugin.json`, bundles e catálogos em `plugins/` e `hosts/`.
+
+Validação:
+- `node --test packages/mcp-server/server.test.js`
+- `node build/check-consistency.mjs`
+- `node --test build/check-consistency.guard.test.mjs`
+- `claude plugin validate ./ --strict`
+- `git diff --check`
+
 ## 0.20.0 - 2026-08-31
 
 Tipo: **runtime**. **Sem breaking**. Schema MCP: v5 (inalterado). Disco: v3 (inalterado).

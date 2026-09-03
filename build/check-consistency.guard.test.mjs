@@ -95,6 +95,19 @@ test('AC-3.1.1: DR02–04 plantados são reportados com o ID certo', () => {
   assert.ok(violations.some((v) => v.dr === 'DR04' && v.rel.includes('talos-findings-repair')), 'DR04 acusa "acceptance_results"');
 });
 
+test('AC-4.3.1: DR05 plantado é reportado (baseline no first_write / filtrar files_changed por proofs)', () => {
+  const root = makeFixtureTree();
+  plant(root, 'packages/skills/talos-plan-execute/SKILL.md',
+    'O checkpoint grava baseline no first_write antes de mutar.\n');
+  plant(root, 'packages/skills/talos-direct-execute/SKILL.md',
+    'Necessário filtrar files_changed por proofs no retorno.\n');
+
+  const violations = collectExecuteSkillDirs(root).flatMap((d) => scanDirDr(root, d));
+  assert.ok(violations.some((v) => v.dr === 'DR05' && v.rel.includes('talos-plan-execute')), 'DR05 acusa baseline no first_write');
+  assert.ok(violations.some((v) => v.dr === 'DR05' && v.rel.includes('talos-direct-execute')), 'DR05 acusa filtrar files_changed por proofs');
+});
+
+
 test('AC-3.1.1: leitura de worktree_* para contexto NÃO é DR02 (skill repair canônica)', () => {
   const root = makeFixtureTree();
   // Mesma redação da skill repair pós-Plano 02: leitura para contexto, atualização é do MCP.
@@ -125,12 +138,14 @@ test('AC-3.1.1: skills canônicas pós-Plano 02 + espelhos hosts/plugins passam 
   assert.deepEqual(violations, [], 'repo pós-Plano 2 não tem âncora DR* nas skills de execução (canônicas + espelhos)');
 });
 
-// matchDrAnchors é a unidade que o guard usa — cobertura direta dos 4 IDs.
-test('matchDrAnchors: 4 âncoras individuais', () => {
+// matchDrAnchors é a unidade que o guard usa — cobertura direta dos 5 IDs.
+test('matchDrAnchors: 5 âncoras individuais', () => {
   assert.deepEqual(matchDrAnchors('schema em STATE_FILE_SCHEMA.md'), ['DR01']);
   assert.deepEqual(matchDrAnchors('capture worktree_baseline before mutation'), ['DR02']);
   assert.deepEqual(matchDrAnchors('emit state_path_created before handoff'), ['DR03']);
   assert.deepEqual(matchDrAnchors('payload com "acceptance_results"'), ['DR04']);
+  assert.deepEqual(matchDrAnchors('grava baseline no first_write'), ['DR05']);
+  assert.deepEqual(matchDrAnchors('necessário filtrar files_changed por proofs'), ['DR05']);
   assert.deepEqual(matchDrAnchors('first_write e talos_commit_state'), []);
   assert.deepEqual(matchDrAnchors('O executor nunca monta o JSON'), []);
 });

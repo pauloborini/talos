@@ -1535,6 +1535,7 @@ function normalizeValidatorCycle(cycle = {}) {
       : 0,
     status: typeof cycle.status === 'string' ? cycle.status : 'idle',
     active: cycle.active && typeof cycle.active === 'object' ? cycle.active : null,
+    slots: Array.isArray(cycle.slots) && cycle.slots.length > 0 ? cycle.slots : (cycle.active ? [cycle.active] : []),
     last_state_path: typeof cycle.last_state_path === 'string' ? cycle.last_state_path : null,
     last_verdict: typeof cycle.last_verdict === 'string' ? cycle.last_verdict : null,
     findings_packet: cycle.findings_packet && typeof cycle.findings_packet === 'object' ? cycle.findings_packet : null,
@@ -1552,6 +1553,7 @@ function normalizeValidatorCycle(cycle = {}) {
         requested_at: typeof cycle.repair.requested_at === 'string' ? cycle.repair.requested_at : null,
         completed_at: typeof cycle.repair.completed_at === 'string' ? cycle.repair.completed_at : null,
         active: cycle.repair.active && typeof cycle.repair.active === 'object' ? cycle.repair.active : null,
+        slots: Array.isArray(cycle.repair.slots) && cycle.repair.slots.length > 0 ? cycle.repair.slots : (cycle.repair.active ? [cycle.repair.active] : []),
         // Plano 02 (loop): procedência do slot (VC1) — S04: run.json adulterado
         // cai no default canônico 'validator'; budget por provenance (INV5) com
         // piso ≥0 (padrão attempts_used). Chaves fora da lista canônica somem.
@@ -1567,6 +1569,7 @@ function normalizeValidatorCycle(cycle = {}) {
         requested_at: null,
         completed_at: null,
         active: null,
+        slots: [],
         origin: 'validator',
         budget_used: normalizeRepairBudget(null),
       },
@@ -3238,9 +3241,110 @@ function selectNextSprint(args = {}) {
     const orderedCandidates = loop
       ? [...loopMaturationCandidates, ...candidates]
       : candidates;
-    const selected = orderedCandidates[0] ?? null;
+    const candidateSelected = orderedCandidates[0] ?? null;
+
+    let ledger = null;
+    try {
+      ledger = readState(runId, args);
+    } catch (error) {
+      if (error.code !== -32004) throw error;
+    }
+
+    const liveness = ledger?.data?.dispatch?.active?.liveness;
+    const cycle = normalizeValidatorCycle(ledger?.data?.validator_cycle ?? {});
+    const slicePath = liveness?.last_commit_state_path || cycle?.last_state_path || null;
+    let diskSha = null;
+    if (slicePath) {
+      try {
+        const sliceAbs = resolveConsumerPath(slicePath, args);
+        if (fs.existsSync(sliceAbs)) diskSha = sha256HexFile(sliceAbs);
+      } catch {
+        diskSha = null;
+      }
+    }
+    const commitSha = liveness?.slice_commit_sha256 ?? null;
+    const isOrphan = Boolean(
+      slicePath &&
+      diskSha !== null &&
+      typeof commitSha === 'string' &&
+      diskSha !== commitSha
+    );
+    const isStalledOrRepairRunning = liveness?.status === 'stalled' || cycle?.status === 'repair_running';
+    const orphanBlocked = Boolean(isStalledOrRepairRunning && isOrphan);
+
+    let associatedSprintId = args.sprint_id
+      || ledger?.data?.sprint_id
+      || ledger?.sprint_id
+      || ledger?.data?.dispatch?.active?.sprint_id
+      || ledger?.data?.dispatch?.active?.liveness?.sprint_id
+      || ledger?.data?.validator_cycle?.sprint_id
+      || null;
+
+    if (!associatedSprintId && slicePath) {
+      associatedSprintId = inferSprintId(slicePath);
+      if (!associatedSprintId) {
+        try {
+          const sliceAbs = resolveConsumerPath(slicePath, args);
+          if (fs.existsSync(sliceAbs)) {
+            const parsed = JSON.parse(fs.readFileSync(sliceAbs, 'utf8'));
+            if (typeof parsed?.sprint_id === 'string') {
+              associatedSprintId = parsed.sprint_id;
+            }
+          }
+        } catch {
+          // best-effort
+        }
+      }
+    }
+    if (!associatedSprintId) {
+      const reviewSprints = index.sprints.filter((s) => s.state === 'review');
+      if (reviewSprints.length === 1) {
+        associatedSprintId = reviewSprints[0].id;
+      }
+    }
+
+    const associatedSprint = associatedSprintId ? index.sprints.find((s) => s.id === associatedSprintId) : null;
+    const associatedRow = associatedSprintId ? rowsById.get(associatedSprintId) : null;
+    const associatedSprintState = associatedSprint?.state || associatedRow?.state || associatedRow?.status;
+    const associatedSprintIsReview = associatedSprintState === 'review';
+    const isValidatorTerminal = Boolean(cycle && VALIDATOR_PASSED_STATUSES.has(cycle.status));
+    const terminalReviewBlocked = Boolean(isValidatorTerminal && associatedSprintIsReview);
+
+    let selected = candidateSelected;
     const structuralPendencies = index.pendencies.filter((p) => p.category !== 'status_drift');
-    const blocked = structuralPendencies.length > 0 || !selected;
+    let blocked = structuralPendencies.length > 0 || !selected;
+
+    let nextAction = blocked
+      ? (structuralPendencies[0]?.next_action ?? 'atualizar_sprint_file_ou_dependencias')
+      : (loop && selected.state === 'backlog' ? 'sprint_interview' : nextActionForSelectedSprint(selected, mode));
+
+    let banner = blocked
+      ? renderBanner('preflight_fail', { motivo: selected ? `backlog index: ${structuralPendencies.length} pendências` : 'nenhuma sprint executável' })
+      : renderBanner('preflight_ok', { caps: `next=${selected.id}` });
+
+    let pendenciesList = structuralPendencies.length > 0 ? structuralPendencies : (selected ? [] : [
+      conformancePending('seleção', 'next_sprint', null, 'Nenhuma sprint executável: exige state=ready, deps done ou manual_validation_pending, sprint file válido e DoR verde.', 'atualizar_sprint_file_ou_dependencias'),
+    ]);
+    let pendingCount = blocked ? (structuralPendencies.length || 1) : 0;
+
+    if (orphanBlocked) {
+      blocked = true;
+      selected = null;
+      nextAction = 'reconcile_state';
+      banner = renderBanner('preflight_fail', { motivo: 'select next sprint: slice órfã exige reconcile_state' });
+      pendenciesList = [conformancePending('seleção', 'next_sprint', null, 'Slice com sha órfão em run stalled ou repair_running: reconcilie o estado via talos_commit_state antes de prosseguir.', 'reconcile_state')];
+      pendingCount = 1;
+    } else if (terminalReviewBlocked) {
+      blocked = true;
+      selected = null;
+      nextAction = structuralPendencies[0]?.next_action ?? 'atualizar_sprint_file_ou_dependencias';
+      banner = renderBanner('preflight_fail', { motivo: `select next sprint: sprint ${associatedSprintId || 'atual'} com validator terminal ainda em review` });
+      pendenciesList = structuralPendencies.length > 0 ? structuralPendencies : [
+        conformancePending('seleção', 'next_sprint', null, `Sprint ${associatedSprintId || 'atual'} com validator terminal ainda em review: atualize o status via talos_update_sprint_status antes de avançar.`, 'atualizar_sprint_file_ou_dependencias'),
+      ];
+      pendingCount = structuralPendencies.length || 1;
+    }
+
     result = {
       gate: 'select_next_sprint',
       status: blocked ? 'blocked' : 'passed',
@@ -3261,18 +3365,10 @@ function selectNextSprint(args = {}) {
       } : null,
       candidates: orderedCandidates.map((item) => item.id),
       rejected,
-      pending_count: blocked ? (structuralPendencies.length || 1) : 0,
-      pendencies: structuralPendencies.length > 0 ? structuralPendencies : (selected ? [] : [
-        conformancePending('seleção', 'next_sprint', null, 'Nenhuma sprint executável: exige state=ready, deps done ou manual_validation_pending, sprint file válido e DoR verde.', 'atualizar_sprint_file_ou_dependencias'),
-      ]),
-      banner: blocked
-        ? renderBanner('preflight_fail', { motivo: selected ? `backlog index: ${structuralPendencies.length} pendências` : 'nenhuma sprint executável' })
-        : renderBanner('preflight_ok', { caps: `next=${selected.id}` }),
-      next_action: blocked
-        ? (structuralPendencies[0]?.next_action ?? 'atualizar_sprint_file_ou_dependencias')
-        // A candidata backlog do loop entra sempre pela maturação do §7; plano
-        // e execução só voltam a ser avaliados após a entrevista/reseleção.
-        : (loop && selected.state === 'backlog' ? 'sprint_interview' : nextActionForSelectedSprint(selected, mode)),
+      pending_count: pendingCount,
+      pendencies: pendenciesList,
+      banner,
+      next_action: nextAction,
       // Plano 02 (loop): bloco aditivo (CN4) — drain gate informativo; nenhum
       // campo existente muda de valor (AC-02.4.3 caso negativo).
       drain_required: drainRequiredFor(backlogPath, args, index.rows, selected),
@@ -4403,6 +4499,7 @@ function startDispatch(args, context) {
   }
   const timestamp = nowIso();
   let baseSha = null;
+  let worktreeBaseline = null;
   if (phase === 'plan_execute') {
     // AC-1.2.1 / P2: âncora de base da slice gravada no ledger no start. O
     // commit NÃO infere branch nem omite base_sha (VC2). Best-effort: repo sem
@@ -4412,6 +4509,7 @@ function startDispatch(args, context) {
     } catch {
       baseSha = null;
     }
+    worktreeBaseline = captureWorktreeSnapshot(consumerRoot(args));
   }
 
   if (context.dispatch.active) {
@@ -4472,7 +4570,13 @@ function startDispatch(args, context) {
       active: {
         phase,
         started_at: timestamp,
-        ...(phase === 'plan_execute' ? { base_sha: baseSha, liveness: initialExecutorLiveness(timestamp) } : {}),
+        ...(phase === 'plan_execute' ? {
+          base_sha: baseSha,
+          liveness: {
+            ...initialExecutorLiveness(timestamp),
+            worktree_baseline: worktreeBaseline ?? [],
+          },
+        } : {}),
       },
       previous_phase: context.dispatch.previous_phase ?? null,
       next_phase: null,
@@ -4561,7 +4665,7 @@ function checkpointDispatch(args, context) {
       event,
       status: 'blocked',
       timestamp,
-      error: 'first_write já emitido: baseline do worktree já está no ledger (G12 só uma vez)',
+      error: 'first_write já emitido: heartbeat já emitido (G12 só uma vez)',
       current_phase: phase,
       expected_phase: phase,
       next_action: 'prosseguir_para_commit_state',
@@ -4577,7 +4681,6 @@ function checkpointDispatch(args, context) {
     ...(statePathValue ? { state_path: statePathValue } : {}),
     ...(detail ? { detail } : {}),
   };
-  const baseline = event === 'first_write' ? captureWorktreeSnapshot(consumerRoot(args)) : null;
   const nextLiveness = {
     ...liveness,
     status: checkpointStatus(event),
@@ -4588,7 +4691,6 @@ function checkpointDispatch(args, context) {
       ...(Array.isArray(liveness.checkpoints) ? liveness.checkpoints : []),
       checkpoint,
     ],
-    ...(baseline ? { worktree_baseline: baseline } : {}),
   };
 
   return {
@@ -4953,7 +5055,10 @@ function stateEvidenceFiles(state) {
   // de um AC cobre os arquivos que ele prova, mesmo sem task/repair associada.
   for (const ref of Object.values(state.proof_refs ?? {})) {
     if (ref && Array.isArray(ref.files)) {
-      result.push(...ref.files.map((index) => (state.files_changed ?? [])[index]).filter((file) => typeof file === 'string'));
+      result.push(...ref.files.map((index) => {
+        if (typeof index === 'string') return index;
+        return (state.files_changed ?? [])[index] ?? state.worktree_final?.[index]?.path ?? null;
+      }).filter((file) => typeof file === 'string'));
     }
   }
   return [...new Set(result.filter((item) => typeof item === 'string' && item.trim()))].sort();
@@ -5405,9 +5510,14 @@ function snapshotHash(root, rel) {
 }
 
 function captureWorktreeSnapshot(root) {
-  const raw = execFileSync('git', [
-    '-C', root, 'status', '--porcelain=v1', '-z', '--untracked-files=all',
-  ]);
+  let raw;
+  try {
+    raw = execFileSync('git', [
+      '-C', root, 'status', '--porcelain=v1', '-z', '--untracked-files=all',
+    ]);
+  } catch {
+    return [];
+  }
   const records = raw.toString('utf8').split('\0').filter(Boolean);
   const snapshot = [];
   for (let index = 0; index < records.length; index += 1) {
@@ -5507,8 +5617,10 @@ function snapshotOnOwnedPaths(snapshot, owned) {
 
 function sliceExpectedFiles(committed, baseline, finalSnapshot, owned) {
   const delta = snapshotDeltaFiles(baseline ?? [], finalSnapshot ?? [])
-    .filter((rel) => owned.has(rel));
-  return [...new Set([...(committed ?? []), ...delta])].sort();
+    .filter((rel) => !rel.startsWith('.talos/') && rel !== '.talos')
+    .filter((rel) => !owned || owned.has(rel));
+  const cleanCommitted = (committed ?? []).filter((rel) => !rel.startsWith('.talos/') && rel !== '.talos');
+  return [...new Set([...cleanCommitted, ...delta])].sort();
 }
 
 function validateStateBoundary(statePathValue, args = {}) {
@@ -5644,6 +5756,87 @@ function normalizeFindingsPacket(packet) {
   return { packet: { ...packet, findings }, violations };
 }
 
+function isFormulaDivergenceOnly(violations) {
+  if (!Array.isArray(violations) || violations.length === 0) return false;
+  const hasFilesChangedDivergence = violations.some((v) => /^files_changed diverge do boundary real/.test(v));
+  if (!hasFilesChangedDivergence) return false;
+  const formulaPatterns = [
+    /^files_changed diverge do boundary real/,
+    /^worktree_final stale: snapshot diverge do working tree atual/,
+    /^diff_stat stale:/,
+    /^evidência diverge do boundary real/,
+  ];
+  return violations.every((v) => formulaPatterns.some((p) => p.test(v)));
+}
+
+function extractProofsFromState(diskState) {
+  if (!diskState || typeof diskState !== 'object') return { proofs: [], repair: [], evalNa: [] };
+  const checkTable = Array.isArray(diskState.check_table) ? diskState.check_table : [];
+  const filesChanged = Array.isArray(diskState.files_changed) ? diskState.files_changed : [];
+  const finalFiles = (Array.isArray(diskState.worktree_final) ? diskState.worktree_final : [])
+    .map((entry) => typeof entry === 'string' ? entry : entry?.path)
+    .filter((file) => typeof file === 'string' && file.trim());
+  const resolveFileIndex = (idx) => {
+    if (typeof idx !== 'number') return idx;
+    return filesChanged[idx] || finalFiles[idx];
+  };
+  const proofs = [];
+  const evalNa = [];
+
+  if (diskState.proof_refs && typeof diskState.proof_refs === 'object') {
+    for (const [id, ref] of Object.entries(diskState.proof_refs)) {
+      if (!ref || typeof ref !== 'object') continue;
+      const checkIdx = Array.isArray(ref.checks) && ref.checks.length > 0 ? ref.checks[0] : -1;
+      const check = checkTable[checkIdx] || 'verified';
+      const files = Array.isArray(ref.files)
+        ? ref.files.map(resolveFileIndex).filter((f) => typeof f === 'string')
+        : [];
+      proofs.push({ kind: 'AC', id, check, files });
+    }
+  }
+
+  if (Array.isArray(diskState.eval_results)) {
+    for (const item of diskState.eval_results) {
+      if (!item || typeof item !== 'object') continue;
+      const id = item.id;
+      const checkIdx = Array.isArray(item.checks) && item.checks.length > 0 ? item.checks[0] : -1;
+      const check = checkTable[checkIdx] || (Array.isArray(item.evidence) ? item.evidence[0] : 'verified');
+      if (item.status === 'not_applicable') evalNa.push(id);
+      proofs.push({ kind: 'EVAL', id, check, files: [] });
+    }
+  }
+
+  if (Array.isArray(diskState.task_evidence)) {
+    for (const item of diskState.task_evidence) {
+      if (!item || typeof item !== 'object') continue;
+      const id = item.task;
+      const checkIdx = Array.isArray(item.checks) && item.checks.length > 0 ? item.checks[0] : -1;
+      const check = checkTable[checkIdx] || 'verified';
+      const files = Array.isArray(item.files)
+        ? item.files.map(resolveFileIndex).filter((f) => typeof f === 'string')
+        : [];
+      proofs.push({ kind: 'T', id, check, files });
+    }
+  }
+
+  const repair = [];
+  if (Array.isArray(diskState.repair_evidence)) {
+    for (const item of diskState.repair_evidence) {
+      if (!item || typeof item !== 'object') continue;
+      const findingId = item.finding_id;
+      const checks = Array.isArray(item.checks)
+        ? item.checks.map((idx) => typeof idx === 'number' ? checkTable[idx] : idx).filter(Boolean)
+        : [];
+      const files = Array.isArray(item.files)
+        ? item.files.map(resolveFileIndex).filter((f) => typeof f === 'string')
+        : [];
+      repair.push({ finding_id: findingId, files, checks, status: item.status || 'resolved' });
+    }
+  }
+
+  return { proofs, repair, evalNa };
+}
+
 function validatorStart(args, context) {
   const runId = validateRunId(args.run_id);
   const statePathValue = requiredString(args, 'state_path');
@@ -5705,19 +5898,8 @@ function validatorStart(args, context) {
       last_commit_state_path: commitPath,
       slice_commit_sha256: commitSha,
       next_action: orphan
-        ? 'remover_ou_recommitar_slice_orfã'
+        ? 'reconcile_state'
         : 'commitar_via_talos_commit_state_antes_do_validator',
-    };
-  }
-
-  const boundaryValidation = validateStateBoundary(statePathValue, args);
-  if (!boundaryValidation.ok) {
-    return {
-      gate: 'G4', action: 'start', status: 'blocked', timestamp,
-      state_path: statePathValue,
-      boundary_violations: boundaryValidation.violations,
-      error: `State/boundary inválido: ${boundaryValidation.violations.join('; ')}`,
-      next_action: 'regerar_state_path_com_boundary_real',
     };
   }
 
@@ -5791,6 +5973,81 @@ function validatorStart(args, context) {
     };
   }
 
+  let boundaryValidation = validateStateBoundary(statePathValue, args);
+  if (!boundaryValidation.ok) {
+    if (isFormulaDivergenceOnly(boundaryValidation.violations)) {
+      // D10: Divergência de fórmula -> MCP reprojeta e sobrescreve
+      let diskState;
+      try {
+        diskState = JSON.parse(fs.readFileSync(sliceAbs, 'utf8'));
+      } catch (err) {
+        return {
+          gate: 'G4', action: 'start', status: 'blocked', timestamp,
+          state_path: statePathValue,
+          boundary_violations: boundaryValidation.violations,
+          error: `State/boundary inválido: ${boundaryValidation.violations.join('; ')}`,
+          next_action: 'regerar_state_path_com_boundary_real',
+        };
+      }
+      const { proofs, repair, evalNa } = extractProofsFromState(diskState);
+      const projectArgs = {
+        run_id: runId,
+        slice: diskState.slice ?? path.basename(statePathValue, '.json'),
+        plan_path: diskState.plan_path,
+        sprint_file_path: diskState.sprint_file_path,
+        obligation_ids: diskState.contract_ids?.obligations ?? [],
+        eval_na: evalNa,
+        proofs,
+        repair,
+        project_root: args.project_root,
+      };
+      let projected;
+      try {
+        projected = projectCommitStateV3(projectArgs, context);
+      } catch (err) {
+        return {
+          gate: 'G4', action: 'start', status: 'blocked', timestamp,
+          state_path: statePathValue,
+          boundary_violations: boundaryValidation.violations,
+          error: `Falha na reprojeção do boundary: ${err.message}`,
+          next_action: 'regerar_state_path_com_boundary_real',
+        };
+      }
+      const tmp = `${sliceAbs}.${process.pid}.tmp`;
+      fs.writeFileSync(tmp, `${JSON.stringify(projected.state)}\n`, { mode: 0o600 });
+      fs.renameSync(tmp, sliceAbs);
+      const newSha = sha256HexFile(sliceAbs);
+      markCommitHandoff(runId, args, {
+        timestamp,
+        status: 'passed',
+        role: 'reproject',
+        next_action: 'open_validator',
+      }, statePathValue, newSha);
+
+      if (context.dispatch?.active?.liveness) {
+        context.dispatch.active.liveness.slice_commit_sha256 = newSha;
+      }
+      boundaryValidation = validateStateBoundary(statePathValue, args);
+      if (!boundaryValidation.ok) {
+        return {
+          gate: 'G4', action: 'start', status: 'blocked', timestamp,
+          state_path: statePathValue,
+          boundary_violations: boundaryValidation.violations,
+          error: `State/boundary inválido após reprojeção: ${boundaryValidation.violations.join('; ')}`,
+          next_action: 'regerar_state_path_com_boundary_real',
+        };
+      }
+    } else {
+      return {
+        gate: 'G4', action: 'start', status: 'blocked', timestamp,
+        state_path: statePathValue,
+        boundary_violations: boundaryValidation.violations,
+        error: `State/boundary inválido: ${boundaryValidation.violations.join('; ')}`,
+        next_action: 'regerar_state_path_com_boundary_real',
+      };
+    }
+  }
+
   const attempt = cycle.attempts_used + 1;
   const activeValidatorRunId = validatorRunId(runId, attempt, timestamp);
   // S04: token de dispatch monotônico — incrementa a cada dispatch aceito
@@ -5851,7 +6108,7 @@ function validatorComplete(args, context) {
   const timestamp = nowIso();
   const cycle = normalizeValidatorCycle(context.state.data?.validator_cycle ?? {});
   const statePathValue = requiredString(args, 'state_path');
-  const activeValidatorRunId = requiredString(args, 'validator_run_id');
+  let activeValidatorRunId = optionalString(args, 'validator_run_id');
   const verdict = requiredString(args, 'verdict');
   const packetResult = normalizeFindingsPacket(optionalData(args));
   const packet = packetResult.packet;
@@ -5863,10 +6120,7 @@ function validatorComplete(args, context) {
   const validatorOutputPath = optionalString(args, 'validator_output_path');
 
   if (!cycle.active) {
-    // S10: slot já fechado. Distinguir retorno duplicado já aplicado (idempotente
-    // reconhecível) de payload sem nenhum slot conhecido. NUNCA reabrir o ciclo.
-    // A idempotência vive em `applied`, não no history curto de observabilidade.
-    const appliedCompleteEvent = appliedValidatorCompletion(cycle, activeValidatorRunId);
+    const appliedCompleteEvent = activeValidatorRunId ? appliedValidatorCompletion(cycle, activeValidatorRunId) : null;
     if (appliedCompleteEvent) {
       return {
         gate: 'G4',
@@ -5878,11 +6132,6 @@ function validatorComplete(args, context) {
         stale_discarded: true,
         reason: 'stale_duplicate_already_applied',
         last_verdict: cycle.last_verdict,
-        // S10/P3-2: ecoa o veredito real que o complete casado produziu no history
-        // (repair_required, passed, passed_with_observations,
-        // blocked_final_validator_failed). last_verdict reflete só o ciclo atual e
-        // pode divergir do estado real daquele evento — applied_validator_status
-        // evita que o consumidor leia um fail→repair como conclusão bem-sucedida.
         applied_validator_status: appliedCompleteEvent.validator_status ?? null,
         error: `Retorno duplicado do validator já aplicado (run_id ${activeValidatorRunId}); descartado de forma idempotente`,
         next_action: 'descartar_retorno_duplicado_idempotente',
@@ -5899,7 +6148,22 @@ function validatorComplete(args, context) {
     };
   }
 
-  if (cycle.active.run_id !== activeValidatorRunId) {
+  // D13 / S10 / OUT:CN8: slot único é frouxo — `validator_run_id` omitido OU
+  // não-canônico fecha o slot ativo. Um id CANÔNICO (`<run>:validator:<n>:<ts>`)
+  // que diverge é stale real e continua `blocked`; com dois slots ativos o id
+  // exato permanece obrigatório. Mesma régua já aplicada em
+  // `validatorRepairComplete` (simetria D13 entre complete e repair_complete).
+  // `cycle.slots` persiste slots de attempts anteriores; só é multi-slot real
+  // quando tem mais de uma entrada E uma delas é o slot ativo corrente. Fora
+  // disso o slot autoritativo é `cycle.active` (régua do código pré-0.21).
+  const persistedSlots = Array.isArray(cycle.slots) ? cycle.slots : [];
+  const activeValidatorSlots = (persistedSlots.length > 1
+    && persistedSlots.some((slot) => slot && slot.run_id === cycle.active.run_id))
+    ? persistedSlots
+    : [cycle.active];
+  const isCanonicalValidatorId = typeof activeValidatorRunId === 'string'
+    && /:validator:\d+:/.test(activeValidatorRunId);
+  if (isCanonicalValidatorId && activeValidatorRunId !== cycle.active.run_id) {
     return {
       gate: 'G4',
       action: 'complete',
@@ -5913,17 +6177,39 @@ function validatorComplete(args, context) {
     };
   }
 
-  if (cycle.active.state_path !== statePathValue) {
+  let matchedValidatorSlot = activeValidatorRunId
+    ? activeValidatorSlots.find((slot) => slot && slot.run_id === activeValidatorRunId)
+    : null;
+  if (!matchedValidatorSlot) {
+    if (activeValidatorSlots.length === 1) {
+      matchedValidatorSlot = activeValidatorSlots[0];
+    } else {
+      return {
+        gate: 'G4',
+        action: 'complete',
+        status: 'blocked',
+        timestamp,
+        validator_attempt: cycle.active.attempt,
+        validator_run_id: activeValidatorRunId ?? null,
+        stale_discarded: true,
+        error: `validator_run_id não corresponde a nenhum validator ativo com múltiplos slots: recebido ${activeValidatorRunId}`,
+        next_action: 'aguardar_ou_descartar_retorno_stale_do_validator',
+      };
+    }
+  }
+  activeValidatorRunId = matchedValidatorSlot.run_id;
+
+  if (matchedValidatorSlot.state_path !== statePathValue) {
     return {
       gate: 'G4',
       action: 'complete',
       status: 'blocked',
       timestamp,
-      validator_attempt: cycle.active.attempt,
+      validator_attempt: matchedValidatorSlot.attempt,
       validator_run_id: activeValidatorRunId,
       state_path: statePathValue,
       stale_discarded: true,
-      error: `state_path do validator ativo diverge: esperado ${cycle.active.state_path}, recebido ${statePathValue}`,
+      error: `state_path do validator ativo diverge: esperado ${matchedValidatorSlot.state_path}, recebido ${statePathValue}`,
       next_action: 'corrigir_payload_do_validator',
     };
   }
@@ -5934,7 +6220,7 @@ function validatorComplete(args, context) {
       action: 'complete',
       status: 'blocked',
       timestamp,
-      validator_attempt: cycle.active.attempt,
+      validator_attempt: matchedValidatorSlot.attempt,
       validator_run_id: activeValidatorRunId,
       state_path: statePathValue,
       stale_discarded: true,
@@ -5947,27 +6233,27 @@ function validatorComplete(args, context) {
   // Divergência → blocked SEM fechar o slot (não retorna validator_cycle, então
   // active é preservado pelo merge).
   // S10: marca stale_discarded para o orquestrador distinguir stale de erro real.
-  if (cycle.active.dispatch_token !== dispatchToken) {
+  if (matchedValidatorSlot.dispatch_token !== dispatchToken) {
     return {
       gate: 'G4',
       action: 'complete',
       status: 'blocked',
       timestamp,
-      validator_attempt: cycle.active.attempt,
+      validator_attempt: matchedValidatorSlot.attempt,
       validator_run_id: activeValidatorRunId,
       state_path: statePathValue,
       stale_discarded: true,
-      error: `token de dispatch divergente: esperado ${cycle.active.dispatch_token}, recebido ${dispatchToken}`,
+      error: `token de dispatch divergente: esperado ${matchedValidatorSlot.dispatch_token}, recebido ${dispatchToken}`,
       next_action: 'aguardar_ou_descartar_retorno_stale_do_validator',
     };
   }
 
-  // P1.1: proof-of-work. Só vale se o start emitiu challenge (cycle.active.challenge).
+  // P1.1: proof-of-work. Só vale se o start emitiu challenge (matchedValidatorSlot.challenge).
   // Falha (resposta ausente/hash divergente) NÃO fecha o slot — igual stale: active é
   // preservado (não retornamos validator_cycle), o orquestrador re-despacha o MESMO
   // validador (mesmo attempt) que lê o boundary e reenvia o hash correto. Não consome
   // attempt nem reabre terminal. Arquivo sumido/ilegível consome o mesmo orçamento bounded.
-  const challengeCheck = verifyValidatorChallenge(cycle.active.challenge, challengeResponse, args);
+  const challengeCheck = verifyValidatorChallenge(matchedValidatorSlot.challenge, challengeResponse, args);
   if (!challengeCheck.ok) {
     // P2-1: falhas de challenge são bounded por attempt. O contador vive em
     // `applied.challenge_failures`; history pode ser truncado sem reabrir loop.
@@ -5978,12 +6264,12 @@ function validatorComplete(args, context) {
         action: 'complete',
         status: 'blocked',
         timestamp,
-        validator_attempt: cycle.active.attempt,
+        validator_attempt: matchedValidatorSlot.attempt,
         validator_run_id: activeValidatorRunId,
         state_path: statePathValue,
         validator_status: 'challenge_exhausted',
-        challenge_file: cycle.active.challenge.file,
-        error: `Proof-of-work do validador falhou ${priorChallengeFailures + 1}x (máximo=${VALIDATOR_CHALLENGE_MAX_FAILURES}) para ${cycle.active.challenge.file}; re-dispatch encerrado`,
+        challenge_file: matchedValidatorSlot.challenge.file,
+        error: `Proof-of-work do validador falhou ${priorChallengeFailures + 1}x (máximo=${VALIDATOR_CHALLENGE_MAX_FAILURES}) para ${matchedValidatorSlot.challenge.file}; re-dispatch encerrado`,
         cause: 'validator_proof_of_work_exhausted',
         impact: 'validador_nao_comprovou_leitura_do_boundary_apos_teto_de_tentativas',
         next_action: 'encerrar_com_blocked_e_investigar_resolucao_de_path_do_challenge_no_host',
@@ -6001,7 +6287,7 @@ function validatorComplete(args, context) {
             validator_status: 'challenge_exhausted',
             status: 'blocked',
             state_path: statePathValue,
-            attempt: cycle.active.attempt,
+            attempt: matchedValidatorSlot.attempt,
             timestamp,
           }),
         },
@@ -6012,14 +6298,14 @@ function validatorComplete(args, context) {
       action: 'complete',
       status: 'blocked',
       timestamp,
-      validator_attempt: cycle.active.attempt,
+      validator_attempt: matchedValidatorSlot.attempt,
       validator_run_id: activeValidatorRunId,
       state_path: statePathValue,
       validator_status: 'challenge_failed',
-      challenge_file: cycle.active.challenge.file,
+      challenge_file: matchedValidatorSlot.challenge.file,
       challenge_failures: priorChallengeFailures + 1,
       challenge_failures_max: VALIDATOR_CHALLENGE_MAX_FAILURES,
-      error: `Proof-of-work do validador falhou (${challengeCheck.reason}): o veredito não comprovou leitura de ${cycle.active.challenge.file}`,
+      error: `Proof-of-work do validador falhou (${challengeCheck.reason}): o veredito não comprovou leitura de ${matchedValidatorSlot.challenge.file}`,
       cause: 'validator_proof_of_work_failed',
       impact: 'sem_prova_de_leitura_do_boundary_o_veredito_pode_nao_ter_lido_o_codigo',
       next_action: 'redespachar_o_mesmo_validador_irmao_que_le_o_boundary_e_reenvia_challenge_response',
@@ -6028,7 +6314,7 @@ function validatorComplete(args, context) {
       },
     };
   }
-  const challengeVerified = !cycle.active.challenge ? 'no_challenge' : 'verified';
+  const challengeVerified = !matchedValidatorSlot.challenge ? 'no_challenge' : 'verified';
 
   if (validatorOutputPath) {
     const outputPath = resolveConsumerPath(validatorOutputPath, args);
@@ -6339,6 +6625,32 @@ function validatorComplete(args, context) {
   };
 }
 
+function isMetadataFinding(finding) {
+  if (!finding || typeof finding !== 'object') return false;
+  const file = String(finding.file ?? '').trim().toLowerCase();
+  const mode = String(finding.failure_mode ?? '').trim().toLowerCase();
+  const text = [
+    finding.id,
+    finding.file,
+    finding.failure_mode,
+    finding.evidence,
+    finding.recommendation,
+    finding.msg,
+    finding.reason,
+  ].filter(Boolean).join(' ').toLowerCase();
+
+  if (file.includes('.talos/state') || file === 'files_changed' || file === 'boundary' || file === 'run_id' || file === 'sha') {
+    return true;
+  }
+  if (/^(files_changed|sha|sha256|run_id|worktree|boundary|metadata)/i.test(mode)) {
+    return true;
+  }
+  if (/files_changed|slice_commit_sha|worktree_baseline|worktree_final|boundary_violation/i.test(text)) {
+    return true;
+  }
+  return false;
+}
+
 function validatorRepairStart(args, context) {
   const runId = validateRunId(args.run_id);
   const timestamp = nowIso();
@@ -6361,6 +6673,20 @@ function validatorRepairStart(args, context) {
       code: 'origin_invalida',
       error: `Procedência de repair inválida: ${JSON.stringify(origin)}; enum fechado ${[...REPAIR_ORIGINS].join(', ')}`,
       next_action: 'corrigir_origin_do_repair_start',
+    };
+  }
+
+  // D14/D19/INV7: finding só de metadata não abre repair_start nem consome budget
+  const blockingFindings = structuredBlockingFindings(cycle.findings_packet);
+  if (blockingFindings.length > 0 && blockingFindings.every(isMetadataFinding)) {
+    return {
+      gate: 'G4',
+      action: 'repair_start',
+      status: 'blocked',
+      timestamp,
+      code: 'repair_metadata_proibido',
+      error: 'Repair bloqueado: findings de metadata (files_changed/sha/run_id) não são reparáveis por LLM; use reconcile_state via orquestrador',
+      next_action: 'reconcile_state',
     };
   }
 
@@ -6389,11 +6715,8 @@ function validatorRepairStart(args, context) {
     };
   }
 
-  // Plano 02 (loop): budget fail-closed por provenance (INV5/D17). Enforcement
-  // só nas provenances in-loop — para 'validator' o fluxo atual fica intacto
-  // (GUIDE §2.5 "validator: fluxo atual intacto"; alerta §2.10: nenhum teste do
-  // ciclo G4 muda de veredito). Contagem por provenance é independente (AC-02.2.2).
-  if (REPAIR_IN_LOOP_ORIGINS.has(origin) && cycle.repair.budget_used[origin] >= 1) {
+  // Budget 1 por provenance neste ciclo. Se esgotado, bloqueia.
+  if (cycle.repair.budget_used[origin] >= 1) {
     return {
       gate: 'G4',
       action: 'repair_start',
@@ -6403,7 +6726,7 @@ function validatorRepairStart(args, context) {
       repair_origin: origin,
       budget_used: { ...cycle.repair.budget_used },
       error: `Budget de repair esgotado para a provenance ${origin} neste ciclo (1 por provenance)`,
-      next_action: 'estacionar_sprint_detached_repair',
+      next_action: origin === 'validator' ? 'segundo_validator_obrigatorio' : 'estacionar_sprint_detached_repair',
     };
   }
 
@@ -6475,6 +6798,7 @@ function validatorRepairStart(args, context) {
           run_id: activeRepairRunId,
           state_path: statePathValue,
           started_at: timestamp,
+          worktree_snapshot: captureWorktreeSnapshot(consumerRoot(args)),
           boundary_before: {
             head_sha: boundaryBefore.state.head_sha ?? null,
             diff_stat: boundaryBefore.state.diff_stat,
@@ -6575,7 +6899,7 @@ function validatorRepairComplete(args, context) {
   const timestamp = nowIso();
   const cycle = normalizeValidatorCycle(context.state.data?.validator_cycle ?? {});
   const statePathValue = requiredString(args, 'state_path');
-  const activeRepairRunId = requiredString(args, 'repair_run_id');
+  let activeRepairRunId = optionalString(args, 'repair_run_id');
   const repairData = optionalData(args);
 
   if (cycle.active) {
@@ -6591,7 +6915,7 @@ function validatorRepairComplete(args, context) {
   }
 
   // S10: idempotência reconhecível sem depender do history truncado.
-  const appliedRepairEvent = appliedRepairCompletion(cycle, activeRepairRunId);
+  const appliedRepairEvent = activeRepairRunId ? appliedRepairCompletion(cycle, activeRepairRunId) : null;
 
   if (cycle.status !== 'repair_running') {
     return {
@@ -6599,7 +6923,7 @@ function validatorRepairComplete(args, context) {
       action: 'repair_complete',
       status: 'blocked',
       timestamp,
-      repair_run_id: activeRepairRunId,
+      repair_run_id: activeRepairRunId ?? null,
       stale_discarded: true,
       ...(appliedRepairEvent ? { reason: 'repair_duplicate_already_applied' } : {}),
       error: appliedRepairEvent
@@ -6611,13 +6935,19 @@ function validatorRepairComplete(args, context) {
     };
   }
 
-  if (!cycle.repair.active) {
+  const activeRepairSlots = (Array.isArray(cycle.repair?.slots) && cycle.repair.slots.length > 1)
+    ? cycle.repair.slots
+    : (cycle.repair?.active
+      ? [cycle.repair.active]
+      : (Array.isArray(cycle.repair?.slots) && cycle.repair.slots.length > 0 ? cycle.repair.slots : []));
+
+  if (activeRepairSlots.length === 0) {
     return {
       gate: 'G4',
       action: 'repair_complete',
       status: 'blocked',
       timestamp,
-      repair_run_id: activeRepairRunId,
+      repair_run_id: activeRepairRunId ?? null,
       stale_discarded: true,
       ...(appliedRepairEvent ? { reason: 'repair_duplicate_already_applied' } : {}),
       error: appliedRepairEvent
@@ -6629,7 +6959,8 @@ function validatorRepairComplete(args, context) {
     };
   }
 
-  if (cycle.repair.active.run_id !== activeRepairRunId) {
+  const isCanonicalRepairId = typeof activeRepairRunId === 'string' && /:repair:\d+:/.test(activeRepairRunId);
+  if (isCanonicalRepairId && cycle.repair?.active && activeRepairRunId !== cycle.repair.active.run_id) {
     return {
       gate: 'G4',
       action: 'repair_complete',
@@ -6638,13 +6969,36 @@ function validatorRepairComplete(args, context) {
       validator_attempt: cycle.attempts_used,
       repair_run_id: activeRepairRunId,
       stale_discarded: true,
-      ...(appliedRepairEvent ? { reason: 'repair_duplicate_already_applied' } : {}),
       error: `repair_run_id não corresponde ao repair ativo: recebido ${activeRepairRunId}`,
       next_action: 'aguardar_ou_descartar_retorno_stale_do_repair',
     };
   }
 
-  if (cycle.repair.active.state_path !== statePathValue) {
+  let matchedRepairSlot = null;
+  if (activeRepairRunId) {
+    matchedRepairSlot = activeRepairSlots.find((slot) => slot && slot.run_id === activeRepairRunId);
+  }
+  if (!matchedRepairSlot) {
+    if (activeRepairSlots.length === 1) {
+      matchedRepairSlot = activeRepairSlots[0];
+      activeRepairRunId = matchedRepairSlot.run_id;
+    } else {
+      return {
+        gate: 'G4',
+        action: 'repair_complete',
+        status: 'blocked',
+        timestamp,
+        validator_attempt: cycle.attempts_used,
+        repair_run_id: activeRepairRunId ?? null,
+        stale_discarded: true,
+        ...(appliedRepairEvent ? { reason: 'repair_duplicate_already_applied' } : {}),
+        error: `repair_run_id não corresponde a nenhum repair ativo com múltiplos slots: recebido ${activeRepairRunId}`,
+        next_action: 'aguardar_ou_descartar_retorno_stale_do_repair',
+      };
+    }
+  }
+
+  if (matchedRepairSlot.state_path !== statePathValue) {
     return {
       gate: 'G4',
       action: 'repair_complete',
@@ -6654,7 +7008,7 @@ function validatorRepairComplete(args, context) {
       repair_run_id: activeRepairRunId,
       state_path: statePathValue,
       stale_discarded: true,
-      error: `state_path do repair ativo diverge: esperado ${cycle.repair.active.state_path}, recebido ${statePathValue}`,
+      error: `state_path do repair ativo diverge: esperado ${matchedRepairSlot.state_path}, recebido ${statePathValue}`,
       next_action: 'atualizar_o_state_path_original_sem_redirecionar_boundary',
     };
   }
@@ -6715,7 +7069,7 @@ function validatorRepairComplete(args, context) {
       repairViolations.push('output do repair diverge de repair_evidence persistido');
     }
   }
-  const before = cycle.repair.active.boundary_before;
+  const before = matchedRepairSlot.boundary_before;
   if (Array.isArray(before?.worktree_final) && Array.isArray(boundaryAfter.state.worktree_final)) {
     let committedDuringRepair = [];
     if (before.head_sha && before.head_sha !== boundaryAfter.state.head_sha) {
@@ -6899,20 +7253,49 @@ function projectCommitStateV3(args, context) {
   const runId = validateRunId(args.run_id);
   const timestamp = nowIso();
   const root = consumerRoot(args);
-  const baseSha = gitOutput(root, ['rev-parse', 'HEAD']).trim();
-  const liveness = context.dispatch.active?.liveness && typeof context.dispatch.active.liveness === 'object'
-    ? context.dispatch.active.liveness
+  const active = context.dispatch?.active;
+  const liveness = active?.liveness && typeof active.liveness === 'object'
+    ? active.liveness
     : null;
+  let baseSha = active?.base_sha ?? liveness?.base_sha ?? null;
+  if (!baseSha) {
+    try {
+      baseSha = gitOutput(root, ['rev-parse', 'HEAD']).trim();
+    } catch {
+      baseSha = null;
+    }
+  }
+  let currentHead = null;
+  try {
+    currentHead = gitOutput(root, ['rev-parse', 'HEAD']).trim();
+  } catch {
+    currentHead = null;
+  }
+  const headSha = currentHead ?? baseSha;
+
   const baseline = Array.isArray(liveness?.worktree_baseline)
     ? liveness.worktree_baseline
-    : [];
+    : (Array.isArray(active?.worktree_baseline) ? active.worktree_baseline : []);
   const currentSnapshot = captureWorktreeSnapshot(root);
-  const committedNow = gitLines(root, ['diff', '--name-only', `${baseSha}...HEAD`]);
-  const claimedNow = commitClaimedPaths(args);
-  const ownedNow = new Set([...committedNow, ...claimedNow]);
+
+  let committedNow = [];
+  if (baseSha && currentHead && baseSha !== currentHead) {
+    try {
+      committedNow = gitLines(root, ['diff', '--name-only', `${baseSha}...HEAD`])
+        .filter((file) => !file.startsWith('.talos/') && file !== '.talos');
+    } catch {
+      committedNow = [];
+    }
+  }
+
   const sliceDeltaNow = snapshotDeltaFiles(baseline, currentSnapshot)
-    .filter((rel) => ownedNow.has(rel));
-  const hasMutated = committedNow.length > 0 || sliceDeltaNow.length > 0;
+    .filter((file) => !file.startsWith('.talos/') && file !== '.talos');
+
+  const priorFiles = Array.isArray(context.state?.data?.validator_cycle?.repair?.active?.boundary_before?.files_changed)
+    ? context.state.data.validator_cycle.repair.active.boundary_before.files_changed
+    : [];
+  const filesChanged = [...new Set([...committedNow, ...sliceDeltaNow, ...priorFiles])].sort();
+  const hasMutated = filesChanged.length > 0;
 
   const planPath = optionalString(args, 'plan_path');
   const sprintFilePath = optionalString(args, 'sprint_file_path');
@@ -6965,14 +7348,9 @@ function projectCommitStateV3(args, context) {
     }
   }
 
-  const worktreeFinal = currentSnapshot;
-  const committed = committedNow;
-  const claimedFiles = [...claimedNow];
-  const worktreeDelta = sliceDeltaNow;
-  const expectedFiles = [...new Set([...committed, ...worktreeDelta])].sort();
-  const filesChanged = hasMutated
-    ? [...new Set([...expectedFiles, ...claimedFiles])].sort()
-    : [];
+  const worktreeFinal = currentSnapshot.filter((entry) => filesChanged.includes(entry.path));
+  const worktreeBaseline = baseline.filter((entry) => filesChanged.includes(entry.path));
+
   const indexOfFile = (rel) => filesChanged.indexOf(rel);
   const proofRefsIndexed = Object.fromEntries(
     Object.entries(proofRefs).map(([id, ref]) => [
@@ -6991,7 +7369,7 @@ function projectCommitStateV3(args, context) {
     run_id: runId,
     slice: args.slice,
     base_sha: baseSha,
-    head_sha: baseSha,
+    head_sha: headSha,
     contract_kind: planPath ? 'plan' : 'direct',
     tasks: [...new Set(taskOrder)],
     files_changed: filesChanged,
@@ -7024,14 +7402,14 @@ function projectCommitStateV3(args, context) {
       checks: item.checks.map(checkIndexOf).filter((i) => i >= 0),
       status: item.status,
     })),
-    worktree_baseline: baseline,
+    worktree_baseline: worktreeBaseline,
     worktree_final: worktreeFinal,
     executed_at: timestamp,
     executor_skill: context.routing.mode === 'direct'
       ? WORKFLOW_CONFIG.skills.direct_execute
       : WORKFLOW_CONFIG.skills.plan_execute,
   };
-  return { state, worktreeDelta, filesChanged, hasMutated };
+  return { state, worktreeDelta: sliceDeltaNow, filesChanged, hasMutated };
 }
 
 function proofRefsFiles(proofRefs) {
@@ -7067,6 +7445,18 @@ function inferCommitRole(args, context) {
     const sliceAbs = resolveConsumerPath(sliceRel, args);
     const sliceExists = fs.existsSync(sliceAbs);
     const sliceSha = sliceExists ? sha256HexFile(sliceAbs) : null;
+    const lastCommitSha = active.liveness?.slice_commit_sha256 ?? null;
+
+    // D12: inferCommitRole ganha reconcile quando plan_execute ativo e sha256(disco) != liveness.slice_commit_sha256 (arquivo existe).
+    if (sliceExists && lastCommitSha !== null && sliceSha !== lastCommitSha) {
+      return {
+        role: 'reconcile',
+        baseline: active.liveness?.worktree_baseline ?? [],
+        baseSha: active.liveness?.base_sha ?? null,
+        sliceSha,
+      };
+    }
+
     if (cycle.status === 'repair_required' || cycle.status === 'repair_running') {
       // Commit repair é a continuação do ciclo: handoff_ready anterior não
       // bloqueia — o repair_start reabriu a slice para correção.
@@ -7076,7 +7466,6 @@ function inferCommitRole(args, context) {
       if (!Array.isArray(args.repair) || args.repair.length === 0) {
         return { status: 'blocked', code: 'repair_sem_repairs', error: 'Commit repair exige repair[] não vazio', next_action: 'enviar_repair_com_findings' };
       }
-      const lastCommitSha = active.liveness?.slice_commit_sha256 ?? null;
       if (!lastCommitSha || sliceSha === null || sliceSha !== lastCommitSha) {
         return { status: 'blocked', code: 'repair_sha_divergente', error: 'Commit repair bloqueado: sha do disco diverge do último commit MCP (repair deve partir do state commitado)', next_action: 'recommit_do_state_atual_antes_do_repair' };
       }
@@ -7103,21 +7492,28 @@ function inferCommitRole(args, context) {
       // Ciclo idle + repair[] no input = repair sem slot → blocked, sem escrita.
       return { status: 'blocked', code: 'repair_sem_slot', error: 'Commit bloqueado: repair[] sem slot repair_start aberto (role pelo lock)', next_action: 'abrir_slot_repair_antes_do_commit_repair' };
     }
-    const hasBaseline = Array.isArray(active.liveness?.worktree_baseline) && active.liveness.worktree_baseline.length >= 0;
-    if (active.liveness && active.liveness.worktree_baseline === undefined) {
-      // AC-1.2.3: sem first_write, o commit só é válido se o worktree está limpo
-      // (no-op slice). Diff real vs HEAD decide — não bloquear incondicionalmente.
-      const rootNow = consumerRoot(args);
-      const baseShaNow = active.liveness?.base_sha ?? gitOutput(rootNow, ['rev-parse', 'HEAD']).trim();
-      const committedNow = gitLines(rootNow, ['diff', '--name-only', `${baseShaNow}...HEAD`]);
-      const claimedNow = commitClaimedPaths(args);
-      const worktreeNow = snapshotDeltaFiles([], captureWorktreeSnapshot(rootNow))
-        .filter((rel) => claimedNow.has(rel));
-      if (committedNow.length > 0 || worktreeNow.length > 0) {
-        return { status: 'blocked', code: 'sem_first_write_dirty', error: 'Commit bloqueado: worktree sujo sem first_write (baseline ausente no ledger)', next_action: 'emitir_first_write_antes_do_commit' };
+    const hasFirstWrite = Array.isArray(active.liveness?.checkpoints)
+      && active.liveness.checkpoints.some((entry) => entry?.event === 'first_write');
+    const rootNow = consumerRoot(args);
+    const baseShaNow = active.liveness?.base_sha ?? active.base_sha ?? null;
+    let committedNow = [];
+    if (baseShaNow) {
+      try {
+        committedNow = gitLines(rootNow, ['diff', '--name-only', `${baseShaNow}...HEAD`])
+          .filter((file) => !file.startsWith('.talos/') && file !== '.talos');
+      } catch {
+        committedNow = [];
       }
-      // No-op (worktree limpo, sem commits desde base_sha): passa sem baseline.
-      return { role: 'execute', baseline: [], baseSha: active.liveness?.base_sha ?? null, sliceSha: null };
+    }
+    const baselineNow = Array.isArray(active.liveness?.worktree_baseline)
+      ? active.liveness.worktree_baseline
+      : [];
+    const deltaNow = snapshotDeltaFiles(baselineNow, captureWorktreeSnapshot(rootNow))
+      .filter((file) => !file.startsWith('.talos/') && file !== '.talos');
+    const factNow = [...new Set([...committedNow, ...deltaNow])];
+
+    if (!hasFirstWrite && factNow.length > 0) {
+      return { status: 'blocked', code: 'sem_first_write_dirty', error: 'Commit bloqueado: worktree sujo sem first_write (heartbeat ausente no ledger)', next_action: 'emitir_first_write_antes_do_commit' };
     }
     if (!sliceExists) {
       return { role: 'execute', baseline: active.liveness?.worktree_baseline ?? [], baseSha: active.liveness?.base_sha ?? null, sliceSha: null };
@@ -7127,7 +7523,12 @@ function inferCommitRole(args, context) {
     if (ledgerSha !== null && diskSha === ledgerSha) {
       return { role: 'execute', baseline: active.liveness?.worktree_baseline ?? [], baseSha: active.liveness?.base_sha ?? null, sliceSha: diskSha };
     }
-    return { status: 'blocked', code: 'slice_orfã', error: 'Commit bloqueado: state_path já existe em disco com sha divergente do ledger (órfão/dual-writer); commit é absoluto e não sobrescreve estado alheio', next_action: 'remover_ou_renomear_slice_orfã_antes_do_commit' };
+    return {
+      role: 'reconcile',
+      baseline: active.liveness?.worktree_baseline ?? [],
+      baseSha: active.liveness?.base_sha ?? null,
+      sliceSha: diskSha,
+    };
   }
   return { status: 'blocked', code: 'sem_plan_execute', error: 'Commit só se aplica com plan_execute ativo (D9: role pelo lock)', next_action: 'dispatch_plan_execute_antes_do_commit' };
 }
@@ -7196,14 +7597,16 @@ function commitState(args = {}) {
     throw rpcError(-32602, `unknown_property: ${denied[0]} (campo projetado pelo MCP — executor não envia)`);
   }
   if (typeof args.slice !== 'string' || !args.slice.trim()) throw rpcError(-32602, 'slice obrigatório');
-  if (!Array.isArray(args.proofs) || args.proofs.length === 0) {
-    throw rpcError(-32602, 'proofs obrigatório (AC/EVAL/T)');
-  }
-  for (const [index, proof] of args.proofs.entries()) {
-    if (!proof || typeof proof !== 'object') throw rpcError(-32602, `proofs[${index}] deve ser objeto`);
-    if (!['AC', 'EVAL', 'T'].includes(proof.kind)) throw rpcError(-32602, `proofs[${index}].kind deve ser AC|EVAL|T`);
-    if (typeof proof.id !== 'string' || !proof.id.trim()) throw rpcError(-32602, `proofs[${index}].id obrigatório`);
-    if (typeof proof.check !== 'string' || !proof.check.trim()) throw rpcError(-32602, `proofs[${index}].check obrigatório`);
+  if (args.proofs !== undefined) {
+    if (!Array.isArray(args.proofs) || args.proofs.length === 0) {
+      throw rpcError(-32602, 'proofs deve ser array não vazio (AC/EVAL/T)');
+    }
+    for (const [index, proof] of args.proofs.entries()) {
+      if (!proof || typeof proof !== 'object') throw rpcError(-32602, `proofs[${index}] deve ser objeto`);
+      if (!['AC', 'EVAL', 'T'].includes(proof.kind)) throw rpcError(-32602, `proofs[${index}].kind deve ser AC|EVAL|T`);
+      if (typeof proof.id !== 'string' || !proof.id.trim()) throw rpcError(-32602, `proofs[${index}].id obrigatório`);
+      if (typeof proof.check !== 'string' || !proof.check.trim()) throw rpcError(-32602, `proofs[${index}].check obrigatório`);
+    }
   }
   if (args.repair !== undefined && !Array.isArray(args.repair)) throw rpcError(-32602, 'repair deve ser array');
 
@@ -7221,9 +7624,33 @@ function commitState(args = {}) {
   const statePathValue = slicePathForCommit(args);
   const stateAbs = resolveConsumerPath(statePathValue, args);
 
+  let projectArgs = { ...args };
+  if (inferred.role === 'reconcile') {
+    if (!Array.isArray(args.proofs) || args.proofs.length === 0) {
+      try {
+        const diskState = JSON.parse(fs.readFileSync(stateAbs, 'utf8'));
+        const extracted = extractProofsFromState(diskState);
+        projectArgs.proofs = extracted.proofs;
+        if (!projectArgs.repair && extracted.repair.length > 0) projectArgs.repair = extracted.repair;
+        if (!projectArgs.eval_na && extracted.evalNa.length > 0) projectArgs.eval_na = extracted.evalNa;
+        if (!projectArgs.plan_path && diskState.plan_path) projectArgs.plan_path = diskState.plan_path;
+        if (!projectArgs.sprint_file_path && diskState.sprint_file_path) projectArgs.sprint_file_path = diskState.sprint_file_path;
+        if (!projectArgs.obligation_ids && Array.isArray(diskState.contract_ids?.obligations)) {
+          projectArgs.obligation_ids = diskState.contract_ids.obligations;
+        }
+      } catch {
+        // fallback
+      }
+    }
+  } else {
+    if (!Array.isArray(args.proofs) || args.proofs.length === 0) {
+      throw rpcError(-32602, 'proofs obrigatório (AC/EVAL/T)');
+    }
+  }
+
   let projected;
   try {
-    projected = projectCommitStateV3(args, context);
+    projected = projectCommitStateV3(projectArgs, context);
   } catch (error) {
     return {
       gate: 'G12', action: 'commit_state', phase: 'plan_execute', status: 'blocked', timestamp,
@@ -7233,23 +7660,81 @@ function commitState(args = {}) {
   }
   const { state, filesChanged } = projected;
   const liveness = context.dispatch.active?.liveness ?? {};
-  const baseline = Array.isArray(liveness.worktree_baseline) ? liveness.worktree_baseline : [];
-  const hasBaseline = liveness.worktree_baseline !== undefined;
-  if (inferred.role === 'repair') {
-    state.worktree_baseline = inferred.baseline;
-    state.worktree_final = captureWorktreeSnapshot(consumerRoot(args));
-  } else if (inferred.role === 'execute' && !hasBaseline && filesChanged.length > 0) {
+  const hasFirstWrite = Array.isArray(liveness.checkpoints)
+    && liveness.checkpoints.some((entry) => entry?.event === 'first_write');
+  if (inferred.role === 'execute' && !hasFirstWrite && filesChanged.length > 0) {
     return {
       gate: 'G12', action: 'commit_state', phase: 'plan_execute', status: 'blocked', timestamp,
-      state_path: statePathValue, error: 'Commit bloqueado: worktree sujo sem first_write (AC-1.2.3)',
+      state_path: statePathValue, code: 'sem_first_write_dirty',
+      error: 'Commit bloqueado: worktree sujo sem first_write (heartbeat ausente no ledger)',
       next_action: 'emitir_first_write_antes_do_commit',
     };
   }
 
-  if (state.worktree_final === undefined) state.worktree_final = captureWorktreeSnapshot(consumerRoot(args));
-  if (state.worktree_baseline === undefined) state.worktree_baseline = [];
-  if (state.base_sha === undefined) state.base_sha = gitOutput(consumerRoot(args), ['rev-parse', 'HEAD']).trim();
-  if (state.head_sha === undefined) state.head_sha = state.base_sha;
+  // D9: Prova ⊆ fato. proofs[].files ou repair[].files fora de filesChanged é recusado.
+  if (Array.isArray(args.proofs) || Array.isArray(args.repair)) {
+    const claimed = commitClaimedPaths(args);
+    const phantomClaims = [...claimed].filter((file) => !filesChanged.includes(file));
+    if (phantomClaims.length > 0) {
+      return {
+        gate: 'G12', action: 'commit_state', phase: 'plan_execute', status: 'blocked', timestamp,
+        state_path: statePathValue, code: 'claim_fora_do_fact',
+        error: `Commit bloqueado: proofs[].files ou repair[].files contêm path ausente de files_changed: ${phantomClaims.join(', ')} (D9: prova deve ser subconjunto do fato)`,
+        next_action: 'remover_paths_fantasmas_das_provas_ou_mutar_arquivos',
+      };
+    }
+  }
+
+  // D15: repair[] lista apenas paths mutados neste repair; recusa paths do execute sem mutação nova
+  if (inferred.role === 'repair') {
+    const activeRepair = context.state?.data?.validator_cycle?.repair?.active;
+    const rootNow = consumerRoot(args);
+    const currentSnapshot = captureWorktreeSnapshot(rootNow);
+    const repairSnapshotBefore = activeRepair?.worktree_snapshot;
+    let mutatedInRepair = new Set();
+    if (Array.isArray(repairSnapshotBefore)) {
+      mutatedInRepair = new Set(snapshotDeltaFiles(repairSnapshotBefore, currentSnapshot));
+    } else {
+      const finalMap = new Map();
+      for (const entry of (activeRepair?.boundary_before?.worktree_final ?? [])) {
+        finalMap.set(entry.path, entry.sha);
+      }
+      for (const entry of currentSnapshot) {
+        if (entry.path.startsWith('.talos/') || entry.path === '.talos') continue;
+        if (!finalMap.has(entry.path) || finalMap.get(entry.path) !== entry.sha) {
+          mutatedInRepair.add(entry.path);
+        }
+      }
+    }
+    const headBefore = activeRepair?.boundary_before?.head_sha;
+    if (headBefore) {
+      try {
+        const gitDiff = gitLines(rootNow, ['diff', '--name-only', `${headBefore}...HEAD`])
+          .filter((f) => !f.startsWith('.talos/') && f !== '.talos');
+        for (const f of gitDiff) mutatedInRepair.add(f);
+      } catch {
+        // ignore
+      }
+    }
+    const unmutated = [];
+    for (const item of (args.repair ?? [])) {
+      if (item && Array.isArray(item.files)) {
+        for (const f of item.files) {
+          if (typeof f === 'string' && f.trim() && !mutatedInRepair.has(f.trim())) {
+            unmutated.push(f.trim());
+          }
+        }
+      }
+    }
+    if (unmutated.length > 0) {
+      return {
+        gate: 'G12', action: 'commit_state', phase: 'plan_execute', status: 'blocked', timestamp,
+        state_path: statePathValue, code: 'repair_files_nao_mutados',
+        error: `Commit repair bloqueado: repair[].files contém paths não mutados neste repair: ${[...new Set(unmutated)].join(', ')}`,
+        next_action: 'listar_apenas_paths_mutados_neste_repair',
+      };
+    }
+  }
 
   const dir = path.dirname(stateAbs);
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -7268,6 +7753,11 @@ function commitState(args = {}) {
     };
   }
 
+  const nextAction = (context.state?.data?.validator_cycle?.status === 'repair_required'
+    || context.state?.data?.validator_cycle?.status === 'repair_running')
+    ? 'complete_repair'
+    : 'open_validator';
+
   const commitResult = {
     gate: 'G12',
     action: 'commit_state',
@@ -7278,7 +7768,7 @@ function commitState(args = {}) {
     state_path: statePathValue,
     state_sha256: writtenSha,
     diff_stat: state.diff_stat,
-    next_action: 'open_validator',
+    next_action: nextAction,
   };
   try {
     markCommitHandoff(runId, args, commitResult, statePathValue, writtenSha);
