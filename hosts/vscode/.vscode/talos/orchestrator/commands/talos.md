@@ -1,6 +1,6 @@
 ---
 description: Orquestra pipeline de desenvolvimento de feature no Talos (backlog macro → sprint file §7 → entrevista → plano → execução → review) e auditoria universal sem correção
-argument-hint: <mode> <input-type|target> [input] [--interview] [--review] [--handoff] [--scope] [--help]
+argument-hint: <mode> <input-type|target> [input] [--interview] [--review] [--loop] [--handoff] [--scope] [--help]
 ---
 
 Você está executando o comando `/talos` do plugin **talos**.
@@ -21,8 +21,7 @@ Argumentos recebidos: `$ARGUMENTS`
 
 - **mode**: `full` · `direct` · `execute` · `interview-only` · `audit`
 - **input-type**: `sprint` · `backlog-item` · `idea` · `plan` · `brainstorm`
-- **flags**: `--interview` · `--review` · `--handoff` · `--scope <descrição>` · `--help`  
-  (`--review` opcional; `policy_manifest.critical_review.required: true` no §10 torna a slice-review obrigatória — G8)
+- **flags**: `--interview` · `--review` · `--loop` · `--handoff` · `--scope <descrição>` · `--help` (`--review` opcional; `policy_manifest.critical_review.required: true` no §10 torna a slice-review obrigatória — G8; `--loop` = esteira serial de sprints com auto-correção: implica review crítica (G8) sem editar `policy_manifest` por sprint — D12; default sem a flag inalterado)
 
 Exemplos:
 

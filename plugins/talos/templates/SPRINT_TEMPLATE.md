@@ -19,6 +19,7 @@ Regra: este arquivo guarda **escopo, estado, decisões locais, dependências, ga
 | PLAN | [pendente ou path] |
 | State / evidência | [pendente ou path] |
 | Revalidação | [false — flag `true` ligada pelo MCP quando `M` falhou em sprint da qual esta depende (cone de revalidação, D2/D20)] |
+| Traceability | [legacy — default; `v1` (opt-in) exige `source_refs` em todo AC da §7.3 e par consistente no ledger `.talos/traceability/<slug>.json`] |
 | Fase | [F0/F1/F2/F3/F4/F5] |
 | MoSCoW | [Must / Should / Could / Won't now] |
 | Prioridade | [P0/P1/P2/P3] |
@@ -158,6 +159,7 @@ acceptance:
   - id: AC-001
     origin: "usuario"
     behavior: "[efeito observável]"
+    source_refs: [REQ-001]
     decisions: [D1]
     scenario: "[cenário §7.2]"
     evals: [EVAL-001]
@@ -167,6 +169,7 @@ acceptance:
   - id: AC-002
     origin: "derivado:packages/exemplo.js"
     behavior: "[efeito observável que requer smoke manual]"
+    source_refs: [REQ-002]
     decisions: [D2]
     scenario: "[cenário §7.2]"
     evals: [EVAL-002]
@@ -182,6 +185,8 @@ acceptance:
 Todo `AC-*` declara `origin` (mesmo enum da §7.1: `usuario` | `derivado:<path>` | `premissa`). `premissa` não sustenta aceite em sprint `Must`/`P0`: o gate `talos_verify_sprint_file` bloqueia nomeando o `AC-*` até a premissa ser fechada em entrevista.
 
 Tipos de evidência (D4): `I` implementação, `T-outcome` resultado observável (assert de retorno/efeito), `W` wiring, `M` smoke manual. `manual` deve ser `null` quando `required` não inclui `M`; objeto (severity/scenario/expected_evidence/impact_paths) quando inclui.
+
+> Rastreabilidade opt-in (v1): com o metadado `Traceability: v1` **e** `ledger.sprints[<id>].schema: traceability_v1`, todo `AC-*` declara `source_refs: [REQ-*]` (sem comentário na mesma linha — o parser lê apenas a lista) com ids existentes no ledger `.talos/traceability/<slug>.json` (registrado via `talos_traceability` action `upsert`); REQ `included` atribuído à sprint precisa aparecer em ≥1 AC; vínculo fora de 1:1 (um REQ em vários ACs ou AC com vários REQs) exige `reason` em `reqs[<id>].links[]` do ledger. Sem a marca (legacy), os gates atuais valem — nenhum campo novo é exigido e `source_refs` é ignorada.
 
 ---
 

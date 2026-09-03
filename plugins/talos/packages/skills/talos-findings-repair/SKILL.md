@@ -33,10 +33,17 @@ O orquestrador é dono do ciclo sibling em todos os hosts:
 Receba do orquestrador:
 
 - `state_path`
-- findings estruturados do validator
+- findings estruturados (packet do lock)
 - `validator_attempt`
 - `repair_run_id`
 - `repair_budget: 1`
+
+Origem do packet — **schema idêntico para as duas origens** (um único contrato de repair; os campos acima não mudam):
+
+- `validator` — pós-`fail` do ciclo G4, fluxo atual (a skill opera entre o validator 1 e o 2º e último validator);
+- `slice_review` — residual P0/P1 da verification da review (fora do ciclo G4 — o ramo da review não tem validator).
+
+`repair_budget` e `repair_run_id` vêm do `talos_lock_validator(action=repair_start, origin=...)` correspondente e nunca são inventados pela skill; a provenance é a do slot aberto pelo orquestrador, não declarada pela skill.
 
 Leia `talos_run_state` como fonte primária do estado da run. O `state_path` continua sendo a fronteira canônica da slice.
 
@@ -46,12 +53,14 @@ Leia `talos_run_state` como fonte primária do estado da run. O `state_path` con
 2. **Não reabrir o plano inteiro.** Corrija só o que os findings exigem.
 3. **Não aumentar boundary** sem evidência estrita de dependência técnica inevitável.
 4. **Não corrigir observações/P3 por capricho.** O foco é fechamento do `fail`.
-5. **Não despachar validator, review ou qualquer subagente.** O orquestrador faz isso.
+5. **Não despachar validator, review ou qualquer subagente.** O orquestrador faz isso — vale para ambas as origens do packet (`validator` e `slice_review`); a verification do delta pós-repair é fase do orquestrador, não desta skill.
 6. **Não iniciar terceiro ciclo.** Esta skill existe só entre validator 1 e validator 2.
 7. **Não trocar o `state_path`.** O commit de repair usa o mesmo `state_path` original; redirecionar o boundary invalida a correlação do repair.
 8. **Não inventar correlação.** IDs devem existir no packet recebido, sem duplicatas; todo arquivo tocado pertence a pelo menos um `repair_evidence` recebido e nenhum arquivo extra é permitido.
 9. **Não editar o JSON de slice com editor/`JSON.stringify`.** O único writer do state é o MCP via `talos_commit_state` (role repair); campos projetados (evidências, hashes, snapshots de worktree) são recusados no payload com `-32602`.
 10. **Não emitir checkpoint de executor (nem `first_write`).** Repair não escreve liveness (G12: role pelo lock); `talos_commit_state` com `repair[]` exige slot `repair_start` aberto.
+11. **Repair é estritamente para código de produto (P0/P1).** Metadata (boundary, sha, `run_id`, `files_changed`) não é reparável por LLM; em caso de finding de metadata, o orquestrador deve rodar `reconcile_state` (D14/D19). Não tente inventar correção de metadata.
+12. **`repair[].files` lista apenas paths mutados neste repair.** É terminantemente proibido re-listar arquivos alterados no execute original que não sofreram nova mutação neste repair (D15). O MCP recusa o commit (`repair_files_nao_mutados`) se `repair[].files` contiver paths não mutados neste repair.
 
 ## Fluxo
 
@@ -143,7 +152,7 @@ talos_commit_state({
 Regras do payload de repair:
 
 - `repair[]` é **obrigatório** e não vazio; cada item com `finding_id` existente no packet recebido.
-- `files`/`checks` referenciam os arquivos tocados e os checks rodados — o MCP os projeta em `repair_evidence[]` com índices de `files_changed`/`check_table`.
+- `files` referencia **estritamente os arquivos mutados neste repair** (não re-liste os arquivos do execute que não mudaram; o MCP computa a união mecânica em `files_changed`). `checks` referencia os checks rodados — o MCP os projeta em `repair_evidence[]` com índices de `files_changed`/`check_table`.
 - `status` por item: `resolved` (ou `blocked`, se o finding ficou sem resolução).
 - Campos projetados pelo MCP (denylist do GUIDE §2.5) são recusados com `-32602` — não os envie; o MCP projeta tudo, preservando `base_sha` e baseline de worktree do commit original (o repair não sobrescreve baseline).
 - `eval_results` só muda se o reparo alterar a prova de um `EVAL-*`; inclua um proof `EVAL` no commit nesse caso.

@@ -40,6 +40,11 @@ const DR_ANCHORS = [
     re: /executor_started|skill_loaded|plan_loaded|handoff_accepted|task_started|state_path_created/,
   },
   { id: 'DR04', label: '"acceptance_results"', re: /"acceptance_results"/ },
+  {
+    id: 'DR05',
+    label: 'âncora 0.20 (baseline no first_write / filtrar files_changed por proofs)',
+    re: /baseline\s+no\s+first_write|first_write[^\n]{0,60}(?:captur|grav|defin)\w*[^\n]{0,60}baseline|filtrar\s+files_changed\s+por\s+proofs/i,
+  },
 ];
 
 // IDs DR* violados por um texto, na ordem do spec §6.1.

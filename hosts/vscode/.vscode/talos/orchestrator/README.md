@@ -44,6 +44,7 @@ Pipeline completo executado automaticamente:
 
 - `--interview` — Força entrevista do contrato §7 do sprint mesmo sem ambiguidades
 - `--review` — Executa slice-review ao final (senão opcional; sprints com `policy_manifest.critical_review.required: true` no §10 tornam a review obrigatória — G8)
+- `--loop` — Esteira serial de sprints com auto-correção (introduzida em v0.20.0 e endurecida em v0.21.1): em cada seleção passa `loop:true` ao MCP e, antes das `ready`, pode maturar uma sprint `backlog` válida com deps satisfeitas e DoR amarelo/verde pela entrevista do §7; depois a reseleciona antes de plano/execução. Corrige residual de review in-loop (repair origem `slice_review` → verification), despacha o sidecar `talos-escalation-repair` se o residual persistir, estaciona sprint irrecuperável em `detached_repair` e drena `PENDENCIAS_<slug>.md` sob demanda (`drain_required` do MCP); implica review crítica (G8) sem editar `policy_manifest` por sprint. Sem a flag, o pipeline atual não muda
 - `--handoff` — Só em `audit`: grava `.talos/plans/PLAN_AUDIT_*.md` TC-conforme
 - `--scope <descrição>` — Só em `audit`: restringe o boundary textual
 - `--help` — Mostra sintaxe completa
@@ -164,6 +165,8 @@ Talos é família única. Cliente (Claude Code, Cursor, Codex App) é apenas o h
 | `direct` | sprint/contrato §7 → `talos-direct-execute` → `talos-task-validator` → `talos-findings-repair` (no `fail`) → `talos-slice-review` (com `--review`; obrigatória quando `critical_review.required:true` — G8) |
 | `interview-only` | draft sprint standalone §7 (se brainstorm) → `talos-sprint-interview` |
 
+Residual da review (introduzido em v0.20.0 e endurecido em v0.21.1, em loop e standalone): P0/P1 → `talos-findings-repair` com origem `slice_review` → **verification pontual** (delta do `repair_evidence`; executa os checks declarados antes de julgar) → sidecar `talos-escalation-repair` se o residual persistir; P2/P3 → `talos_pendencies(append)` (`PD-<sprint>-<NN>` em `PENDENCIAS_<slug>.md`). Nunca 2º `talos-task-validator` nem nova review completa no ramo da review.
+
 ## Validação automática
 
 Plugin detecta ambiguidades no contrato §7 do sprint file (`talos_scan_acceptance`):
@@ -229,7 +232,8 @@ Plugin automatiza tudo. Você valida output.
 | `talos-direct-execute` | Executa direto a partir do sprint/contrato §7 (modo `direct`) |
 | `talos-findings-repair` | Corrige findings P0/P1/P2 após `fail` do validator dentro do boundary executado |
 | `talos-task-validator` | Validador frio sibling; lê `state_path`, emite veredito estruturado + `acceptance_results` e nunca corrige |
-| `talos-slice-review` | Review fria quando `--review` ou `critical_review.required:true` (G8) |
+| `talos-slice-review` | Review fria quando `--review` ou `critical_review.required:true` (G8); fase de verification (pós-repair) |
+| `talos-escalation-repair` | Sidecar serial do loop `--loop`: residual P0/P1 pós-verification (slot `escalation`) e PDs delegadas pelo drain |
 | `talos-memory-promote` | Promove candidatos de `HANDOFF_*.md` após `done` (nunca em MVP); sink Argus opcional |
 
 ## Configuração
@@ -249,9 +253,44 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `talos-*` para o
 
 ---
 
-**Plugin version:** 0.18.2
+**Plugin version:** 0.21.1
 **Author:** Paulo Borini
-**Last updated:** 2026-08-25
+**Last updated:** 2026-09-03
+
+### Novidades v0.21.1 — hardening pós-0.21.0 no reconcile e no repair
+
+- **Slice `direct` continua `direct` no reconcile.** O MCP deixa de herdar o sentinel interno `.talos/plans/direct.md` como `plan_path` real ao reconstruir uma slice sem `proofs`; isso evita flip incorreto de `contract_kind=direct -> plan` em recoveries.
+- **Repair pós-fail volta ao trilho certo.** Quando o complete do validador grava `acceptance_results`, o ledger ressincroniza `liveness.slice_commit_sha256` antes do próximo commit; o repair subsequente continua `role=repair` e preserva o enforcement D15 de subconjunto em `repair[].files`.
+- **Regressões cobertas em teste.** `packages/mcp-server/server.test.js` ganha casos para os dois achados da campanha integrada e deixa de depender do cwd da raiz para localizar fixtures.
+- **Docs consolidadas para distribuição.** README pública, README do MCP e este README do orquestrador passam a narrar explicitamente o hardening da `0.21.1`, alinhando release, operação e material de comunicação.
+
+### Novidades v0.21.0 — determinismo mecânico de boundary na slice e fechamento de sprint (BREAKING 0.21)
+
+- **Boundary mecânico via git (`files_changed`).** `files_changed` passa a ser derivado deterministicamente pelo MCP como o git fact real (porcelain atual Δ baseline t0 do start ∪ commits desde base_sha minus `.talos/`), sem filtragem por `proofs[].files` vazios ou parciais.
+- **Baseline t0 no start.** Capturado em `talos_lock_dispatch(start, phase=plan_execute)`; `first_write` vira heartbeat G12 puro (não sobrescreve baseline).
+- **Reprojeção no G4.** Divergência de fórmula é corrigida pelo MCP via reproject overwrite antes de abrir o slot, sem falso repair de metadata; JSON com sha divergente recupera com role `reconcile` (não rename).
+- **Validador frio focado em produto.** Não litiga metadata; repair foca exclusivamente em findings de produto (budget 1 por finding).
+- **Fechamento no `--loop` (D17/D18).** `talos_update_sprint_status` roda no mesmo turno antes de `talos_select_next_sprint`; `select_next` bloqueia avanço com `next_action: reconcile_state` quando há slice órfã em run stalled ou repair_running.
+- **BREAKING (DEC-039).** Skills 0.20 que ensinam baseline no `first_write` ou filtro de `files_changed` por proofs são rejeitadas pelo guard `DR05`.
+
+### Novidades v0.20.0 — esteira `--loop` de sprints com auto-correção (minor aditiva, D18)
+
+- **Flag `--loop`** — esteira serial de sprints: puxa a próxima sprint `ready` sozinha após fechar a atual (única pausa = entrevista), com repair in-loop, sidecar de escalation, drain de pendências e estacionamento. Flag gravada no ledger (`options.loop`); sem a flag, o pipeline atual não muda (CN7) e o gate de review crítica sob `policy_manifest` segue como estava.
+- **Residual da review — auto-correção (D3/D4/D17).** P0/P1 na review abre `repair_start` com origem `slice_review` (budget 1 fail-closed por provenance) → `talos-findings-repair` → **verification pontual** (fase nova da `talos-slice-review`: delta do `repair_evidence`, executa os checks declarados antes de julgar, veredito `resolved`/`not_resolved`/`regression` por finding) → veredito persistido via `repair_complete` (`data.verification` validado pelo MCP; `resolved` sem check executado é recusado). Nunca 2º `talos-task-validator` nem nova review completa no ramo da review (LEG1 cortado no G8/bloco EXEC; G4 do validator preservado).
+- **Sidecar `talos-escalation-repair` (D7).** Residual P0/P1 persistente abre slot com origem `escalation` (budget próprio, 1 dispatch por sprint) e é corrigido serial, sem self-validation; falha do sidecar estaciona a sprint em **`detached_repair`** (novo status: não `done`, não satisfaz DEP, não emite handoff; saída `→ready`/`→blocked`) enquanto a campanha segue para a próxima independente.
+- **PENDENCIAS + drain (D9/D10/D20).** Residual P2/P3 vira `PD-<sprint>-<NN>` em `.talos/backlog/PENDENCIAS_<slug>.md` (writer exclusivo do MCP, id monotônico por arquivo); `talos_select_next_sprint` retorna `drain_required` com ≥3 PDs abertas, PD no cone DEP do candidato ou overlap de files — drenada pelo sidecar em modo drain antes do avanço.
+- **Standalone com a mesma cadeia (D13)** — o arco review→repair→verification→sidecar não é condicional a `--loop`; review crítica sob `critical_review.required` segue antes de `talos_update_sprint_status` (G8 preservado).
+- **Blindagem (Plano 06).** Guards permanentes no `check-consistency` (review read-only, ramo review sem 2º validator, verification com eco/âncora de checks/roteamento por severidade, violated⇒P0 mecânico, enum `detached_repair` e catálogo do sidecar) + guard test; docs descrevem o loop.
+- Bump minor `0.19.0 → 0.20.0`. Schema MCP v5 e disco v3 inalterados.
+
+### Novidades v0.19.0 — rastreabilidade MCP de requisitos `traceability v1` (opt-in) + receipt de fechamento + métricas de piloto
+
+- **Ledger de rastreabilidade opt-in (tool única `talos_traceability`).** REQs de origem → destino → AC/`source_refs` → `acceptance_results` v3 → receipt MCP, em `.talos/traceability/<backlog-slug>.json` (D5: zero coluna nova no backlog; D2: zero hook; state v3 intocado). Actions: `upsert` (insert-or-update por REQ; `deferred`/`rejected` com motivo; `deferred` com destino tipado; fonte `external` exige `ref`), `verify` (destinos/ids + cruzamento com `source_refs` do §7.3 via `checkTraceabilityGraph`).
+- **Parser/selo/conformance do §7.3 com `source_refs`.** `applyItemField` passa a mapear o campo (antes era no-op no YAML); sprint v1 tem grafo REQ↔AC exigido (refs válidas, sem órfãos, REQ `included` com caminho até AC, N:N com motivo); sprint sem marcador v1 (legacy) sela e fecha como hoje (CN7).
+- **Gate de fechamento v1 no `done`.** `talos_update_sprint_status(done)` em sprint v1 recusa REQ `included` com qualquer AC ligado `unproved`/`manual_pending`/`violated`/ausente — antes de qualquer write (D14; irmão N:N não fecha por um lado).
+- **Receipt de fechamento é projeção do MCP.** Action `receipt` devolve cobertura por REQ, exceções (deferred/rejected) e blockers, derivada de ledger + `acceptance_results` do state v3; o orquestrador ecoa o payload, sem claim de cobertura próprio.
+- **Métricas de piloto.** Action `record_metric` persiste `{calls, retries, turns, coverage, instructions}` no documento completo (escrita absoluta preserva `reqs`/`sprints`); economia só se promove com medição registrada (INV5).
+- **Minor 0.19.0 (D10):** feature aditiva opt-in com readers legacy — bump minor, sem breaking; bundes `plugins/`/`hosts/` regenerados pelo `build/bump-version.mjs`.
 
 ### Novidades v0.18.2 — nono host (MinimaxCode) + Plugin V1 spec-conforme + 5 custom agents + Plugin V1 visível com skills
 
@@ -401,7 +440,7 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `talos-*` para o
 - **Backlog em 2 camadas**: mestre enxuto (índice estratégico — fases, tabela de sprints, MoSCoW, dependências, links) + sprint files vivos (`sprints/SNN_<slug>.md`, 16 seções: DoR/DoD, `eval_manifest`, `policy_manifest`, §14 Execução e validação, §16 Histórico). Skills priorizam sprint file como fonte primária de contexto; backlog mestre só para deps/ordem macro.
 - **`talos_verify_sprint_file`** — valida conformidade do arquivo vivo contra `SPRINT_TEMPLATE.md`: seções obrigatórias, link bidirecional ao backlog, DoR, eval_manifest. Fail-closed (ausente ou vazio = blocked).
 - **`talos_verify_backlog_index`** — valida backlog mestre: §7 Registro de sprints, enums válidos (MoSCoW/prioridade/status), links para sprint files reais, sem duplicata de sprint ID, detecção de ciclo de dependência, status drift backlog↔sprint file = blocked.
-- **`talos_select_next_sprint`** — seleção determinística: filtra `state=ready` + deps `done`/`manual_validation_pending` + sprint file válido + DoR verde; ordena por MoSCoW→prioridade→ganho→esforço→ID. Resultado único, sem ambiguidade.
+- **`talos_select_next_sprint`** — seleção determinística: por padrão filtra `state=ready` + deps `done`/`manual_validation_pending` + sprint file válido + DoR verde; com `loop:true`, inclui exclusivamente a pré-etapa de sprint `backlog` válida com DoR amarelo/verde e devolve `sprint_interview`. Ordena por MoSCoW→prioridade→ganho→esforço→ID. Resultado único, sem ambiguidade.
 - **`talos_update_sprint_status`** — atualiza status atomicamente em backlog e sprint file: pré-condição (FSM de transições, `done`/`manual_validation_pending` exigem validator terminal + `state_path`; `done` bloqueado com M aberto), escrita com rollback P2 (se write do sprint file falhar após o backlog ser escrito, backlog é restaurado), pós-validação antes de `passed`. Handoff só em `done`.
 - **`SPRINT_TEMPLATE.md`** canônico — template de 16 seções para sprint files vivos.
 - **`BACKLOG_MESTRE_TEMPLATE.md` refatorado** — índice enxuto sem duplicar conteúdo de sprint.
@@ -452,7 +491,7 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `talos-*` para o
 ### Novidades v0.6.1 — fronteira documental no orquestrador
 
 - Fases documentais (`contrato §7`, entrevista, `PLAN_*.md`) são conduzidas no orquestrador; o primeiro sub-agent obrigatório do `full` nasce em `talos-plan-execute`.
-- Os únicos sub-agents do pipeline são `talos-plan-execute`/`talos-direct-execute`, `talos-task-validator`, `talos-findings-repair` e `talos-slice-review`.
+- Os sub-agents do pipeline são `talos-plan-execute`/`talos-direct-execute`, `talos-task-validator`, `talos-findings-repair`, `talos-slice-review` e — desde v0.20.0 — o sidecar `talos-escalation-repair` (serial, só com slot de escalation/drain aberto).
 - A topologia é **sibling** em todos os hosts: o orquestrador coordena o validator irmão a partir do `state_path` retornado pelo executor e só reabre execução em `fail`. Host sem join síncrono é rejeitado no preflight (gate JOIN).
 - `talos_preflight`/dispatchability distinguem skills documentais de skills executoras, evitando exigir sub-agent para entrevista/plano.
 

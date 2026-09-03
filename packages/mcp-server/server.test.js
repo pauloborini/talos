@@ -37,6 +37,7 @@ import {
   nextActionForSelectedSprint,
   updateSprintStatus,
   syncManualValidation,
+  pendenciesHandler,
   emitMemoryHandoff,
   propagateRevalidation,
   classifyInput,
@@ -53,7 +54,13 @@ import {
   commitState,
 } from './server.js';
 import {
+  traceabilityHandler,
+  writeTraceabilityLedger,
+  TRACEABILITY_SCHEMA_VERSION,
+} from './traceability.mjs';
+import {
   parseSprintRows,
+  parseAcceptanceContract,
   validateSprintFileConformance,
   validateAcceptanceSeal,
   computeAcceptanceSeal,
@@ -265,6 +272,14 @@ test('tools: conjunto registrado é exatamente a lista canônica, sem adição (
     'talos_scan_acceptance',
     'talos_select_next_sprint',
     'talos_sync_manual_validation',
+    // Guide LOOP_SPRINTS_AUTOCORRECAO_GUIDE (Plano 02): `talos_pendencies` —
+    // writer/reader MCP do PENDENCIAS_<slug>.md (D10/D20/INV7); único writer do
+    // arquivo é o MCP (append|list|close). Adição consciente ao catálogo canônico.
+    'talos_pendencies',
+    // Guide RASTREABILIDADE_MCP_GUIDE (Plano 01): tool única `talos_traceability`
+    // com action upsert|verify — ledger opt-in sem hook (D2/D5). Extensível no
+    // Plano 03 (receipt|record_metric) sem nova tool.
+    'talos_traceability',
     'talos_update_sprint_status',
     'talos_verify_artifact',
     'talos_verify_backlog_index',
@@ -1697,6 +1712,19 @@ test('SPRINT_TEMPLATE: §1 contém Contrato status (AC-1.1.2)', () => {
   assert.match(template, /^\|\s*Contrato status\s*\|\s*\[draft \/ aprovado\]\s*\|/m);
 });
 
+test('SPRINT_TEMPLATE: exemplo §7.3 parseia source_refs em todo AC (Plano F — comentário inline matava o parse)', () => {
+  const template = fs.readFileSync(SPRINT_TEMPLATE_PATH, 'utf8');
+  const items = parseAcceptanceContract(template) ?? [];
+  assert.ok(items.length >= 2, 'template deve exemplificar ≥2 ACs');
+  for (const item of items) {
+    assert.ok(Array.isArray(item.source_refs) && item.source_refs.length > 0,
+      `${item.id} sem source_refs parseada — o usuário copia o exemplo e descobre tardiamente no gate`);
+    for (const ref of item.source_refs) {
+      assert.match(ref, /^REQ-\d+$/, 'ref malformada no exemplo do template');
+    }
+  }
+});
+
 test('SPRINT_TEMPLATE: numeração 1–16 preservada; §9/§10/§12/§13/§16 intactas (AC-1.1.3)', () => {
   const template = fs.readFileSync(SPRINT_TEMPLATE_PATH, 'utf8');
   for (const heading of [
@@ -2254,6 +2282,92 @@ test('talos_select_next_sprint: §7 draft → sprint_interview (nunca gerar_prd)
   assert.equal(r.next_action, 'sprint_interview');
   assert.equal(r.selected.prd_path, null);
   assert.ok(!String(r.next_action).includes('prd'));
+});
+
+test('talos_select_next_sprint: loop seleciona backlog draft com DoR amarelo para sprint_interview', () => {
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S02', { status: 'backlog', dorStatus: 'amarelo', contratoStatus: 'draft' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S02 | Maturação no loop | F0 | objetivo | Must | Alto | Baixo | P0 | — | — | backlog | — | `.talos/backlog/sprints/SPRINT_S02_runtime.md` | pendente | pendente |',
+  ]));
+
+  const r = selectNextSprint({ run_id: 'r1', project_root: root, backlog_path: 'BACKLOG.md', mode: 'full', loop: true });
+  assert.equal(r.status, 'passed');
+  assert.equal(r.selected.sprint_id, 'S02');
+  assert.match(r.selected.reason, /^loop: sprint backlog maturável/);
+  assert.equal(r.next_action, 'sprint_interview');
+});
+
+test('talos_select_next_sprint: loop prioriza backlog maturável antes de ready com ranking maior', () => {
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S01', { status: 'ready', dorStatus: 'verde', contratoStatus: 'aprovado' });
+  writeSprintFixture(root, 'S02', { status: 'backlog', dorStatus: 'amarelo', contratoStatus: 'draft' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Ready prioritária | F0 | objetivo | Must | Alto | Baixo | P0 | — | — | ready | — | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+    '| S02 | Backlog a maturar | F0 | objetivo | Should | Baixo | Alto | P3 | — | — | backlog | — | `.talos/backlog/sprints/SPRINT_S02_runtime.md` | pendente | pendente |',
+  ]));
+
+  const r = selectNextSprint({ run_id: 'r1', project_root: root, backlog_path: 'BACKLOG.md', mode: 'full', loop: true });
+  assert.equal(r.status, 'passed');
+  assert.equal(r.selected.sprint_id, 'S02');
+  assert.deepEqual(r.candidates, ['S02', 'S01']);
+  assert.equal(r.next_action, 'sprint_interview');
+});
+
+test('talos_select_next_sprint: sem loop preserva bloqueio de backlog com DoR amarelo', () => {
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S02', { status: 'backlog', dorStatus: 'amarelo', contratoStatus: 'draft' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S02 | Sem opt-in | F0 | objetivo | Must | Alto | Baixo | P0 | — | — | backlog | — | `.talos/backlog/sprints/SPRINT_S02_runtime.md` | pendente | pendente |',
+  ]));
+
+  const r = selectNextSprint({ run_id: 'r1', project_root: root, backlog_path: 'BACKLOG.md', mode: 'full' });
+  assert.equal(r.status, 'blocked');
+  assert.equal(r.selected, null);
+  assert.deepEqual(r.rejected, [{ id: 'S02', reasons: ['state=backlog', 'dor=amarelo'] }]);
+  assert.equal(r.next_action, 'atualizar_sprint_file_ou_dependencias');
+});
+
+test('talos_select_next_sprint: loop recusa DoR vermelho, dependência pendente, estacionamento e sprint inválida', () => {
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S01', { status: 'blocked', dorStatus: 'verde' });
+  writeSprintFixture(root, 'S02', { status: 'backlog', dorStatus: 'vermelho', contratoStatus: 'draft' });
+  writeSprintFixture(root, 'S03', { status: 'backlog', dorStatus: 'amarelo', contratoStatus: 'draft' });
+  writeSprintFixture(root, 'S04', { status: 'detached_repair', dorStatus: 'verde', contratoStatus: 'draft' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Dependência presa | F0 | objetivo | Must | Alto | Baixo | P0 | — | — | blocked | — | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+    '| S02 | DoR vermelho | F0 | objetivo | Must | Alto | Baixo | P0 | — | — | backlog | — | `.talos/backlog/sprints/SPRINT_S02_runtime.md` | pendente | pendente |',
+    '| S03 | Dep pendente | F0 | objetivo | Must | Alto | Baixo | P0 | — | S01 | backlog | — | `.talos/backlog/sprints/SPRINT_S03_runtime.md` | pendente | pendente |',
+    '| S04 | Estacionada | F0 | objetivo | Must | Alto | Baixo | P0 | — | — | detached_repair | — | `.talos/backlog/sprints/SPRINT_S04_runtime.md` | pendente | pendente |',
+    '| S05 | Arquivo inválido | F0 | objetivo | Must | Alto | Baixo | P0 | — | — | backlog | — | `.talos/backlog/sprints/SPRINT_S05_inexistente.md` | pendente | pendente |',
+  ]));
+
+  const r = selectNextSprint({ run_id: 'r1', project_root: root, backlog_path: 'BACKLOG.md', mode: 'full', loop: true });
+  assert.equal(r.status, 'blocked');
+  assert.equal(r.selected, null);
+  assert.ok(r.rejected.some((item) => item.id === 'S02' && item.reasons.includes('dor=vermelho')));
+  assert.ok(r.rejected.some((item) => item.id === 'S03' && item.reasons.includes('unmet_dependencies=S01:blocked')));
+  assert.ok(r.rejected.some((item) => item.id === 'S04' && item.reasons.includes('state=detached_repair')));
+  assert.ok(r.rejected.some((item) => item.id === 'S05' && item.reasons.includes('sprint_file=missing')));
+});
+
+test('talos_select_next_sprint: loop é estritamente booleano no schema e no servidor', () => {
+  const tool = toolsList().tools.find((item) => item.name === 'talos_select_next_sprint');
+  assert.deepEqual(tool.inputSchema.properties.loop, {
+    type: 'boolean',
+    description: 'Opt-in estrito da seleção de maturação do --loop: permite somente sprint backlog válida, deps satisfeitas e DoR amarelo/verde para sprint_interview. Ausente/false preserva a seleção normal.',
+  });
+  assert.throws(
+    () => selectNextSprint({ run_id: 'r1', backlog_path: 'BACKLOG.md', loop: 'true' }),
+    (error) => error.code === -32602 && /loop deve ser boolean/.test(error.message),
+  );
+});
+
+test('orquestrador: --loop seleciona backlog maturável pela entrevista antes de plano ou execução', () => {
+  const orchestrator = fs.readFileSync(ORCHESTRATOR_SKILL_PATH, 'utf8');
+  assert.match(orchestrator, /Com `--loop`, passar adicionalmente `loop:true` .*em \*\*toda\*\* seleção, inclusive na retomada/s);
+  assert.match(orchestrator, /`sprint_interview` → maturar §7 e \*\*reselecionar antes de plano\/execução\*\*/);
+  assert.match(orchestrator, /`talos_select_next_sprint\(\{mode, loop:true\}\)` em \*\*cada\*\* ciclo e retomada/);
 });
 
 test('talos_select_next_sprint: §7 aprovado+selo sem PLAN → plan_handoff', () => {
@@ -2928,6 +3042,257 @@ test('talos_update_sprint_status: manual_validation_pending exige validator term
   });
   assert.equal(rD.status, 'blocked');
   assert.ok(rD.pendencies.some((p) => p.category === 'acceptance_results'));
+});
+
+// ===== Plano 01 (loop) — estacionamento detached_repair + flag --loop no ledger =====
+
+// Fixture do run de loop: preflight + lock_dispatch(start, options.loop) — a
+// ORIGEM real do VC3 (a flag nasce no ledger por lockDispatch, nunca à mão).
+function startLoopRun(root, runId, { withFlag = true } = {}) {
+  preflight({
+    run_id: runId, project_root: root, mode: 'execute',
+    host: 'claude', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  return lockDispatch({
+    run_id: runId, project_root: root, action: 'start', phase: 'plan_execute',
+    ...(withFlag ? { options: { loop: true } } : {}),
+  });
+}
+
+// Fixture de READER do gate slice_review (o gravador real do veredito é o
+// orquestrador — Plano 05; hoje nenhum path público grava data.gates.slice_review).
+// Mesmo padrão de harness documentado do wrapper lockValidator acima.
+function grantSliceReviewPassed(root, runId) {
+  const current = runState({ action: 'get', run_id: runId, project_root: root });
+  const data = current.data ?? {};
+  data.gates = { ...(data.gates ?? {}), slice_review: { status: 'passed', timestamp: '2026-08-31T00:00:00.000Z' } };
+  runState({ action: 'upsert', run_id: runId, project_root: root, data });
+}
+
+// Fixture de fechamento (done) com acceptance_results provados.
+function writeDoneFixture(root) {
+  writeHandoffTemplateFixture(root);
+  writeSprintFixture(root, 'S01', { status: 'doing', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | doing | exec:running | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+  writeStateWithAcceptance(root, 'S01.json', [
+    { id: 'AC-001', status: 'proved', proof_types: ['I:present', 'T-outcome:proved'] },
+  ]);
+}
+
+function closeDone(root, runId) {
+  return updateSprintStatus({
+    run_id: runId, project_root: root, backlog_path: 'BACKLOG.md', sprint_id: 'S01',
+    status: 'done', validator_verdict: 'pass', plan_path: 'PLAN_S01.md',
+    state_path: '.talos/state/S01.json', evidence: 'validator pass',
+  });
+}
+
+test('update sprint status detached_repair: grava estacionamento (gate escalation:failed) e recusa transições fora da régua', () => {
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S01', { status: 'doing', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | doing | exec:running | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+  const r = updateSprintStatus({
+    run_id: 'r1', project_root: root, backlog_path: 'BACKLOG.md', sprint_id: 'S01',
+    status: 'detached_repair',
+  });
+  assert.equal(r.status, 'passed');
+  assert.equal(r.next_status, 'detached_repair');
+  const backlog = fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8');
+  const row = parseSprintRows(backlog)[0];
+  assert.equal(row.state, 'detached_repair');
+  assert.equal(row.gate, 'escalation:failed');
+  const sprint = fs.readFileSync(path.join(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md'), 'utf8');
+  assert.match(sprint, /^\| Status \| detached_repair \|$/m);
+  // O índice aceita o estado novo (enum propaga à validação do backlog).
+  assert.equal(verifyBacklogIndex({ run_id: 'r1', project_root: root, backlog_path: 'BACKLOG.md' }).status, 'passed');
+
+  // Transição ilegal: detached_repair → done (sem caminho direto estacionado→done).
+  const rBadDone = updateSprintStatus({
+    run_id: 'r1', project_root: root, backlog_path: 'BACKLOG.md', sprint_id: 'S01',
+    status: 'done', validator_verdict: 'pass', state_path: '.talos/state/S01.json',
+  });
+  assert.equal(rBadDone.status, 'blocked');
+  assert.ok(rBadDone.pendencies.some((p) => p.category === 'status_transition' && p.next_action === 'corrigir_fluxo_status_sprint'));
+
+  // Saída P1 legal: detached_repair → ready (reingresso após correção).
+  const rReady = updateSprintStatus({
+    run_id: 'r1', project_root: root, backlog_path: 'BACKLOG.md', sprint_id: 'S01',
+    status: 'ready',
+  });
+  assert.equal(rReady.status, 'passed');
+  assert.equal(parseSprintRows(fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8'))[0].state, 'ready');
+
+  // Transição ilegal: done → detached_repair (reabertura de done segue recusada).
+  const rootDone = tmpRoot();
+  writeSprintFixture(rootDone, 'S01', { status: 'done', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(rootDone, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | done | validator:pass | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+  const rReopen = updateSprintStatus({
+    run_id: 'r1', project_root: rootDone, backlog_path: 'BACKLOG.md', sprint_id: 'S01',
+    status: 'detached_repair',
+  });
+  assert.equal(rReopen.status, 'blocked');
+  assert.ok(rReopen.pendencies.some((p) => p.category === 'status_transition'));
+
+  // Transição ilegal: backlog → detached_repair.
+  const rootBacklog = tmpRoot();
+  writeSprintFixture(rootBacklog, 'S01', { status: 'backlog', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(rootBacklog, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | backlog | — | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+  const rBacklog = updateSprintStatus({
+    run_id: 'r1', project_root: rootBacklog, backlog_path: 'BACKLOG.md', sprint_id: 'S01',
+    status: 'detached_repair',
+  });
+  assert.equal(rBacklog.status, 'blocked');
+  assert.ok(rBacklog.pendencies.some((p) => p.category === 'status_transition' && p.next_action === 'corrigir_fluxo_status_sprint'));
+});
+
+test('detached_repair não satisfaz DEP e select_next pula presa pega independente', () => {
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S01', { status: 'detached_repair', dorStatus: 'verde' });
+  writeSprintFixture(root, 'S02', { status: 'ready', dorStatus: 'verde' });
+  writeSprintFixture(root, 'S03', { status: 'ready', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Estacionada | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | detached_repair | escalation:failed | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+    '| S02 | Dependente | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | S01 | ready | — | `.talos/backlog/sprints/SPRINT_S02_runtime.md` | pendente | pendente |',
+    '| S03 | Independente | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | ready | — | `.talos/backlog/sprints/SPRINT_S03_runtime.md` | pendente | pendente |',
+  ]));
+  const r = selectNextSprint({ run_id: 'r1', project_root: root, backlog_path: 'BACKLOG.md' });
+  assert.equal(r.status, 'passed');
+  assert.equal(r.selected.sprint_id, 'S03');
+  // A presa estacionada sai em rejected com a razão do estado; o dependente fica
+  // travado por unmet_dependencies apontando o estado detached_repair.
+  assert.ok(r.rejected.some((item) => item.id === 'S01' && item.reasons.includes('state=detached_repair')));
+  assert.ok(r.rejected.some((item) => item.id === 'S02' && item.reasons.some((reason) => /unmet_dependencies=S01:detached_repair/.test(reason))));
+
+  // Zero candidata (presa + dependente, sem independente) → blocked: a campanha
+  // não avança com dependência estacionada, mas a presa NÃO é DEP-satisfatória.
+  const rootBlocked = tmpRoot();
+  writeSprintFixture(rootBlocked, 'S01', { status: 'detached_repair', dorStatus: 'verde' });
+  writeSprintFixture(rootBlocked, 'S02', { status: 'ready', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(rootBlocked, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Estacionada | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | detached_repair | escalation:failed | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+    '| S02 | Dependente | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | S01 | ready | — | `.talos/backlog/sprints/SPRINT_S02_runtime.md` | pendente | pendente |',
+  ]));
+  const rBlocked = selectNextSprint({ run_id: 'r1', project_root: rootBlocked, backlog_path: 'BACKLOG.md' });
+  assert.equal(rBlocked.status, 'blocked');
+  assert.equal(rBlocked.selected, null);
+  assert.ok(rBlocked.rejected.some((item) => item.id === 'S02' && item.reasons.some((reason) => /unmet_dependencies=S01:detached_repair/.test(reason))));
+});
+
+test('manual_validation_pending satisfaz DEP (regressão D15)', () => {
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S01', { status: 'manual_validation_pending', dorStatus: 'verde' });
+  writeSprintFixture(root, 'S02', { status: 'ready', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | M pendente | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | manual_validation_pending | validator:pass;manual_pending | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+    '| S02 | Dependente | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | S01 | ready | — | `.talos/backlog/sprints/SPRINT_S02_runtime.md` | pendente | pendente |',
+  ]));
+  const r = selectNextSprint({ run_id: 'r1', project_root: root, backlog_path: 'BACKLOG.md' });
+  assert.equal(r.status, 'passed');
+  assert.equal(r.selected.sprint_id, 'S02');
+  assert.ok(!r.rejected.some((item) => item.reasons.some((reason) => /unmet_dependencies=S01/.test(reason))));
+});
+
+test('loop exige slice review antes de done', () => {
+  const root = tmpRoot();
+  writeDoneFixture(root);
+  startLoopRun(root, 'loopgate', { withFlag: true });
+
+  // Run de loop SEM gate slice_review passed: done é recusado fail-closed.
+  const r = closeDone(root, 'loopgate');
+  assert.equal(r.status, 'blocked');
+  const loopPendency = r.pendencies.find((p) => p.next_action === 'rodar_slice_review_loop');
+  assert.ok(loopPendency, `esperava pendência rodar_slice_review_loop; obtido: ${JSON.stringify(r.pendencies)}`);
+  assert.equal(loopPendency.category, 'loop_review');
+  assert.match(loopPendency.message, /--loop implica review crítica/);
+  // Fail-closed: backlog inalterado (nenhum write parcial).
+  assert.equal(parseSprintRows(fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8'))[0].state, 'doing');
+
+  // manual_validation_pending é fechamento e exige review no loop do mesmo jeito.
+  writeStateWithAcceptance(root, 'S01.json', [{ id: 'AC-001', status: 'manual_pending', proof_types: ['M:pending'] }]);
+  const rMvp = updateSprintStatus({
+    run_id: 'loopgate', project_root: root, backlog_path: 'BACKLOG.md', sprint_id: 'S01',
+    status: 'manual_validation_pending', validator_verdict: 'pass', state_path: '.talos/state/S01.json',
+  });
+  assert.equal(rMvp.status, 'blocked');
+  assert.ok(rMvp.pendencies.some((p) => p.next_action === 'rodar_slice_review_loop'));
+  writeStateWithAcceptance(root, 'S01.json', [
+    { id: 'AC-001', status: 'proved', proof_types: ['I:present', 'T-outcome:proved'] },
+  ]);
+
+  // Gravado slice_review passed no MESMO ledger → done passa.
+  grantSliceReviewPassed(root, 'loopgate');
+  const r2 = closeDone(root, 'loopgate');
+  assert.equal(r2.status, 'passed', JSON.stringify(r2.pendencies, null, 1));
+  assert.ok(!r2.pendencies.some((p) => p.next_action === 'rodar_slice_review_loop'));
+  assert.equal(parseSprintRows(fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8'))[0].state, 'done');
+});
+
+test('loop com review passed fecha normal', () => {
+  const root = tmpRoot();
+  writeDoneFixture(root);
+  startLoopRun(root, 'loopok', { withFlag: true });
+  grantSliceReviewPassed(root, 'loopok');
+
+  const r = closeDone(root, 'loopok');
+  assert.equal(r.status, 'passed');
+  assert.equal(r.next_status, 'done');
+  // Gate idempotente: output existente mantido (sem pendência nova, handoff emitido).
+  assert.equal(r.pending_count, 0);
+  assert.equal(r.next_action, 'promover_handoff');
+  assert.ok(r.handoff_path);
+});
+
+test('loop flag persistida no ledger', () => {
+  const root = tmpRoot();
+  const r = startLoopRun(root, 'loopflag', { withFlag: true });
+  assert.equal(r.status, 'passed');
+  const st = runState({ action: 'get', run_id: 'loopflag', project_root: root });
+  assert.equal(st.data.options.loop, true);
+
+  // Normalização estrita (detalhe local do plano): não-bool e não-objeto → -32602.
+  assert.throws(
+    () => lockDispatch({ run_id: 'loopflag', project_root: root, action: 'start', phase: 'plan_execute', options: { loop: 'sim' } }),
+    (error) => error.code === -32602 && /options\.loop/.test(error.message),
+  );
+  assert.throws(
+    () => lockDispatch({ run_id: 'loopflag', project_root: root, action: 'start', phase: 'plan_execute', options: { loop: 1 } }),
+    (error) => error.code === -32602,
+  );
+  assert.throws(
+    () => lockDispatch({ run_id: 'loopflag', project_root: root, action: 'start', phase: 'plan_execute', options: 'loop' }),
+    (error) => error.code === -32602 && /options/.test(error.message),
+  );
+  assert.throws(
+    () => lockDispatch({ run_id: 'loopflag', project_root: root, action: 'start', phase: 'plan_execute', options: { outro: true } }),
+    (error) => error.code === -32602 && /options\.outro/.test(error.message),
+  );
+  // A recusa não mutou a flag gravada.
+  assert.equal(runState({ action: 'get', run_id: 'loopflag', project_root: root }).data.options.loop, true);
+});
+
+test('sem flag loop nada grava e pipeline atual passa', () => {
+  const root = tmpRoot();
+  writeDoneFixture(root);
+  const start = startLoopRun(root, 'noflag', { withFlag: false });
+  assert.equal(start.status, 'passed');
+  assert.equal(start.options, undefined);
+  // Sem options: nenhum campo de loop no run.json (opt-in byte a byte, CN7).
+  const st = runState({ action: 'get', run_id: 'noflag', project_root: root });
+  assert.equal(st.data.options, undefined);
+
+  // Fechamento sem flag flui como hoje: review crítica NÃO é exigida pelo gate.
+  const r = closeDone(root, 'noflag');
+  assert.equal(r.status, 'passed', JSON.stringify(r.pendencies, null, 1));
+  assert.ok(!r.pendencies.some((p) => p.next_action === 'rodar_slice_review_loop'));
+  assert.equal(parseSprintRows(fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8'))[0].state, 'done');
 });
 
 // ===== Plano 4 — relatório de validação manual e sync (AC-4.* / CN3 / D11-D15) =====
@@ -5896,7 +6261,16 @@ function initGitFixture() {
 }
 
 function fixtureState(name, replacements = {}) {
-  let raw = fs.readFileSync(path.resolve('packages/mcp-server/fixtures', name), 'utf8');
+  // F-003: fixture resolvida contra o PRÓPRIO arquivo de teste, não contra o
+  // cwd. Com `path.resolve('packages/mcp-server/fixtures', ...)` a suite só
+  // rodava da raiz do repo; `npm test --prefix packages/mcp-server` (cwd =
+  // packages/mcp-server) dobrava o path e quebrava 22 testes com ENOENT.
+  // Mesmo padrão de `fileURLToPath(import.meta.url)` já usado no topo do arquivo.
+  let raw = fs.readFileSync(path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    'fixtures',
+    name,
+  ), 'utf8');
   for (const [token, value] of Object.entries(replacements)) raw = raw.replaceAll(token, value);
   return JSON.parse(raw);
 }
@@ -6360,6 +6734,139 @@ test('talos_lock_validator complete: sprint_file_path exige acceptance_results (
   assert.equal(done.validator_status, 'passed');
 });
 
+// Achado da campanha de integração stdio (2026-09-03, build/integration-loop-
+// campaign.mjs): commitState role=reconcile SEM proofs herdava diskState.plan_path
+// mesmo quando esse valor era só o filler interno de contract_kind=direct
+// (`.talos/plans/direct.md`, nunca um plan_path genuíno do caller) — flipando
+// contract_kind de 'direct' para 'plan' e quebrando validateStateBoundary
+// ("talos-direct-execute exige contract_kind=direct") em qualquer reconcile de
+// slice direct sem proofs re-supridas. Fix: DIRECT_MODE_PLAN_PATH_SENTINEL.
+test('reconcile sem proofs preserva contract_kind=direct (regressão campanha 2026-09-03)', () => {
+  const runId = 'reconcile-direct-kind';
+  const { root } = initGitFixture();
+  preflight({
+    run_id: runId, project_root: root, mode: 'direct',
+    host: 'claude', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: runId, project_root: root, action: 'start', phase: 'plan_execute' });
+  lockDispatch({ run_id: runId, project_root: root, action: 'checkpoint', phase: 'plan_execute', event: 'first_write' });
+  fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'src/d.js'), 'export const d = 1;\n');
+  const commit = commitState({
+    run_id: runId, project_root: root, slice: 'A', obligation_ids: ['O1'],
+    proofs: [{ kind: 'AC', id: 'AC-001', check: 'node --test', files: ['src/d.js'] }],
+  });
+  assert.equal(commit.status, 'passed');
+  const diskBefore = JSON.parse(fs.readFileSync(path.join(root, commit.state_path), 'utf8'));
+  assert.equal(diskBefore.contract_kind, 'direct');
+
+  // Falsificador: reverter DIRECT_MODE_PLAN_PATH_SENTINEL e a checagem de
+  // exclusão em commitState (role reconcile) faz este assert falhar de novo
+  // (contract_kind volta a virar 'plan').
+  const abs = path.join(root, commit.state_path);
+  const tampered = JSON.parse(fs.readFileSync(abs, 'utf8'));
+  tampered.diff_stat = 'adulterado à mão';
+  fs.writeFileSync(abs, `${JSON.stringify(tampered, null, 2)}\n`);
+
+  const reconciled = commitState({ run_id: runId, project_root: root, slice: 'A' });
+  assert.equal(reconciled.status, 'passed');
+  assert.equal(reconciled.role, 'reconcile');
+  const diskAfter = JSON.parse(fs.readFileSync(path.join(root, reconciled.state_path), 'utf8'));
+  assert.equal(diskAfter.contract_kind, 'direct', 'reconcile sem proofs não deve flipar contract_kind para plan');
+  assert.equal(diskAfter.executor_skill, 'talos-direct-execute');
+
+  const start = lockValidatorCore({ run_id: runId, project_root: root, action: 'start', state_path: reconciled.state_path });
+  assert.equal(start.status, 'passed', `boundary deve validar após reconcile: ${JSON.stringify(start)}`);
+});
+
+// Achado da campanha de integração stdio (2026-09-03): validatorComplete
+// persiste acceptance_results direto no disco (fs.writeFileSync fora de
+// commitState/markCommitHandoff) sem ressincronizar liveness.slice_commit_sha256
+// no ledger — quebrando o invariante disco=ledger (D4). O próximo commitState
+// legítimo do repair via a sha divergente e inferCommitRole (checagem de
+// reconcile por sha ANTES da checagem de cycle.status===repair_required)
+// classifica role='reconcile' em vez de 'repair', pulando o enforcement D15
+// (repair[].files deve ser subconjunto do que foi mutado NESTE repair). Fix:
+// validatorComplete ressincroniza a sha do ledger após a escrita.
+test('repair pós-fail com sprint_file_path é classificado role=repair, não reconcile (regressão campanha 2026-09-03)', () => {
+  const runId = 'repair-not-reconcile';
+  const { root } = initGitFixture();
+  preflight({
+    run_id: runId, project_root: root, mode: 'execute',
+    host: 'codex', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: runId, project_root: root, action: 'start', phase: 'plan_execute' });
+  lockDispatch({ run_id: runId, project_root: root, action: 'checkpoint', phase: 'plan_execute', event: 'first_write' });
+  const stateRel = `.talos/state/${runId}/slice.json`;
+  fs.mkdirSync(path.join(root, '.talos/backlog/sprints'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md'), sprintDoc());
+  fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'tests'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'src/initial.js'), 'export const initial = true;\n');
+  fs.writeFileSync(
+    path.join(root, 'tests/outcome.test.js'),
+    "import assert from 'node:assert/strict';\nimport { initial } from '../src/initial.js';\nassert.equal(initial, true);\n",
+  );
+  const commit = commitState({
+    run_id: runId, project_root: root, slice: 'slice',
+    plan_path: '.talos/plans/PLAN_S01_runtime.md',
+    sprint_file_path: '.talos/backlog/sprints/SPRINT_S01_runtime.md',
+    proofs: [
+      { kind: 'AC', id: 'AC-001', check: 'node --test tests/outcome.test.js', files: ['src/initial.js', 'tests/outcome.test.js'] },
+      { kind: 'AC', id: 'AC-002', check: 'node --test tests/outcome.test.js', files: ['src/initial.js'] },
+      { kind: 'EVAL', id: 'EVAL-001', check: 'node --test tests/outcome.test.js' },
+    ],
+  });
+  assert.equal(commit.status, 'passed');
+  assert.equal(commit.state_path, stateRel);
+
+  const start = lockValidatorCore({ run_id: runId, project_root: root, action: 'start', state_path: stateRel });
+  assert.equal(start.status, 'passed');
+
+  // fail com finding de PRODUTO (não metadata) + acceptance_results ecoando o
+  // oráculo — este complete é o que grava acceptance_results direto no disco.
+  const fail = lockValidatorCore({
+    run_id: runId, project_root: root, action: 'complete', state_path: stateRel,
+    validator_run_id: start.validator_run_id, dispatch_token: start.dispatch_token,
+    challenge_response: start.challenge ? sha256File(root, start.challenge.file) : null, verdict: 'fail',
+    data: {
+      findings: [finding({ id: 'F-001', severity: 'P1', file: 'src/initial.js' })],
+      acceptance_results: [
+        { id: 'AC-001', status: 'proved', proof_types: ['T-outcome:proved', 'I:present'] },
+        { id: 'AC-002', status: 'proved', proof_types: ['T-outcome:proved', 'I:present'] },
+      ],
+    },
+  });
+  assert.equal(fail.status, 'passed');
+  assert.equal(fail.validator_status, 'repair_required');
+  const diskAfterFail = JSON.parse(fs.readFileSync(path.join(root, stateRel), 'utf8'));
+  assert.ok(Array.isArray(diskAfterFail.acceptance_results), 'validatorComplete persistiu acceptance_results no disco');
+  const ledgerAfterFail = readRunJson(root, runId);
+  assert.equal(
+    ledgerAfterFail.data.dispatch.active.liveness.slice_commit_sha256,
+    sha256File(root, stateRel),
+    'liveness.slice_commit_sha256 deve casar com o disco após validatorComplete persistir acceptance_results (D4)',
+  );
+
+  const repairStart = lockValidatorCore({ run_id: runId, project_root: root, action: 'repair_start', state_path: stateRel, origin: 'validator' });
+  assert.equal(repairStart.status, 'passed');
+
+  fs.writeFileSync(path.join(root, 'src/initial.js'), 'export const initial = false;\n');
+  const repairCommit = commitState({
+    run_id: runId, project_root: root, slice: 'slice',
+    plan_path: '.talos/plans/PLAN_S01_runtime.md',
+    sprint_file_path: '.talos/backlog/sprints/SPRINT_S01_runtime.md',
+    proofs: [
+      { kind: 'AC', id: 'AC-001', check: 'node --test tests/outcome.test.js', files: ['src/initial.js'] },
+      { kind: 'AC', id: 'AC-002', check: 'node --test tests/outcome.test.js', files: ['src/initial.js'] },
+      { kind: 'EVAL', id: 'EVAL-001', check: 'node --test tests/outcome.test.js' },
+    ],
+    repair: [{ finding_id: 'F-001', files: ['src/initial.js'], checks: ['node --test'], status: 'resolved' }],
+  });
+  assert.equal(repairCommit.status, 'passed', JSON.stringify(repairCommit));
+  assert.equal(repairCommit.role, 'repair', 'commit pós-fail com repair[] deve ser role=repair, não reconcile (D15 fica sem checagem se cair em reconcile)');
+});
+
 // D22: shape estrito de acceptance_results. Status fora do enum, id fora de
 // AC-NNN e cobertura incompleta (AC do §7.3 ausente) → fail estrutural
 // (invalid_acceptance_shape), mesmo com verdict pass.
@@ -6595,6 +7102,39 @@ test('Plano 01: talos_commit_state projeta v3 completo e retorna sha do arquivo 
   assert.equal(boundary.ok, true, boundary.violations.join('; '));
 });
 
+test('Plano 01: G4 bloqueado por boundary permite reemitir somente o mesmo state MCP íntegro', () => {
+  const { root } = planCommitSetup('commit-reemit-boundary', { mutar: true });
+  const first = commitState({
+    run_id: 'commit-reemit-boundary', project_root: root, slice: 'A',
+    plan_path: '.talos/plans/PLAN_reemit.md',
+    proofs: [{ kind: 'AC', id: 'AC-001', check: 'node --test', files: ['src/a.js'] }],
+  });
+  assert.equal(first.status, 'passed');
+  fs.writeFileSync(path.join(root, 'src/a.js'), 'export const a = 2;\n');
+
+  const blockedValidator = lockValidatorCore({
+    run_id: 'commit-reemit-boundary', project_root: root, action: 'start', state_path: first.state_path,
+  });
+  assert.equal(blockedValidator.status, 'blocked');
+  assert.equal(blockedValidator.next_action, 'regerar_state_path_com_boundary_real');
+
+  const reemitted = commitState({
+    run_id: 'commit-reemit-boundary', project_root: root, slice: 'A',
+    plan_path: '.talos/plans/PLAN_reemit.md',
+    proofs: [{ kind: 'AC', id: 'AC-001', check: 'node --test', files: ['src/a.js'] }],
+  });
+  assert.equal(reemitted.status, 'passed');
+  assert.equal(reemitted.state_path, first.state_path);
+  assert.notEqual(reemitted.state_sha256, first.state_sha256);
+  const boundary = validateStateBoundary(reemitted.state_path, { project_root: root });
+  assert.equal(boundary.ok, true, boundary.violations.join('; '));
+
+  const validator = lockValidatorCore({
+    run_id: 'commit-reemit-boundary', project_root: root, action: 'start', state_path: reemitted.state_path,
+  });
+  assert.equal(validator.status, 'passed');
+});
+
 // AC-1.1.2 (CN9/INV5): acceptance_results no input → -32602, disco intacto.
 test('Plano 01: commit rejeita acceptance_results no input (AC-1.1.2)', () => {
   const { root } = planCommitSetup('commit-denied', { mutar: true });
@@ -6740,17 +7280,32 @@ test('Plano 01: first_write one-shot e repair não emite (AC-1.2.2)', () => {
   assert.match(repairFirstWrite.error, /repair ativo não emite first_write/);
 });
 
-// AC-1.2.3 (CN2): worktree sujo sem first_write → commit blocked; limpo sem first_write → passed.
+// AC-1.2.3 (CN2): dirt da slice sem first_write → commit blocked; WIP alheio não conta.
 test('Plano 01: commit exige first_write se worktree sujo; no-op passa (AC-1.2.3)', () => {
   const { root } = planCommitSetup('commit-dirty', {});
   fs.writeFileSync(path.join(root, 'src-dirty.js'), 'x\n');
   const blocked = commitState({
     run_id: 'commit-dirty', project_root: root, slice: 'A',
-    proofs: [{ kind: 'AC', id: 'AC-001', check: 'node --test' }],
+    proofs: [{ kind: 'AC', id: 'AC-001', check: 'node --test', files: ['src-dirty.js'] }],
   });
   assert.equal(blocked.status, 'blocked');
   assert.equal(blocked.code, 'sem_first_write_dirty');
   assert.equal(blocked.next_action, 'emitir_first_write_antes_do_commit');
+
+  const { root: foreignRoot } = initGitFixture();
+  fs.writeFileSync(path.join(foreignRoot, 'AgentsView.tsx'), 'wip alheio preexistente\n');
+  preflight({
+    run_id: 'commit-foreign-dirty', project_root: foreignRoot, mode: 'execute',
+    host: 'claude', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: 'commit-foreign-dirty', project_root: foreignRoot, action: 'start', phase: 'plan_execute' });
+  const foreign = commitState({
+    run_id: 'commit-foreign-dirty', project_root: foreignRoot, slice: 'A',
+    proofs: [{ kind: 'AC', id: 'AC-001', check: 'node --test' }],
+  });
+  assert.equal(foreign.status, 'passed');
+  const diskForeign = JSON.parse(fs.readFileSync(path.join(foreignRoot, foreign.state_path), 'utf8'));
+  assert.deepEqual(diskForeign.files_changed, [], 'dirty preexistente não entra em files_changed');
 
   // No-op slice (worktree limpo) sem first_write → passed.
   const { root: root2 } = planCommitSetup('commit-clean', {});
@@ -6803,7 +7358,117 @@ test('Plano 01: g12 checkpoint desconhecido para events antigos (AC-1.2.5)', () 
   }
 });
 
-// AC-1.3.1 (CN5/VC1/INV2): commit → lock_validator(start) passa e boundary aceita.
+// AC-1.1.1 / AC-1.1.2 (CN4): t0 gravado no start; first_write não redefine t0.
+test('CN4 first_write não redefine t0', () => {
+  const { root } = initGitFixture();
+  preflight({
+    run_id: 'cn4-t0', project_root: root, mode: 'execute',
+    host: 'claude', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  const start = lockDispatch({ run_id: 'cn4-t0', project_root: root, action: 'start', phase: 'plan_execute' });
+  assert.equal(start.status, 'passed');
+  const t0Baseline = start.dispatch.active.liveness.worktree_baseline;
+  assert.ok(Array.isArray(t0Baseline), 't0 gravado no start');
+  assert.equal(t0Baseline.length, 0, 'worktree limpo em t0');
+
+  fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'src/dirty.js'), 'export const dirty = 1;\n');
+
+  const fw = lockDispatch({
+    run_id: 'cn4-t0', project_root: root, action: 'checkpoint', phase: 'plan_execute', event: 'first_write',
+  });
+  assert.equal(fw.status, 'passed');
+  const ledger = readRunJson(root, 'cn4-t0');
+  assert.deepEqual(ledger.data.dispatch.active.liveness.worktree_baseline, t0Baseline, 'worktree_baseline é byte-idêntico ao t0');
+
+  const commit = commitState({
+    run_id: 'cn4-t0', project_root: root, slice: 'A',
+    proofs: [{ kind: 'AC', id: 'AC-001', check: 'node --test', files: ['src/dirty.js'] }],
+  });
+  assert.equal(commit.status, 'passed');
+  const disk = JSON.parse(fs.readFileSync(path.join(root, commit.state_path), 'utf8'));
+  assert.deepEqual(disk.files_changed, ['src/dirty.js'], 'files_changed não zera após first_write tardio');
+});
+
+// AC-1.2.1 (CN1): files_changed dirty sem proofs.files.
+test('CN1 files_changed dirty sem proofs.files', () => {
+  const { root } = initGitFixture();
+  preflight({
+    run_id: 'cn1-dirty', project_root: root, mode: 'execute',
+    host: 'claude', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: 'cn1-dirty', project_root: root, action: 'start', phase: 'plan_execute' });
+  lockDispatch({ run_id: 'cn1-dirty', project_root: root, action: 'checkpoint', phase: 'plan_execute', event: 'first_write' });
+
+  fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'src/one.js'), 'one\n');
+  fs.writeFileSync(path.join(root, 'src/two.js'), 'two\n');
+
+  const commit = commitState({
+    run_id: 'cn1-dirty', project_root: root, slice: 'A',
+    proofs: [
+      { kind: 'AC', id: 'AC-001', check: 'node --test', files: [] },
+    ],
+  });
+  assert.equal(commit.status, 'passed');
+  const disk = JSON.parse(fs.readFileSync(path.join(root, commit.state_path), 'utf8'));
+  assert.deepEqual(disk.files_changed, ['src/one.js', 'src/two.js'], 'files_changed contém os paths reais do git fact');
+});
+
+// AC-1.2.2 (CN6): proofs.files fora do fact recusa.
+test('CN6 proofs.files fora do fact recusa', () => {
+  const { root } = initGitFixture();
+  preflight({
+    run_id: 'cn6-phantom', project_root: root, mode: 'execute',
+    host: 'claude', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: 'cn6-phantom', project_root: root, action: 'start', phase: 'plan_execute' });
+  lockDispatch({ run_id: 'cn6-phantom', project_root: root, action: 'checkpoint', phase: 'plan_execute', event: 'first_write' });
+
+  fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'src/real.js'), 'real\n');
+
+  const commit = commitState({
+    run_id: 'cn6-phantom', project_root: root, slice: 'A',
+    proofs: [
+      { kind: 'AC', id: 'AC-001', check: 'node --test', files: ['src/real.js', 'src/phantom.js'] },
+    ],
+  });
+  assert.equal(commit.status, 'blocked');
+  assert.equal(commit.code, 'claim_fora_do_fact');
+  assert.equal(fs.existsSync(path.join(root, '.talos/state/cn6-phantom/A.json')), false, 'disco não grava fact encolhido');
+});
+
+// AC-1.2.3 (CN1/D16): JSON magro hashes só de files_changed.
+test('JSON magro hashes só de files_changed', () => {
+  const { root } = initGitFixture();
+  fs.writeFileSync(path.join(root, 'unrelated.txt'), 'unrelated dirt\n');
+
+  preflight({
+    run_id: 'json-magro', project_root: root, mode: 'execute',
+    host: 'claude', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: 'json-magro', project_root: root, action: 'start', phase: 'plan_execute' });
+  lockDispatch({ run_id: 'json-magro', project_root: root, action: 'checkpoint', phase: 'plan_execute', event: 'first_write' });
+
+  fs.writeFileSync(path.join(root, 'slice.txt'), 'slice content\n');
+
+  const commit = commitState({
+    run_id: 'json-magro', project_root: root, slice: 'A',
+    proofs: [{ kind: 'AC', id: 'AC-001', check: 'node --test', files: ['slice.txt'] }],
+  });
+  assert.equal(commit.status, 'passed');
+
+  const disk = JSON.parse(fs.readFileSync(path.join(root, commit.state_path), 'utf8'));
+  assert.deepEqual(disk.files_changed, ['slice.txt']);
+
+  const finalPaths = disk.worktree_final.map((entry) => Array.isArray(entry) ? entry[0] : entry.path);
+  assert.deepEqual(finalPaths, ['slice.txt'], 'worktree_final só contém paths de files_changed');
+  const baselinePaths = disk.worktree_baseline.map((entry) => Array.isArray(entry) ? entry[0] : entry.path);
+  assert.deepEqual(baselinePaths, [], 'baseline persistida no JSON não contém paths fora de files_changed');
+});
+
+
 test('Plano 01: commit alimenta validateStateBoundary e start passed (AC-1.3.1)', () => {
   const { root } = planCommitSetup('commit-start', { mutar: true });
   const commit = commitState({
@@ -7014,7 +7679,7 @@ test('Plano 03: tools lista sem onda 2/3 e G12 sem pref obrigatório (AC-3.2.2)'
   assert.doesNotMatch(g12, /pref/, 'G12 não menciona pref');
 });
 
-test('F-003: dirty preexistente intacto não contamina; mutação posterior entra no boundary', () => {
+test('F-003: dirty preexistente intacto não contamina; mutação da slice entra no boundary', () => {
   const { root, head } = initGitFixture();
   fs.writeFileSync(path.join(root, 'README.md'), 'dirty anterior\n');
   const baseline = captureWorktreeSnapshot(root);
@@ -7026,26 +7691,58 @@ test('F-003: dirty preexistente intacto não contamina; mutação posterior entr
   const mutated = planStateForBoundary(root, head, baseline, ['README.md']);
   const mutatedPath = writeSliceState(root, 'dirty-mutado', mutated);
   assert.equal(validateStateBoundary(mutatedPath, { project_root: root }).ok, true);
-
-  const omitted = { ...mutated, files_changed: [], task_evidence: [] };
-  const omittedPath = writeSliceState(root, 'dirty-omitido', omitted);
-  const result = validateStateBoundary(omittedPath, { project_root: root });
-  assert.equal(result.ok, false);
-  assert.match(result.violations.join(' '), /README\.md/);
 });
 
-test('F-003: untracked novo omitido e state stale bloqueiam', () => {
+test('F-003: WIP paralelo fora da slice não bloqueia; stale na slice bloqueia', () => {
   const { root, head } = initGitFixture();
   const baseline = captureWorktreeSnapshot(root);
   fs.writeFileSync(path.join(root, 'novo.js'), 'v1\n');
   const omitted = planStateForBoundary(root, head, baseline, []);
-  const omittedPath = writeSliceState(root, 'untracked-omitido', omitted);
-  assert.match(validateStateBoundary(omittedPath, { project_root: root }).violations.join(' '), /novo\.js/);
+  const omittedPath = writeSliceState(root, 'untracked-alheio', omitted);
+  assert.equal(validateStateBoundary(omittedPath, { project_root: root }).ok, true);
 
   const stale = planStateForBoundary(root, head, baseline, ['novo.js']);
   const stalePath = writeSliceState(root, 'state-stale', stale);
   fs.writeFileSync(path.join(root, 'novo.js'), 'v2\n');
   assert.match(validateStateBoundary(stalePath, { project_root: root }).violations.join(' '), /worktree_final stale/);
+});
+
+test('F-003: dirty alheio depois do snapshot não staleia G4', () => {
+  const { root, head } = initGitFixture();
+  const baseline = captureWorktreeSnapshot(root);
+  fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'src/slice.js'), 'export const slice = 1;\n');
+  const state = planStateForBoundary(root, head, baseline, ['src/slice.js']);
+  const statePath = writeSliceState(root, 'slice-ok', state);
+  fs.writeFileSync(path.join(root, 'AgentsView.tsx'), 'foreign wip\n');
+  fs.writeFileSync(path.join(root, 'src/slice.js'), 'export const slice = 1;\n');
+  assert.equal(validateStateBoundary(statePath, { project_root: root }).ok, true);
+});
+
+test('F-003: commit paralelo fora da slice não staleia HEAD; drift na slice bloqueia', () => {
+  const { root, head: base } = initGitFixture();
+  fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'src/slice.js'), 'export const slice = 1;\n');
+  execFileSync('git', ['-C', root, 'add', 'src/slice.js']);
+  execFileSync('git', ['-C', root, 'commit', '-qm', 'slice']);
+  const sliceHead = execFileSync('git', ['-C', root, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  const baseline = captureWorktreeSnapshot(root);
+  const state = planStateForBoundary(root, sliceHead, baseline, ['src/slice.js']);
+  state.base_sha = base;
+  const statePath = writeSliceState(root, 'head-foreign', state);
+  assert.equal(validateStateBoundary(statePath, { project_root: root }).ok, true);
+
+  fs.writeFileSync(path.join(root, 'AgentsView.tsx'), 'commit alheio\n');
+  execFileSync('git', ['-C', root, 'add', 'AgentsView.tsx']);
+  execFileSync('git', ['-C', root, 'commit', '-qm', 'wip paralelo']);
+  assert.equal(validateStateBoundary(statePath, { project_root: root }).ok, true);
+
+  fs.writeFileSync(path.join(root, 'src/slice.js'), 'export const slice = 2;\n');
+  execFileSync('git', ['-C', root, 'add', 'src/slice.js']);
+  execFileSync('git', ['-C', root, 'commit', '-qm', 'colisão na slice']);
+  const drifted = validateStateBoundary(statePath, { project_root: root });
+  assert.equal(drifted.ok, false);
+  assert.match(drifted.violations.join(' '), /head_sha drift na slice/);
 });
 
 test('F-003: remoção e rename são representados no delta real', () => {
@@ -7394,4 +8091,1528 @@ test('proof-of-work: falhas de challenge são bounded — esgotado o teto, slot 
   // Slot fechado terminal: recovery não expõe mais validador ativo.
   const rec = runState({ action: 'get', run_id: 'pow8', project_root: root }).validator_recovery;
   assert.equal(rec, null, 'slot terminal fechado (sem active)');
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Guide RASTREABILIDADE_MCP_GUIDE — Plano 01: ledger traceability v1 (MCP-only)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function traceReq(overrides = {}) {
+  return {
+    id: 'REQ-001',
+    sources: [{ kind: 'talos', ref: 'sprint:S01' }],
+    criticality: 'alta',
+    disposition: 'included',
+    ...overrides,
+  };
+}
+
+const traceAlphaBacklog = '.talos/backlog/BACKLOG_MESTRE_alpha.md';
+const traceLedgerFile = (root, backlog) => path.join(
+  root, '.talos', 'traceability', `${path.basename(backlog).replace(/\.md$/i, '')}.json`,
+);
+
+test('traceability: upsert grava REQ no slug do backlog e preserva sprints/pilot_metrics (AC-1.1.1 / VC1 / VC6)', () => {
+  const root = tmpRoot();
+  // Documento com sprints e pilot_metrics pré-existentes: a escrita absoluta do
+  // ledger DEVE preservar as chaves irmãs (falsificador: write que só persiste reqs).
+  const pre = {
+    schema: TRACEABILITY_SCHEMA_VERSION,
+    reqs: {},
+    sprints: { S01: { schema: TRACEABILITY_SCHEMA_VERSION } },
+    pilot_metrics: [{
+      calls: 1, retries: 0, turns: 2, coverage: 'parcial',
+      observed_at: '2026-08-26T00:00:00.000Z',
+    }],
+  };
+  writeTraceabilityLedger(pre, traceAlphaBacklog, root);
+  const doc = traceabilityHandler({
+    run_id: 'tr011', project_root: root, backlog_path: traceAlphaBacklog,
+    reqs: [traceReq()],
+  });
+  assert.equal(doc.document.reqs['REQ-001'].disposition, 'included');
+  assert.deepEqual(doc.document.sprints, pre.sprints, 'sprints irmã preservada (write absoluto)');
+  assert.deepEqual(doc.document.pilot_metrics, pre.pilot_metrics, 'pilot_metrics irmã preservada (write absoluto)');
+  const onDisk = JSON.parse(fs.readFileSync(traceLedgerFile(root, traceAlphaBacklog), 'utf8'));
+  assert.deepEqual(onDisk, doc.document, 'disco == documento retornado');
+  // VC6: backlog B não escreve no slug de A.
+  const backlogB = '.talos/backlog/BACKLOG_MESTRE_beta.md';
+  traceabilityHandler({
+    run_id: 'tr011', project_root: root, backlog_path: backlogB,
+    reqs: [traceReq({ id: 'REQ-002' })],
+  });
+  assert.ok(fs.existsSync(traceLedgerFile(root, backlogB)), 'ledger de B criado no próprio slug');
+  const alpha = JSON.parse(fs.readFileSync(traceLedgerFile(root, traceAlphaBacklog), 'utf8'));
+  assert.ok(!('REQ-002' in alpha.reqs), 'upsert de B não vaza para o ledger de A (VC6)');
+});
+
+test('traceability: upsert do mesmo id atualiza destino, sem duplicar chave; duplicata no mesmo write recusa (AC-1.1.2 / VC1)', () => {
+  const root = tmpRoot();
+  traceabilityHandler({
+    run_id: 'tr012', project_root: root, backlog_path: traceAlphaBacklog,
+    reqs: [traceReq()],
+  });
+  // Update de disposition (D1/D12: deferred pode passar a included e vice-versa).
+  const updated = traceabilityHandler({
+    run_id: 'tr012', project_root: root, backlog_path: traceAlphaBacklog,
+    reqs: [traceReq({ disposition: 'rejected', reason: 'fora do escopo' })],
+  });
+  assert.deepEqual(Object.keys(updated.document.reqs), ['REQ-001'], 'exatamente uma chave REQ-001');
+  assert.equal(updated.document.reqs['REQ-001'].disposition, 'rejected');
+  // Duas entradas do mesmo id num único write: recusa e disco permanece o anterior.
+  const before = fs.readFileSync(traceLedgerFile(root, traceAlphaBacklog), 'utf8');
+  assert.throws(
+    () => traceabilityHandler({
+      run_id: 'tr012', project_root: root, backlog_path: traceAlphaBacklog,
+      reqs: [traceReq(), traceReq({ id: 'REQ-001' })],
+    }),
+    /REQ duplicado no mesmo write/,
+  );
+  assert.equal(fs.readFileSync(traceLedgerFile(root, traceAlphaBacklog), 'utf8'), before,
+    'disco permanece o anterior na recusa');
+  // Contraprova: id novo convive com o existente.
+  const both = traceabilityHandler({
+    run_id: 'tr012', project_root: root, backlog_path: traceAlphaBacklog,
+    reqs: [traceReq({ id: 'REQ-003' })],
+  });
+  assert.deepEqual(Object.keys(both.document.reqs).sort(), ['REQ-001', 'REQ-003']);
+});
+
+test('traceability: INV1 — deferred/rejected incompletos recusam e nada é gravado (AC-1.1.3 / INV1 / VC2)', () => {
+  const root = tmpRoot();
+  traceabilityHandler({
+    run_id: 'tr013', project_root: root, backlog_path: traceAlphaBacklog,
+    reqs: [traceReq()],
+  });
+  const cases = [
+    [traceReq({ disposition: 'deferred' }), /deferred exige reason/],
+    [traceReq({ disposition: 'deferred', reason: 'adiar' }), /deferred_target/],
+    [traceReq({ disposition: 'deferred', reason: 'adiar', deferred_target: { type: 'sprint' } }), /deferred_target\.id/],
+    [traceReq({ disposition: 'deferred', reason: 'adiar', deferred_target: { type: 'sprint', id: 'X1' } }), /deferred_target\.id/],
+    [traceReq({ disposition: 'deferred', reason: 'adiar', deferred_target: { type: 'inventado', id: 'S01' } }), /deferred_target\.type/],
+    [traceReq({ disposition: 'deferred', reason: 'adiar', deferred_target: { type: 'backlog_candidate' } }), /deferred_target\.name/],
+    [traceReq({ disposition: 'rejected' }), /rejected exige reason/],
+  ];
+  const before = fs.readFileSync(traceLedgerFile(root, traceAlphaBacklog), 'utf8');
+  for (const [payload, pattern] of cases) {
+    assert.throws(
+      () => traceabilityHandler({
+        run_id: 'tr013', project_root: root, backlog_path: traceAlphaBacklog, reqs: [payload],
+      }),
+      pattern,
+      `payload inválido deveria recusar: ${JSON.stringify(payload)}`,
+    );
+  }
+  assert.equal(fs.readFileSync(traceLedgerFile(root, traceAlphaBacklog), 'utf8'), before,
+    'nenhuma recusa gravou nada');
+  // VC2: deferred válido persiste como deferred no disco (não vira included).
+  const deferred = traceabilityHandler({
+    run_id: 'tr013', project_root: root, backlog_path: traceAlphaBacklog,
+    reqs: [traceReq({
+      id: 'REQ-004', disposition: 'deferred', reason: 'adiar',
+      deferred_target: { type: 'sprint', id: 'S02' },
+    })],
+  });
+  assert.equal(deferred.document.reqs['REQ-004'].disposition, 'deferred');
+  assert.deepEqual(deferred.document.reqs['REQ-004'].deferred_target, { type: 'sprint', id: 'S02' });
+});
+
+test('traceability: fonte externa sem ref não entra no ledger (AC-1.3.1 / CN9 / INV6)', () => {
+  const root = tmpRoot();
+  traceabilityHandler({
+    run_id: 'tr131', project_root: root, backlog_path: traceAlphaBacklog,
+    reqs: [traceReq()],
+  });
+  const before = fs.readFileSync(traceLedgerFile(root, traceAlphaBacklog), 'utf8');
+  assert.throws(
+    () => traceabilityHandler({
+      run_id: 'tr131', project_root: root, backlog_path: traceAlphaBacklog,
+      reqs: [traceReq({ id: 'REQ-005', sources: [{ kind: 'external' }] })],
+    }),
+    /fonte externa exige ref/,
+  );
+  assert.equal(fs.readFileSync(traceLedgerFile(root, traceAlphaBacklog), 'utf8'), before,
+    'external sem ref não grava');
+  // Contraprova: external com ref estável entra; kind talos aceito com ponteiro.
+  const ext = traceabilityHandler({
+    run_id: 'tr131', project_root: root, backlog_path: traceAlphaBacklog,
+    reqs: [traceReq({
+      id: 'REQ-006',
+      sources: [{ kind: 'external', ref: 'https://exemplo.invalid/reqs/6' }],
+    })],
+  });
+  assert.equal(ext.document.reqs['REQ-006'].sources[0].ref, 'https://exemplo.invalid/reqs/6');
+  assert.ok(!('REQ-005' in ext.document.reqs), 'REQ hostil não aparece em write posterior');
+});
+
+test('traceability: tool registrada sem hook nem pré-load de capabilities (AC-1.2.3 / CN10 / INV4)', () => {
+  const tool = toolsList().tools.find((t) => t.name === 'talos_traceability');
+  assert.ok(tool, 'talos_traceability precisa existir em tools/list');
+  assert.deepEqual(tool.inputSchema.properties.action.enum, ['upsert', 'verify', 'receipt', 'record_metric']);
+  assert.deepEqual(tool.inputSchema.required, ['run_id', 'backlog_path']);
+  // Nenhum adapter declara hook cuja função seja pré-carregar traceability.
+  for (const host of HOST_NAMES) {
+    const hooks = capabilities({ host }).hooks;
+    assert.ok(!JSON.stringify(hooks).toLowerCase().includes('trace'),
+      `host ${host}: hooks citam traceability (D2/INV4) — hook proibido`);
+  }
+  // Estrutural: nenhuma linha de server.js junta hook com esta feature.
+  const source = fs.readFileSync(new URL('./server.js', import.meta.url), 'utf8');
+  for (const line of source.split('\n')) {
+    assert.ok(!(line.includes('hooks') && /trace/i.test(line)),
+      `linha de server.js casa hooks com traceability:\n${line}`);
+  }
+  // A tool existe só via call explícito: nada no boot (initialize/tools list) a invoca.
+  assert.ok(!/talos_traceability[\s\S]{0,120}hooks|hooks[\s\S]{0,120}talos_traceability/.test(source),
+    'dispatch de traceability não pode depender de hooks');
+});
+
+test('traceability: verify pleno cruza source_refs e reporta included sem AC (AC-2.1.3 / CN4 / INV2)', () => {
+  const root = tmpRoot();
+  traceabilityHandler({
+    run_id: 'tr213', project_root: root, backlog_path: traceAlphaBacklog,
+    reqs: [traceReq(), traceReq({ id: 'REQ-002' }), traceReq({ id: 'REQ-003' })],
+  });
+  // Sprint v1 cujos ACs cobrem REQ-001 e REQ-002: REQ-003 (included, S01) fica sem AC.
+  const sprintMarkdown = sprintDoc()
+    .replace(
+      '| Revalidação | false |',
+      '| Revalidação | false |\n| Traceability | v1 |',
+    )
+    .replace(
+      '    behavior: "Gate observável passa quando AC válido"',
+      '    source_refs: [REQ-001]\n    behavior: "Gate observável passa quando AC válido"',
+    )
+    .replace(
+      '    behavior: "Parser antigo preservado após mudança"',
+      '    source_refs: [REQ-002]\n    behavior: "Parser antigo preservado após mudança"',
+    );
+  const sprintPath = path.join(root, 'SPRINT_S01_tr213.md');
+  fs.writeFileSync(sprintPath, sprintMarkdown);
+  const report = traceabilityHandler({
+    run_id: 'tr213', project_root: root, backlog_path: traceAlphaBacklog,
+    action: 'verify', sprint_path: sprintPath,
+  });
+  assert.equal(report.valid, false);
+  assert.equal(report.status, 'failed', 'verify não afirma cobertura com buraco (INV2)');
+  assert.deepEqual(report.gaps, [{ req: 'REQ-003', problem: 'included_sem_ac' }],
+    JSON.stringify(report.gaps));
+  // Contraprova: REQ-003 coberto por um AC → verify passa (status passed).
+  const covered = sprintMarkdown.replace(
+    '    source_refs: [REQ-002]',
+    '    source_refs: [REQ-002]\n    extra: null\n  - id: AC-003\n    origin: "usuario"\n    behavior: "Cobre REQ-003"\n    source_refs: [REQ-003]\n    decisions: [D1]\n    scenario: "Cenário 1"\n    evals: [EVAL-001]\n    evidence:\n      required: [I, T-outcome]\n      manual: null',
+  );
+  fs.writeFileSync(sprintPath, covered);
+  const report2 = traceabilityHandler({
+    run_id: 'tr213', project_root: root, backlog_path: traceAlphaBacklog,
+    action: 'verify', sprint_path: sprintPath,
+  });
+  assert.equal(report2.valid, true, JSON.stringify(report2.gaps));
+  assert.equal(report2.status, 'passed');
+  // sprint_path inexistente → erro determinístico (nenhum report fabricado).
+  assert.throws(
+    () => traceabilityHandler({
+      run_id: 'tr213', project_root: root, backlog_path: traceAlphaBacklog,
+      action: 'verify', sprint_path: path.join(root, 'nao-existe.md'),
+    }),
+    /Sprint file não encontrado/,
+  );
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Guide RASTREABILIDADE_MCP_GUIDE — Plano 03: gate done v1, receipt MCP,
+// métricas e bump minor 0.19.0
+// ─────────────────────────────────────────────────────────────────────────────
+
+function traceSprintV1(root, overrides = {}) {
+  // Sprint v1 consistente (metadado Traceability: v1) com AC-001 e AC-002 ambos
+  // ligando REQ-001 (N:N) — base do gate done v1 e do receipt.
+  const markdown = sprintDoc({ id: 'S01', status: 'ready', dorStatus: 'verde' })
+    .replace('| Revalidação | false |', '| Revalidação | false |\n| Traceability | v1 |')
+    .replace(
+      '    behavior: "Gate observável passa quando AC válido"',
+      '    source_refs: [REQ-001]\n    behavior: "Gate observável passa quando AC válido"',
+    )
+    .replace(
+      '    behavior: "Parser antigo preservado após mudança"',
+      '    source_refs: [REQ-001]\n    behavior: "Parser antigo preservado após mudança"',
+    );
+  const sprintPath = path.join(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md');
+  fs.mkdirSync(path.dirname(sprintPath), { recursive: true });
+  fs.writeFileSync(sprintPath, markdown);
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | ready | ready | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+  writeTraceabilityLedger({
+    schema: TRACEABILITY_SCHEMA_VERSION,
+    reqs: {
+      'REQ-001': { id: 'REQ-001', sources: [{ kind: 'talos', ref: 'sprint:S01' }], criticality: 'alta', disposition: 'included' },
+      ...(overrides.reqs ?? {}),
+    },
+    sprints: { S01: { schema: TRACEABILITY_SCHEMA_VERSION } },
+    pilot_metrics: [],
+  }, 'BACKLOG.md', root);
+  return sprintPath;
+}
+
+test('update_sprint_status: done v1 bloqueia REQ included com qualquer AC ligado não proved, sem mutar disco (AC-3.1.1 / CN8 / INV8 / VC5)', () => {
+  const root = tmpRoot();
+  writeHandoffTemplateFixture(root);
+  const sprintPath = traceSprintV1(root);
+  const common = {
+    run_id: 'r311', project_root: root, backlog_path: 'BACKLOG.md', sprint_id: 'S01',
+    status: 'done', validator_verdict: 'pass', plan_path: 'PLAN_S01.md',
+    state_path: '.talos/state/S01.json', evidence: 'validator pass',
+  };
+  const beforeBacklog = fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8');
+  const beforeSprint = fs.readFileSync(sprintPath, 'utf8');
+  // (1) AC-001 unproved, AC-002 proved → done blocked com pendência de
+  // rastreabilidade (VC5: oráculo único de proved = acceptance_results do state),
+  // e backlog/sprint no disco idênticos ao before (sem write).
+  writeStateWithAcceptance(root, 'S01.json', [
+    { id: 'AC-001', status: 'unproved' },
+    { id: 'AC-002', status: 'proved' },
+  ]);
+  const r1 = updateSprintStatus(common);
+  assert.equal(r1.status, 'blocked');
+  assert.ok(r1.pendencies.some((p) => p.category === 'rastreabilidade' && p.item.includes('REQ-001')),
+    `pendência de rastreabilidade esperada: ${JSON.stringify(r1.pendencies)}`);
+  assert.equal(fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8'), beforeBacklog, 'backlog intacto no bloqueio');
+  assert.equal(fs.readFileSync(sprintPath, 'utf8'), beforeSprint, 'sprint intacto no bloqueio');
+  // (2) AC-001 proved e AC-002 unproved → irmão unproved bloqueia mesmo com o
+  // outro proved (D13/D14: cobertura N:N não fecha por um irmão proved).
+  writeStateWithAcceptance(root, 'S01.json', [
+    { id: 'AC-001', status: 'proved' },
+    { id: 'AC-002', status: 'unproved' },
+  ]);
+  const r2 = updateSprintStatus(common);
+  assert.equal(r2.status, 'blocked');
+  assert.ok(r2.pendencies.some((p) => p.category === 'rastreabilidade' && p.item.includes('AC-002')),
+    `pendência rastreabilidade (irmão N:N) esperada: ${JSON.stringify(r2.pendencies)}`);
+  assert.equal(fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8'), beforeBacklog, 'backlog intacto (N:N)');
+  // (3) Todos os AC ligados proved → done passa (gates pré-existentes seguem) e
+  // sincroniza backlog para done.
+  writeStateWithAcceptance(root, 'S01.json', [
+    { id: 'AC-001', status: 'proved' },
+    { id: 'AC-002', status: 'proved' },
+  ]);
+  const r3 = updateSprintStatus(common);
+  assert.equal(r3.status, 'passed', JSON.stringify(r3.pendencies));
+  assert.equal(parseSprintRows(fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8'))[0].state, 'done');
+});
+
+test('traceability: receipt exige proved para included, lista exceções e não aceita claim do caller (AC-3.2.1 / CN5)', () => {
+  const root = tmpRoot();
+  writeTraceabilityLedger({
+    schema: TRACEABILITY_SCHEMA_VERSION,
+    reqs: {
+      'REQ-001': { id: 'REQ-001', sources: [{ kind: 'talos', ref: 'sprint:S01' }], criticality: 'alta', disposition: 'included' },
+      'REQ-002': {
+        id: 'REQ-002', sources: [{ kind: 'talos', ref: 'sprint:S01' }],
+        disposition: 'deferred', reason: 'aguardar S02', deferred_target: { type: 'sprint', id: 'S02' },
+      },
+      'REQ-003': { id: 'REQ-003', sources: [{ kind: 'talos', ref: 'sprint:S01' }], disposition: 'included' },
+    },
+    sprints: { S01: { schema: TRACEABILITY_SCHEMA_VERSION } },
+    pilot_metrics: [],
+  }, traceAlphaBacklog, root);
+  // AC-001 liga REQ-001 (proved no state); AC-002 liga REQ-003 (unproved).
+  const sprintMarkdown = sprintDoc({ id: 'S01' })
+    .replace('| Revalidação | false |', '| Revalidação | false |\n| Traceability | v1 |')
+    .replace(
+      '    behavior: "Gate observável passa quando AC válido"',
+      '    source_refs: [REQ-001]\n    behavior: "Gate observável passa quando AC válido"',
+    )
+    .replace(
+      '    behavior: "Parser antigo preservado após mudança"',
+      '    source_refs: [REQ-003]\n    behavior: "Parser antigo preservado após mudança"',
+    );
+  const sprintPath = path.join(root, 'SPRINT_S01_tr32.md');
+  fs.writeFileSync(sprintPath, sprintMarkdown);
+  writeStateWithAcceptance(root, 'S01.json', [
+    { id: 'AC-001', status: 'proved', proof_types: ['I:present', 'T-outcome:proved'] },
+    { id: 'AC-002', status: 'unproved' },
+  ]);
+  const base = {
+    run_id: 'r321', project_root: root, backlog_path: traceAlphaBacklog, action: 'receipt',
+    sprint_path: sprintPath, sprint_id: 'S01', state_path: '.talos/state/S01.json',
+  };
+  const receipt = traceabilityHandler(base);
+  assert.equal(receipt.schema, TRACEABILITY_SCHEMA_VERSION);
+  const row1 = receipt.reqs.find((r) => r.req === 'REQ-001');
+  assert.deepEqual(row1.ac_ids, ['AC-001'], 'ac_ids pelos source_refs do §7.3');
+  assert.deepEqual(row1.ac_status, [{ ac: 'AC-001', status: 'proved' }]);
+  assert.equal(row1.ok, true, 'included proved → ok');
+  const row3 = receipt.reqs.find((r) => r.req === 'REQ-003');
+  assert.equal(row3.ok, false, 'included com AC unproved → não ok');
+  assert.deepEqual(row3.ac_status, [{ ac: 'AC-002', status: 'unproved' }]);
+  assert.ok(receipt.blockers.some((b) => b.req === 'REQ-003'), 'blockers lista included não proved');
+  assert.ok(receipt.exceptions.some((e) => e.req === 'REQ-002' && e.disposition === 'deferred' && e.reason === 'aguardar S02'),
+    'deferred com motivo vai para exceptions');
+  assert.equal(receipt.coverage.included, 2);
+  assert.equal(receipt.coverage.proved, 1);
+  assert.equal(receipt.coverage.pending, 1);
+  // Falsificador: claim de cobertura do caller não entra no payload (D8: a
+  // projeção é do MCP, o orquestrador só ecoa).
+  const claimed = traceabilityHandler({ ...base, coverage_claim: '100% coberto pelo agente' });
+  assert.equal(JSON.stringify(claimed.reqs), JSON.stringify(receipt.reqs), 'payload independe de claim do caller');
+  assert.ok(!JSON.stringify(claimed).includes('coverage_claim'), 'claim não é ecoado no payload');
+  // Legacy: sprint sem metadado v1 → receipt schema legacy sem exigir ledger.
+  const legacyPath = path.join(root, 'SPRINT_legacy.md');
+  fs.writeFileSync(legacyPath, sprintDoc({ id: 'L01', backlog: 'BACKLOG.md#L01' }));
+  const legacy = traceabilityHandler({
+    run_id: 'r321', project_root: root, backlog_path: traceAlphaBacklog,
+    action: 'receipt', sprint_path: legacyPath, sprint_id: 'L01',
+  });
+  assert.equal(legacy.schema, 'legacy');
+  assert.deepEqual(legacy.reqs, []);
+  assert.deepEqual(legacy.exceptions, []);
+  // INCONSISTENTE: sprint v1 sem a marca no ledger → erro determinístico (INV3).
+  const noLedgerPath = path.join(root, 'SPRINT_v1semledger.md');
+  fs.writeFileSync(noLedgerPath, sprintDoc({ id: 'S09' })
+    .replace('| Revalidação | false |', '| Revalidação | false |\n| Traceability | v1 |'));
+  assert.throws(
+    () => traceabilityHandler({
+      run_id: 'r321', project_root: root, backlog_path: traceAlphaBacklog,
+      action: 'receipt', sprint_path: noLedgerPath, sprint_id: 'S09',
+    }),
+    /marcadores consistentes/,
+  );
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Auditoria externa pós-fechamento (Plano F): lado B do INV3 nos gates,
+// escopo de sprint no receipt, pendência dedicada de ledger ilegível,
+// pilot_metrics legível via verify (superfície read-only).
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('update_sprint_status: done bloqueia ledger marcado sem metadado na sprint (lado B — INV3/D15)', () => {
+  const root = tmpRoot();
+  writeHandoffTemplateFixture(root);
+  // Sprint LEGACY (sem marca) cujo backlog TEM ledger com S01 marcado: par
+  // inconsistente no sentido oposto ao coberto pelo Plano 03 — antes fechava
+  // como legacy silencioso; agora bloqueia alinhar_marcadores_traceability.
+  const markdown = sprintDoc({ id: 'S01', status: 'ready', dorStatus: 'verde' });
+  const sprintPath = path.join(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md');
+  fs.mkdirSync(path.dirname(sprintPath), { recursive: true });
+  fs.writeFileSync(sprintPath, markdown);
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | ready | ready | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+  writeStateWithAcceptance(root, 'S01.json', [{ id: 'AC-001', status: 'proved' }]);
+  writeTraceabilityLedger({
+    schema: TRACEABILITY_SCHEMA_VERSION,
+    reqs: {
+      'REQ-001': { id: 'REQ-001', sources: [{ kind: 'talos', ref: 'sprint:S01' }], disposition: 'included' },
+    },
+    sprints: { S01: { schema: TRACEABILITY_SCHEMA_VERSION } },
+    pilot_metrics: [],
+  }, 'BACKLOG.md', root);
+  const beforeBacklog = fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8');
+  const beforeSprint = fs.readFileSync(sprintPath, 'utf8');
+  const r = updateSprintStatus({
+    run_id: 'rsideb', project_root: root, backlog_path: 'BACKLOG.md', sprint_id: 'S01',
+    status: 'done', validator_verdict: 'pass', plan_path: 'PLAN_S01.md',
+    state_path: '.talos/state/S01.json', evidence: 'validator pass',
+  });
+  assert.equal(r.status, 'blocked');
+  const pendB = r.pendencies.find((p) => p.category === 'rastreabilidade' && p.next_action === 'alinhar_marcadores_traceability');
+  assert.ok(pendB, `pendência lado B esperada: ${JSON.stringify(r.pendencies)}`);
+  assert.equal(fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8'), beforeBacklog, 'backlog intacto no bloqueio');
+  assert.equal(fs.readFileSync(sprintPath, 'utf8'), beforeSprint, 'sprint intacta no bloqueio');
+});
+
+test('update_sprint_status: sprint v1 com ledger ilegível bloqueia com pendência dedicada (corrigir_ledger_traceability)', () => {
+  const root = tmpRoot();
+  writeHandoffTemplateFixture(root);
+  const sprintPath = traceSprintV1(root);
+  // Falsificador: erro genérico de leitura viraria pendência ampla
+  // corrigir_backlog_ou_sprint_file, escondendo a causa real do caller.
+  fs.mkdirSync(path.dirname(traceLedgerFile(root, 'BACKLOG.md')), { recursive: true });
+  fs.writeFileSync(traceLedgerFile(root, 'BACKLOG.md'), '{ ledger quebrado', 'utf8');
+  writeStateWithAcceptance(root, 'S01.json', [
+    { id: 'AC-001', status: 'proved' },
+    { id: 'AC-002', status: 'proved' },
+  ]);
+  const beforeSprint = fs.readFileSync(sprintPath, 'utf8');
+  const r = updateSprintStatus({
+    run_id: 'rbadledger', project_root: root, backlog_path: 'BACKLOG.md', sprint_id: 'S01',
+    status: 'done', validator_verdict: 'pass', plan_path: 'PLAN_S01.md',
+    state_path: '.talos/state/S01.json', evidence: 'validator pass',
+  });
+  assert.equal(r.status, 'blocked');
+  const pend = r.pendencies.find(
+    (p) => p.category === 'rastreabilidade' && p.next_action === 'corrigir_ledger_traceability',
+  );
+  assert.ok(pend, `pendência de ledger ilegível esperada: ${JSON.stringify(r.pendencies)}`);
+  assert.match(pend.message, /ilegível/i);
+  assert.equal(fs.readFileSync(sprintPath, 'utf8'), beforeSprint, 'sprint intacta no bloqueio');
+});
+
+test('traceability: receipt tem escopo da sprint atribuída e lado B lança INV3; verify expõe pilot_metrics', () => {
+  const root = tmpRoot();
+  // REQ-001 pertence à S01 (incluído, proved); REQ-002 é REQ do backlog inteiro
+  // sem vínculo com a S01 — NÃO pode aparecer no receipt de fechamento da S01.
+  writeTraceabilityLedger({
+    schema: TRACEABILITY_SCHEMA_VERSION,
+    reqs: {
+      'REQ-001': { id: 'REQ-001', sources: [{ kind: 'talos', ref: 'sprint:S01' }], disposition: 'included' },
+      'REQ-002': { id: 'REQ-002', sources: [{ kind: 'talos', ref: 'brainstorm:piloto' }], disposition: 'included' },
+    },
+    sprints: { S01: { schema: TRACEABILITY_SCHEMA_VERSION } },
+    pilot_metrics: [],
+  }, traceAlphaBacklog, root);
+  const sprintMarkdown = sprintDoc({ id: 'S01' })
+    .replace('| Revalidação | false |', '| Revalidação | false |\n| Traceability | v1 |')
+    .replace(
+      '    behavior: "Gate observável passa quando AC válido"',
+      '    source_refs: [REQ-001]\n    behavior: "Gate observável passa quando AC válido"',
+    );
+  const sprintPath = path.join(root, 'SPRINT_S01_scope.md');
+  fs.writeFileSync(sprintPath, sprintMarkdown);
+  writeStateWithAcceptance(root, 'S01.json', [{ id: 'AC-001', status: 'proved' }]);
+  // Métrica de piloto registrada antes: verify precisa expor sem ação de escrita.
+  const stamped = traceabilityHandler({
+    run_id: 'rscope', project_root: root, backlog_path: traceAlphaBacklog,
+    action: 'record_metric', metric: { calls: 4, retries: 1, coverage: '3/3' },
+  });
+  assert.equal(stamped.metric_count, 1);
+  const receipt = traceabilityHandler({
+    run_id: 'rscope', project_root: root, backlog_path: traceAlphaBacklog, action: 'receipt',
+    sprint_path: sprintPath, sprint_id: 'S01', state_path: '.talos/state/S01.json',
+  });
+  assert.deepEqual(receipt.coverage, { included: 1, proved: 1, pending: 0 }, 'escopo: só REQ atribuído à S01 entra na cobertura');
+  assert.deepEqual(receipt.reqs.map((row) => row.req), ['REQ-001']);
+  assert.deepEqual(receipt.exceptions, []);
+  assert.deepEqual(receipt.blockers, [], 'REQ estranho não pode virar blocker da S01');
+  const consult = traceabilityHandler({
+    run_id: 'rscope', project_root: root, backlog_path: traceAlphaBacklog, action: 'verify',
+  });
+  assert.equal(consult.pilot_metrics.length, 1, 'verify expõe métricas registradas');
+  assert.equal(consult.pilot_metrics[0].calls, 4);
+  // LADO B: ledger marcado para ESTA sprint sem metadado `Traceability` no
+  // sprint file → erro determinístico (antes devolvia receipt legacy feliz
+  // contradizendo o conformance público, que bloqueia o mesmo par). Marca em
+  // outra sprint qualquer continua legacy happy.
+  traceabilityHandler({
+    run_id: 'rscope', project_root: root, backlog_path: traceAlphaBacklog,
+    action: 'upsert', sprint: { sprint_id: 'S05', schema: TRACEABILITY_SCHEMA_VERSION },
+  });
+  const unmarkedPath = path.join(root, 'SPRINT_unmarked.md');
+  fs.writeFileSync(unmarkedPath, sprintDoc({ id: 'S05' }));
+  assert.throws(
+    () => traceabilityHandler({
+      run_id: 'rscope', project_root: root, backlog_path: traceAlphaBacklog,
+      action: 'receipt', sprint_path: unmarkedPath, sprint_id: 'S05',
+    }),
+    /marcadores consistentes/,
+  );
+});
+
+test('traceability: record_metric persiste observação preservando reqs, sem claim de economia no receipt (AC-3.3.1 / CN6 / INV5)', () => {
+  const root = tmpRoot();
+  traceabilityHandler({
+    run_id: 'r331', project_root: root, backlog_path: traceAlphaBacklog,
+    reqs: [traceReq()],
+  });
+  const stamped = traceabilityHandler({
+    run_id: 'r331', project_root: root, backlog_path: traceAlphaBacklog,
+    action: 'record_metric',
+    metric: { calls: 12, retries: 2, turns: 5, coverage: 0.8, instructions: 'piloto: registrar fluxo real' },
+  });
+  assert.equal(stamped.metric_count, 1);
+  const ledger = JSON.parse(fs.readFileSync(traceLedgerFile(root, traceAlphaBacklog), 'utf8'));
+  assert.equal(ledger.pilot_metrics.length, 1);
+  assert.equal(ledger.pilot_metrics[0].calls, 12);
+  assert.equal(ledger.pilot_metrics[0].retries, 2);
+  assert.equal(ledger.pilot_metrics[0].turns, 5);
+  assert.equal(ledger.pilot_metrics[0].coverage, 0.8);
+  assert.equal(ledger.pilot_metrics[0].instructions, 'piloto: registrar fluxo real');
+  assert.ok('REQ-001' in ledger.reqs, 'escrita absoluta preserva reqs irmãos (falsificador: append que apaga reqs)');
+  assert.equal(stamped.metric.coverage, 0.8);
+  // Recusas: payload sem calls; coverage fora de 0–1/fração; nada grava.
+  const before = fs.readFileSync(traceLedgerFile(root, traceAlphaBacklog), 'utf8');
+  assert.throws(
+    () => traceabilityHandler({
+      run_id: 'r331', project_root: root, backlog_path: traceAlphaBacklog,
+      action: 'record_metric', metric: { retries: 1 },
+    }),
+    /calls/,
+  );
+  assert.throws(
+    () => traceabilityHandler({
+      run_id: 'r331', project_root: root, backlog_path: traceAlphaBacklog,
+      action: 'record_metric', metric: { calls: 1, coverage: 1.5 },
+    }),
+    /coverage/,
+  );
+  assert.equal(fs.readFileSync(traceLedgerFile(root, traceAlphaBacklog), 'utf8'), before, 'recusas não gravam');
+  // INV5: nenhuma superfície do receipt nem do registro afirma economia (a
+  // medição existe, a promoção da economia é do fechamento, não da tool).
+  assert.ok(!JSON.stringify(stamped).includes('economia'), 'record_metric não afirma economia');
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Guide RASTREABILIDADE_MCP_GUIDE — Plano F (fechamento): wire de produção do
+// grafo v1 no gate público talos_verify_sprint_file (CN2/CN3/INV3). Até o
+// fechamento, os ACs 1.2.1/2.1.2/2.1.3/2.3.1 eram provados sob injeção direta
+// da opção `traceability`; nenhum call site de produção alimentava o ramo v1.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('talos_verify_sprint_file: mismatch de marcas bloqueia nos dois sentidos pelo gate público (AC-1.2.1 / INV3 — wire do Plano F)', () => {
+  const root = tmpRoot();
+  fs.mkdirSync(path.join(root, '.talos/backlog/sprints'), { recursive: true });
+  // Lado A: sprint marcada v1, ledger sem a marca da sprint.
+  const sprintA = path.join(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md');
+  fs.writeFileSync(sprintA, sprintDoc().replace('| Revalidação | false |', '| Revalidação | false |\n| Traceability | v1 |'));
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), BACKLOG_WITH_SPRINT_FILE);
+  writeTraceabilityLedger({
+    schema: TRACEABILITY_SCHEMA_VERSION,
+    reqs: {},
+    sprints: {},
+    pilot_metrics: [],
+  }, 'BACKLOG.md', root);
+  const ladoA = verifySprintFile({
+    run_id: 'rpf1', project_root: root,
+    sprint_path: '.talos/backlog/sprints/SPRINT_S01_runtime.md',
+    sprint_id: 'S01', backlog_path: 'BACKLOG.md',
+  });
+  assert.equal(ladoA.status, 'blocked');
+  const pendA = ladoA.pendencies.find((p) => p.category === 'rastreabilidade' && p.next_action === 'alinhar_marcadores_traceability');
+  assert.ok(pendA, `pendência de marcadores esperada no lado A: ${JSON.stringify(ladoA.pendencies)}`);
+  // Lado B: ledger marcado como v1, sprint sem o metadado Traceability.
+  fs.writeFileSync(sprintA, sprintDoc());
+  writeTraceabilityLedger({
+    schema: TRACEABILITY_SCHEMA_VERSION,
+    reqs: {},
+    sprints: { S01: { schema: TRACEABILITY_SCHEMA_VERSION } },
+    pilot_metrics: [],
+  }, 'BACKLOG.md', root);
+  const ladoB = verifySprintFile({
+    run_id: 'rpf1', project_root: root,
+    sprint_path: '.talos/backlog/sprints/SPRINT_S01_runtime.md',
+    sprint_id: 'S01', backlog_path: 'BACKLOG.md',
+  });
+  assert.equal(ladoB.status, 'blocked');
+  const pendB = ladoB.pendencies.find((p) => p.category === 'rastreabilidade' && p.next_action === 'alinhar_marcadores_traceability');
+  assert.ok(pendB, `pendência de marcadores esperada no lado B: ${JSON.stringify(ladoB.pendencies)}`);
+});
+
+test('talos_verify_sprint_file: v1 com source_refs órfã bloqueia antes do selo/execução (AC-2.1.2 / CN3 — wire do Plano F)', () => {
+  const root = tmpRoot();
+  fs.mkdirSync(path.join(root, '.talos/backlog/sprints'), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md'),
+    sprintDoc()
+      .replace('| Revalidação | false |', '| Revalidação | false |\n| Traceability | v1 |')
+      .replace(
+        'behavior: "Gate observável passa quando AC válido"',
+        'source_refs: [REQ-999]\n    behavior: "Gate observável passa quando AC válido"',
+      ),
+  );
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), BACKLOG_WITH_SPRINT_FILE);
+  writeTraceabilityLedger({
+    schema: TRACEABILITY_SCHEMA_VERSION,
+    reqs: {
+      'REQ-001': { id: 'REQ-001', sources: [{ kind: 'talos', ref: 'sprint:S01' }], criticality: 'alta', disposition: 'included' },
+    },
+    sprints: { S01: { schema: TRACEABILITY_SCHEMA_VERSION } },
+    pilot_metrics: [],
+  }, 'BACKLOG.md', root);
+  const r = verifySprintFile({
+    run_id: 'rpf2', project_root: root,
+    sprint_path: '.talos/backlog/sprints/SPRINT_S01_runtime.md',
+    sprint_id: 'S01', backlog_path: 'BACKLOG.md',
+  });
+  assert.equal(r.status, 'blocked');
+  const orfa = r.pendencies.find((p) => p.category === 'rastreabilidade' && /órfão|órfã/.test(p.message));
+  assert.ok(orfa, `pendência de ref órfã esperada: ${JSON.stringify(r.pendencies)}`);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Plano 02 (loop) — provenance/budget do repair, veredito da verification e
+// PENDENCIAS writer/reader + drain gate (CN6/CN9/CN4 parcial; VC1/VC2/VC4;
+// INV3/INV5/INV7). Princípio aditivo: chamadas sem `origin` mantêm o fluxo G4.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Fluxo in-loop pós-review: sem validator aberto (D4 corta o 2º validator no
+// ramo review→repair). O slot de repair abre sobre state v3 válido em disco.
+function plan02InLoopSetup(root, runId, statePath = `.talos/state/${runId}/slice.json`) {
+  preflight({
+    run_id: runId, project_root: root, mode: 'execute',
+    host: 'codex', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: runId, project_root: root, action: 'start', phase: 'plan_execute' });
+  ensureValidatorStateFixture(root, runId, statePath);
+  return statePath;
+}
+
+function plan02Verification(verdict, overrides = {}) {
+  return {
+    findings: [{
+      finding_id: 'F-001', verdict,
+      checks_executed: ['node --test'],
+      check_results: [{ check: 'node --test', ok: true }],
+      ...overrides,
+    }],
+    verified_at: new Date().toISOString(),
+  };
+}
+
+// AC-02.1.1 (VC1/CN6): procedência persistida; default validator preserva o fluxo.
+test('Plano 02: repair start persiste procedência (AC-02.1.1)', () => {
+  const root = tmpRoot();
+  const statePath = plan02InLoopSetup(root, 'p02prov');
+
+  const slice = lockValidator({
+    run_id: 'p02prov', project_root: root, action: 'repair_start',
+    state_path: statePath, origin: 'slice_review',
+  });
+  assert.equal(slice.status, 'passed');
+  assert.equal(slice.validator_status, 'repair_running');
+  let cycle = readRunJson(root, 'p02prov').data.validator_cycle;
+  assert.equal(cycle.repair.origin, 'slice_review', 'procedência in-loop persistida no cycle');
+  assert.equal(cycle.repair.budget_used.slice_review, 1);
+  assert.equal(cycle.repair.budget_used.escalation, 0);
+  assert.equal(cycle.repair.budget_used.validator, 0);
+
+  // Default: fluxo validator sem `origin` — mesma semântica de hoje.
+  const root2 = tmpRoot();
+  const statePath2 = plan02InLoopSetup(root2, 'p02prov2');
+  const start = lockValidator({
+    run_id: 'p02prov2', project_root: root2, action: 'start', state_path: statePath2,
+  });
+  assert.equal(start.status, 'passed');
+  lockValidator({
+    run_id: 'p02prov2', project_root: root2, action: 'complete', state_path: statePath2,
+    validator_run_id: start.validator_run_id, verdict: 'fail',
+    data: { findings: [finding()] },
+  });
+  const legacy = lockValidator({
+    run_id: 'p02prov2', project_root: root2, action: 'repair_start', state_path: statePath2,
+  });
+  assert.equal(legacy.status, 'passed', 'fluxo validator sem origin intacto (D18)');
+  cycle = readRunJson(root2, 'p02prov2').data.validator_cycle;
+  assert.equal(cycle.repair.origin, 'validator');
+
+  // Origin fora do enum: blocked tipado, sem abrir slot.
+  const root3 = tmpRoot();
+  const statePath3 = plan02InLoopSetup(root3, 'p02prov3');
+  const bad = lockValidator({
+    run_id: 'p02prov3', project_root: root3, action: 'repair_start',
+    state_path: statePath3, origin: 'outro',
+  });
+  assert.equal(bad.status, 'blocked');
+  assert.equal(bad.code, 'origin_invalida');
+  cycle = readRunJson(root3, 'p02prov3').data.validator_cycle;
+  assert.equal(cycle.repair.status, 'not_needed', 'slot não abre com origin inválida');
+});
+
+// AC-02.2.1 (INV5/CN6/CN9): 2ª abertura da mesma provenance → blocked (fail-closed).
+test('Plano 02: budget 1 por provenance bloqueia 2ª abertura (AC-02.2.1)', () => {
+  const root = tmpRoot();
+  const statePath = plan02InLoopSetup(root, 'p02budget');
+
+  const first = lockValidator({
+    run_id: 'p02budget', project_root: root, action: 'repair_start',
+    state_path: statePath, origin: 'slice_review',
+  });
+  assert.equal(first.status, 'passed');
+  const done = lockValidator({
+    run_id: 'p02budget', project_root: root, action: 'repair_complete',
+    repair_run_id: first.repair_run_id, state_path: statePath,
+  });
+  assert.equal(done.status, 'passed', 'slot fecha sem verification (fluxo mínimo)');
+
+  const second = lockValidator({
+    run_id: 'p02budget', project_root: root, action: 'repair_start',
+    state_path: statePath, origin: 'slice_review',
+  });
+  assert.equal(second.status, 'blocked');
+  assert.equal(second.code, 'repair_budget_exhausted');
+  assert.equal(second.next_action, 'estacionar_sprint_detached_repair');
+  const cycle = readRunJson(root, 'p02budget').data.validator_cycle;
+  assert.equal(cycle.repair.status, 'completed', 'block de budget não abre slot');
+  assert.equal(cycle.repair.active, null);
+});
+
+// AC-02.2.2 (VC1/INV5/CN3 fundação): contadores independentes; slot escalation
+// habilita commit de role repair pela role inference existente.
+test('Plano 02: escalation com budget próprio e commit de repair (AC-02.2.2)', () => {
+  const { root } = planCommitSetup('p02esc', { mutar: true });
+  const commit = commitState({
+    run_id: 'p02esc', project_root: root, slice: 'A',
+    plan_path: '.talos/plans/PLAN_S41.md',
+    proofs: [{ kind: 'AC', id: 'AC-001', check: 'node --test', files: ['src/a.js'] }],
+  });
+  assert.equal(commit.status, 'passed');
+
+  // Esgota o budget da esteira primeiro.
+  const inLoop = lockValidator({
+    run_id: 'p02esc', project_root: root, action: 'repair_start',
+    state_path: commit.state_path, origin: 'slice_review',
+  });
+  assert.equal(inLoop.status, 'passed');
+  const inLoopDone = lockValidator({
+    run_id: 'p02esc', project_root: root, action: 'repair_complete',
+    repair_run_id: inLoop.repair_run_id, state_path: commit.state_path,
+  });
+  assert.equal(inLoopDone.status, 'passed');
+  const secondSlice = lockValidator({
+    run_id: 'p02esc', project_root: root, action: 'repair_start',
+    state_path: commit.state_path, origin: 'slice_review',
+  });
+  assert.equal(secondSlice.status, 'blocked');
+  assert.equal(secondSlice.code, 'repair_budget_exhausted');
+
+  // escalation NÃO consome o contador da esteira (falsificador: budget único).
+  const esc = lockValidator({
+    run_id: 'p02esc', project_root: root, action: 'repair_start',
+    state_path: commit.state_path, origin: 'escalation',
+  });
+  assert.equal(esc.status, 'passed', 'sidecar com budget próprio');
+  let cycle = readRunJson(root, 'p02esc').data.validator_cycle;
+  assert.equal(cycle.repair.origin, 'escalation');
+  assert.equal(cycle.repair.budget_used.escalation, 1);
+  assert.equal(cycle.repair.budget_used.slice_review, 1, 'contador da esteira intocado');
+
+  // Commit de role repair do sidecar passa na role inference (mesmo state_path).
+  fs.writeFileSync(path.join(root, 'src/a.js'), 'export const a = 2;\n');
+  const escCommit = commitState({
+    run_id: 'p02esc', project_root: root, slice: 'A',
+    plan_path: '.talos/plans/PLAN_S41.md',
+    proofs: [{ kind: 'AC', id: 'AC-001', check: 'node --test', files: ['src/a.js'] }],
+    repair: [{ finding_id: 'F-001', files: ['src/a.js'], checks: ['node --test'], status: 'resolved' }],
+  });
+  assert.equal(escCommit.status, 'passed', `commit do sidecar: ${escCommit.error ?? ''}`);
+  assert.equal(escCommit.role, 'repair');
+  cycle = readRunJson(root, 'p02esc').data.validator_cycle;
+  assert.equal(cycle.repair.budget_used.escalation, 1, 'commit não abre novo slot');
+});
+
+// AC-02.3.1 (VC4/INV3/CN2): veredito persiste; payload inválido → blocked sem mutar.
+test('Plano 02: verification persistida e recusas tipadas (AC-02.3.1)', () => {
+  const root = tmpRoot();
+  const statePath = plan02InLoopSetup(root, 'p02verif');
+  const slot = lockValidator({
+    run_id: 'p02verif', project_root: root, action: 'repair_start',
+    state_path: statePath, origin: 'slice_review',
+  });
+  assert.equal(slot.status, 'passed');
+  // Delta do repair no fluxo in-loop: sem packet de validator (D4), a fonte de
+  // finding_ids é o repair_evidence do state (commit do repair, F-001).
+  const repairData = resolvedRepair(root, statePath);
+
+  const casos = [
+    ['resolved sem checks', plan02Verification('resolved', { checks_executed: [], check_results: [] }), /checks_executed/],
+    ['verdict fora do enum', plan02Verification('aprovado'), /verdict/],
+    ['finding_id desconhecido', plan02Verification('resolved', { finding_id: 'F-999' }), /desconhecido/],
+  ];
+  for (const [nome, payload, motivo] of casos) {
+    const bad = lockValidator({
+      run_id: 'p02verif', project_root: root, action: 'repair_complete',
+      repair_run_id: slot.repair_run_id, state_path: statePath,
+      data: { repairs: repairData.repairs, verification: payload },
+    });
+    assert.equal(bad.status, 'blocked', `${nome}: deveria bloquear (recebido ${bad.error ?? ''})`);
+    assert.equal(bad.code, 'verification_invalida', `${nome}: ${JSON.stringify(bad.verification_violations ?? bad.error)}`);
+    assert.match(JSON.stringify(bad.verification_violations), motivo);
+    const cycle = readRunJson(root, 'p02verif').data.validator_cycle;
+    assert.equal(cycle.verification, null, `${nome}: block não muta cycle`);
+    assert.equal(cycle.repair.active?.run_id, slot.repair_run_id, `${nome}: slot permanece aberto`);
+  }
+
+  const good = lockValidator({
+    run_id: 'p02verif', project_root: root, action: 'repair_complete',
+    repair_run_id: slot.repair_run_id, state_path: statePath,
+    data: { repairs: repairData.repairs, verification: plan02Verification('resolved') },
+  });
+  assert.equal(good.status, 'passed', `verification válida: ${good.error ?? ''}`);
+  const cycle = readRunJson(root, 'p02verif').data.validator_cycle;
+  assert.equal(cycle.verification.findings[0].verdict, 'resolved', 'veredito persiste no cycle');
+  assert.deepEqual(cycle.verification.findings[0].checks_executed, ['node --test']);
+  assert.ok(cycle.verification.verified_at);
+});
+
+// AC-02.3.2 (CN7/D18): repair do ramo validator SEM verification segue válido e
+// idempotente — verification opcional não quebra o ciclo G4.
+test('Plano 02: repair sem verification segue válido (AC-02.3.2)', () => {
+  const root = tmpRoot();
+  const statePath = plan02InLoopSetup(root, 'p02nover');
+  const start = lockValidator({
+    run_id: 'p02nover', project_root: root, action: 'start', state_path: statePath,
+  });
+  assert.equal(start.status, 'passed');
+  lockValidator({
+    run_id: 'p02nover', project_root: root, action: 'complete', state_path: statePath,
+    validator_run_id: start.validator_run_id, verdict: 'fail',
+    data: { findings: [finding()] },
+  });
+  const repairStart = lockValidator({
+    run_id: 'p02nover', project_root: root, action: 'repair_start', state_path: statePath,
+  });
+  assert.equal(repairStart.status, 'passed');
+  const done = lockValidator({
+    run_id: 'p02nover', project_root: root, action: 'repair_complete',
+    repair_run_id: repairStart.repair_run_id, state_path: statePath,
+    data: resolvedRepair(root, statePath),
+  });
+  assert.equal(done.status, 'passed', `repair sem verification: ${done.error ?? ''}`);
+  const cycle = readRunJson(root, 'p02nover').data.validator_cycle;
+  assert.ok(cycle.verification === null || cycle.verification === undefined, 'verification ausente no fluxo validator');
+  // Idempotência S10 preservada: retorno duplicado é descartado.
+  const dup = lockValidator({
+    run_id: 'p02nover', project_root: root, action: 'repair_complete',
+    repair_run_id: repairStart.repair_run_id, state_path: statePath,
+    data: resolvedRepair(root, statePath),
+  });
+  assert.equal(dup.status, 'blocked');
+  assert.equal(dup.stale_discarded, true);
+  assert.equal(dup.reason, 'repair_duplicate_already_applied');
+});
+
+// AC-02.4.1 (VC2/CN4): NN monotônico por sprint, sem reuso após close; recarga.
+test('Plano 02: pendencies id monotônico e recarga (AC-02.4.1)', () => {
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S01', { status: 'ready', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | ready | — | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+  const append = (sprint = 'S01') => pendenciesHandler({
+    run_id: 'p02pd', project_root: root, backlog_path: 'BACKLOG.md', action: 'append',
+    sprint_id: sprint, severity: 'P2', files: ['src/a.js'],
+    recommendation: 'corrigir fluxo', fix_validation: 'node --test',
+  });
+  const p1 = append();
+  assert.equal(p1.status, 'passed');
+  assert.equal(p1.pd_id, 'PD-S01-01');
+  const p2 = append();
+  assert.equal(p2.pd_id, 'PD-S01-02', 'NN sequencial');
+  const close = pendenciesHandler({
+    run_id: 'p02pd', project_root: root, backlog_path: 'BACKLOG.md',
+    action: 'close', pd_id: 'PD-S01-01',
+  });
+  assert.equal(close.status, 'passed');
+  const p3 = append();
+  assert.equal(p3.pd_id, 'PD-S01-03', 'close não recicla NN');
+  // Recarga: list relê o arquivo do disco com os mesmos IDs.
+  const list = pendenciesHandler({
+    run_id: 'p02pd', project_root: root, backlog_path: 'BACKLOG.md', action: 'list',
+  });
+  assert.equal(list.status, 'passed');
+  assert.equal(list.open_count, 2);
+  assert.deepEqual(list.pds.map((pd) => pd.id), ['PD-S01-01', 'PD-S01-02', 'PD-S01-03']);
+  assert.deepEqual(list.pds.find((pd) => pd.id === 'PD-S01-01').status, 'closed');
+});
+
+// AC-02.4.2 (INV7/CN9): append só via tool MCP; recusa tipada; writer único.
+test('Plano 02: pendencies writer único (AC-02.4.2)', () => {
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S01', { status: 'ready', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | ready | — | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+
+  // Backlog inexistente → recusa tipada, sem criar arquivo.
+  const missing = pendenciesHandler({
+    run_id: 'p02w1', project_root: root, backlog_path: 'NAO_EXISTE.md', action: 'append',
+    sprint_id: 'S01', severity: 'P2', files: [], recommendation: 'r', fix_validation: 'node --test',
+  });
+  assert.equal(missing.status, 'blocked');
+  assert.equal(missing.code, 'backlog_ilegivel');
+  assert.equal(fs.existsSync(path.join(root, '.talos/backlog/PENDENCIAS_nao_existe.md')), false);
+
+  // Sprint inexistente no backlog → recusa tipada.
+  const noSprint = pendenciesHandler({
+    run_id: 'p02w1', project_root: root, backlog_path: 'BACKLOG.md', action: 'append',
+    sprint_id: 'S09', severity: 'P2', files: [], recommendation: 'r', fix_validation: 'node --test',
+  });
+  assert.equal(noSprint.status, 'blocked');
+  assert.equal(noSprint.code, 'sprint_inexistente');
+
+  // Busca estrutural: uma única função de escrita do PENDENCIAS no server.
+  const source = fs.readFileSync(
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'server.js'),
+    'utf8',
+  );
+  const writerDefs = (source.match(/function writePendenciesDocument\(/g) ?? []).length;
+  assert.equal(writerDefs, 1, 'definição única do writer PENDENCIAS');
+  const writerBody = source.slice(
+    source.indexOf('function writePendenciesDocument('),
+    source.indexOf('\nfunction ', source.indexOf('function writePendenciesDocument(')),
+  );
+  assert.ok(/fs\.writeFileSync\(tmp/.test(writerBody), 'writer único usa writeFileSync tmp');
+  assert.ok(/fs\.renameSync\(tmp/.test(writerBody), 'writer único usa renameSync tmp');
+  assert.ok(writerBody.includes('0o600'), 'writer único usa mode 0o600');
+  const restante = source.replace(writerBody, '');
+  const escritaDireta = restante
+    .split('\n')
+    .filter((line) => /PENDENCIES|PENDENCIAS/.test(line) && /fs\.writeFileSync\(/.test(line));
+  assert.deepEqual(escritaDireta, [], 'nenhuma escrita de PENDENCIAS fora do writer único');
+});
+
+// AC-02.4.3 (CN4): drain_required no select_next — teto 3, DEP-cone, closed não conta.
+test('Plano 02: drain_required no select_next (AC-02.4.3)', () => {
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S01', { status: 'done', dorStatus: 'verde' });
+  writeSprintFixture(root, 'S02', { status: 'ready', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Base | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | done | — | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+    '| S02 | Presa | F0 | objetivo | Must | Médio | Baixo | P1 | pendente | S01 | ready | — | `.talos/backlog/sprints/SPRINT_S02_runtime.md` | pendente | pendente |',
+  ]));
+  const append = (sprint) => pendenciesHandler({
+    run_id: 'p02drain', project_root: root, backlog_path: 'BACKLOG.md', action: 'append',
+    sprint_id: sprint, severity: 'P3', files: [], recommendation: 'melhorar', fix_validation: 'node --test',
+  });
+  const select = () => selectNextSprint({ run_id: 'p02drain', project_root: root, backlog_path: 'BACKLOG.md' });
+
+  // Sem PENDENCIAS: required false, demais campos idênticos.
+  const r0 = select();
+  assert.equal(r0.status, 'passed');
+  assert.equal(r0.selected.sprint_id, 'S02');
+  assert.equal(r0.drain_required.required, false);
+  assert.deepEqual(r0.drain_required.reasons, []);
+
+  append('S02');
+  append('S02');
+  const r1 = select();
+  assert.equal(r1.drain_required.required, false, '2 PDs < teto 3');
+
+  append('S02');
+  const r2 = select();
+  assert.equal(r2.drain_required.required, true, '3 PDs abertas atingem o teto');
+  assert.ok(r2.drain_required.reasons.includes('threshold'));
+  assert.equal(r2.drain_required.open_pd_count, 3);
+  assert.equal(r2.status, 'passed', 'drain_required anexa informação, não bloqueia a seleção');
+  assert.equal(r2.selected.sprint_id, 'S02');
+
+  // Falsificador: PDs closed não contam no limiar.
+  for (const pdId of ['PD-S02-01', 'PD-S02-02', 'PD-S02-03']) {
+    pendenciesHandler({
+      run_id: 'p02drain', project_root: root, backlog_path: 'BACKLOG.md',
+      action: 'close', pd_id: pdId,
+    });
+  }
+  const r3 = select();
+  assert.equal(r3.drain_required.required, false, 'closed não conta no teto');
+  assert.equal(r3.drain_required.open_pd_count, 0);
+
+  // DEP-cone: PD aberta de S01 (ancestral de S02) dispara com 1 PD.
+  append('S01');
+  const r4 = select();
+  assert.equal(r4.drain_required.required, true, 'PD de DEP-ancestral dispara');
+  assert.ok(r4.drain_required.reasons.includes('dep_cone'));
+  assert.equal(r4.drain_required.open_pd_count, 1);
+});
+
+// AC-02.5.1 (INV7/CN9): commit repair sem slot correspondente é recusado —
+// inclusive quando um slot de OUTRA provenance/state_path está aberto.
+test('Plano 02: commit repair sem slot é recusado (AC-02.5.1)', () => {
+  // Caso 1: ciclo idle, repair[] no input → repair_sem_slot (nada escreve).
+  const idle = planCommitSetup('p02slot1', { mutar: true });
+  const stateRel = '.talos/state/p02slot1/A.json';
+  const abs = path.join(idle.root, stateRel);
+  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  fs.writeFileSync(abs, 'ORIGINAL');
+  const noSlot = commitState({
+    run_id: 'p02slot1', project_root: idle.root, slice: 'A',
+    proofs: [{ kind: 'AC', id: 'AC-001', check: 'node --test' }],
+    repair: [{ finding_id: 'F-001', files: ['src/a.js'], checks: ['node --test'], status: 'resolved' }],
+  });
+  assert.equal(noSlot.status, 'blocked');
+  assert.equal(noSlot.code, 'repair_sem_slot');
+  assert.equal(fs.readFileSync(abs, 'utf8'), 'ORIGINAL', 'commit sem slot não escreve');
+
+  // Caso 2: slot escalation aberto para A não habilita commit repair em B.
+  const { root } = planCommitSetup('p02slot2', { mutar: true });
+  const commitA = commitState({
+    run_id: 'p02slot2', project_root: root, slice: 'A',
+    plan_path: '.talos/plans/PLAN_S41.md',
+    proofs: [{ kind: 'AC', id: 'AC-001', check: 'node --test', files: ['src/a.js'] }],
+  });
+  assert.equal(commitA.status, 'passed');
+  const slot = lockValidator({
+    run_id: 'p02slot2', project_root: root, action: 'repair_start',
+    state_path: commitA.state_path, origin: 'escalation',
+  });
+  assert.equal(slot.status, 'passed');
+  const commitB = commitState({
+    run_id: 'p02slot2', project_root: root, slice: 'B',
+    plan_path: '.talos/plans/PLAN_S41.md',
+    proofs: [{ kind: 'AC', id: 'AC-002', check: 'node --test' }],
+    repair: [{ finding_id: 'F-001', files: ['src/b.js'], checks: ['node --test'], status: 'resolved' }],
+  });
+  assert.equal(commitB.status, 'blocked', 'slot de outro state_path não habilita commit');
+  assert.equal(fs.existsSync(path.join(root, '.talos/state/p02slot2/B.json')), false, 'commit em B não escreve');
+});
+
+// AC-02.5.2 (CN3 fundação/D18): catálogo da skill sidecar sem exigência por mode.
+test('Plano 02: catálogo escalation sem exigência por mode (AC-02.5.2)', () => {
+  assert.equal(WORKFLOW_CONFIG.skills.escalation_repair, 'talos-escalation-repair');
+  // Sidecar não virou fase obrigatória de modo algum (falsificador).
+  assert.equal(expectedExecutorSkill('full'), 'talos-plan-execute');
+  assert.equal(expectedExecutorSkill('direct'), 'talos-direct-execute');
+  assert.equal(expectedExecutorSkill('execute'), 'talos-plan-execute');
+  const flow = JSON.stringify(documentFlowForRouting('full', 'backlog-item'));
+  assert.ok(!flow.includes('escalation-repair'), 'routing não cita o sidecar');
+  // Preflight continua passando sem nenhuma exigência nova da skill — o
+  // catálogo ecoa o id (G10), mas nada do preflight exige o sidecar para os
+  // modos com execução (status passed sem report de sidecar).
+  const root = tmpRoot();
+  const pf = preflight({
+    run_id: 'p02cat', project_root: root, mode: 'execute',
+    host: 'claude', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  assert.equal(pf.status, 'passed');
+  assert.ok(!JSON.stringify(pf.gates ?? {}).includes('escalation'), 'nenhum gate do preflight exige o sidecar');
+  const exigencias = JSON.stringify(pf.routing?.skills_exigidos ?? pf.required_skills ?? []);
+  assert.ok(!exigencias.includes('escalation-repair'), 'skills exigidas não incluem o sidecar');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Plano 2 (FSM_BOUNDARY_MINIMAL_GUIDE) — G4 reproject, reconcile, slot único
+// (CN2, CN7, CN8; VC1, VC3; LEG3, LEG4; INV3, INV6, INV8)
+// ═══════════════════════════════════════════════════════════════════════════
+
+// AC-2.1.1 (OUT:CN1, TECH:VC1, TECH:LEG4, INT:D10): G4 reproject
+test('G4 reproject: fórmula divergente é sobrescrita pelo MCP e start passa (AC-2.1.1)', () => {
+  const { root } = planCommitSetup('g4-reproject', { mutar: true });
+  const commit = commitState({
+    run_id: 'g4-reproject', project_root: root, slice: 'A',
+    plan_path: '.talos/plans/PLAN_S41.md',
+    proofs: [
+      { kind: 'AC', id: 'AC-001', check: 'node --test', files: ['src/a.js'] },
+    ],
+  });
+  assert.equal(commit.status, 'passed');
+
+  // Simula divergência de fórmula pura: files_changed=[] com worktree dirty desde t0,
+  // mas com sha do disco sincronizado no ledger.
+  const sliceAbs = path.join(root, commit.state_path);
+  const disk = JSON.parse(fs.readFileSync(sliceAbs, 'utf8'));
+  disk.files_changed = [];
+  disk.diff_stat = '0 files';
+  fs.writeFileSync(sliceAbs, `${JSON.stringify(disk, null, 2)}\n`);
+  const formulaDivergentSha = crypto.createHash('sha256').update(fs.readFileSync(sliceAbs)).digest('hex');
+  const ledger = runState({ action: 'get', run_id: 'g4-reproject', project_root: root });
+  ledger.data.dispatch.active.liveness.slice_commit_sha256 = formulaDivergentSha;
+  runState({ action: 'upsert', run_id: 'g4-reproject', project_root: root, data: ledger.data });
+
+  // lockValidator start deve detectar a divergência de fórmula, reprojectar,
+  // atualizar files_changed e sha no disco e no ledger, e passar (passed).
+  const start = lockValidatorCore({ run_id: 'g4-reproject', project_root: root, action: 'start', state_path: commit.state_path });
+  assert.equal(start.status, 'passed');
+  assert.equal(start.validator_status, 'running');
+
+  const reprojected = JSON.parse(fs.readFileSync(sliceAbs, 'utf8'));
+  assert.deepEqual(reprojected.files_changed, ['src/a.js'], 'JSON no disco foi reprojetado com fact git real');
+});
+
+// AC-2.2.1 (OUT:CN2, TECH:INV8, TECH:LEG3, INT:D12): CN2 reconcile reabre G4
+test('CN2 reconcile reabre G4 após edição manual do JSON (AC-2.2.1)', () => {
+  const { root } = planCommitSetup('cn2-rec', { mutar: true });
+  const commit = commitState({
+    run_id: 'cn2-rec', project_root: root, slice: 'A',
+    plan_path: '.talos/plans/PLAN_S41.md',
+    proofs: [{ kind: 'AC', id: 'AC-001', check: 'node --test', files: ['src/a.js'] }],
+  });
+  assert.equal(commit.status, 'passed');
+  const sliceAbs = path.join(root, commit.state_path);
+  const oldSha = commit.state_sha256;
+
+  // Altera bytes do JSON no disco
+  const content = JSON.parse(fs.readFileSync(sliceAbs, 'utf8'));
+  content.diff_stat = 'modificado a mao';
+  fs.writeFileSync(sliceAbs, `${JSON.stringify(content, null, 2)}\n`);
+
+  // Sem reconcile, validatorStart é bloqueado (G12 órfão) com next_action reconcile_state
+  const startBlocked = lockValidatorCore({ run_id: 'cn2-rec', project_root: root, action: 'start', state_path: commit.state_path });
+  assert.equal(startBlocked.status, 'blocked');
+  assert.equal(startBlocked.gate, 'G12');
+  assert.equal(startBlocked.next_action, 'reconcile_state');
+
+  // Chama talos_commit_state (sem campo role)
+  const rec = commitState({
+    run_id: 'cn2-rec', project_root: root, slice: 'A',
+  });
+  assert.equal(rec.status, 'passed');
+  assert.equal(rec.role, 'reconcile');
+  assert.equal(rec.next_action, 'open_validator');
+  assert.notEqual(rec.state_sha256, oldSha);
+
+  // G4 agora abre com sucesso
+  const startPassed = lockValidatorCore({ run_id: 'cn2-rec', project_root: root, action: 'start', state_path: commit.state_path });
+  assert.equal(startPassed.status, 'passed');
+  assert.equal(startPassed.validator_status, 'running');
+});
+
+// AC-2.1.2 (OUT:CN7, TECH:VC3, TECH:INV6): CN7 órfão sem reconcile continua blocked
+test('CN7 órfão sem reconcile continua blocked com next_action reconcile_state (AC-2.1.2)', () => {
+  const { root } = planCommitSetup('cn7-orphan', { mutar: true });
+  const commit = commitState({
+    run_id: 'cn7-orphan', project_root: root, slice: 'A',
+    plan_path: '.talos/plans/PLAN_S41.md',
+    proofs: [{ kind: 'AC', id: 'AC-001', check: 'node --test', files: ['src/a.js'] }],
+  });
+  assert.equal(commit.status, 'passed');
+  const sliceAbs = path.join(root, commit.state_path);
+
+  // Altera bytes no disco à mão
+  fs.appendFileSync(sliceAbs, '\n/* adulterado */\n');
+
+  // validatorStart sem reconcile continua blocked com next_action: reconcile_state
+  const start = lockValidatorCore({ run_id: 'cn7-orphan', project_root: root, action: 'start', state_path: commit.state_path });
+  assert.equal(start.status, 'blocked');
+  assert.equal(start.gate, 'G12');
+  assert.equal(start.next_action, 'reconcile_state');
+  assert.match(start.error, /órfão\/dual-writer/);
+});
+
+// AC-2.3.1 (OUT:CN8, INT:D13): CN8 slot único aceita id frouxo
+test('CN8 slot único aceita id frouxo; dois slots exigem id exato (AC-2.3.1)', () => {
+  const { root } = planCommitSetup('cn8-slot', { mutar: true });
+  const commit = commitState({
+    run_id: 'cn8-slot', project_root: root, slice: 'A',
+    plan_path: '.talos/plans/PLAN_S41.md',
+    proofs: [{ kind: 'AC', id: 'AC-001', check: 'node --test', files: ['src/a.js'] }],
+  });
+  assert.equal(commit.status, 'passed');
+
+  // Coloca ciclo em repair_required para abrir repair_start
+  const pre = runState({ action: 'get', run_id: 'cn8-slot', project_root: root });
+  pre.data = pre.data ?? {};
+  pre.data.validator_cycle = {
+    status: 'repair_required',
+    last_state_path: commit.state_path,
+    repair: { origin: 'validator', budget_used: {} },
+  };
+  runState({ action: 'upsert', run_id: 'cn8-slot', project_root: root, data: pre.data });
+
+  const rStart = lockValidatorCore({
+    run_id: 'cn8-slot', project_root: root, action: 'repair_start',
+    state_path: commit.state_path, origin: 'validator',
+  });
+  assert.equal(rStart.status, 'passed');
+  const canonicalId = rStart.repair_run_id;
+  assert.match(canonicalId, /repair/);
+
+  // Cenário 1: slot único com repair_run_id='repair-001' (frouxo) fecha o slot
+  const completeFrouxo = lockValidatorCore({
+    run_id: 'cn8-slot', project_root: root, action: 'repair_complete',
+    state_path: commit.state_path, repair_run_id: 'repair-001',
+    data: { repairs: [] },
+  });
+  assert.equal(completeFrouxo.status, 'passed');
+  assert.equal(completeFrouxo.validator_status, 'ready_for_retry');
+  assert.equal(completeFrouxo.validator_status, 'ready_for_retry');
+
+  // Cenário 2: com 2 slots ativos, id errado continua blocked
+  const slotA = { run_id: 'repair-slot-A', state_path: commit.state_path, started_at: new Date().toISOString() };
+  const slotB = { run_id: 'repair-slot-B', state_path: commit.state_path, started_at: new Date().toISOString() };
+  const current = runState({ action: 'get', run_id: 'cn8-slot', project_root: root });
+  current.data.validator_cycle.status = 'repair_running';
+  current.data.validator_cycle.repair = {
+    ...current.data.validator_cycle.repair,
+    status: 'running',
+    slots: [slotA, slotB],
+    active: slotA,
+  };
+  runState({ action: 'upsert', run_id: 'cn8-slot', project_root: root, data: current.data });
+
+  const completeWrongDual = lockValidatorCore({
+    run_id: 'cn8-slot', project_root: root, action: 'repair_complete',
+    state_path: commit.state_path, repair_run_id: 'repair-unknown',
+    data: { repairs: [] },
+  });
+  assert.equal(completeWrongDual.status, 'blocked');
+  assert.equal(completeWrongDual.stale_discarded, true);
+
+  // Fechar com o id exato slotA fecha
+  const completeSlotA = lockValidatorCore({
+    run_id: 'cn8-slot', project_root: root, action: 'repair_complete',
+    state_path: commit.state_path, repair_run_id: 'repair-slot-A',
+    data: { repairs: [] },
+  });
+  assert.equal(completeSlotA.status, 'passed');
+});
+
+// AC-2.3.1 (OUT:CN8, INT:D13): a mesma régua de slot frouxo vale para
+// `complete`, não só para `repair_complete`. CN8 nomeia os dois sinks.
+test('CN8 slot único aceita validator_run_id frouxo no complete; id canônico divergente e dois slots continuam blocked (AC-2.3.1)', () => {
+  const root = tmpRoot();
+  preflight({
+    run_id: 'cn8-vc', project_root: root, mode: 'execute',
+    host: 'codex', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: 'cn8-vc', project_root: root, action: 'start', phase: 'plan_execute' });
+
+  const start = lockValidator({
+    run_id: 'cn8-vc', project_root: root, host: 'codex',
+    action: 'start', state_path: '.talos/state/cn8-vc/slice.json',
+  });
+  assert.equal(start.status, 'passed');
+  assert.match(start.validator_run_id, /^cn8-vc:validator:1:/);
+
+  // Cenário 1: id canônico que diverge do slot ativo é stale real -> blocked.
+  const canonicalStale = lockValidator({
+    run_id: 'cn8-vc', project_root: root, host: 'codex', action: 'complete',
+    state_path: '.talos/state/cn8-vc/slice.json',
+    validator_run_id: 'cn8-vc:validator:9:stale', verdict: 'pass',
+  });
+  assert.equal(canonicalStale.status, 'blocked');
+  assert.equal(canonicalStale.stale_discarded, true);
+
+  // Cenário 2: slot único com id NÃO-canônico ('validator-001') fecha o slot.
+  const frouxo = lockValidator({
+    run_id: 'cn8-vc', project_root: root, host: 'codex', action: 'complete',
+    state_path: '.talos/state/cn8-vc/slice.json',
+    validator_run_id: 'validator-001', verdict: 'pass',
+  });
+  assert.equal(frouxo.status, 'passed');
+  assert.equal(frouxo.validator_run_id, start.validator_run_id, 'fecha usando o id canônico do slot ativo');
+
+  // Cenário 3: com dois slots ativos, id frouxo não escolhe slot -> blocked.
+  const root2 = tmpRoot();
+  preflight({
+    run_id: 'cn8-vc2', project_root: root2, mode: 'execute',
+    host: 'codex', host_capabilities: { subagent_available: true, mcp_available: true },
+  });
+  lockDispatch({ run_id: 'cn8-vc2', project_root: root2, action: 'start', phase: 'plan_execute' });
+  const start2 = lockValidator({
+    run_id: 'cn8-vc2', project_root: root2, host: 'codex',
+    action: 'start', state_path: '.talos/state/cn8-vc2/slice.json',
+  });
+  assert.equal(start2.status, 'passed');
+  const cur = runState({ action: 'get', run_id: 'cn8-vc2', project_root: root2 });
+  cur.data.validator_cycle.slots = [
+    cur.data.validator_cycle.active,
+    { ...cur.data.validator_cycle.active, run_id: 'cn8-vc2:validator:1:outro' },
+  ];
+  runState({ action: 'upsert', run_id: 'cn8-vc2', project_root: root2, data: cur.data });
+
+  const dualFrouxo = lockValidator({
+    run_id: 'cn8-vc2', project_root: root2, host: 'codex', action: 'complete',
+    state_path: '.talos/state/cn8-vc2/slice.json',
+    validator_run_id: 'validator-001', verdict: 'pass',
+  });
+  assert.equal(dualFrouxo.status, 'blocked');
+  assert.equal(dualFrouxo.stale_discarded, true);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Plano 03 — Frio sem metadata; repair só produto (CN1/CN5; LEG5; INV2/INV7)
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('Plano 03: validator skill não instrui finding P1 por boundary (AC-3.1.1 / LEG5 / INV7)', () => {
+  const validatorSkill = fs.readFileSync(path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    '../skills/talos-task-validator/SKILL.md',
+  ), 'utf8');
+  assert.doesNotMatch(validatorSkill, /Divergência (?:\*\*na slice\*\*|na slice) gera `?boundary_violations`? e finding P1/i, 'não instrui finding P1 de boundary');
+  assert.match(validatorSkill, /G4/i, 'menciona G4 como garantia de metadata');
+});
+
+test('Plano 03: sibling topology orquestrador G4 despacha validator (AC-3.1.2 / INV2)', () => {
+  const orchestrator = fs.readFileSync(ORCHESTRATOR_SKILL_PATH, 'utf8');
+  assert.match(orchestrator, /talos-task-validator/, 'orquestrador despacha validator');
+  for (const skillPath of [PLAN_EXECUTE_SKILL_PATH, DIRECT_EXECUTE_SKILL_PATH, FINDINGS_REPAIR_SKILL_PATH]) {
+    const skill = fs.readFileSync(skillPath, 'utf8');
+    assert.doesNotMatch(skill, /spawn_agent\s*\([^)]*talos-task-validator/, 'executor/repair não despacha validator');
+    assert.doesNotMatch(skill, /subagent_type\s*:\s*talos-task-validator/, 'executor/repair não despacha validator');
+  }
+});
+
+test('Plano 03: first_write é heartbeat G12 e baseline t0 vem do start (AC-3.3.1 / CN1 / INV2 / D21)', () => {
+  for (const skillPath of [PLAN_EXECUTE_SKILL_PATH, DIRECT_EXECUTE_SKILL_PATH]) {
+    const skill = fs.readFileSync(skillPath, 'utf8');
+    assert.match(skill, /first_write.*heartbeat G12/i, 'menciona first_write como heartbeat G12');
+    assert.match(skill, /baseline t0/i, 'menciona baseline t0 capturado no start');
+    assert.doesNotMatch(skill, /first_write.*captura.*snapshot inicial/i, 'não ensina que first_write captura snapshot inicial');
+  }
+});
+
+// AC-3.2.1 (CN5/INV7/D14/D15/D19): repair[] só aceita files mutados neste repair;
+// união mecânica em files_changed; F-metadata não abre repair_start nem consome budget;
+// retry após budget 1 é recusado.
+test('CN5 repair[] só deste repair', () => {
+  const { root } = planCommitSetup('cn5-repair', { mutar: true });
+  fs.writeFileSync(path.join(root, 'src/b.js'), 'export const b = 1;\n');
+
+  const first = commitState({
+    run_id: 'cn5-repair', project_root: root, slice: 'A',
+    plan_path: '.talos/plans/PLAN_S41.md',
+    proofs: [{ kind: 'AC', id: 'AC-001', check: 'node --test', files: ['src/a.js', 'src/b.js'] }],
+  });
+  assert.equal(first.status, 'passed');
+  const stateRel = first.state_path;
+
+  // 1. Validator attempt 1 falha com F-metadata:
+  const start = lockValidator({ run_id: 'cn5-repair', project_root: root, action: 'start', state_path: stateRel });
+  assert.equal(start.status, 'passed');
+
+  const comp = lockValidator({
+    run_id: 'cn5-repair', project_root: root, action: 'complete', state_path: stateRel,
+    validator_run_id: start.validator_run_id, dispatch_token: start.dispatch_token,
+    challenge_response: start.challenge ? sha256File(root, start.challenge.file) : null, verdict: 'fail',
+    data: {
+      findings: [finding({
+        id: 'F-099', severity: 'P1', file: 'files_changed',
+        failure_mode: 'files_changed', evidence: 'files_changed diverge da worktree',
+      })],
+    },
+  });
+  assert.equal(comp.status, 'passed');
+
+  // repair_start com apenas F-metadata é bloqueado e NÃO consome budget
+  const repairStartMeta = lockValidator({ run_id: 'cn5-repair', project_root: root, action: 'repair_start', state_path: stateRel });
+  assert.equal(repairStartMeta.status, 'blocked');
+  assert.equal(repairStartMeta.code, 'repair_metadata_proibido');
+  assert.equal(repairStartMeta.next_action, 'reconcile_state');
+  const cycleMeta = readRunJson(root, 'cn5-repair').data.validator_cycle;
+  assert.equal(cycleMeta.repair.budget_used.validator, 0, 'budget não foi consumido por F-metadata');
+
+  // 2. Agora com finding de produto (código):
+  const runData = readRunJson(root, 'cn5-repair');
+  runData.data.validator_cycle.findings_packet = {
+    findings: [finding({
+      id: 'F-001', severity: 'P1', file: 'src/a.js',
+      failure_mode: 'logic_bug', evidence: 'broken logic in a.js',
+    })],
+  };
+  runState({ action: 'upsert', run_id: 'cn5-repair', project_root: root, data: runData.data });
+
+  // repair_start para produto passa e consome budget 1
+  const repairStartProduct = lockValidator({ run_id: 'cn5-repair', project_root: root, action: 'repair_start', state_path: stateRel });
+  assert.equal(repairStartProduct.status, 'passed');
+  assert.equal(repairStartProduct.repair_budget, 1);
+  const cycleAfterStart = readRunJson(root, 'cn5-repair').data.validator_cycle;
+  assert.equal(cycleAfterStart.repair.budget_used.validator, 1);
+
+  // 3. Retry/reopen do mesmo finding de produto após budget 1 recusa:
+  const cycleData = readRunJson(root, 'cn5-repair');
+  cycleData.data.validator_cycle.repair.active = null;
+  cycleData.data.validator_cycle.status = 'repair_required';
+  runState({ action: 'upsert', run_id: 'cn5-repair', project_root: root, data: cycleData.data });
+
+  // Segundo repair_start com budget já esgotado recusa
+  const secondRepairStart = lockValidator({ run_id: 'cn5-repair', project_root: root, action: 'repair_start', state_path: stateRel });
+  assert.equal(secondRepairStart.status, 'blocked');
+  assert.equal(secondRepairStart.code, 'repair_budget_exhausted');
+
+  // 4. Testar verificação de repair[].files no commitState:
+  // Reabre slot de repair manualmente no ledger para testar o commit
+  runData.data.validator_cycle.status = 'repair_running';
+  runData.data.validator_cycle.repair.status = 'running';
+  runData.data.validator_cycle.repair.active = {
+    run_id: 'repair-test-slot',
+    state_path: stateRel,
+    started_at: new Date().toISOString(),
+    worktree_snapshot: captureWorktreeSnapshot(root),
+    boundary_before: {
+      head_sha: execFileSync('git', ['-C', root, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
+      files_changed: ['src/a.js', 'src/b.js'],
+      worktree_final: captureWorktreeSnapshot(root).filter((e) => ['src/a.js', 'src/b.js'].includes(e.path)),
+    },
+  };
+  runState({ action: 'upsert', run_id: 'cn5-repair', project_root: root, data: runData.data });
+
+  // repair[] lista src/b.js que NÃO foi mutado neste repair → blocked
+  const blockedCommit = commitState({
+    run_id: 'cn5-repair', project_root: root, slice: 'A',
+    plan_path: '.talos/plans/PLAN_S41.md',
+    proofs: [{ kind: 'AC', id: 'AC-001', check: 'node --test', files: ['src/a.js', 'src/b.js'] }],
+    repair: [{ finding_id: 'F-001', files: ['src/b.js'], checks: ['node --test'], status: 'resolved' }],
+  });
+  assert.equal(blockedCommit.status, 'blocked');
+  assert.equal(blockedCommit.code, 'repair_files_nao_mutados');
+
+  // 5. Agora realmente muta src/a.js neste repair:
+  fs.writeFileSync(path.join(root, 'src/a.js'), 'export const a = 2;\n');
+  const passedCommit = commitState({
+    run_id: 'cn5-repair', project_root: root, slice: 'A',
+    plan_path: '.talos/plans/PLAN_S41.md',
+    proofs: [{ kind: 'AC', id: 'AC-001', check: 'node --test', files: ['src/a.js', 'src/b.js'] }],
+    repair: [{ finding_id: 'F-001', files: ['src/a.js'], checks: ['node --test'], status: 'resolved' }],
+  });
+  assert.equal(passedCommit.status, 'passed');
+  assert.equal(passedCommit.role, 'repair');
+  const diskState = JSON.parse(fs.readFileSync(path.join(root, stateRel), 'utf8'));
+  assert.deepEqual(diskState.files_changed, ['src/a.js', 'src/b.js'], 'união mecânica execute ∪ repair');
+  assert.equal(diskState.repair_evidence.length, 1);
+  assert.equal(diskState.repair_evidence[0].finding_id, 'F-001');
+});
+
+test('CN3 select_next recusa sprint review com validator terminal', () => {
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S02', { status: 'review', dorStatus: 'verde', contratoStatus: 'aprovado' });
+  writeSprintFixture(root, 'S03', { status: 'ready', dorStatus: 'verde', contratoStatus: 'draft' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S02 | Sprint anterior | F0 | objetivo | Must | Alto | Baixo | P0 | — | — | review | — | `.talos/backlog/sprints/SPRINT_S02_runtime.md` | pendente | pendente |',
+    '| S03 | Próxima candidata | F0 | objetivo | Must | Alto | Baixo | P0 | — | — | ready | — | `.talos/backlog/sprints/SPRINT_S03_runtime.md` | pendente | pendente |',
+  ]));
+
+  const runId = 'r-cn3-terminal';
+  runState({
+    action: 'upsert',
+    run_id: runId,
+    project_root: root,
+    phase: 'plan_execute',
+    data: {
+      sprint_id: 'S02',
+      validator_cycle: {
+        status: 'passed',
+        sprint_id: 'S02',
+      },
+    },
+  });
+
+  const r = selectNextSprint({ run_id: runId, project_root: root, backlog_path: 'BACKLOG.md', loop: true });
+  assert.equal(r.status, 'blocked');
+  assert.equal(r.selected, null);
+});
+
+test('select_next reconcile_state em órfão', () => {
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S02', { status: 'ready', dorStatus: 'verde', contratoStatus: 'draft' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S02 | Candidata | F0 | objetivo | Must | Alto | Baixo | P0 | — | — | ready | — | `.talos/backlog/sprints/SPRINT_S02_runtime.md` | pendente | pendente |',
+  ]));
+
+  const runId = 'r-reconcile-orphan';
+  const stateRel = '.talos/state/r-reconcile-orphan/slice-01.json';
+  const stateAbs = path.join(root, stateRel);
+  fs.mkdirSync(path.dirname(stateAbs), { recursive: true });
+  fs.writeFileSync(stateAbs, JSON.stringify({ files_changed: ['src/foo.js'] }, null, 2));
+
+  runState({
+    action: 'upsert',
+    run_id: runId,
+    project_root: root,
+    phase: 'plan_execute',
+    data: {
+      dispatch: {
+        active: {
+          phase: 'plan_execute',
+          liveness: {
+            status: 'stalled',
+            last_commit_state_path: stateRel,
+            slice_commit_sha256: 'deadbeef1234',
+          },
+        },
+      },
+    },
+  });
+
+  const r = selectNextSprint({ run_id: runId, project_root: root, backlog_path: 'BACKLOG.md', loop: true });
+  assert.equal(r.status, 'blocked');
+  assert.equal(r.selected, null);
+  assert.equal(r.next_action, 'reconcile_state');
+});
+
+test('Plano 04: orquestrador update_sprint_status no mesmo turno do terminal antes do select_next (AC-4.2.1 / CN3 / INV1 / D17)', () => {
+  const orchestrator = fs.readFileSync(ORCHESTRATOR_SKILL_PATH, 'utf8');
+  assert.match(orchestrator, /talos_update_sprint_status/i);
+  assert.match(orchestrator, /mesmo turno.*talos_update_sprint_status|talos_update_sprint_status.*(?:mesmo turno|neste turno)/i, 'exige update_sprint_status no mesmo turno');
+  assert.match(orchestrator, /antes d[oe].*talos_select_next_sprint|talos_update_sprint_status.*antes d[oe].*select/i, 'exige update_sprint_status antes de select_next');
+  assert.match(orchestrator, /reconcile_state.*não avançar/i, 'reconcile_state bloqueia avanço de sprint');
 });

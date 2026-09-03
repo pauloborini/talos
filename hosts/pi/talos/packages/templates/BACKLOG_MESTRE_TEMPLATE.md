@@ -92,7 +92,7 @@ Observações:
 
 `backlog → ready → doing → review → manual_validation_pending → done`
 
-Estado lateral: `blocked`.
+Estados laterais: `blocked`; estacionamento do loop `--loop`: `detached_repair` (entrada via `doing`/`review`; saída via `ready`/`blocked`).
 
 | Estado | Significado | Contrato §7 pronto? | Pode executar? |
 |---|---|---:|---:|
@@ -103,6 +103,7 @@ Estado lateral: `blocked`.
 | manual_validation_pending | Provas automáticas verdes, aguardando validação manual (`M`); satisfaz DEP, não emite handoff | sim (aprovado+selo) | não |
 | done | DoD verde e evidência registrada | não | não |
 | blocked | Bloqueada por decisão/dependência | não | não |
+| detached_repair | Estacionada: residual P0/P1 irrecuperável no loop `--loop`; não satisfaz DEP; não emite handoff | sim (aprovado+selo) | não |
 
 ### 5.2 Definition of Ready global
 

@@ -53,6 +53,7 @@ const description = get('description') || '';
 const PI_TOOLS = {
   'talos-task-validator': 'read, grep, find, ls, bash',
   'talos-findings-repair': 'read, write, edit, grep, find, ls, bash',
+  'talos-escalation-repair': 'read, write, edit, grep, find, ls, bash',
   'talos-slice-review': 'read, grep, find, ls, bash',
   'talos-plan-execute': 'read, write, edit, grep, find, ls, bash',
   'talos-direct-execute': 'read, write, edit, grep, find, ls, bash',
@@ -106,7 +107,7 @@ if (host === 'opencode') {
   // canônico no corpo gerado (mesmo padrão auto-contido), mantendo fonte única:
   // o contrato continua vivendo só em packages/skills/<name>/SKILL.md; aqui é cópia
   // gerada (regenerável), nunca editada à mão.
-  const PI_EMBED_SHIMS = new Set(['talos-plan-execute', 'talos-direct-execute', 'talos-slice-review', 'talos-findings-repair']);
+  const PI_EMBED_SHIMS = new Set(['talos-plan-execute', 'talos-direct-execute', 'talos-slice-review', 'talos-findings-repair', 'talos-escalation-repair']);
   let piBody = body;
   if (PI_EMBED_SHIMS.has(name)) {
     const skillPath = path.join(ROOT, `packages/skills/${name}/SKILL.md`);

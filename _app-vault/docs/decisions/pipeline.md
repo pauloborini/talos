@@ -34,3 +34,7 @@ Desde v0.14.0 o artefato `PRD_*.md` não existe como etapa do pipeline. O sprint
 
 Desde v0.15.0: aceite de produto atômico (`AC-*` no §7.3 com YAML `acceptance`, hierarquia AC⊃EVAL). State schema v3 com `acceptance_results`/`proof_refs` por AC. Status `manual_validation_pending` satisfaz DEP; transição permitida com ACs `manual_pending` ou `unproved` (sem `violated`) sob veredito terminal do validator. Qualquer AC da sprint pode ser objeto de validação manual (`validated`) ou dispensa fundamentada (`waived`) no relatório `.talos/manual-validation/`. Promoção a `done` via `talos_sync_manual_validation` com emissão canônica de `HANDOFF_*.md` e ledger. Proibida edição manual de backlog/sprint para forçar status. Review crítica obrigatória via `policy_manifest.critical_review`.
 
+### DEC-038 — Worktree dirty da slice é válido
+
+A slice não exige commit git do código do produto. `files_changed` segue DEC-031 (porcelain Δ t0 ∪ range git). Exigir commit git dos files da slice é pack/DEC futura, não este contrato.
+

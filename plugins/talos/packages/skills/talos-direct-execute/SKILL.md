@@ -13,7 +13,7 @@ This is not planless execution. Replace the visible markdown plan with a compact
 
 ## Executor liveness (G12)
 
-O checkpoint público do executor é **apenas** `first_write`, emitido **imediatamente antes** da primeira mutação de workspace. Não emita outros checkpoints de executor: o MCP bloqueia qualquer event fora do conjunto público (G12 enxuto). A liveness do executor é comprovada pelo próprio commit — no-op sem mutação só chama `talos_commit_state` dentro de 120s e não é stalled; slice com mutação precisa de `first_write` antes do `talos_commit_state`.
+O checkpoint público do executor é **apenas** `first_write` (heartbeat G12), emitido **imediatamente antes** da primeira mutação de workspace (o baseline t0 já foi capturado pelo MCP no start). Não emita outros checkpoints de executor: o MCP bloqueia qualquer event fora do conjunto público (G12 enxuto). A liveness do executor é comprovada pelo próprio commit — no-op sem mutação só chama `talos_commit_state` dentro de 120s e não é stalled; slice com mutação precisa de `first_write` antes do `talos_commit_state`.
 
 ```json
 talos_lock_dispatch({
@@ -191,7 +191,7 @@ Para execução direta, use o path do sprint file/spec fornecido pelo usuário q
 Regras do payload (D10/D9):
 
 - `proofs[].kind` ∈ `{AC, EVAL, T}`; `id` e `check` obrigatórios; `check` é a string do comando — o MCP grava a string, **não** executa nem exige sidecar/exit 0 (honor, D11).
-- `files` e `covers` são opcionais; sem `files` o MCP projeta lista vazia.
+- `files` e `covers` são opcionais; sem `files` o MCP projeta lista vazia. `proofs[].files` não filtra nem limita `files_changed`: `files_changed` é a verdade mecânica do git (delta desde t0 do start ∪ diff git, D7).
 - `eval_na` marca EVAL não aplicável (nunca vira aprovado). Cada `EVAL-*` do sprint file precisa de proof `EVAL` (ou `eval_na`); sem isso o state é inválido para validação fria.
 - Campos projetados pelo MCP (denylist do GUIDE §2.5) são recusados com `-32602` — não os envie; o MCP projeta mapas de evidência, hashes e snapshots de worktree a partir de proofs + git + ledger.
 - O veredito de aceite por AC é emitido pelo validator sibling no `complete` e persistido pelo MCP no state em disco (oráculo mecânico, D22) — nunca entra no payload do executor.

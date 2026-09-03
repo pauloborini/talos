@@ -21,3 +21,7 @@ Hosts: Claude Code, Cursor, Codex App, Antigravity (Gemini), opencode, pi cli, z
 ### DEC-019 — Mecanismo Claude/Cursor vs Codex
 
 Claude Code e Cursor compartilham `.claude-plugin/` (mesmo manifest). Codex lê `.agents/plugins/marketplace.json` com source apontando para `plugins/talos/` commitado. Mexer em `.claude-plugin/` afeta Claude e Cursor ao mesmo tempo.
+
+### DEC-039 — v0.21.0 BREAKING do procedimento de boundary
+
+Skills 0.20 que ensinam baseline de `files_changed` no `first_write` e filtro por `proofs.files` não servem o 0.21. Semântica 0.18 nesse ponto é defeito (incidente loop S02). Disco v3 e schema MCP v5 podem permanecer se a projeção caber. Bump consciente + migração (DEC-009). Feature branch até `main` instalável (DEC-010).

@@ -1,5 +1,144 @@
 # Changelog
 
+## Unreleased
+
+- Sem entradas no momento.
+
+## 0.21.1 - 2026-09-03
+
+Tipo: **runtime + docs**. **Sem breaking**. Schema MCP: v5 (inalterado). Disco: v3 (inalterado).
+
+Resumo: hardening pós-0.21.0 do determinismo de boundary e do ciclo validator→repair. Corrige dois achados confirmados na campanha de integração: `reconcile` de slice `direct` sem `proofs` não herda mais o sentinel interno `.talos/plans/direct.md` como `plan_path` real, evitando flip indevido de `contract_kind: direct -> plan`; e o complete do validador ressincroniza `liveness.slice_commit_sha256` após persistir `acceptance_results`, preservando a classificação correta `role=repair` no commit seguinte e mantendo o enforcement D15 sobre `repair[].files`. A release também consolida a documentação pública/operacional para refletir o modelo endurecido e servir de insumo para comunicação externa.
+
+Mudanças:
+- **`packages/mcp-server/server.js`** — `commitState` em `role=reconcile` passa a ignorar `DIRECT_MODE_PLAN_PATH_SENTINEL` ao herdar `plan_path` do state em disco; slices `direct` reconciliadas sem `proofs` mantêm `contract_kind=direct` e continuam válidas para `talos-direct-execute`.
+- **`packages/mcp-server/server.js`** — `validatorComplete` ressincroniza a sha do ledger após gravar `acceptance_results` no disco; o repair pós-fail volta a cair em `role=repair` em vez de `reconcile`, preservando o gate de subconjunto do D15.
+- **`packages/mcp-server/server.test.js`** — novos testes de regressão para os dois achados da campanha de integração; helper `fixtureState()` deixa de depender do cwd da raiz do repo e passa a resolver fixtures relativo ao próprio arquivo de teste.
+- **Docs distribuídas** — `README.md`, `README.pt-BR.md`, `packages/mcp-server/README.md` e `packages/orchestrator/README.md` passam a explicar explicitamente o hardening pós-0.21.0 e o impacto operacional do fix.
+- **Release/docs operacionais** — criação do contrato canônico em `.app-work/releases/BUILD_AND_RELEASE.md` e do recibo `.app-work/releases/RELEASE_0.21.1.md`.
+
+Impacto:
+- Reconcile de slice `direct` adulterada/órfã não muda o tipo de contrato e não quebra a abertura do validador frio.
+- Repair disparado após `fail` do validator volta a usar o caminho correto de `repair`, sem pular validações de subset sobre `repair[].files`.
+- Suite de testes do MCP roda tanto da raiz quanto via `npm test --prefix packages/mcp-server`.
+- A narrativa pública do produto fica alinhada com o comportamento real da `0.21.1`.
+
+Arquivos/artefatos:
+- `packages/mcp-server/server.js`, `packages/mcp-server/server.test.js`.
+- `README.md`, `README.pt-BR.md`, `packages/mcp-server/README.md`, `packages/orchestrator/README.md`.
+- `.app-work/releases/BUILD_AND_RELEASE.md`, `.app-work/releases/RELEASE_0.21.1.md`.
+- Bump: `VERSION`, `package.json`, `packages/mcp-server/package.json`, `.claude-plugin/plugin.json`, READMEs/COMMANDS/CLAUDE/AGENTS, bundles e catálogos em `plugins/` e `hosts/`.
+
+Validação:
+- `node build/check-consistency.mjs`
+- `node build/check-public-docs.mjs`
+- `bash build/test-all.sh`
+- `claude plugin validate ./ --strict`
+- `codex plugin validate ./ --strict`
+- `git diff --check`
+
+## 0.21.0 - 2026-09-03
+
+Tipo: **runtime**. **Com breaking (skills 0.20)**. Schema MCP: v5 (inalterado). Disco: v3 (inalterado).
+
+Resumo: máquina de evidência e determinismo de boundary na slice — git + ledger são a verdade mecânica; o JSON de slice vira cache projetado pelo MCP (`talos_commit_state`). Corrige o contrato v0.18 em que o LLM filtrava `files_changed` por proofs: `files_changed` passa a ser a união git real (porcelain atual Δ baseline t0 do start ∪ commits desde base_sha minus `.talos/`), desacoplada de `proofs[].files` vazios ou parciais (incidente S02). Baseline t0 é capturada no `talos_lock_dispatch(start, phase=plan_execute)`; `first_write` vira heartbeat G12 puro (não redefine baseline). Reprojeção mecânica no G4 (`talos_lock_validator(start)`): divergência de fórmula é corrigida pelo MCP (reproject overwrite) sem abrir falso repair de metadata; JSON adulterado à mão (sha divergente) recupera via role `reconcile` (não rename). Validador frio não litiga metadata; repair foca exclusivamente em findings de produto (budget 1 por finding; complete sem mutação não inventa paths). Fechamento de sprint no `--loop` roda no mesmo turno antes do `select_next` (D17); `select_next` bloqueia seleção com `next_action: reconcile_state` se houver run stalled/repair_running com sha órfão (D18). BREAKING 0.21.0 (DEC-039): skills 0.20 que ensinam baseline no `first_write` ou filtro de `files_changed` por proofs não servem; disco v3 e schema MCP v5 permanecem.
+
+Mudanças:
+- **`packages/mcp-server/server.js`** — (Plano 01) t0 capturado no `startDispatch` (`phase=plan_execute`); `first_write` mantido apenas como heartbeat G12 (uma vez antes da primeira mutação; não altera baseline); `projectCommitStateV3` calcula `files_changed` como git fact real sem filtrar por `proofs[].files`; valida prova ⊆ fato (`proofs[].files` fora do fato é recusado); JSON de slice magro (hashes e `worktree_final` restritos aos paths de `files_changed`, D16); remoção de refills de porcelain completo em `commitState`. (Plano 02) G4 reprojeta e sobrescreve formula divergente automaticamente antes de abrir o slot; inferência de role `reconcile` para recuperar JSON adulterado ou órfão com `open_validator`/`complete_repair`; `lock_validator` afrouxa IDs de slot quando há slot único ativo (D13). (Plano 04) `selectNextSprint` recusa seleção da próxima sprint se a run atual tem veredito terminal do validator e a sprint associada permanece em `review` no backlog (D17); expõe `next_action: reconcile_state` em runs stalled ou repair_running com sha órfão (D18).
+- **`packages/skills/`** — `talos-task-validator` deixa de emitir findings P1 de boundary/metadata quando G4 passou; `talos-findings-repair` foca em findings P0/P1 de produto e envia `repair[]` apenas dos arquivos mutados no repair; `talos-plan-execute` e `talos-direct-execute` documentam t0 no start e `first_write` como heartbeat.
+- **`packages/orchestrator/skills/talos/SKILL.md`** — `SPRINT_STATUS_SYNC` e seção `--loop` explicitam chamada a `talos_update_sprint_status` no mesmo turno do validator terminal antes do `talos_select_next_sprint`; bloqueio de avanço com `next_action: reconcile_state`.
+- **`build/dr-guard.mjs` + `build/check-consistency.mjs` + `build/check-consistency.guard.test.mjs`** — guard `DR05` falha skills execute/repair que reensinem baseline no `first_write` ou filtro de `files_changed` por proofs (INV4).
+- **Bump minor `0.21.0`** via `build/bump-version.mjs` (bundles `plugins/`/`hosts/` regenerados; `VERSION`/manifests/READMEs sincronizados).
+
+Impacto:
+- Executor entrega slice dirty com `proofs[].files` vazio e `files_changed` lista os paths reais; G4 abre sem fail de metadata.
+- JSON órfão ou adulterado recupera deterministicamente via MCP `reconcile` sem edição manual.
+- `--loop` não pula sprint em review para selecionar a próxima.
+- Skills de execução da versão 0.20 devem ser atualizadas para 0.21.0.
+
+Arquivos/artefatos:
+- `packages/mcp-server/server.js`, `packages/mcp-server/server.test.js`.
+- `packages/skills/talos-plan-execute/SKILL.md`, `packages/skills/talos-direct-execute/SKILL.md`, `packages/skills/talos-task-validator/SKILL.md`, `packages/skills/talos-findings-repair/SKILL.md`.
+- `packages/orchestrator/skills/talos/SKILL.md`.
+- `packages/templates/STATE_FILE_SCHEMA.md`.
+- `build/dr-guard.mjs`, `build/check-consistency.mjs`, `build/check-consistency.guard.test.mjs`.
+- Bump: `VERSION`, `package.json`, `packages/mcp-server/package.json`, `.claude-plugin/plugin.json`, bundles e catálogos em `plugins/` e `hosts/`.
+
+Validação:
+- `node --test packages/mcp-server/server.test.js`
+- `node build/check-consistency.mjs`
+- `node --test build/check-consistency.guard.test.mjs`
+- `claude plugin validate ./ --strict`
+- `git diff --check`
+
+## 0.20.0 - 2026-08-31
+
+Tipo: **runtime**. **Sem breaking**. Schema MCP: v5 (inalterado). Disco: v3 (inalterado).
+
+Resumo: esteira `--loop` de sprints com auto-correção no orquestrador Talos — em vez de abortar a campanha por residual de review, cada sprint fecha com correção in-loop (repair com procedência → verification pontual), residual P0/P1 persistente vai ao sidecar serial `talos-escalation-repair` (slot com origem `escalation`), residual P2/P3 vira pendência `PD-<sprint>-<NN>` em `PENDENCIAS_<slug>.md` (writer MCP) drenada sob demanda (`drain_required` no `select_next`), e sprint irrecuperável é estacionada em `detached_repair` (não `done`, não satisfaz DEP) enquanto a campanha segue. Opt-in: sem a flag `--loop`, o pipeline atual não muda (CN7). Bump minor 0.19.0 → 0.20.0 (D18: feature aditiva).
+
+Mudanças:
+- **`packages/mcp-server/server.js`** — (Plano 01) status `detached_repair` em `BACKLOG_STATES`/`SPRINT_STATUS_TRANSITIONS` (`doing`/`review` → estaciona; saída `→ready`/`→blocked`; gate `escalation:failed`; nunca satisfaz DEP e `select_next` pula a presa); flag `--loop` gravada no ledger por `lock_dispatch(start, options.loop:true)` e gate em `updateSprintStatus`: run com `options.loop` recusa `done`/`manual_validation_pending` sem gate `slice_review` `passed` (VC3/D12). (Plano 02) `talos_lock_validator(repair_start, origin)` com procedência `slice_review`/`escalation` (ausente = `validator`, comportamento atual) e budget fail-closed de 1 por provenance no ciclo; `repair_complete` valida e persiste `data.verification` (enum fechado `resolved|not_resolved|regression`, `finding_id` ∈ packet, `resolved` exige `checks_executed` com resultado — INV3); tool `talos_pendencies` (`append`/`list`/`close`) com writer exclusivo do MCP, ID `PD-<sprint>-<NN>` monotônico por arquivo e `select_next` calculando `drain_required` (teto 3 PDs abertas, DEP-cone, overlap de files). (Plano 04) registro `escalation_repair` em `WORKFLOW_CONFIG.skills` (catálogo G10, sem exigência por mode).
+- **`packages/skills/talos-slice-review/SKILL.md`** — (Plano 03) fase **verification** (pós-repair): escopo fechado no delta do `repair_evidence`, âncora mecânica (checks executados ANTES do veredito; sem execução não há veredito), veredito binário por finding com eco obrigatório ao `repair_complete` (`data.verification`), roteamento do residual por severidade declarada (P0/P1 → sidecar; P2/P3 → PD; `violated` no state ⇒ residual P0 mecânico) e finding novo fora do delta roteado sem reabrir review completa (D11/INV10).
+- **`packages/skills/talos-findings-repair/SKILL.md`** — (Plano 04) origem `slice_review` do orquestrador aceita pelo mesmo schema de packet/regras duras; sem mudança de runtime do repair em si.
+- **`packages/skills/talos-escalation-repair/` (novo)** — (Plano 04) sidecar serial de escalation (modo residual + modo drain com `close` via MCP): commit via `talos_commit_state(repair[])` no mesmo `state_path`, sem self-validation, budget `escalation` = 1 sem retry; shim canônico + espelhos gerados em 5 hosts (`agents/`, `plugins/talos/.codex/`, `hosts/{opencode,pi,zcode}/`).
+- **`packages/orchestrator/skills/talos/SKILL.md` + `commands/talos.md`** — (Plano 05) flag `--loop` + seção "Modo loop" (esteira serial, drain sob demanda pelo `drain_required` do MCP, estacionamento, relatório final); cutover LEG1: ramo review do G8/bloco EXEC reescrito para repair (origem `slice_review`) → verification → sidecar (origem `escalation`) → `detached_repair` em loop / `blocked` standalone — o "2º e último" validator continua só no ramo G4; standalone (D13) descreve a mesma cadeia de fechamento sem condicional de loop; wiring do gate de review no ledger (`data.gates.slice_review` via `run_state` merge top-level).
+- **`build/check-consistency.mjs` + `build/loop-guard.mjs` (novo) + `build/check-consistency.guard.test.mjs`** — (Plano 06) guards permanentes do loop: review read-only (INV1), ramo review sem 2º validator/nova review com G4 preservado (INV2/LEG1/CN8), sem reabertura por finding novo (INV10), `violated`⇒P0 mecânico (INV12), verification com eco/âncora de checks/roteamento por severidade (INV4) e enum/catálogo (`detached_repair` em `BACKLOG_STATES` + template; `talos-escalation-repair` em `DISPATCHED_EXEC_AGENTS` + `WORKFLOW_CONFIG.skills` — shims do id novo cobertos por shim-drift/M4 em 5 hosts); catálogo `DISPATCHED_EXEC_AGENTS` movido para `loop-guard.mjs`; guard test cobre os falsificadores e o positivo do repo.
+- **`packages/templates/BACKLOG_MESTRE_TEMPLATE.md` + `packages/skills/_shared/scripts/document_quality.mjs`** — (Plano 01) `detached_repair` na tabela de estados e no enum canônico do conformance.
+- **Docs** — README (pt-BR/en) e `packages/orchestrator/README.md` descrevem o loop, a cadeia de residual (verification/sidecar/PD/drain/`detached_repair`) e o sidecar; template de backlog já documentava o estacionamento.
+- **Bump minor `0.20.0`** via `build/bump-version.mjs` (bundles `plugins/`/`hosts/` regenerados; `VERSION`/manifests/READMEs sincronizados).
+
+Impacto:
+- Sem `--loop`: nenhum caminho muda de veredito — flag ausente não grava nada no ledger, gate de loop não se aplica, `drain_required` não dispara e o fluxo G4 (fail → repair → 2º e último validator) permanece idêntico (D18 aditivo).
+- Com `--loop`: review crítica sempre roda (sem editar `policy_manifest` por sprint — D12); fechamento exige gate `slice_review` `passed` no ledger; esteira serializa tudo (D16), entrevista é a única pausa humana (D14).
+- Skills (prosa contratual) blindadas por guards estruturais: regressão de texto das semânticas novas reprova o `check-consistency` (CN8).
+- `detached_repair` não é `done` e não satisfaz DEP — campanha só encerra `blocked` com zero candidata (D8/INV6).
+
+Arquivos/artefatos:
+- `packages/mcp-server/server.js`, `packages/mcp-server/server.test.js`.
+- `packages/skills/talos-slice-review/SKILL.md`, `packages/skills/talos-findings-repair/SKILL.md`, `packages/skills/talos-escalation-repair/` (novo).
+- `packages/orchestrator/skills/talos/SKILL.md`, `packages/orchestrator/commands/talos.md`, `packages/orchestrator/references/subagent_dispatch.md`.
+- `packages/templates/BACKLOG_MESTRE_TEMPLATE.md`, `packages/skills/_shared/scripts/document_quality.mjs`.
+- `build/check-consistency.mjs`, `build/loop-guard.mjs` (novo), `build/check-consistency.guard.test.mjs`.
+- Espelhos gerados: `agents/`, `plugins/talos/`, `hosts/{opencode,pi,zcode,vscode}/` (via `build/build-plugins.sh`).
+- Bump: `VERSION`, `package.json`, `packages/mcp-server/package.json`, `.claude-plugin/plugin.json`, READMEs/COMMANDS/CLAUDE/AGENTS, bundles e `dist/` regenerados.
+
+Validação:
+- `node --test packages/mcp-server/server.test.js` — 343/343 (casos novos de loop dos Planos 01–02; regressão CN7 sem flag).
+- `node build/check-consistency.mjs` — ok (exit 0, com guards do loop).
+- `node build/check-consistency.guard.test.mjs` — 12/12 (falsificadores + positivo).
+- `git diff --check` — limpo.
+
+## 0.19.0 - 2026-08-26
+
+Tipo: **runtime**. **Sem breaking**. Schema MCP: v5 (inalterado). Disco: v3 (inalterado).
+
+Resumo: rastreabilidade MCP de requisitos **opt-in `traceability v1`** — REQ de origem → destino → AC/`source_refs` → EVAL → `acceptance_results` v3 → receipt MCP, sem hook, sem coluna nova no backlog, sem state v4. Tool única `talos_traceability` (upsert/verify/receipt/record_metric); gate de `done` para sprint v1; receipt de fechamento renderizado pelo MCP; métricas de piloto; bump minor 0.18.2 → 0.19.0 (D10: feature aditiva opt-in com readers legacy).
+
+Mudanças:
+- **`packages/mcp-server/traceability.mjs` (novo, Planos 01–03)** — ledger `.talos/traceability/<slug>.json` (escrita absoluta tmp+rename mode 0o600; fallback de root idêntico ao `consumerRoot` do server — sem divergência entre onde a tool grava e onde o gate lê); `upsert` insert-or-update com validação de `sources[]`/`disposition` (`external` exige `ref`; `deferred`/`rejected` com motivo; `deferred_target` tipado); `verify` cruza `source_refs` do §7.3 via `checkTraceabilityGraph` (função pura compartilhada com o conformance) e **expõe `pilot_metrics`** (leitura read-only das métricas, R5); `receipt` (projeção read-only com **escopo da sprint atribuída** — rows/exceptions/blockers cobrem só REQs com source `sprint:<id>`, mesma regra do gate `done`; rejeita claim do caller; marcadores inconsistentes em qualquer sentido lançam -32002; sprint legacy de backlog sem marca naquele id segue happy); `record_metric` (append de observação de piloto no documento completo; `calls` obrigatório; `coverage` 0–1 ou fração). Projeção REQ→AC única (`traceabilityRequirementRows`) compartilhada por receipt e gate done.
+- **`packages/mcp-server/server.js`** — registro da tool `talos_traceability` (actions `upsert|verify|receipt|record_metric`, `sprint_path`/`sprint_id`/`state_path`/`metric`); ramo v1 no gate `done` de `updateSprintStatus` (AC-3.1.1): todo REQ `included` atribuído à sprint exige todos os AC ligados `proved` — um irmão unproved bloqueia, sem write; **INV3 nos dois sentidos** — "sprint marcada sem ledger" E "ledger marcado sem sprint" bloqueiam o fechamento com `alinhar_marcadores_traceability`; ledger ilegível na sprint v1 vira pendência dedicada (`corrigir_ledger_traceability`); sprint legacy intocada. **Wire de produção no `talos_verify_sprint_file`**: quando o caller informa `backlog_path`, o ledger alimenta o ramo v1 do conformance público (refs inválidas/órfãs e mismatch de marcas bloqueiam antes do selo/execução) — antes o grafo só rodava sob injeção nos testes.
+- **`packages/skills/_shared/scripts/document_quality.mjs`** — `applyItemField` mapeia `source_refs` (antes no-op); `traceabilityMode` (v1/legacy/inconsistent por par metadado↔ledger); `checkTraceabilityGraph` (refs válidas/órfãs, included sem AC, N:N com motivo; ref duplicada no mesmo AC não fabrica N:N); ramo v1 no conformance.
+- **`packages/templates/SPRINT_TEMPLATE.md`** — metadado `Traceability` (default legacy) + exemplo `source_refs` parseável nos ACs exemplificados (sem comentário inline — o parser lê apenas a lista).
+- **`packages/orchestrator/skills/talos/SKILL.md`** — gate de fechamento (SPRINT_STATUS_SYNC) menciona o gate v1, o registro do par via `upsert` no momento da marcação, `record_metric` pós-execução e o receipt ecoado da action `receipt` (sem recalcular cobertura).
+- **Bump minor `0.19.0`** via `build/bump-version.mjs` (bundles `plugins/`/`hosts/` regenerados; `VERSION`/manifests/READMEs sincronizados).
+
+Impacto:
+- Sprints legacy (sem metadado `Traceability: v1`) **sem mudança de comportamento**: gates atuais de `acceptance_results`, selo e parser de 16 células intactos; fixtures seladas não são reescritas.
+- Sprints `traceability v1` passam a exigir grafo REQ↔AC no conformance e todos os AC ligados `proved` no `done` — opt-in por sprint, sem coluna nova no backlog.
+- `talos_traceability` é chamada sob demanda (D2): nada no boot, nenhum hook, nenhum cache de capabilities.
+
+Arquivos/artefatos:
+- `packages/mcp-server/traceability.mjs` (novo), `packages/mcp-server/server.js`, `packages/mcp-server/server.test.js`.
+- `packages/skills/_shared/scripts/document_quality.mjs`, `build/tests/etapa3.test.mjs`.
+- `packages/templates/SPRINT_TEMPLATE.md`, `packages/orchestrator/skills/talos/SKILL.md`, `packages/orchestrator/README.md`.
+- Bump: `VERSION`, `package.json`, `packages/mcp-server/package.json`, `.claude-plugin/plugin.json`, READMEs/COMMANDS/CLAUDE/AGENTS, bundles `plugins/`/`hosts/` e `dist/` regenerados.
+
+Validação:
+- `node --test packages/mcp-server/server.test.js build/tests/etapa3.test.mjs` — 360/360 (inclui lado B do INV3 nos gates, escopo de sprint do receipt, ref duplicada sem N:N falso e exemplo do template parseável).
+- `node build/check-consistency.mjs` — ok (exit 0).
+- `git diff --check` — limpo.
+
 ## 0.18.2 - 2026-08-25
 
 Tipo: **packaging + adapter-only**. **Sem breaking**. Schema MCP: v5 (inalterado). Disco: v3 (inalterado). Motor (gates, state machine, executor, validator, repair, skills): **intocado**.
