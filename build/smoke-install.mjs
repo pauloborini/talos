@@ -333,6 +333,27 @@ esac
   assert(mcpU.mcpServers['user-tool'], 'antigravity uninstall perdeu server MCP do usuário');
 }
 
+// minimaxcode: install copia Plugin V1 + server.js + traceability.mjs + package.json +
+// custom agents ~/.minimax/agents/talos-*/. uninstall remove plugin e agents.
+{
+  const dataDir = path.join(TMP, 'minimax-home');
+  const r = run(['init', 'minimaxcode'], { MINIMAX_DATA_DIR: dataDir });
+  assert(r.status === 0, `minimaxcode init falhou: ${r.stderr || r.stdout}`);
+  assert(exists(path.join(dataDir, 'plugins/talos/server.js')), 'minimaxcode não copiou server.js');
+  assert(exists(path.join(dataDir, 'plugins/talos/traceability.mjs')), 'minimaxcode não copiou traceability.mjs');
+  assert(exists(path.join(dataDir, 'plugins/talos/package.json')), 'minimaxcode não copiou package.json');
+  assert(exists(path.join(dataDir, 'plugins/talos/.minimax-plugin/plugin.json')), 'minimaxcode não criou manifest');
+  assert(exists(path.join(dataDir, 'plugins/talos/servers/mcp.json')), 'minimaxcode não criou servers/mcp.json');
+  assert(exists(path.join(dataDir, 'plugins/talos/skills/talos-task-validator/SKILL.md')), 'minimaxcode não copiou skills');
+  assert(exists(path.join(dataDir, 'agents/talos-task-validator/agent.md')), 'minimaxcode não criou custom agent');
+  assert(exists(path.join(dataDir, 'agents/talos-task-validator/config.yaml')), 'minimaxcode não criou config.yaml do agent');
+
+  const u = run(['uninstall', 'minimaxcode'], { MINIMAX_DATA_DIR: dataDir });
+  assert(u.status === 0, `minimaxcode uninstall falhou: ${u.stderr || u.stdout}`);
+  assert(!exists(path.join(dataDir, 'plugins/talos')), 'minimaxcode uninstall manteve plugin dir');
+  assert(!exists(path.join(dataDir, 'agents/talos-task-validator')), 'minimaxcode uninstall manteve custom agent');
+}
+
 // Parser de flags.
 {
   assert(run(['init', 'opencode', '--dir']).status !== 0, '--dir sem valor deveria falhar');
@@ -346,4 +367,4 @@ if (errors.length) {
   for (const e of errors) console.error(`  - ${e}`);
   process.exit(1);
 }
-console.log('smoke-install: ok (install/uninstall tmp: codex, opencode, pi, zcode, antigravity; stale cleanup, deps, JSONC, enabledPlugins migration, flags)');
+console.log('smoke-install: ok (install/uninstall tmp: codex, opencode, pi, zcode, antigravity, minimaxcode; stale cleanup, deps, JSONC, enabledPlugins migration, flags)');
