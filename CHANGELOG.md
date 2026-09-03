@@ -1,5 +1,42 @@
 # Changelog
 
+## Unreleased
+
+- Sem entradas no momento.
+
+## 0.21.1 - 2026-09-03
+
+Tipo: **runtime + docs**. **Sem breaking**. Schema MCP: v5 (inalterado). Disco: v3 (inalterado).
+
+Resumo: hardening pós-0.21.0 do determinismo de boundary e do ciclo validator→repair. Corrige dois achados confirmados na campanha de integração: `reconcile` de slice `direct` sem `proofs` não herda mais o sentinel interno `.talos/plans/direct.md` como `plan_path` real, evitando flip indevido de `contract_kind: direct -> plan`; e o complete do validador ressincroniza `liveness.slice_commit_sha256` após persistir `acceptance_results`, preservando a classificação correta `role=repair` no commit seguinte e mantendo o enforcement D15 sobre `repair[].files`. A release também consolida a documentação pública/operacional para refletir o modelo endurecido e servir de insumo para comunicação externa.
+
+Mudanças:
+- **`packages/mcp-server/server.js`** — `commitState` em `role=reconcile` passa a ignorar `DIRECT_MODE_PLAN_PATH_SENTINEL` ao herdar `plan_path` do state em disco; slices `direct` reconciliadas sem `proofs` mantêm `contract_kind=direct` e continuam válidas para `talos-direct-execute`.
+- **`packages/mcp-server/server.js`** — `validatorComplete` ressincroniza a sha do ledger após gravar `acceptance_results` no disco; o repair pós-fail volta a cair em `role=repair` em vez de `reconcile`, preservando o gate de subconjunto do D15.
+- **`packages/mcp-server/server.test.js`** — novos testes de regressão para os dois achados da campanha de integração; helper `fixtureState()` deixa de depender do cwd da raiz do repo e passa a resolver fixtures relativo ao próprio arquivo de teste.
+- **Docs distribuídas** — `README.md`, `README.pt-BR.md`, `packages/mcp-server/README.md` e `packages/orchestrator/README.md` passam a explicar explicitamente o hardening pós-0.21.0 e o impacto operacional do fix.
+- **Release/docs operacionais** — criação do contrato canônico em `.app-work/releases/BUILD_AND_RELEASE.md` e do recibo `.app-work/releases/RELEASE_0.21.1.md`.
+
+Impacto:
+- Reconcile de slice `direct` adulterada/órfã não muda o tipo de contrato e não quebra a abertura do validador frio.
+- Repair disparado após `fail` do validator volta a usar o caminho correto de `repair`, sem pular validações de subset sobre `repair[].files`.
+- Suite de testes do MCP roda tanto da raiz quanto via `npm test --prefix packages/mcp-server`.
+- A narrativa pública do produto fica alinhada com o comportamento real da `0.21.1`.
+
+Arquivos/artefatos:
+- `packages/mcp-server/server.js`, `packages/mcp-server/server.test.js`.
+- `README.md`, `README.pt-BR.md`, `packages/mcp-server/README.md`, `packages/orchestrator/README.md`.
+- `.app-work/releases/BUILD_AND_RELEASE.md`, `.app-work/releases/RELEASE_0.21.1.md`.
+- Bump: `VERSION`, `package.json`, `packages/mcp-server/package.json`, `.claude-plugin/plugin.json`, READMEs/COMMANDS/CLAUDE/AGENTS, bundles e catálogos em `plugins/` e `hosts/`.
+
+Validação:
+- `node build/check-consistency.mjs`
+- `node build/check-public-docs.mjs`
+- `bash build/test-all.sh`
+- `claude plugin validate ./ --strict`
+- `codex plugin validate ./ --strict`
+- `git diff --check`
+
 ## 0.21.0 - 2026-09-03
 
 Tipo: **runtime**. **Com breaking (skills 0.20)**. Schema MCP: v5 (inalterado). Disco: v3 (inalterado).

@@ -1,6 +1,12 @@
 # Talos MCP Server
 
-Servidor MCP do plugin Talos v0.21.0.
+Servidor MCP do plugin Talos v0.21.1.
+
+## Destaques v0.21.1
+
+- **Hardening de `reconcile` para slices `direct`.** O MCP ignora o sentinel interno `.talos/plans/direct.md` ao reidratar `plan_path` a partir do state em disco; uma slice `direct` recuperada continua `contract_kind=direct`.
+- **Ledger e disco voltam a falar a mesma verdade após o validator.** Quando o complete do validador persiste `acceptance_results`, o MCP ressincroniza `liveness.slice_commit_sha256`; o próximo commit pós-fail continua sendo `role=repair`, preservando o enforcement de subconjunto sobre `repair[].files`.
+- **Testes mais robustos.** A suíte do MCP ganhou regressões para esses dois cenários e deixa de depender do cwd da raiz do repo para resolver fixtures.
 
 ## Tools
 
@@ -31,6 +37,7 @@ Servidor MCP do plugin Talos v0.21.0.
 - Roteamento: lock persistido em `data.routing`.
 - Dispatch: fase ativa, próxima ação e histórico persistidos em `data.dispatch`.
 - Liveness: `plan_execute` persiste `data.dispatch.active.liveness`; antes do handoff, bootstrap vencido sem checkpoint ou checkpoint antigo sem progresso vira `executor_liveness.status = stalled` e `next_action: retry_plan_execute`; `state_path_created` põe `executor_liveness.status = handoff_ready` e não expira enquanto aguarda `talos_lock_validator(start)`, que só abre quando o checkpoint corresponde ao mesmo `state_path`.
+- Reconcile/repair: `reconcile` pode recuperar state adulterado/órfão sem transformar slice `direct` em `plan`; após o complete do validador gravar `acceptance_results`, a sha persistida no ledger é ressincronizada antes do próximo commit.
 - State de sprint: quando `.talos/state/<run_id>/<slice>.json` declara `sprint_file_path`, o boundary exige `eval_results`, `policy_scope` e `proof_refs`; em schema v3, `eval_results` é a fonte única e `evidence_to_claim` não é persistido. Todo `EVAL-*` do sprint file precisa estar `passed` com evidência, e `policy_scope.forbidden_scope` bloqueia arquivo tocado. O validator emit `acceptance_results[]` no complete quando `sprint_file_path` presente (shape estrito; v1/v2 hard-fail).
 - Validação manual: `talos_sync_manual_validation` grava o resultado humano de `M` no state (`acceptance_results` com `M:validated`/`M:waived`/`M:failed` + `manual_validation_report`), no sprint (histórico) e no ledger `data.manual_validation` do run state (append-only; re-run não apaga). Relatório: `.talos/manual-validation/<slug>.md` (template `MANUAL_VALIDATION_REPORT_TEMPLATE.md`).
 - Erro bloqueante: entradas inválidas, run inexistente ou falha de estado retornam erro JSON-RPC; gate bloqueado retorna `status: "blocked"` e `next_action`.

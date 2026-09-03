@@ -44,7 +44,7 @@ Pipeline completo executado automaticamente:
 
 - `--interview` — Força entrevista do contrato §7 do sprint mesmo sem ambiguidades
 - `--review` — Executa slice-review ao final (senão opcional; sprints com `policy_manifest.critical_review.required: true` no §10 tornam a review obrigatória — G8)
-- `--loop` — Esteira serial de sprints com auto-correção (v0.20.0): em cada seleção passa `loop:true` ao MCP e, antes das `ready`, pode maturar uma sprint `backlog` válida com deps satisfeitas e DoR amarelo/verde pela entrevista do §7; depois a reseleciona antes de plano/execução. Corrige residual de review in-loop (repair origem `slice_review` → verification), despacha o sidecar `talos-escalation-repair` se o residual persistir, estaciona sprint irrecuperável em `detached_repair` e drena `PENDENCIAS_<slug>.md` sob demanda (`drain_required` do MCP); implica review crítica (G8) sem editar `policy_manifest` por sprint. Sem a flag, o pipeline atual não muda
+- `--loop` — Esteira serial de sprints com auto-correção (introduzida em v0.20.0 e endurecida em v0.21.1): em cada seleção passa `loop:true` ao MCP e, antes das `ready`, pode maturar uma sprint `backlog` válida com deps satisfeitas e DoR amarelo/verde pela entrevista do §7; depois a reseleciona antes de plano/execução. Corrige residual de review in-loop (repair origem `slice_review` → verification), despacha o sidecar `talos-escalation-repair` se o residual persistir, estaciona sprint irrecuperável em `detached_repair` e drena `PENDENCIAS_<slug>.md` sob demanda (`drain_required` do MCP); implica review crítica (G8) sem editar `policy_manifest` por sprint. Sem a flag, o pipeline atual não muda
 - `--handoff` — Só em `audit`: grava `.talos/plans/PLAN_AUDIT_*.md` TC-conforme
 - `--scope <descrição>` — Só em `audit`: restringe o boundary textual
 - `--help` — Mostra sintaxe completa
@@ -165,7 +165,7 @@ Talos é família única. Cliente (Claude Code, Cursor, Codex App) é apenas o h
 | `direct` | sprint/contrato §7 → `talos-direct-execute` → `talos-task-validator` → `talos-findings-repair` (no `fail`) → `talos-slice-review` (com `--review`; obrigatória quando `critical_review.required:true` — G8) |
 | `interview-only` | draft sprint standalone §7 (se brainstorm) → `talos-sprint-interview` |
 
-Residual da review (v0.20.0, em loop e standalone): P0/P1 → `talos-findings-repair` com origem `slice_review` → **verification pontual** (delta do `repair_evidence`; executa os checks declarados antes de julgar) → sidecar `talos-escalation-repair` se o residual persistir; P2/P3 → `talos_pendencies(append)` (`PD-<sprint>-<NN>` em `PENDENCIAS_<slug>.md`). Nunca 2º `talos-task-validator` nem nova review completa no ramo da review.
+Residual da review (introduzido em v0.20.0 e endurecido em v0.21.1, em loop e standalone): P0/P1 → `talos-findings-repair` com origem `slice_review` → **verification pontual** (delta do `repair_evidence`; executa os checks declarados antes de julgar) → sidecar `talos-escalation-repair` se o residual persistir; P2/P3 → `talos_pendencies(append)` (`PD-<sprint>-<NN>` em `PENDENCIAS_<slug>.md`). Nunca 2º `talos-task-validator` nem nova review completa no ramo da review.
 
 ## Validação automática
 
@@ -253,9 +253,16 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `talos-*` para o
 
 ---
 
-**Plugin version:** 0.21.0
+**Plugin version:** 0.21.1
 **Author:** Paulo Borini
 **Last updated:** 2026-09-03
+
+### Novidades v0.21.1 — hardening pós-0.21.0 no reconcile e no repair
+
+- **Slice `direct` continua `direct` no reconcile.** O MCP deixa de herdar o sentinel interno `.talos/plans/direct.md` como `plan_path` real ao reconstruir uma slice sem `proofs`; isso evita flip incorreto de `contract_kind=direct -> plan` em recoveries.
+- **Repair pós-fail volta ao trilho certo.** Quando o complete do validador grava `acceptance_results`, o ledger ressincroniza `liveness.slice_commit_sha256` antes do próximo commit; o repair subsequente continua `role=repair` e preserva o enforcement D15 de subconjunto em `repair[].files`.
+- **Regressões cobertas em teste.** `packages/mcp-server/server.test.js` ganha casos para os dois achados da campanha integrada e deixa de depender do cwd da raiz para localizar fixtures.
+- **Docs consolidadas para distribuição.** README pública, README do MCP e este README do orquestrador passam a narrar explicitamente o hardening da `0.21.1`, alinhando release, operação e material de comunicação.
 
 ### Novidades v0.21.0 — determinismo mecânico de boundary na slice e fechamento de sprint (BREAKING 0.21)
 
