@@ -40,5 +40,8 @@ node_modules/
 references/
 # Exceção: mandato canônico da revisão fria do backlog (VC2 — precisa ser versionado e empacotado)
 !packages/skills/talos-backlog-generator/references/
+# Exceção: contrato de adapters referenciado pelo README público
+!packages/orchestrator/references/
+!packages/orchestrator/references/host-adapters.md
 
 

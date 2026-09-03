@@ -287,7 +287,7 @@ Nenhuma tool MCP nova, nenhum gate novo de orquestrador e nenhum selo de revisã
 
 ### Rastreabilidade v1 (opt-in) — `talos_traceability`
 
-Disponível a partir da **v0.21.2** (aditiva, opt-in por sprint; sprints legacy intocadas — schema MCP v5 e disco v3 inalterados). Uma sprint entra no modo `traceability v1` com o metadado `Traceability: v1` no sprint file; aí cada requisito (`REQ-*`) é registrado no ledger `.talos/traceability/<backlog-slug>.json` pela tool única `talos_traceability` (actions `upsert`, `verify`, `receipt`, `record_metric`), e cada `AC-*` pode declarar `source_refs` apontando para seus requisitos.
+Disponível desde a **v0.19.0** (aditiva, opt-in por sprint; sprints legacy intocadas — schema MCP v5 e disco v3 inalterados). A série 0.21.x só endureceu e documentou o contrato; a tool e o ledger já existem desde 0.19.0. Uma sprint entra no modo `traceability v1` com o metadado `Traceability: v1` no sprint file; aí cada requisito (`REQ-*`) é registrado no ledger `.talos/traceability/<backlog-slug>.json` pela tool única `talos_traceability` (actions `upsert`, `verify`, `receipt`, `record_metric`), e cada `AC-*` pode declarar `source_refs` apontando para seus requisitos.
 
 | Conceito | O que é |
 |----------|---------|
@@ -422,7 +422,7 @@ Templates canônicos em [`packages/templates/`](packages/templates/) — fonte �
 
 - Adapters de host: [`host-adapters.md`](packages/orchestrator/references/host-adapters.md)
 - Orquestrador: [`packages/orchestrator/README.md`](packages/orchestrator/README.md)
-- MCP: [`packages/mcp-server/`](packages/mcp-server/) — 18 ferramentas disponíveis:
+- MCP: [`packages/mcp-server/`](packages/mcp-server/) — 19 ferramentas disponíveis:
 
 | Tool | Função |
 |------|--------|
@@ -443,4 +443,5 @@ Templates canônicos em [`packages/templates/`](packages/templates/) — fonte �
 | `talos_update_sprint_status` | Atualiza status atomicamente (`done` / `manual_validation_pending` + handoff só em `done`; gate traceability v1 no `done`) |
 | `talos_sync_manual_validation` | Sync do relatório humano `MV-*` → promove `done` ou bloqueia origem |
 | `talos_commit_state` | Writer único do JSON de slice v3 (executor/repair enviam julgamento curto; recebe `state_path` + sha) |
+| `talos_pendencies` | Writer/reader MCP de `PENDENCIAS_<slug>.md` (residual P2/P3 da review): `append` (grava `PD-<sprint>-<NN>` monotônico; única escrita), `list` (relê o disco) e `close` (marca Status closed; nunca apaga a linha) |
 | `talos_traceability` | Ledger opt-in de rastreabilidade de requisitos (`upsert`/`verify`/`receipt`/`record_metric`) — sprint `Traceability: v1` |
