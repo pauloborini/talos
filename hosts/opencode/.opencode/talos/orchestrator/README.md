@@ -44,7 +44,7 @@ Pipeline completo executado automaticamente:
 
 - `--interview` — Força entrevista do contrato §7 do sprint mesmo sem ambiguidades
 - `--review` — Executa slice-review ao final (senão opcional; sprints com `policy_manifest.critical_review.required: true` no §10 tornam a review obrigatória — G8)
-- `--loop` — Esteira serial de sprints com auto-correção (introduzida em v0.20.0 e endurecida em v0.21.1): em cada seleção passa `loop:true` ao MCP e, antes das `ready`, pode maturar uma sprint `backlog` válida com deps satisfeitas e DoR amarelo/verde pela entrevista do §7; depois a reseleciona antes de plano/execução. Corrige residual de review in-loop (repair origem `slice_review` → verification), despacha o sidecar `talos-escalation-repair` se o residual persistir, estaciona sprint irrecuperável em `detached_repair` e drena `PENDENCIAS_<slug>.md` sob demanda (`drain_required` do MCP); implica review crítica (G8) sem editar `policy_manifest` por sprint. Sem a flag, o pipeline atual não muda
+- `--loop` — Esteira serial de sprints com auto-correção (introduzida em v0.20.0 e endurecida em v0.21.2): em cada seleção passa `loop:true` ao MCP e, antes das `ready`, pode maturar uma sprint `backlog` válida com deps satisfeitas e DoR amarelo/verde pela entrevista do §7; depois a reseleciona antes de plano/execução. Corrige residual de review in-loop (repair origem `slice_review` → verification), despacha o sidecar `talos-escalation-repair` se o residual persistir, estaciona sprint irrecuperável em `detached_repair` e drena `PENDENCIAS_<slug>.md` sob demanda (`drain_required` do MCP); implica review crítica (G8) sem editar `policy_manifest` por sprint. Sem a flag, o pipeline atual não muda
 - `--handoff` — Só em `audit`: grava `.talos/plans/PLAN_AUDIT_*.md` TC-conforme
 - `--scope <descrição>` — Só em `audit`: restringe o boundary textual
 - `--help` — Mostra sintaxe completa
@@ -165,7 +165,7 @@ Talos é família única. Cliente (Claude Code, Cursor, Codex App) é apenas o h
 | `direct` | sprint/contrato §7 → `talos-direct-execute` → `talos-task-validator` → `talos-findings-repair` (no `fail`) → `talos-slice-review` (com `--review`; obrigatória quando `critical_review.required:true` — G8) |
 | `interview-only` | draft sprint standalone §7 (se brainstorm) → `talos-sprint-interview` |
 
-Residual da review (introduzido em v0.20.0 e endurecido em v0.21.1, em loop e standalone): P0/P1 → `talos-findings-repair` com origem `slice_review` → **verification pontual** (delta do `repair_evidence`; executa os checks declarados antes de julgar) → sidecar `talos-escalation-repair` se o residual persistir; P2/P3 → `talos_pendencies(append)` (`PD-<sprint>-<NN>` em `PENDENCIAS_<slug>.md`). Nunca 2º `talos-task-validator` nem nova review completa no ramo da review.
+Residual da review (introduzido em v0.20.0 e endurecido em v0.21.2, em loop e standalone): P0/P1 → `talos-findings-repair` com origem `slice_review` → **verification pontual** (delta do `repair_evidence`; executa os checks declarados antes de julgar) → sidecar `talos-escalation-repair` se o residual persistir; P2/P3 → `talos_pendencies(append)` (`PD-<sprint>-<NN>` em `PENDENCIAS_<slug>.md`). Nunca 2º `talos-task-validator` nem nova review completa no ramo da review.
 
 ## Validação automática
 
@@ -253,9 +253,17 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `talos-*` para o
 
 ---
 
-**Plugin version:** 0.21.2
+**Plugin version:** 0.22.0
 **Author:** Paulo Borini
-**Last updated:** 2026-09-03
+**Last updated:** 2026-09-04
+
+### Novidades v0.22.0 — veredito tipado da slice review e gate de fechamento derivado pelo MCP
+
+- **Complete da review exige veredito.** `talos_lock_dispatch(action=complete, phase=slice_review)` passa a exigir `review_verdict ∈ {pass, pass_with_observations, fail}`; sem ele o complete devolve `blocked`/`review_verdict_ausente`.
+- **Findings com ids `F-NNN`.** `review_findings` segue o mesmo packet do validator (`classify_findings.mjs`); `fail` ou qualquer P0/P1 devolve `blocked`/`review_repair_required` e trava o fechamento até a cadeia de repair (`origin=slice_review`).
+- **Gate derivado, não declarado.** `data.gates.slice_review` e `data.review_cycle` são projeção do MCP no complete da fase; `talos_run_state(action=upsert)` com `gates.slice_review` é recusado (-32602).
+- **Review crítica lida pelo MCP.** `talos_update_sprint_status` lê `policy_manifest.critical_review.required` do sprint file além da flag `--loop`; sem review derivada `passed` não há `done` nem `manual_validation_pending`.
+- **Liveness preservada pós-review.** O commit do repair pós-review herda a mesma base (`base_sha`, `worktree_baseline`, `slice_commit_sha256`) do `plan_execute` já fechado.
 
 ### Novidades v0.21.2 — fix do instalador MinimaxCode em npx/tarball
 
