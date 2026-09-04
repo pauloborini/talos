@@ -42,7 +42,7 @@ import {
   propagateRevalidation,
   classifyInput,
   preflight,
-  lockDispatch,
+  lockDispatch as lockDispatchCore,
   lockValidator as lockValidatorCore,
   captureWorktreeSnapshot,
   validateStateBoundary,
@@ -135,7 +135,42 @@ function ensureValidatorStateFixture(root, runId, statePath) {
   }, null, 2));
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Guard de contrato: args validados contra o inputSchema PUBLICADO antes de
+// chegar ao handler.
+//
+// Motivo (A1): o servidor não valida args — o `additionalProperties: false` só é
+// enforçado pelo client MCP. Como estes testes chamam os handlers direto, um
+// campo lido pelo runtime mas AUSENTE do schema passava verde aqui e era
+// descartado em produção. Foi exatamente o que aconteceu com
+// `talos_lock_validator.origin`: `validatorRepairStart` lia `args.origin`, o
+// schema não declarava a propriedade, todo caller real caía no default
+// `validator` e a cadeia de repair pós-review ficou inalcançável — com a suíte
+// inteira verde. O guard checa só propriedade desconhecida (a classe do bug);
+// enum e required continuam sendo prova dos testes de comportamento, que
+// precisam poder enviar valor inválido de propósito.
+function assertSchemaAccepts(toolName, args) {
+  const tool = toolsList().tools.find((entry) => entry.name === toolName);
+  assert.ok(tool, `${toolName} ausente em toolsList()`);
+  const schema = tool.inputSchema ?? {};
+  if (schema.additionalProperties !== false) return;
+  const declared = Object.keys(schema.properties ?? {});
+  for (const key of Object.keys(args ?? {})) {
+    assert.ok(
+      declared.includes(key),
+      `${toolName}: propriedade "${key}" é lida pelo runtime mas não está declarada no inputSchema `
+      + `(additionalProperties:false ⇒ o client MCP descarta o campo em produção). Declaradas: ${declared.join(', ')}`,
+    );
+  }
+}
+
+function lockDispatch(args) {
+  assertSchemaAccepts('talos_lock_dispatch', args);
+  return lockDispatchCore(args);
+}
+
 function lockValidator(args) {
+  assertSchemaAccepts('talos_lock_validator', args);
   // AC-1.3.3 (LEG4): o wrapper NUNCA emite checkpoint público `state_path_created`
   // (event morto desde o Plano 01). Testes de ciclo que precisam de slice em
   // disco: fixture de READER (ensureValidatorStateFixture) e, na sequência, o
@@ -3059,14 +3094,21 @@ function startLoopRun(root, runId, { withFlag = true } = {}) {
   });
 }
 
-// Fixture de READER do gate slice_review (o gravador real do veredito é o
-// orquestrador — Plano 05; hoje nenhum path público grava data.gates.slice_review).
-// Mesmo padrão de harness documentado do wrapper lockValidator acima.
-function grantSliceReviewPassed(root, runId) {
-  const current = runState({ action: 'get', run_id: runId, project_root: root });
-  const data = current.data ?? {};
-  data.gates = { ...(data.gates ?? {}), slice_review: { status: 'passed', timestamp: '2026-08-31T00:00:00.000Z' } };
-  runState({ action: 'upsert', run_id: runId, project_root: root, data });
+// D13: o gate `slice_review` passou a ser DERIVADO pelo MCP no complete da fase.
+// Não existe mais harness que grave `data.gates.slice_review` à mão — o upsert
+// direto dessa chave é recusado. O helper roda a fase real: fecha plan_execute,
+// abre a review e a conclui com o veredito declarado.
+function runSliceReview(root, runId, { verdict = 'pass', findings } = {}) {
+  lockDispatch({
+    run_id: runId, project_root: root, action: 'complete', phase: 'plan_execute',
+    validator_status: 'passed',
+  });
+  lockDispatch({ run_id: runId, project_root: root, action: 'start', phase: 'slice_review' });
+  return lockDispatch({
+    run_id: runId, project_root: root, action: 'complete', phase: 'slice_review',
+    review_verdict: verdict,
+    ...(findings === undefined ? {} : { review_findings: findings }),
+  });
 }
 
 // Fixture de fechamento (done) com acceptance_results provados.
@@ -3211,7 +3253,7 @@ test('loop exige slice review antes de done', () => {
   const loopPendency = r.pendencies.find((p) => p.next_action === 'rodar_slice_review_loop');
   assert.ok(loopPendency, `esperava pendência rodar_slice_review_loop; obtido: ${JSON.stringify(r.pendencies)}`);
   assert.equal(loopPendency.category, 'loop_review');
-  assert.match(loopPendency.message, /--loop implica review crítica/);
+  assert.match(loopPendency.message, /Review crítica exigida por --loop \(D12\)/);
   // Fail-closed: backlog inalterado (nenhum write parcial).
   assert.equal(parseSprintRows(fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8'))[0].state, 'doing');
 
@@ -3228,7 +3270,7 @@ test('loop exige slice review antes de done', () => {
   ]);
 
   // Gravado slice_review passed no MESMO ledger → done passa.
-  grantSliceReviewPassed(root, 'loopgate');
+  runSliceReview(root, 'loopgate');
   const r2 = closeDone(root, 'loopgate');
   assert.equal(r2.status, 'passed', JSON.stringify(r2.pendencies, null, 1));
   assert.ok(!r2.pendencies.some((p) => p.next_action === 'rodar_slice_review_loop'));
@@ -3239,7 +3281,7 @@ test('loop com review passed fecha normal', () => {
   const root = tmpRoot();
   writeDoneFixture(root);
   startLoopRun(root, 'loopok', { withFlag: true });
-  grantSliceReviewPassed(root, 'loopok');
+  runSliceReview(root, 'loopok');
 
   const r = closeDone(root, 'loopok');
   assert.equal(r.status, 'passed');
@@ -3248,6 +3290,101 @@ test('loop com review passed fecha normal', () => {
   assert.equal(r.pending_count, 0);
   assert.equal(r.next_action, 'promover_handoff');
   assert.ok(r.handoff_path);
+});
+
+// D13 (saída da review): o cenário completo que o pipeline não tinha. Review com
+// P0 → sprint NÃO fecha; dependente trava pelo estado da dependência; sprint
+// independente segue livre; a cadeia de repair abre; review verde fecha.
+test('D13: review com residual bloqueia fechamento, trava dependente e libera independente', () => {
+  const root = tmpRoot();
+  writeHandoffTemplateFixture(root);
+  writeSprintFixture(root, 'S01', { status: 'doing', dorStatus: 'verde' });
+  writeSprintFixture(root, 'S02', { status: 'ready', dorStatus: 'verde' });
+  writeSprintFixture(root, 'S03', { status: 'ready', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Corrente | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | doing | exec:running | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+    '| S02 | Dependente | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | S01 | ready | — | `.talos/backlog/sprints/SPRINT_S02_runtime.md` | pendente | pendente |',
+    '| S03 | Independente | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | ready | — | `.talos/backlog/sprints/SPRINT_S03_runtime.md` | pendente | pendente |',
+  ]));
+  writeStateWithAcceptance(root, 'S01.json', [
+    { id: 'AC-001', status: 'proved', proof_types: ['I:present', 'T-outcome:proved'] },
+  ]);
+  startLoopRun(root, 'd13', { withFlag: true });
+
+  // Review terminal com P0: a fase não conclui e o ledger registra o residual.
+  const review = runSliceReview(root, 'd13', {
+    verdict: 'fail',
+    findings: [finding({ severity: 'P0', file: 'src/a.js' })],
+  });
+  assert.equal(review.status, 'blocked');
+  assert.equal(review.code, 'review_repair_required');
+  assert.equal(review.next_action, 'repair_start_origin_slice_review');
+  const ledger = runState({ action: 'get', run_id: 'd13', project_root: root });
+  assert.equal(ledger.data.gates.slice_review.status, 'blocked');
+  assert.equal(ledger.data.gates.slice_review.source, 'mcp_derived');
+  assert.equal(ledger.data.review_cycle.status, 'repair_required');
+
+  // Fechamento recusado: a sprint corrente não vira done com residual aberto.
+  const fechar = closeDone(root, 'd13');
+  assert.equal(fechar.status, 'blocked');
+  const pend = fechar.pendencies.find((entry) => entry.category === 'loop_review');
+  assert.ok(pend, `esperava pendência loop_review; obtido: ${JSON.stringify(fechar.pendencies)}`);
+  assert.equal(pend.next_action, 'repair_start_origin_slice_review');
+  assert.equal(parseSprintRows(fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8'))[0].state, 'doing');
+
+  // Seleção: a independente abre direto; a dependente trava pelo estado de S01.
+  const sel = selectNextSprint({ run_id: 'd13', project_root: root, backlog_path: 'BACKLOG.md', loop: true });
+  assert.equal(sel.status, 'passed');
+  assert.equal(sel.selected.sprint_id, 'S03', 'sprint independente segue sem esperar a corrente');
+  assert.ok(sel.rejected.some((item) => item.id === 'S02'
+    && item.reasons.some((reason) => /unmet_dependencies=S01:doing/.test(reason))));
+
+  // (A abertura do slot `repair_start(origin=slice_review)` sobre este mesmo
+  // estado de review é provada em 'Plano 02: repair start persiste procedência',
+  // que agora exige review terminal antes do slot.)
+
+  // Corrigido: review verde deriva o gate passed e o fechamento passa.
+  const revistaOk = runSliceReview(root, 'd13', { verdict: 'pass' });
+  assert.equal(revistaOk.status, 'passed');
+  assert.equal(
+    runState({ action: 'get', run_id: 'd13', project_root: root }).data.gates.slice_review.status,
+    'passed',
+  );
+  const fecharOk = closeDone(root, 'd13');
+  assert.equal(fecharOk.status, 'passed', JSON.stringify(fecharOk.pendencies, null, 1));
+  assert.equal(parseSprintRows(fs.readFileSync(path.join(root, 'BACKLOG.md'), 'utf8'))[0].state, 'done');
+});
+
+// D06/D09: a segunda origem da exigência — sprint file, sem --loop.
+test('D06: policy_manifest.critical_review.required exige review mesmo sem --loop', () => {
+  const root = tmpRoot();
+  writeDoneFixture(root);
+  fs.writeFileSync(
+    path.join(root, '.talos/backlog/sprints/SPRINT_S01_runtime.md'),
+    policyWithCriticalReview({ required: 'true', reasons: '[authorization]' })
+      .replace('| Sprint ID | S00 |', '| Sprint ID | S01 |'),
+  );
+  startLoopRun(root, 'critrev', { withFlag: false });
+
+  const sem = closeDone(root, 'critrev');
+  assert.equal(sem.status, 'blocked');
+  const pend = sem.pendencies.find((entry) => entry.category === 'loop_review');
+  assert.ok(pend, `esperava pendência de review crítica; obtido: ${JSON.stringify(sem.pendencies)}`);
+  assert.match(pend.message, /policy_manifest\.critical_review/);
+
+  runSliceReview(root, 'critrev', { verdict: 'pass_with_observations' });
+  const com = closeDone(root, 'critrev');
+  assert.equal(com.status, 'passed', JSON.stringify(com.pendencies, null, 1));
+});
+
+// Contraprova (CN7): sprint sem `critical_review.required: true` e run sem
+// --loop continuam fechando sem review — o gate só endurece onde foi declarado.
+test('D06: sem critical_review e sem --loop o fechamento não exige review', () => {
+  const root = tmpRoot();
+  writeDoneFixture(root);
+  startLoopRun(root, 'semrev', { withFlag: false });
+  const r = closeDone(root, 'semrev');
+  assert.equal(r.status, 'passed', JSON.stringify(r.pendencies, null, 1));
 });
 
 test('loop flag persistida no ledger', () => {
@@ -8747,6 +8884,27 @@ function plan02InLoopSetup(root, runId, statePath = `.talos/state/${runId}/slice
   return statePath;
 }
 
+// D13: procedências in-loop (`slice_review`/`escalation`) só abrem slot DEPOIS de
+// uma review terminal com residual bloqueante — `repair_start` exige
+// `review_cycle.status=repair_required`. Este setup roda a fase de review de
+// verdade (complete com `review_verdict`), em vez de abrir o slot no vácuo como
+// o harness antigo fazia. O ramo `validator` continua usando o setup acima: lá o
+// repair acontece ANTES da review, no ciclo G4.
+function plan02PostReviewSetup(root, runId, statePath = `.talos/state/${runId}/slice.json`) {
+  plan02InLoopSetup(root, runId, statePath);
+  lockDispatch({
+    run_id: runId, project_root: root, action: 'complete', phase: 'plan_execute',
+    validator_status: 'passed',
+  });
+  lockDispatch({ run_id: runId, project_root: root, action: 'start', phase: 'slice_review' });
+  const review = lockDispatch({
+    run_id: runId, project_root: root, action: 'complete', phase: 'slice_review',
+    review_verdict: 'fail', review_findings: [finding()],
+  });
+  assert.equal(review.code, 'review_repair_required', 'setup: review deve exigir repair');
+  return statePath;
+}
+
 function plan02Verification(verdict, overrides = {}) {
   return {
     findings: [{
@@ -8762,7 +8920,7 @@ function plan02Verification(verdict, overrides = {}) {
 // AC-02.1.1 (VC1/CN6): procedência persistida; default validator preserva o fluxo.
 test('Plano 02: repair start persiste procedência (AC-02.1.1)', () => {
   const root = tmpRoot();
-  const statePath = plan02InLoopSetup(root, 'p02prov');
+  const statePath = plan02PostReviewSetup(root, 'p02prov');
 
   const slice = lockValidator({
     run_id: 'p02prov', project_root: root, action: 'repair_start',
@@ -8811,7 +8969,7 @@ test('Plano 02: repair start persiste procedência (AC-02.1.1)', () => {
 // AC-02.2.1 (INV5/CN6/CN9): 2ª abertura da mesma provenance → blocked (fail-closed).
 test('Plano 02: budget 1 por provenance bloqueia 2ª abertura (AC-02.2.1)', () => {
   const root = tmpRoot();
-  const statePath = plan02InLoopSetup(root, 'p02budget');
+  const statePath = plan02PostReviewSetup(root, 'p02budget');
 
   const first = lockValidator({
     run_id: 'p02budget', project_root: root, action: 'repair_start',
@@ -8846,6 +9004,17 @@ test('Plano 02: escalation com budget próprio e commit de repair (AC-02.2.2)', 
     proofs: [{ kind: 'AC', id: 'AC-001', check: 'node --test', files: ['src/a.js'] }],
   });
   assert.equal(commit.status, 'passed');
+
+  // D13: a esteira só abre slot depois de uma review terminal com residual.
+  lockDispatch({
+    run_id: 'p02esc', project_root: root, action: 'complete', phase: 'plan_execute',
+    validator_status: 'passed',
+  });
+  lockDispatch({ run_id: 'p02esc', project_root: root, action: 'start', phase: 'slice_review' });
+  lockDispatch({
+    run_id: 'p02esc', project_root: root, action: 'complete', phase: 'slice_review',
+    review_verdict: 'fail', review_findings: [finding()],
+  });
 
   // Esgota o budget da esteira primeiro.
   const inLoop = lockValidator({
@@ -8893,7 +9062,7 @@ test('Plano 02: escalation com budget próprio e commit de repair (AC-02.2.2)', 
 // AC-02.3.1 (VC4/INV3/CN2): veredito persiste; payload inválido → blocked sem mutar.
 test('Plano 02: verification persistida e recusas tipadas (AC-02.3.1)', () => {
   const root = tmpRoot();
-  const statePath = plan02InLoopSetup(root, 'p02verif');
+  const statePath = plan02PostReviewSetup(root, 'p02verif');
   const slot = lockValidator({
     run_id: 'p02verif', project_root: root, action: 'repair_start',
     state_path: statePath, origin: 'slice_review',

@@ -102,7 +102,7 @@ Elimine duplicatas que descrevam o mesmo defeito no mesmo local. Classifique cad
 
 Apenas `CONFIRMED` vira finding. Descarte `REFUTED`. Mova `NEEDS_EVIDENCE` para `Perguntas Abertas ou Suposições`, sem apresentá-lo como defeito. Nunca mantenha um candidato apenas por ser plausível.
 
-Antes de renderizar a saída, materialize os findings confirmados como JSON e execute o gate canônico Node `node scripts/classify_findings.mjs <findings.json>`. Cada item deve conter `severity`, `task_id`, `title`, `file`, `line`, `failure_mode`, `evidence`, `recommendation` e `fix_validation`. Saída não-zero bloqueia o relatório até o payload ser corrigido; é proibido ignorar o gate ou substituir campos ausentes por texto vazio. Array vazio é válido quando não há findings confirmados.
+Antes de renderizar a saída, materialize os findings confirmados como JSON e execute o gate canônico Node `node scripts/classify_findings.mjs <findings.json>`. Cada item deve conter `id` (formato `F-NNN`), `severity`, `task_id`, `title`, `file`, `line`, `failure_mode`, `evidence`, `recommendation` e `fix_validation`. Saída não-zero bloqueia o relatório até o payload ser corrigido; é proibido ignorar o gate ou substituir campos ausentes por texto vazio. Array vazio é válido quando não há findings confirmados.
 
 Node é o único requisito runtime deste gate e funciona em Linux/macOS/Windows. `scripts/classify_findings.py` permanece por uma release somente como wrapper compatível que delega ao Node; não é fonte canônica nem torna Python obrigatório.
 
@@ -124,7 +124,7 @@ Return exactly this structure:
 ```markdown
 ## Findings
 
-### P0 - <short title>
+### P0 - F-NNN - <short title>
 - **Slice/Task:** T0N
 - **Por que importa:** [impacto real]
 - **Arquivo:** `relative/path.ext:line`
@@ -151,9 +151,19 @@ Return exactly this structure:
 
 ## Resumo da Slice
 [breve — o que foi bem implementado, o que precisa atenção, se a slice pode ser considerada fechada]
+
+**Veredito:** pass | pass_with_observations | fail
 ```
 
 Do not add extra sections or narrative conclusions.
+
+O `Veredito` é enum fechado e obrigatório: o orquestrador o ecoa em
+`talos_lock_dispatch(action=complete, phase=slice_review, review_verdict=<veredito>)`
+junto com os findings (`review_findings`, ids `F-NNN`). Sem ele o MCP recusa o
+complete da fase (`review_verdict_ausente`) — o gate `slice_review` é derivado
+desse veredito, nunca declarado pelo orquestrador. `fail` ou qualquer P0/P1 no
+packet abre a cadeia de repair (`origin=slice_review`) antes de qualquer
+fechamento de sprint.
 
 ---
 

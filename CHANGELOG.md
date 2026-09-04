@@ -4,6 +4,37 @@
 
 - Sem entradas no momento.
 
+## 0.22.0 - 2026-09-04
+
+Tipo: **runtime**. **Sem breaking**. Schema MCP: v5 (inalterado). Disco: v3 (inalterado).
+
+Resumo: fecha o buraco em que o orquestrador declarava `passed` à própria review. O complete da fase `slice_review` passa a exigir `review_verdict` tipado (`pass`/`pass_with_observations`/`fail`) com `review_findings` no packet do validator (ids `F-NNN`); o MCP deriva `gates.slice_review` + `review_cycle` desse veredito e recusa upsert direto da chave. O gate de fechamento (`done`/`manual_validation_pending`) passa a ler as duas origens da exigência — flag `--loop` do ledger e `policy_manifest.critical_review.required` do sprint file — e a liveness da execução sobrevive ao complete para o repair pós-review commitar na mesma base. Bump minor 0.21.2 → 0.22.0 (feature de determinismo, aditiva e fail-closed).
+
+Mudanças:
+- **`packages/mcp-server/server.js`** — `talos_lock_dispatch(action=complete, phase=slice_review)` exige `review_verdict` (enum `REVIEW_VERDICTS`; ausente/inválido → `blocked` `review_verdict_ausente`); `review_findings` validado via `validateFindingsPacket` (mesmo contrato do validator); `fail` ou qualquer P0/P1 → `blocked` `review_repair_required` (`repair_start_origin_slice_review`); `patchDispatchResult` deriva `gates.slice_review` (projeção MCP, `source: mcp_derived`) + `review_cycle` e preserva `execute_liveness` do `plan_execute` já fechado; `talos_run_state(action=upsert)` com `gates.slice_review` recusado (-32602); `talos_update_sprint_status` lê `critical_review.required` do sprint file (`sprintCriticalReviewRequired`, sem deps YAML) e exige review derivada `passed` nas duas origens; `repair_start(origin=slice_review)` sem review concluída exige `review_verdict` prévio (`concluir_slice_review_com_review_verdict_antes_do_repair`).
+- **`packages/skills/talos-slice-review/SKILL.md`** — findings exigem `id` `F-NNN`; saída ganha seção `**Veredito:** pass | pass_with_observations | fail` (ecoada no complete); `fail`/P0/P1 abre a cadeia de repair antes de qualquer fechamento.
+- **`packages/orchestrator/skills/talos/SKILL.md`** — G8 e bloco EXEC: fechar a review é ecoar o veredito do sub-agent no complete (`review_verdict` obrigatório + `review_findings`); gesto manual de `talos_run_state(upsert)` com `gates.slice_review` removido (agora recusado pelo MCP); modos full/direct/execute passam `review_verdict` no complete.
+- **`packages/mcp-server/server.test.js`** — bateria de regressão da review tipada (373/373, +3 casos: complete sem veredito bloqueia, upsert direto de `gates.slice_review` recusado, fechamento exige review derivada nas duas origens).
+- **Bump minor `0.22.0`** via `build/bump-version.mjs` (bundles `plugins/`/`hosts/` regenerados; `VERSION`/manifests/READMEs sincronizados).
+
+Impacto:
+- Orquestrador que concluía `slice_review` sem veredito ou declarava `gates.slice_review.passed` via upsert passa a bloquear com `next_action` tipado — fechar a review exige ecoar o veredito do sub-agent no complete.
+- Sprint com `critical_review.required: true` ou flag `--loop` só fecha (`done`/`manual_validation_pending`) com review derivada `passed` no ledger; sem ela, `updateSprintStatus` responde `blocked` nomeando a origem.
+- Sem review exigida: nenhum comportamento muda (gate só endurece quando a sprint declarou `true` ou o run tem `options.loop`).
+
+Arquivos/artefatos:
+- `packages/mcp-server/server.js`, `packages/mcp-server/server.test.js`.
+- `packages/skills/talos-slice-review/SKILL.md`, `packages/orchestrator/skills/talos/SKILL.md`.
+- Bump: `VERSION`, `package.json`, `packages/mcp-server/package.json`, `.claude-plugin/plugin.json`, READMEs/COMMANDS/CLAUDE/AGENTS, bundles e catálogos em `plugins/` e `hosts/`.
+
+Validação:
+- `node --test packages/mcp-server/server.test.js` — 373/373
+- `node build/check-consistency.mjs`
+- `node build/check-public-docs.mjs`
+- `bash build/test-all.sh`
+- `claude plugin validate ./ --strict`
+- `git diff --check`
+
 ## 0.21.2 - 2026-09-03
 
 Tipo: **packaging/tooling**. **Sem breaking**. Schema MCP: v5 (inalterado). Disco: v3 (inalterado).

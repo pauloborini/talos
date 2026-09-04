@@ -195,6 +195,10 @@ const MANUAL_VALIDATION_MV_ID_RE = /^MV-(S\d{2}(?:[a-z]|\.\d+)?)-(AC-\d+)$/;
 // = 'validator' (fluxo atual, byte a byte — D18 aditivo).
 const REPAIR_ORIGINS = new Set(['validator', 'slice_review', 'escalation']);
 const REPAIR_IN_LOOP_ORIGINS = new Set(['slice_review', 'escalation']);
+// D13/D06: veredito terminal da slice-review. Mesmo enum do validator —
+// `fail` (ou qualquer finding P0/P1 no packet) abre a cadeia de repair
+// pós-review; os dois `pass` fecham o gate `slice_review` do ledger.
+const REVIEW_VERDICTS = new Set(['pass', 'pass_with_observations', 'fail']);
 // D21: veredito da verification — enum fechado, enforcement no repair_complete.
 const VERIFICATION_VERDICTS = new Set(['resolved', 'not_resolved', 'regression']);
 // D10/D20: PENDENCIAS — writer único MCP, arquivo parseável, teto de drain 3.
@@ -1491,12 +1495,50 @@ function patchDispatchResult(runId, result, args = {}) {
     dispatch: {
       ...currentDispatch,
       ...(result.dispatch ?? {}),
+      // D13/G12: a liveness da execução sobrevive ao complete da fase. O repair
+      // pós-review acontece com `plan_execute` já fechado (a review só inicia
+      // depois do complete) e precisa da MESMA base — base_sha,
+      // worktree_baseline e slice_commit_sha256 — que o repair do ramo
+      // validator usa. Sem isso o commit do repair pós-review não tem lock.
+      ...(result.dispatch?.active === null && currentDispatch.active?.liveness
+        ? { execute_liveness: currentDispatch.active.liveness }
+        : {}),
       history,
     },
     gates: {
       ...(previous.data?.gates ?? {}),
       [result.gate ?? 'G7']: compactLedgerEvent(result),
+      // D12/D13: `gates.slice_review` é DERIVADO do veredito no complete da fase,
+      // nunca auto-declarado pelo orquestrador. É esta chave que o gate de
+      // fechamento em `--loop` lê (updateSprintStatus); antes ela só existia
+      // porque a skill mandava o orquestrador escrever `passed` à mão.
+      ...(result.review
+        ? {
+          slice_review: {
+            status: result.review.status === 'passed' ? 'passed' : 'blocked',
+            review_status: result.review.status,
+            verdict: result.review.verdict,
+            blocking_count: result.review.blocking_count,
+            timestamp: result.review.timestamp,
+            source: 'mcp_derived',
+          },
+        }
+        : {}),
     },
+    // Ciclo próprio da review: o `findings_packet` do validator pertence ao
+    // ramo G4 e não pode ser sobrescrito pela review. `repair_start(origin=
+    // slice_review)` lê daqui.
+    ...(result.review
+      ? {
+        review_cycle: {
+          status: result.review.status,
+          verdict: result.review.verdict,
+          findings_packet: result.review.findings_packet,
+          blocking_count: result.review.blocking_count,
+          timestamp: result.review.timestamp,
+        },
+      }
+      : {}),
   };
 
   return upsertState({
@@ -1668,7 +1710,18 @@ function runState(args = {}) {
       validator_recovery: deriveValidatorRecovery(state),
     };
   }
-  if (action === 'upsert') return upsertState(args);
+  if (action === 'upsert') {
+    // D13/INV: `gates.slice_review` é projeção do MCP no complete da fase
+    // (patchDispatchResult). Upsert direto reabre exatamente o buraco que o
+    // gate fecha — o orquestrador declarando `passed` a review que ele mesmo
+    // pediu. Chave reservada, recusa tipada.
+    if (args?.data?.gates && Object.prototype.hasOwnProperty.call(args.data.gates, 'slice_review')) {
+      throw rpcError(-32602, 'gates.slice_review é derivado pelo MCP em talos_lock_dispatch(action=complete, phase=slice_review); upsert direto é proibido.', {
+        next_action: 'concluir_a_fase_slice_review_com_review_verdict',
+      });
+    }
+    return upsertState(args);
+  }
   throw rpcError(-32602, `Ação inválida para talos_run_state: ${action}`);
 }
 
@@ -2462,6 +2515,27 @@ function verifyBacklogIndex(args = {}) {
   return result;
 }
 
+// D06/D09: leitor do `policy_manifest.critical_review.required` do sprint file.
+// Sem dependência de YAML (o MCP não tem deps): acha a chave `critical_review:`
+// e lê o `required:` dentro do bloco indentado dela. Ausente/ilegível ⇒ false —
+// o gate só endurece quando a sprint declarou explicitamente `true` (CN7).
+function sprintCriticalReviewRequired(content) {
+  if (typeof content !== 'string') return false;
+  const header = /^([ \t]*)critical_review:[ \t]*(?:#[^\n]*)?$/m.exec(content);
+  if (!header) return false;
+  const baseIndent = header[1].length;
+  const rest = content.slice(header.index + header[0].length);
+  for (const line of rest.split('\n')) {
+    const trimmed = line.trim();
+    if (trimmed === '' || trimmed.startsWith('#')) continue;
+    const indent = line.length - line.trimStart().length;
+    if (indent <= baseIndent) return false;
+    const required = /^required:[ \t]*(true|false)\b/.exec(trimmed);
+    if (required) return required[1] === 'true';
+  }
+  return false;
+}
+
 function depsSatisfied(row, byId) {
   const unmet = [];
   for (const dep of sprintDeps(row.dependencies)) {
@@ -2809,6 +2883,11 @@ function updateSprintStatus(args = {}) {
     // `options.loop` (campo ausente/falsey) → nenhum comportamento novo (CN7).
     // Leitura do run: mesmo acesso de patchGateResult (readState); run ausente
     // ou ilegível ⇒ sem flag ⇒ sem gate novo (comportamento aditivo, D18).
+    // Sprint file lido cedo: o gate v1 de fechamento (Plano 03) cruza o
+    // metadado `Traceability` e os `source_refs` ANTES de qualquer write.
+    const sprintPath = cleanBacklogPathToken(row.sprint_file);
+    const sprintAbs = resolveConsumerPath(sprintPath, args);
+    const sprintBefore = fs.readFileSync(sprintAbs, 'utf8');
     if (status === 'done' || status === 'manual_validation_pending') {
       let loopReviewRequired = false;
       try {
@@ -2817,30 +2896,39 @@ function updateSprintStatus(args = {}) {
       } catch {
         loopReviewRequired = false;
       }
-      if (loopReviewRequired) {
-        let loopReviewPassed = false;
+      // D06/D09: a segunda origem da exigência é o próprio sprint file. Até aqui
+      // `policy_manifest.critical_review.required: true` só existia como prosa em
+      // SKILL.md — o MCP nunca lia o campo, então a review "obrigatória" era
+      // obrigatória só para quem lesse a doutrina. As duas origens compartilham
+      // o mesmo gate: review derivada `passed` no ledger.
+      const criticalReviewRequired = sprintCriticalReviewRequired(sprintBefore);
+      const reviewRequired = loopReviewRequired || criticalReviewRequired;
+      if (reviewRequired) {
+        let reviewGate = null;
         try {
           const runLedger = readState(runId, args);
-          loopReviewPassed = runLedger?.data?.gates?.slice_review?.status === 'passed';
+          reviewGate = runLedger?.data?.gates?.slice_review ?? null;
         } catch {
-          loopReviewPassed = false;
+          reviewGate = null;
         }
-        if (!loopReviewPassed) {
+        if (reviewGate?.status !== 'passed') {
+          const origem = loopReviewRequired && criticalReviewRequired
+            ? '--loop + policy_manifest.critical_review'
+            : loopReviewRequired ? '--loop (D12)' : 'policy_manifest.critical_review (D06/D09)';
           pendencies.push(conformancePending(
             'loop_review',
             sprintId,
             null,
-            '--loop implica review crítica (D12): rode talos-slice-review antes de fechar.',
-            'rodar_slice_review_loop',
+            reviewGate?.review_status === 'repair_required'
+              ? `Review crítica exigida por ${origem} terminou com residual bloqueante (${reviewGate.blocking_count} P0/P1): corrija pela cadeia de repair antes de fechar.`
+              : `Review crítica exigida por ${origem}: rode talos-slice-review e conclua a fase com review_verdict antes de fechar.`,
+            reviewGate?.review_status === 'repair_required'
+              ? 'repair_start_origin_slice_review'
+              : 'rodar_slice_review_loop',
           ));
         }
       }
     }
-    // Sprint file lido cedo: o gate v1 de fechamento (Plano 03) cruza o
-    // metadado `Traceability` e os `source_refs` ANTES de qualquer write.
-    const sprintPath = cleanBacklogPathToken(row.sprint_file);
-    const sprintAbs = resolveConsumerPath(sprintPath, args);
-    const sprintBefore = fs.readFileSync(sprintAbs, 'utf8');
     // D5/D23 + A6 (fechamento Plano F): gate de aceite por estado.
     // acceptance_results moram no state v3 (eco do oráculo classifyAcceptanceResults —
     // VC5; o validator emite no packet e o MCP persiste o eco no complete).
@@ -4881,12 +4969,98 @@ function completeDispatch(args, context) {
   }
 
   if (phase === 'slice_review') {
+    // D13: o veredito da review é DADO do MCP, não prosa do orquestrador. Antes
+    // deste gate o complete devolvia `passed` incondicional e o próprio
+    // orquestrador escrevia `gates.slice_review = passed` via run_state — uma
+    // review com P0 fechava a sprint e, em `--loop`, a esteira avançava.
+    // Fail-closed: sem veredito declarado não há fase concluída.
+    const reviewVerdict = args.review_verdict;
+    if (typeof reviewVerdict !== 'string' || !REVIEW_VERDICTS.has(reviewVerdict)) {
+      return {
+        gate: 'G8',
+        action: 'complete',
+        phase,
+        status: 'blocked',
+        timestamp,
+        code: 'review_verdict_ausente',
+        error: `Conclusão da review exige review_verdict ∈ {${[...REVIEW_VERDICTS].join(', ')}}; recebido ${JSON.stringify(reviewVerdict ?? null)}`,
+        current_phase: phase,
+        expected_phase: phase,
+        next_action: 'informar_review_verdict_do_subagente',
+      };
+    }
+
+    // Packet opcional, mas quando vem tem que ser o mesmo contrato do validator
+    // (F-NNN + severity + evidência). Packet malformado bloqueia — findings
+    // inventáveis não podem virar base de repair.
+    let reviewPacket = null;
+    if (args.review_findings !== undefined && args.review_findings !== null) {
+      const candidate = Array.isArray(args.review_findings)
+        ? { findings: args.review_findings }
+        : args.review_findings;
+      const normalized = normalizeFindingsPacket(candidate);
+      if (normalized.violations.length > 0) {
+        return {
+          gate: 'G8',
+          action: 'complete',
+          phase,
+          status: 'blocked',
+          timestamp,
+          code: 'review_findings_invalidos',
+          error: `Packet da review inválido: ${normalized.violations.join('; ')}`,
+          current_phase: phase,
+          expected_phase: phase,
+          next_action: 'corrigir_packet_da_review',
+        };
+      }
+      reviewPacket = normalized.packet;
+    }
+
+    const blocking = structuredBlockingFindings(reviewPacket);
+    const repairRequired = reviewVerdict === 'fail' || blocking.length > 0;
+    const review = {
+      status: repairRequired ? 'repair_required' : 'passed',
+      verdict: reviewVerdict,
+      blocking_count: blocking.length,
+      findings_packet: reviewPacket,
+      timestamp,
+    };
+
+    // Residual bloqueante não é "fase concluída". O slot de review fecha, mas a
+    // sprint só avança pela cadeia repair(origin=slice_review) → verification →
+    // sidecar(origin=escalation) → detached_repair/blocked.
+    if (repairRequired) {
+      return {
+        gate: 'G8',
+        action: 'complete',
+        phase,
+        status: 'blocked',
+        timestamp,
+        code: 'review_repair_required',
+        review_verdict: reviewVerdict,
+        blocking_count: blocking.length,
+        review,
+        error: `Review terminal com residual bloqueante (verdict=${reviewVerdict}, P0/P1=${blocking.length}): sprint não pode fechar nem avançar antes da cadeia de repair`,
+        dispatch: {
+          active: null,
+          previous_phase: phase,
+          review_completed: true,
+          next_phase: null,
+          next_action: 'repair_start_origin_slice_review',
+        },
+        next_action: 'repair_start_origin_slice_review',
+      };
+    }
+
     return {
       gate: 'G8',
       action: 'complete',
       phase,
       status: 'passed',
       timestamp,
+      review_verdict: reviewVerdict,
+      blocking_count: 0,
+      review,
       dispatch: {
         active: null,
         previous_phase: phase,
@@ -6707,8 +6881,34 @@ function validatorRepairStart(args, context) {
     };
   }
 
+  // D13: o packet lido depende da procedência. O ramo do validator lê o
+  // `findings_packet` do próprio ciclo G4; slice_review/escalation leem o
+  // `review_cycle` gravado no complete da fase de review. Ler o packet do
+  // validator num repair pós-review julgaria o finding errado.
+  const reviewCycle = context.state.data?.review_cycle ?? null;
+  const originPacket = REPAIR_IN_LOOP_ORIGINS.has(origin)
+    ? reviewCycle?.findings_packet
+    : cycle.findings_packet;
+
+  // Guard de ordem simétrico ao do validator: repair pós-review só abre se a
+  // review terminal declarou residual bloqueante. Sem isso qualquer caller
+  // abriria slot de correção sem review nenhuma.
+  if (origin === 'slice_review' && reviewCycle?.status !== 'repair_required') {
+    return {
+      gate: 'G4',
+      action: 'repair_start',
+      status: 'blocked',
+      timestamp,
+      code: 'review_sem_residual',
+      repair_origin: origin,
+      review_status: reviewCycle?.status ?? null,
+      error: `Repair de review fora de ordem: review_cycle.status atual ${reviewCycle?.status ?? 'ausente'}; exige repair_required`,
+      next_action: 'concluir_slice_review_com_review_verdict_antes_do_repair',
+    };
+  }
+
   // D14/D19/INV7: finding só de metadata não abre repair_start nem consome budget
-  const blockingFindings = structuredBlockingFindings(cycle.findings_packet);
+  const blockingFindings = structuredBlockingFindings(originPacket);
   if (blockingFindings.length > 0 && blockingFindings.every(isMetadataFinding)) {
     return {
       gate: 'G4',
@@ -7647,7 +7847,24 @@ function commitState(args = {}) {
   }
   if (args.repair !== undefined && !Array.isArray(args.repair)) throw rpcError(-32602, 'repair deve ser array');
 
-  const context = getDispatchState(runId, args);
+  let context = getDispatchState(runId, args);
+  // D13: commit de repair pós-review. Fase de execução fechada + slot de repair
+  // aberto = a autorização vem do slot (D9: role pelo lock), não do lock do
+  // executor. Reinstalar a liveness preservada devolve ao commit a base real da
+  // slice; sem ela `projectCommitStateV3` calcularia files_changed contra um
+  // baseline vazio. Só acontece com repair ativo — nenhum outro caminho ganha
+  // fase ativa sintética.
+  if (!context.dispatch.active
+    && context.dispatch.execute_liveness
+    && context.state.data?.validator_cycle?.repair?.active) {
+    context = {
+      ...context,
+      dispatch: {
+        ...context.dispatch,
+        active: { phase: 'plan_execute', liveness: context.dispatch.execute_liveness },
+      },
+    };
+  }
   const inferred = inferCommitRole(args, context);
   if (inferred.status === 'blocked') {
     const timestamp = nowIso();
@@ -8286,6 +8503,21 @@ function toolsList() {
             state_path: { type: 'string' },
             detail: { type: 'string' },
             validator_status: { type: 'string' },
+            // D13: veredito terminal e packet da slice-review, consumidos só pelo
+            // complete de `phase=slice_review`. É o canal que faltava — sem ele o
+            // MCP não tinha como distinguir review verde de review com P0.
+            review_verdict: {
+              type: 'string',
+              enum: [...REVIEW_VERDICTS],
+              description: 'Veredito terminal da slice-review (obrigatório em complete/slice_review).',
+            },
+            review_findings: {
+              oneOf: [
+                { type: 'array', items: { type: 'object', additionalProperties: true } },
+                { type: 'object', additionalProperties: true },
+              ],
+              description: 'Findings estruturados da review (F-NNN, severity P0..P3); mesmo contrato do packet do validator.',
+            },
             // Plano 01 (loop): flag opt-in da esteira serial (D1/D12). Só o start
             // consome; ausente ⇒ nada gravado (CN7).
             options: {
@@ -8309,6 +8541,12 @@ function toolsList() {
             run_id: { type: 'string', minLength: 1 },
             project_root: { type: 'string', minLength: 1 },
             action: { type: 'string', enum: ['start', 'complete', 'repair_start', 'repair_complete'] },
+            // Plano 02 (loop): procedência do slot de repair (VC1/D17). Sem esta
+            // declaração o `additionalProperties: false` acima faz o client MCP
+            // descartar o campo, `validatorRepairStart` cai no default
+            // `validator` e a cadeia pós-review (slice_review/escalation) fica
+            // inalcançável em produção — o enum tem que existir na superfície.
+            origin: { type: 'string', enum: [...REPAIR_ORIGINS] },
             state_path: { type: 'string' },
             validator_run_id: { type: 'string' },
             repair_run_id: { type: 'string' },
