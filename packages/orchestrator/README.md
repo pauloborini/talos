@@ -253,9 +253,17 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `talos-*` para o
 
 ---
 
-**Plugin version:** 0.21.2
+**Plugin version:** 0.22.0
 **Author:** Paulo Borini
-**Last updated:** 2026-09-03
+**Last updated:** 2026-09-04
+
+### Novidades v0.22.0 — veredito tipado da slice review e gate de fechamento derivado pelo MCP
+
+- **Complete da review exige veredito.** `talos_lock_dispatch(action=complete, phase=slice_review)` passa a exigir `review_verdict ∈ {pass, pass_with_observations, fail}`; sem ele o complete devolve `blocked`/`review_verdict_ausente`.
+- **Findings com ids `F-NNN`.** `review_findings` segue o mesmo packet do validator (`classify_findings.mjs`); `fail` ou qualquer P0/P1 devolve `blocked`/`review_repair_required` e trava o fechamento até a cadeia de repair (`origin=slice_review`).
+- **Gate derivado, não declarado.** `data.gates.slice_review` e `data.review_cycle` são projeção do MCP no complete da fase; `talos_run_state(action=upsert)` com `gates.slice_review` é recusado (-32602).
+- **Review crítica lida pelo MCP.** `talos_update_sprint_status` lê `policy_manifest.critical_review.required` do sprint file além da flag `--loop`; sem review derivada `passed` não há `done` nem `manual_validation_pending`.
+- **Liveness preservada pós-review.** O commit do repair pós-review herda a mesma base (`base_sha`, `worktree_baseline`, `slice_commit_sha256`) do `plan_execute` já fechado.
 
 ### Novidades v0.21.2 — fix do instalador MinimaxCode em npx/tarball
 
