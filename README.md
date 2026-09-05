@@ -3,11 +3,11 @@
   <img src="docs/assets/talos-logo.png" alt="Talos" width="200" height="200">
 </p>
 
-# Talos v0.22.0
+# Talos v0.23.0
 
 **Talos** is a deterministic development pipeline: product contract (§7) → plan → isolated execution → cold validation. It ships as one public, free plugin for Claude Code, Cursor, Codex App, Antigravity, ZCode, OpenCode, Pi CLI, VS Code, and MinimaxCode.
 
-**Version:** [`VERSION`](VERSION) (`0.22.0`) · **Command reference:** [COMMANDS.md](COMMANDS.md) · **Portuguese guide:** [README.pt-BR.md](README.pt-BR.md)
+**Version:** [`VERSION`](VERSION) (`0.23.0`) · **Command reference:** [COMMANDS.md](COMMANDS.md) · **Portuguese guide:** [README.pt-BR.md](README.pt-BR.md)
 
 ## Install
 
@@ -46,13 +46,15 @@ talos_capabilities
 
 `talos_ping` must report the expected host and current version. `talos_capabilities` reports the host adapter and required dispatch/validation capabilities. A host missing required subagent or MCP support fails preflight instead of silently degrading.
 
-## What's new in v0.22.0
+## What's new in v0.23.0
 
-Talos `0.22.0` hardens the deterministic slice model introduced in `0.21.0`:
+Talos `0.23.0` adds **intent saturation in sprint file §2 before planning** (documental BREAKING; MCP schema v5 and disk v3 unchanged):
 
-- Direct-mode `reconcile` no longer promotes the internal sentinel `.talos/plans/direct.md` into a real `plan_path`, so a recovered direct slice keeps `contract_kind: direct`.
-- Validator completion now resyncs `liveness.slice_commit_sha256` after persisting `acceptance_results`, which keeps the next post-fail commit on the real `repair` path instead of accidentally downgrading it to `reconcile`.
-- Public and operational documentation now describe the hardened boundary/repair model explicitly, so release notes, install docs, and orchestrator docs stay aligned with the shipped behavior.
+- **Dual L1/L2 interview.** L1 scopes the cycle; L2 saturates §2 (axis, `SF-*`, `AS-*`, `R1`) **before** deriving §7. G5=0 (`talos_scan_acceptance` with zero patterns) no longer skips the L2 interview.
+- **`talos_verify_sprint_file` with `stub` vs `plan_ready` threshold.** Default is `plan_ready` (stricter); generator and `select_next` pass `require: stub` explicitly.
+- **`talos_select_next_sprint` matures stubs without `--loop`.** A valid stub in the `backlog` queue returns `next_action: sprint_interview` before `ready`.
+- **PLAN ⊆ §2 via `intent_refs`.** Each task declares `SF-*`/`R1` from §2; `talos_assert_after_plan` validates mechanical coverage when `require_sprint_file`.
+- **No `legacy_sealed`.** Open `doing`/`review` sprints must migrate the 0.23 §1 intent rows and complete L2 before plan/direct. Missing `Intenção status` / `Selo da intenção` fails even `require: stub`.
 
 ## Use Talos
 
@@ -60,10 +62,10 @@ Use `/talos <mode> <input-type> [input] [flags]` in Claude Code/Cursor. In other
 
 | Mode | Use it when | Result |
 |---|---|---|
-| `full` | New backlog item, sprint, or feature | Matures §7, plans, executes, and validates |
-| `direct` | §7 is already approved and sealed | Executes without a separate plan-handoff phase |
+| `full` | New backlog item, sprint, or feature | Saturates §2 intent, matures §7, plans, executes, and validates |
+| `direct` | Intent §2 and §7 are already approved and sealed | Executes without a separate plan-handoff phase |
 | `execute` | A `PLAN_*.md` already exists | Validates then executes that plan; never regenerates it |
-| `interview-only` | Decisions need to be closed | Interviews §7; does not implement |
+| `interview-only` | Decisions need to be closed | Interviews §2 then §7; does not implement |
 | `audit` | You need a diagnosis only | Read-only audit; `--handoff` writes a plan without executing it |
 
 Examples:
@@ -94,7 +96,7 @@ Automated proof can end at `manual_validation_pending` when a human smoke check 
 
 ## Contract, acceptance, and manual validation
 
-Talos v0.22.0 rejects pre-v0.16 artifacts: start a new backlog and sprint rather than migrating an incomplete legacy contract. A sprint's §7 is the frozen product contract. Each acceptance criterion (`AC-*`) has an `origin` (`usuario`, `derivado:<path>`, or `premissa`); an assumption cannot support a Must/P0 acceptance criterion.
+Talos v0.23.0 rejects pre-v0.16 artifacts: start a new backlog and sprint rather than migrating an incomplete legacy contract. A sprint's §7 is the frozen product contract. Each acceptance criterion (`AC-*`) has an `origin` (`usuario`, `derivado:<path>`, or `premissa`); an assumption cannot support a Must/P0 acceptance criterion.
 
 An execution state uses schema v3. `done` requires every `AC-*` to be proved and no pending manual check. When automated proof is complete but a human smoke check remains, Talos records `manual_validation_pending`: dependencies may proceed, but no handoff is emitted. Complete the report in `.talos/manual-validation/` with `talos_sync_manual_validation`; it either promotes the sprint to `done` or blocks the source when the smoke check fails.
 
@@ -116,7 +118,7 @@ Talos separates a concise strategic `BACKLOG_MESTRE_*.md` from live sprint files
 
 The normal chain is `talos-sprint-interview` → `talos-plan-handoff` → executor → `talos-task-validator`; `talos-findings-repair` runs only after a failed validator, and `talos-slice-review` runs with `--review` or when `critical_review.required` is set. The primary orchestrator authors the contract and plan, but never implementation code: mutations happen only in an isolated executor, then a sibling validator performs cold validation.
 
-With `--loop`, sprints are pulled serially and review residuals self-correct in-loop (introduced in `0.20.0`, hardened in `0.22.0`): P0/P1 opens a repair with origin `slice_review`, a punctual verification executes the declared checks before judging and echoes a per-finding verdict (`resolved`/`not_resolved`/`regression`); persistent residuals go to the `talos-escalation-repair` sidecar (origin `escalation`), P2/P3 becomes a `PD-<sprint>-<NN>` entry in `PENDENCIAS_<slug>.md` (MCP-only writer) drained on demand, and an unrecoverable sprint is parked as `detached_repair`. There is never a second validator or a full re-review on the review branch.
+With `--loop`, sprints are pulled serially and review residuals self-correct in-loop (introduced in `0.20.0`, hardened in `0.23.0`): P0/P1 opens a repair with origin `slice_review`, a punctual verification executes the declared checks before judging and echoes a per-finding verdict (`resolved`/`not_resolved`/`regression`); persistent residuals go to the `talos-escalation-repair` sidecar (origin `escalation`), P2/P3 becomes a `PD-<sprint>-<NN>` entry in `PENDENCIAS_<slug>.md` (MCP-only writer) drained on demand, and an unrecoverable sprint is parked as `detached_repair`. There is never a second validator or a full re-review on the review branch.
 
 Use direct skills only for their narrow purpose: `talos-backlog-generator` organizes demand; `talos-sprint-interview` seals §7; `talos-plan-handoff` creates a plan; `talos-audit` diagnoses without patching (and may write a handoff with `--handoff`); `talos-memory-promote` is an explicit post-`done` action. Never invoke `talos-task-validator` manually.
 

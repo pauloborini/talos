@@ -1,6 +1,6 @@
 {
   "name": "talos",
-  "version": "0.22.0",
+  "version": "0.23.0",
   "description": "Orquestra pipelines via sub-agents (sprint file com contrato §7, entrevista, plan handoff, execução, validator, repair, review), auditoria universal e geração explícita de backlog mestre. Bundle único: skills talos-* + orquestrador + templates canônicos.",
   "author": {
     "name": "Paulo Borini"

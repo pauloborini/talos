@@ -530,6 +530,395 @@ export function validateAcceptanceSeal(markdown) {
   };
 }
 
+/** Extrai o bloco §2 (intenção) normalizado — mesma normalização do §7. */
+export function extractIntentBlock(markdown) {
+  const start = /^##\s+2\.\s/im.exec(markdown);
+  if (!start) return null;
+  const tail = markdown.slice(start.index);
+  const afterHeading = tail.slice(start[0].length);
+  const next = /\n##\s/.exec(afterHeading);
+  const raw = next ? tail.slice(0, start[0].length + next.index) : tail;
+  return normalizeAcceptanceBlock(raw);
+}
+
+/** Retorna `sha256:<hex>` do bloco §2, ou null se §2 ausente. */
+export function computeIntentSeal(markdown) {
+  const block = extractIntentBlock(markdown);
+  if (block == null) return null;
+  const hash = crypto.createHash('sha256').update(block, 'utf8').digest('hex');
+  return `sha256:${hash}`;
+}
+
+/**
+ * Selo write-once da intenção saturada (§2).
+ * - rascunho (ou status ≠ saturada): selo ignorado → { sealed:false, tampered:false }
+ * - saturada sem selo válido: { sealed:false, tampered:true }
+ * - saturada com selo: compara sha256 do §2 → tampered se divergir
+ */
+export function validateIntentSeal(markdown) {
+  const status = tableValue(markdown, 'Intenção status');
+  if (!status || !/^saturada$/i.test(status.trim())) {
+    return { sealed: false, tampered: false };
+  }
+  const sealRaw = tableValue(markdown, 'Selo da intenção');
+  if (!sealRaw || !/^sha256:[a-f0-9]{64}$/i.test(sealRaw.trim())) {
+    return { sealed: false, tampered: true };
+  }
+  const expected = computeIntentSeal(markdown);
+  if (!expected) {
+    return { sealed: false, tampered: true };
+  }
+  return {
+    sealed: true,
+    tampered: expected.toLowerCase() !== sealRaw.trim().toLowerCase(),
+  };
+}
+
+/** Aprova saturação da intenção: `Intenção status: saturada` + `Selo da intenção` (sha256 do §2). */
+export function approveIntentSaturation(markdown) {
+  let updated = setTableValue(markdown, 'Intenção status', 'saturada');
+  const seal = computeIntentSeal(updated);
+  if (!seal) throw new Error('INTENT_BLOCK_MISSING');
+  updated = setTableValue(updated, 'Selo da intenção', seal);
+  return updated;
+}
+
+function replaceSection2Line(markdown, labelRe, replacementLine) {
+  const section2 = extractSectionMarkdown(markdown, 2);
+  if (section2 == null) throw new Error('INTENT_SECTION_MISSING');
+  const nextScope = labelRe.test(section2)
+    ? section2.replace(labelRe, replacementLine)
+    : `${section2.trimEnd()}\n${replacementLine}\n`;
+  const start = markdown.indexOf(section2);
+  return markdown.slice(0, start) + nextScope + markdown.slice(start + section2.length);
+}
+
+function upsertBulletList(markdown, headingRe, idPrefix, items) {
+  const section2 = extractSectionMarkdown(markdown, 2) ?? '';
+  const headingMatch = headingRe.exec(section2);
+  if (!headingMatch) throw new Error(`INTENT_HEADING_MISSING:${idPrefix}`);
+  const afterHeading = section2.slice(headingMatch.index + headingMatch[0].length);
+  const nextHeading = /\n\*\*[^\n]+:\*\*/.exec(afterHeading);
+  const listBlock = nextHeading ? afterHeading.slice(0, nextHeading.index) : afterHeading;
+  let nextList = listBlock;
+  for (const item of items) {
+    const id = item.id.toUpperCase();
+    const line = `- **${id}** — ${item.text} — ${item.origin ?? 'usuario'}`;
+    const rowRe = new RegExp(`^-\\s*\\*\\*${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\*\\*.*$`, 'm');
+    nextList = rowRe.test(nextList) ? nextList.replace(rowRe, line) : `${nextList.trimEnd()}\n${line}\n`;
+  }
+  const nextSection2 = section2.slice(0, headingMatch.index + headingMatch[0].length)
+    + nextList
+    + (nextHeading ? afterHeading.slice(nextHeading.index) : '');
+  const start = markdown.indexOf(section2);
+  return markdown.slice(0, start) + nextSection2 + markdown.slice(start + section2.length);
+}
+
+/**
+ * Upsert mínimo de campos §2 (intenção): eixo, SF-*, AS-*, R1, linha `Aferição T*`.
+ * Se `Intenção status: saturada`, volta a `rascunho` e limpa o selo antes de editar.
+ * Com `{ approve: true }`, fecha com `approveIntentSaturation` (caller deve zerar T* antes).
+ */
+export function applyIntentField(markdown, fields = {}, options = {}) {
+  const { approve = false } = options;
+  let updated = markdown;
+  const intentStatus = tableValue(updated, 'Intenção status');
+  if (intentStatus && /^saturada$/i.test(intentStatus.trim())) {
+    updated = setTableValue(updated, 'Intenção status', 'rascunho');
+    updated = setTableValue(updated, 'Selo da intenção', 'pendente até saturação');
+  }
+  if (fields.eixo) {
+    const origin = fields.eixo_origin ?? 'usuario';
+    updated = replaceSection2Line(
+      updated,
+      /^\*\*Eixo do ataque:\*\*.*$/m,
+      `**Eixo do ataque:** \`${fields.eixo}\` — ${origin}`,
+    );
+  }
+  if (Array.isArray(fields.surfaces) && fields.surfaces.length > 0) {
+    updated = upsertBulletList(
+      updated,
+      /^\*\*Superfícies \(SF-\\?\*\):\*\*\s*$/m,
+      'SF',
+      fields.surfaces,
+    );
+  }
+  if (Array.isArray(fields.anti_scope) && fields.anti_scope.length > 0) {
+    updated = upsertBulletList(
+      updated,
+      /^\*\*Anti-escopo tentador \(AS-\\?\*\):\*\*\s*$/m,
+      'AS',
+      fields.anti_scope,
+    );
+  }
+  if (fields.recusa) {
+    const origin = fields.recusa_origin ?? 'usuario';
+    updated = upsertBulletList(
+      updated,
+      /^\*\*Recusa:\*\*\s*$/m,
+      'R1',
+      [{ id: 'R1:', text: `eu recuso a sprint se ${fields.recusa}`, origin }],
+    );
+  }
+  if (fields.repo_rules != null) {
+    updated = replaceSection2Line(
+      updated,
+      /^\*\*Regras do repo:\*\*.*$/m,
+      `**Regras do repo:** ${fields.repo_rules}`,
+    );
+  }
+  if (fields.afericao != null) {
+    updated = replaceSection2Line(
+      updated,
+      /^\*\*Aferição T\\?\*:\*\*.*$/m,
+      `**Aferição T*:** ${fields.afericao}`,
+    );
+  }
+  if (approve) updated = approveIntentSaturation(updated);
+  return updated;
+}
+
+function planIntentPending(item, line, message, nextAction = 'corrigir_intent_refs') {
+  return { category: 'intent_refs', item, line, message, next_action: nextAction };
+}
+
+function normalizeIntentRef(ref) {
+  if (/^SF-\d+$/i.test(ref)) return ref.toUpperCase();
+  if (/^R1$/i.test(ref)) return 'R1';
+  return ref;
+}
+
+/** IDs estáveis declarados como bullets §2 (`**SF-NN**` / `**AS-NN**` / `**R1:**`). */
+export function parseIntentIds(sprintMarkdown) {
+  const block = extractIntentBlock(sprintMarkdown) ?? '';
+  const surfaces = [...block.matchAll(/^\s*-\s*\*\*(SF-\d+)\*\*/gim)].map((m) => m[1].toUpperCase());
+  const antis = [...block.matchAll(/^\s*-\s*\*\*(AS-\d+)\*\*/gim)].map((m) => m[1].toUpperCase());
+  const hasR1 = /^\s*-\s*\*\*R1:\*\*/im.test(block);
+  return { sf: [...new Set(surfaces)], as: [...new Set(antis)], hasR1 };
+}
+
+const BOLD_INTENT_REFS_RE = /^\s*[-*]\s+\*\*intent_refs:\*\*\s*\[([^\]]+)\]/im;
+const PLAIN_INTENT_REFS_RE = /intent_refs:\s*\[([^\]]+)\]/i;
+
+function parseIntentRefsLine(taskBlock) {
+  const bold = BOLD_INTENT_REFS_RE.exec(taskBlock);
+  const plain = bold ? null : PLAIN_INTENT_REFS_RE.exec(taskBlock);
+  const match = bold ?? plain;
+  if (!match) return null;
+  return match[1].split(',').map((part) => part.trim()).filter(Boolean);
+}
+
+function extractPlanTaskBlocks(planMarkdown) {
+  const headings = [];
+  const re = /^####\s+(T\d+)\./gm;
+  let match;
+  while ((match = re.exec(planMarkdown)) !== null) {
+    headings.push({ id: match[1], start: match.index, headingEnd: match.index + match[0].length });
+  }
+  return headings.map((heading, index) => {
+    const sliceStart = heading.headingEnd;
+    const sliceEnd = index + 1 < headings.length ? headings[index + 1].start : planMarkdown.length;
+    const raw = planMarkdown.slice(sliceStart, sliceEnd);
+    const nextSection = /\n##\s/.exec(raw);
+    const block = nextSection ? raw.slice(0, nextSection.index) : raw;
+    return { id: heading.id, block };
+  });
+}
+
+/**
+ * PLAN ⊆ §2 (D-INT-18): cada task declara `intent_refs` só com SF-* ou R1 da §2;
+ * todo SF-* e R1 têm ≥1 task de lastro.
+ */
+export function verifyIntentRefs(planMarkdown, sprintMarkdown) {
+  const pendencies = [];
+  const { sf, hasR1 } = parseIntentIds(sprintMarkdown);
+  const sfSet = new Set(sf);
+  const citedSf = new Set();
+  let citedR1 = false;
+  const tasks = extractPlanTaskBlocks(planMarkdown);
+
+  for (const task of tasks) {
+    const refs = parseIntentRefsLine(task.block);
+    if (!refs || refs.length === 0) {
+      pendencies.push(planIntentPending(
+        task.id,
+        null,
+        `Task ${task.id} sem intent_refs não vazio.`,
+      ));
+      continue;
+    }
+    for (const rawRef of refs) {
+      const ref = normalizeIntentRef(rawRef);
+      if (/^AS-\d+$/i.test(rawRef)) {
+        pendencies.push(planIntentPending(
+          rawRef,
+          null,
+          `Task ${task.id} cita anti-escopo ${rawRef} em intent_refs (proibido).`,
+        ));
+        continue;
+      }
+      if (/^SF-\d+$/i.test(rawRef)) {
+        if (!sfSet.has(ref)) {
+          pendencies.push(planIntentPending(
+            ref,
+            null,
+            `Task ${task.id} cita ${ref} ausente na §2.`,
+          ));
+        } else {
+          citedSf.add(ref);
+        }
+        continue;
+      }
+      if (/^R1$/i.test(rawRef)) {
+        if (!hasR1) {
+          pendencies.push(planIntentPending(
+            'R1',
+            null,
+            `Task ${task.id} cita R1 ausente na §2.`,
+          ));
+        } else {
+          citedR1 = true;
+        }
+        continue;
+      }
+      pendencies.push(planIntentPending(
+        rawRef,
+        null,
+        `Task ${task.id} cita ID inválido em intent_refs: ${rawRef} (esperado SF-* ou R1).`,
+      ));
+    }
+  }
+
+  for (const surface of sf) {
+    if (!citedSf.has(surface)) {
+      pendencies.push(planIntentPending(
+        surface,
+        null,
+        `Superfície ${surface} da §2 sem lastro em nenhuma task.`,
+      ));
+    }
+  }
+  if (hasR1 && !citedR1) {
+    pendencies.push(planIntentPending(
+      'R1',
+      null,
+      'Recusa R1 da §2 sem lastro em nenhuma task.',
+    ));
+  }
+
+  return pendencies;
+}
+
+const INTENT_ORIGIN_RE = '(usuario|derivado:\\S+|premissa)';
+
+function intentBulletPlaceholder(line) {
+  return /\[enunciado|\[tentação|\[efeito observável|\[…/i.test(line);
+}
+
+function filledIntentBullets(section2, idRe) {
+  const rowRe = new RegExp(
+    `^\\s*-\\s*\\*\\*${idRe}\\*\\*(?:\\s+—)?\\s+\\S.*?\\s+—\\s+${INTENT_ORIGIN_RE}\\s*$`,
+    'gim',
+  );
+  return [...section2.matchAll(rowRe)].filter((m) => !intentBulletPlaceholder(m[0]));
+}
+
+function validateIntentPlanReady(markdown, pendencies) {
+  const section2 = extractSectionMarkdown(markdown, 2) ?? '';
+  const eixoMatch = /^\*\*Eixo do ataque:\*\*\s*`(dados|ux|estrutura|contrato|misto)`\s+—\s+(\S+)\s*$/im.exec(section2);
+  if (!eixoMatch) {
+    pendencies.push(sprintConformancePending(
+      'intencao',
+      'eixo',
+      lineOf(markdown, /^\*\*Eixo do ataque:\*\*/i),
+      '§2 sem eixo do ataque válido (esperado `dados|ux|estrutura|contrato|misto` — origem).',
+      'preencher_eixo_intencao',
+    ));
+  } else if (/^premissa$/i.test(eixoMatch[2])) {
+    pendencies.push(sprintConformancePending(
+      'intencao',
+      'eixo_premissa',
+      lineOf(markdown, /^\*\*Eixo do ataque:\*\*/i),
+      'premissa no eixo não sustenta Intenção status: saturada.',
+      'entrevistar_eixo_intencao',
+    ));
+  }
+  const sfCount = filledIntentBullets(section2, 'SF-\\d+').length;
+  if (sfCount < 1) {
+    pendencies.push(sprintConformancePending(
+      'intencao',
+      'superficies',
+      lineOf(markdown, /^\*\*Superfícies/i),
+      '§2 sem superfície SF-NN preenchida (placeholder do template não conta).',
+      'preencher_superficies_intencao',
+    ));
+  }
+  const asCount = filledIntentBullets(section2, 'AS-\\d+').length;
+  if (asCount < 1) {
+    pendencies.push(sprintConformancePending(
+      'intencao',
+      'anti_escopo',
+      lineOf(markdown, /^\*\*Anti-escopo/i),
+      '§2 sem anti-escopo AS-NN preenchido (placeholder do template não conta).',
+      'preencher_anti_escopo_intencao',
+    ));
+  }
+  const r1Rows = filledIntentBullets(section2, 'R1:');
+  if (r1Rows.length !== 1) {
+    pendencies.push(sprintConformancePending(
+      'intencao',
+      'recusa',
+      lineOf(markdown, /^\*\*Recusa:\*\*/i),
+      `§2 exige exatamente uma recusa R1 preenchida (encontradas: ${r1Rows.length}).`,
+      'preencher_recusa_intencao',
+    ));
+  }
+  const intentStatus = tableValue(markdown, 'Intenção status');
+  if (!intentStatus || !/^saturada$/i.test(intentStatus.trim())) {
+    pendencies.push(sprintConformancePending(
+      'intencao',
+      'Intenção status',
+      lineOf(markdown, /^\|\s*Intenção status\s*\|/i),
+      `Intenção status inválido ou ausente: ${intentStatus ?? '<ausente>'} (esperado saturada para plan_ready).`,
+      'saturar_intencao',
+    ));
+  }
+  const intentSeal = validateIntentSeal(markdown);
+  if (!intentSeal.sealed || intentSeal.tampered) {
+    pendencies.push(sprintConformancePending(
+      'intencao_congelada',
+      intentSeal.tampered ? 'FROZEN_INTENT_TAMPERED' : 'selo_intencao',
+      lineOf(markdown, /^##\s+2\./i),
+      intentSeal.tampered
+        ? 'Intenção saturada foi alterada sem re-saturação (selo divergente).'
+        : 'Intenção saturada sem selo válido.',
+      intentSeal.tampered ? 'resaturar_intencao' : 'saturar_intencao',
+    ));
+  }
+  const contratoStatus = tableValue(markdown, 'Contrato status');
+  if (!contratoStatus || !/^aprovado$/i.test(contratoStatus.trim())) {
+    pendencies.push(sprintConformancePending(
+      'contrato_produto',
+      'Contrato status',
+      lineOf(markdown, /^\|\s*Contrato status\s*\|/i),
+      `Contrato status deve ser aprovado para plan_ready: ${contratoStatus ?? '<ausente>'}.`,
+      'aprovar_contrato',
+    ));
+  }
+  const acceptanceSeal = validateAcceptanceSeal(markdown);
+  if (!acceptanceSeal.sealed || acceptanceSeal.tampered) {
+    pendencies.push(sprintConformancePending(
+      'contrato_produto',
+      acceptanceSeal.tampered ? 'FROZEN_ACCEPTANCE_TAMPERED' : 'selo_contrato',
+      lineOf(markdown, /^##\s+7\./i),
+      acceptanceSeal.tampered
+        ? 'Contrato aprovado foi alterado sem re-aprovação (selo divergente).'
+        : 'Contrato aprovado sem selo válido.',
+      acceptanceSeal.tampered ? 'reaprovar_contrato' : 'aprovar_contrato',
+    ));
+  }
+}
+
 /**
  * Modo de rastreabilidade de uma sprint (opt-in `traceability v1`, D5/D6/D15):
  * - `v1`: metadado `Traceability: v1` na sprint E `ledger.sprints[<id>].schema`
@@ -636,11 +1025,17 @@ export function validateSprintFileConformance(markdown, {
   backlogPath = null,
   backlogMarkdown = null,
   root = null,
+  require: requireLevel = 'plan_ready',
   // Opt-in `traceability v1` (Plano 01): objeto do ledger MCP quando o caller
   // conhece o ledger; `undefined` preserva o comportamento atual (legacy puro).
   traceability = undefined,
 } = {}) {
-  const pendencies = [];
+  if (requireLevel !== 'stub' && requireLevel !== 'plan_ready') {
+    throw new Error('INVALID_REQUIRE');
+  }
+  const basePendencies = [];
+  const planReadyPendencies = [];
+  const pendencies = basePendencies;
   let premissaCount = 0;
   const moscowValue = tableValue(markdown, 'MoSCoW');
   const prioridadeValue = tableValue(markdown, 'Prioridade');
@@ -760,33 +1155,59 @@ export function validateSprintFileConformance(markdown, {
     ));
   }
 
-  const section7 = extractSectionMarkdown(markdown, 7) ?? '';
-  if (!/\|\s*D\d+\s*\|/.test(section7)) {
+  const intentStatusMeta = tableValue(markdown, 'Intenção status');
+  if (!intentStatusMeta || !/^(rascunho|saturada)$/i.test(intentStatusMeta.trim())) {
     pendencies.push(sprintConformancePending(
-      'contrato_produto',
-      'decisoes',
-      lineOf(markdown, /^##\s+7\./i),
-      'Contrato §7 sem decisão de produto D* (| D<n> |).',
-      'preencher_decisoes_produto',
+      'metadados',
+      'Intenção status',
+      lineOf(markdown, /^\|\s*Intenção status\s*\|/i),
+      `Intenção status ausente ou placeholder: ${intentStatusMeta ?? '<ausente>'} (esperado rascunho|saturada).`,
+      'preencher_metadados_intencao',
     ));
   }
-  // LEG1: validação de aceite substitui os 4 grupos checkbox por AC-* (YAML acceptance).
-  const acceptanceItems = parseAcceptanceContract(markdown);
-  if (acceptanceItems == null) {
+  const intentSealMeta = tableValue(markdown, 'Selo da intenção');
+  const intentSealOk = intentSealMeta
+    && !/^\[/.test(intentSealMeta.trim())
+    && (/^pendente até saturação$/i.test(intentSealMeta.trim())
+      || /^sha256:[a-f0-9]{64}$/i.test(intentSealMeta.trim()));
+  if (!intentSealOk) {
     pendencies.push(sprintConformancePending(
-      'contrato_produto',
-      'aceite',
-      lineOf(markdown, /^##\s+7\./i),
-      'Contrato §7 sem bloco `acceptance` (YAML com AC-*).',
-      'preencher_aceite_binario',
+      'metadados',
+      'Selo da intenção',
+      lineOf(markdown, /^\|\s*Selo da intenção\s*\|/i),
+      `Selo da intenção ausente ou placeholder: ${intentSealMeta ?? '<ausente>'} (esperado 'pendente até saturação' ou sha256:<hex>).`,
+      'preencher_metadados_intencao',
     ));
-  } else {
-    const VALID_EVIDENCE = new Set(['I', 'T-outcome', 'W', 'M']);
-    const seenIds = new Set();
-    const evalIds = extractEvalIds(markdown);
-    for (const item of acceptanceItems) {
-      if (!item.id || !/^AC-\d+$/.test(item.id)) {
-        pendencies.push(sprintConformancePending(
+  }
+
+  const section7 = extractSectionMarkdown(markdown, 7) ?? '';
+  let acceptanceItems = null;
+  if (!/\|\s*D\d+\s*\|/.test(section7)) {
+      planReadyPendencies.push(sprintConformancePending(
+        'contrato_produto',
+        'decisoes',
+        lineOf(markdown, /^##\s+7\./i),
+        'Contrato §7 sem decisão de produto D* (| D<n> |).',
+        'preencher_decisoes_produto',
+      ));
+    }
+    // LEG1: validação de aceite substitui os 4 grupos checkbox por AC-* (YAML acceptance).
+    acceptanceItems = parseAcceptanceContract(markdown);
+    if (acceptanceItems == null) {
+      planReadyPendencies.push(sprintConformancePending(
+        'contrato_produto',
+        'aceite',
+        lineOf(markdown, /^##\s+7\./i),
+        'Contrato §7 sem bloco `acceptance` (YAML com AC-*).',
+        'preencher_aceite_binario',
+      ));
+    } else {
+      const VALID_EVIDENCE = new Set(['I', 'T-outcome', 'W', 'M']);
+      const seenIds = new Set();
+      const evalIds = extractEvalIds(markdown);
+      for (const item of acceptanceItems) {
+        if (!item.id || !/^AC-\d+$/.test(item.id)) {
+          planReadyPendencies.push(sprintConformancePending(
           'contrato_produto',
           'aceite',
           lineOf(markdown, /^##\s+7\./i),
@@ -796,7 +1217,7 @@ export function validateSprintFileConformance(markdown, {
         continue;
       }
       if (seenIds.has(item.id)) {
-        pendencies.push(sprintConformancePending(
+        planReadyPendencies.push(sprintConformancePending(
           'contrato_produto',
           'aceite',
           lineOf(markdown, /^##\s+7\./i),
@@ -807,7 +1228,7 @@ export function validateSprintFileConformance(markdown, {
       seenIds.add(item.id);
       // Procedência por linha (v0.16.0, D3/D5/D17): todo AC declara `origin`.
       if (item.origin === undefined || item.origin === null || String(item.origin).trim() === '') {
-        pendencies.push(sprintConformancePending(
+        planReadyPendencies.push(sprintConformancePending(
           'procedencia_ausente',
           item.id,
           lineOf(markdown, /^##\s+7\./i),
@@ -818,7 +1239,7 @@ export function validateSprintFileConformance(markdown, {
         const originCheck = validateOriginToken(item.origin, { root });
         if (!originCheck.valid) {
           if (originCheck.kind === 'derivado' && originCheck.path) {
-            pendencies.push(sprintConformancePending(
+            planReadyPendencies.push(sprintConformancePending(
               'origem_path_inexistente',
               item.id,
               lineOf(markdown, /^##\s+7\./i),
@@ -826,7 +1247,7 @@ export function validateSprintFileConformance(markdown, {
               'corrigir_origem_path',
             ));
           } else {
-            pendencies.push(sprintConformancePending(
+            planReadyPendencies.push(sprintConformancePending(
               'procedencia_invalida',
               item.id,
               lineOf(markdown, /^##\s+7\./i),
@@ -837,7 +1258,7 @@ export function validateSprintFileConformance(markdown, {
         } else if (originCheck.kind === 'premissa') {
           premissaCount += 1;
           if (prioridadeSprint) {
-            pendencies.push(sprintConformancePending(
+            planReadyPendencies.push(sprintConformancePending(
               'procedencia_premissa_em_prioridade',
               item.id,
               lineOf(markdown, /^##\s+7\./i),
@@ -848,7 +1269,7 @@ export function validateSprintFileConformance(markdown, {
         }
       }
       if (!item.behavior || !item.behavior.trim()) {
-        pendencies.push(sprintConformancePending(
+        planReadyPendencies.push(sprintConformancePending(
           'contrato_produto',
           'aceite',
           lineOf(markdown, /^##\s+7\./i),
@@ -859,7 +1280,7 @@ export function validateSprintFileConformance(markdown, {
       const evidence = item.evidence ?? { required: [], manual: null };
       const required = Array.isArray(evidence.required) ? evidence.required : [];
       if (required.length === 0) {
-        pendencies.push(sprintConformancePending(
+        planReadyPendencies.push(sprintConformancePending(
           'contrato_produto',
           'aceite',
           lineOf(markdown, /^##\s+7\./i),
@@ -869,7 +1290,7 @@ export function validateSprintFileConformance(markdown, {
       } else {
         const invalid = required.filter((t) => !VALID_EVIDENCE.has(t));
         if (invalid.length > 0) {
-          pendencies.push(sprintConformancePending(
+          planReadyPendencies.push(sprintConformancePending(
             'contrato_produto',
             'aceite',
             lineOf(markdown, /^##\s+7\./i),
@@ -882,7 +1303,7 @@ export function validateSprintFileConformance(markdown, {
       const hasManual = !!required.includes('M');
       const manualObj = evidence.manual && typeof evidence.manual === 'object' ? evidence.manual : null;
       if (hasManual && !manualObj) {
-        pendencies.push(sprintConformancePending(
+        planReadyPendencies.push(sprintConformancePending(
           'contrato_produto',
           'aceite',
           lineOf(markdown, /^##\s+7\./i),
@@ -891,7 +1312,7 @@ export function validateSprintFileConformance(markdown, {
         ));
       }
       if (!hasManual && manualObj) {
-        pendencies.push(sprintConformancePending(
+        planReadyPendencies.push(sprintConformancePending(
           'contrato_produto',
           'aceite',
           lineOf(markdown, /^##\s+7\./i),
@@ -902,7 +1323,7 @@ export function validateSprintFileConformance(markdown, {
       // D3/D21: hierarquia AC ⊃ EVAL. Todo EVAL referenciado deve existir no §9.
       for (const evalId of (item.evals ?? [])) {
         if (!/^EVAL-\d+$/.test(evalId)) {
-          pendencies.push(sprintConformancePending(
+          planReadyPendencies.push(sprintConformancePending(
             'contrato_produto',
             'aceite',
             lineOf(markdown, /^##\s+7\./i),
@@ -910,7 +1331,7 @@ export function validateSprintFileConformance(markdown, {
             'corrigir_aceite_evals',
           ));
         } else if (evalIds.size > 0 && !evalIds.has(evalId)) {
-          pendencies.push(sprintConformancePending(
+          planReadyPendencies.push(sprintConformancePending(
             'contrato_produto',
             'aceite',
             lineOf(markdown, /^##\s+7\./i),
@@ -924,7 +1345,7 @@ export function validateSprintFileConformance(markdown, {
     for (const evalId of evalIds) {
       const referenced = acceptanceItems.some((item) => (item.evals ?? []).includes(evalId));
       if (!referenced) {
-        pendencies.push(sprintConformancePending(
+        planReadyPendencies.push(sprintConformancePending(
           'contrato_produto',
           'aceite',
           lineOf(markdown, /^##\s+7\./i),
@@ -933,121 +1354,119 @@ export function validateSprintFileConformance(markdown, {
         ));
       }
     }
-  }
-
-  // Procedência por linha nas decisões D* da §7.1 (v0.16.0, D3/D5/D17).
-  const contractDecisions = contractDecisionRows(markdown);
-  if (/\|\s*D\d+\s*\|/.test(extractSectionMarkdown(markdown, 7) ?? '')) {
-    if (!contractDecisions.hasOriginColumn) {
-      pendencies.push(sprintConformancePending(
-        'procedencia_ausente',
-        '§7.1',
-        lineOf(markdown, /^###\s+7\.1/i),
-        '§7.1 sem coluna `Origem` — schema anterior a 0.16.0; migrar (reinicio do artefato).',
-        'migrar_para_0_16',
-      ));
     }
-    for (const decision of contractDecisions.rows) {
-      if (decision.origin === null || decision.origin === undefined || decision.origin.trim() === '') {
-        pendencies.push(sprintConformancePending(
+
+    // Procedência por linha nas decisões D* da §7.1 (v0.16.0, D3/D5/D17).
+    const contractDecisions = contractDecisionRows(markdown);
+    if (/\|\s*D\d+\s*\|/.test(section7)) {
+      if (!contractDecisions.hasOriginColumn) {
+        planReadyPendencies.push(sprintConformancePending(
           'procedencia_ausente',
-          decision.id,
-          lineOf(markdown, new RegExp(`^\\|\\s*${decision.id}\\s*\\|`, 'm')),
-          `Decisão ${decision.id} da §7.1 sem \`Origem\`.`,
+          '§7.1',
+          lineOf(markdown, /^###\s+7\.1/i),
+          '§7.1 sem coluna `Origem` — schema anterior a 0.16.0; migrar (reinicio do artefato).',
           'migrar_para_0_16',
         ));
-        continue;
       }
-      const originCheck = validateOriginToken(decision.origin, { root });
-      if (!originCheck.valid) {
-        if (originCheck.kind === 'derivado' && originCheck.path) {
-          pendencies.push(sprintConformancePending(
-            'origem_path_inexistente',
+      for (const decision of contractDecisions.rows) {
+        if (decision.origin === null || decision.origin === undefined || decision.origin.trim() === '') {
+          planReadyPendencies.push(sprintConformancePending(
+            'procedencia_ausente',
             decision.id,
             lineOf(markdown, new RegExp(`^\\|\\s*${decision.id}\\s*\\|`, 'm')),
-            `Decisão ${decision.id} da §7.1 com origem inexistente: ${decision.origin} (${originCheck.reason}).`,
-            'corrigir_origem_path',
+            `Decisão ${decision.id} da §7.1 sem \`Origem\`.`,
+            'migrar_para_0_16',
           ));
-        } else {
-          pendencies.push(sprintConformancePending(
-            'procedencia_invalida',
-            decision.id,
-            lineOf(markdown, new RegExp(`^\\|\\s*${decision.id}\\s*\\|`, 'm')),
-            `Decisão ${decision.id} da §7.1 com origem inválida: ${decision.origin} (${originCheck.reason}).`,
-            'corrigir_origem',
-          ));
+          continue;
         }
-      } else if (originCheck.kind === 'premissa') {
-        premissaCount += 1;
-        if (prioridadeSprint) {
-          pendencies.push(sprintConformancePending(
-            'procedencia_premissa_em_prioridade',
-            decision.id,
-            lineOf(markdown, new RegExp(`^\\|\\s*${decision.id}\\s*\\|`, 'm')),
-            `Decisão ${decision.id} da §7.1 apoiada em \`Origem: premissa\` em sprint ${moscowValue === 'Must' ? 'MoSCoW Must' : 'Prioridade P0'} — fechar em entrevista.`,
-            'fechar_premissa_em_entrevista',
-          ));
+        const originCheck = validateOriginToken(decision.origin, { root });
+        if (!originCheck.valid) {
+          if (originCheck.kind === 'derivado' && originCheck.path) {
+            planReadyPendencies.push(sprintConformancePending(
+              'origem_path_inexistente',
+              decision.id,
+              lineOf(markdown, new RegExp(`^\\|\\s*${decision.id}\\s*\\|`, 'm')),
+              `Decisão ${decision.id} da §7.1 com origem inexistente: ${decision.origin} (${originCheck.reason}).`,
+              'corrigir_origem_path',
+            ));
+          } else {
+            planReadyPendencies.push(sprintConformancePending(
+              'procedencia_invalida',
+              decision.id,
+              lineOf(markdown, new RegExp(`^\\|\\s*${decision.id}\\s*\\|`, 'm')),
+              `Decisão ${decision.id} da §7.1 com origem inválida: ${decision.origin} (${originCheck.reason}).`,
+              'corrigir_origem',
+            ));
+          }
+        } else if (originCheck.kind === 'premissa') {
+          premissaCount += 1;
+          if (prioridadeSprint) {
+            planReadyPendencies.push(sprintConformancePending(
+              'procedencia_premissa_em_prioridade',
+              decision.id,
+              lineOf(markdown, new RegExp(`^\\|\\s*${decision.id}\\s*\\|`, 'm')),
+              `Decisão ${decision.id} da §7.1 apoiada em \`Origem: premissa\` em sprint ${moscowValue === 'Must' ? 'MoSCoW Must' : 'Prioridade P0'} — fechar em entrevista.`,
+              'fechar_premissa_em_entrevista',
+            ));
+          }
         }
       }
     }
-  }
 
-  // Plano 02 (RASTREABILIDADE_MCP_GUIDE): ramo v1 — o grafo REQ↔AC é exigido.
-  // Todo AC tem `source_refs` não vazio, cada ref casa /^REQ-\d+$/ e existe no
-  // ledger; REQ `included` atribuído à sprint aparece em ≥1 AC; N:N com motivo
-  // (CN2/CN3/INV2/INV7 — matriz 2.4 passos 5–7). Legacy/`inconsistent` não
-  // entram aqui (D6/CN7: sprint sem marca sela como hoje).
-  if (traceabilityModeValue === 'v1') {
-    const graph = checkTraceabilityGraph({
-      acceptanceItems: acceptanceItems ?? [],
-      ledger: traceability,
-      sprintId: expectedSprintId,
-    });
-    const aceiteLine = lineOf(markdown, /^##\s+7\./i);
-    for (const issue of graph.issues) {
-      if (issue.kind === 'ac_sem_source_refs') {
-        pendencies.push(sprintConformancePending(
-          'rastreabilidade',
-          issue.ac,
-          aceiteLine,
-          `AC ${issue.ac} sem \`source_refs\` — sprint v1 exige referência a ≥1 REQ do ledger (.talos/traceability/<slug>.json).`,
-          'preencher_source_refs',
-        ));
-      } else if (issue.kind === 'ref_malformada') {
-        pendencies.push(sprintConformancePending(
-          'rastreabilidade',
-          issue.ac,
-          aceiteLine,
-          `AC ${issue.ac} com \`source_refs\` inválido: ${issue.req} (esperado REQ-\\d+).`,
-          'corrigir_source_refs',
-        ));
-      } else if (issue.kind === 'ref_orfã') {
-        pendencies.push(sprintConformancePending(
-          'rastreabilidade',
-          issue.ac,
-          aceiteLine,
-          `AC ${issue.ac} referencia REQ órfão: ${issue.req} não existe no ledger de rastreabilidade.`,
-          'registrar_req_no_ledger',
-        ));
-      } else if (issue.kind === 'included_sem_ac') {
-        pendencies.push(sprintConformancePending(
-          'rastreabilidade',
-          issue.req,
-          aceiteLine,
-          `REQ ${issue.req} (included, atribuído a ${expectedSprintId}) não aparece em nenhum \`source_refs\` de AC — todo included exige caminho até AC no grafo v1.`,
-          'vincular_req_a_ac',
-        ));
-      } else if (issue.kind === 'nn_sem_reason') {
-        pendencies.push(sprintConformancePending(
-          'rastreabilidade',
-          issue.ac,
-          aceiteLine,
-          `Vínculo N:N ${issue.req}↔${issue.ac} sem motivo: fora de 1:1, cada aresta exige \`links[].reason\` não vazio no ledger (upsert do REQ).`,
-          'declarar_reason_no_link',
-        ));
+    // Plano 02 (RASTREABILIDADE_MCP_GUIDE): ramo v1 — o grafo REQ↔AC é exigido.
+    if (traceabilityModeValue === 'v1') {
+      const graph = checkTraceabilityGraph({
+        acceptanceItems: acceptanceItems ?? [],
+        ledger: traceability,
+        sprintId: expectedSprintId,
+      });
+      const aceiteLine = lineOf(markdown, /^##\s+7\./i);
+      for (const issue of graph.issues) {
+        if (issue.kind === 'ac_sem_source_refs') {
+          planReadyPendencies.push(sprintConformancePending(
+            'rastreabilidade',
+            issue.ac,
+            aceiteLine,
+            `AC ${issue.ac} sem \`source_refs\` — sprint v1 exige referência a ≥1 REQ do ledger (.talos/traceability/<slug>.json).`,
+            'preencher_source_refs',
+          ));
+        } else if (issue.kind === 'ref_malformada') {
+          planReadyPendencies.push(sprintConformancePending(
+            'rastreabilidade',
+            issue.ac,
+            aceiteLine,
+            `AC ${issue.ac} com \`source_refs\` inválido: ${issue.req} (esperado REQ-\\d+).`,
+            'corrigir_source_refs',
+          ));
+        } else if (issue.kind === 'ref_orfã') {
+          planReadyPendencies.push(sprintConformancePending(
+            'rastreabilidade',
+            issue.ac,
+            aceiteLine,
+            `AC ${issue.ac} referencia REQ órfão: ${issue.req} não existe no ledger de rastreabilidade.`,
+            'registrar_req_no_ledger',
+          ));
+        } else if (issue.kind === 'included_sem_ac') {
+          planReadyPendencies.push(sprintConformancePending(
+            'rastreabilidade',
+            issue.req,
+            aceiteLine,
+            `REQ ${issue.req} (included, atribuído a ${expectedSprintId}) não aparece em nenhum \`source_refs\` de AC — todo included exige caminho até AC no grafo v1.`,
+            'vincular_req_a_ac',
+          ));
+        } else if (issue.kind === 'nn_sem_reason') {
+          planReadyPendencies.push(sprintConformancePending(
+            'rastreabilidade',
+            issue.ac,
+            aceiteLine,
+            `Vínculo N:N ${issue.req}↔${issue.ac} sem motivo: fora de 1:1, cada aresta exige \`links[].reason\` não vazio no ledger (upsert do REQ).`,
+            'declarar_reason_no_link',
+          ));
+        }
       }
     }
-  }
+
+    validateIntentPlanReady(markdown, planReadyPendencies);
 
   const sealResult = validateAcceptanceSeal(markdown);
   if (sealResult.tampered) {
@@ -1140,11 +1559,20 @@ export function validateSprintFileConformance(markdown, {
     }
   }
 
+  const stubValid = basePendencies.length === 0;
+  const planReadyValid = stubValid && planReadyPendencies.length === 0;
+  const maturity = planReadyValid ? 'plan_ready' : 'stub';
+
+  const activePendencies = requireLevel === 'plan_ready'
+    ? [...basePendencies, ...planReadyPendencies]
+    : basePendencies;
+
   return {
-    valid: pendencies.length === 0,
-    pending_count: pendencies.length,
-    pendencies,
+    valid: activePendencies.length === 0,
+    pending_count: activePendencies.length,
+    pendencies: activePendencies,
     premissa_count: premissaCount,
+    maturity,
   };
 }
 

@@ -2,7 +2,7 @@
 
 Prompt do passo final de `talos-backlog-generator`. Despachar em contexto novo, com o mesmo modelo e o mesmo nível de esforço usados na geração do backlog.
 
-Passar ao revisor **apenas** o bloco abaixo, com `<BACKLOG_PATH>`, `<SPRINT_PATHS>`, `<FONTES_DE_DISCUSSAO>` e `<RAIZ_DO_REPO>` substituídos. Não anexar a conversa que originou os artefatos nem o racional do brainstorm: o viés a eliminar é esse. A fonte de intenção é a §4 `Discussão` de cada sprint file — revisor que recebe só os artefatos avalia coerência interna, não cobertura da intenção registrada.
+Passar ao revisor **apenas** o bloco abaixo, com `<BACKLOG_PATH>`, `<SPRINT_PATHS>`, `<FONTES_DE_DISCUSSAO>` e `<RAIZ_DO_REPO>` substituídos. Não anexar a conversa que originou os artefatos nem o racional do brainstorm: o viés a eliminar é esse. Oráculo de intenção: §2 (eixo/SF/AS/R1, ainda rascunho no stub L1) **e** §4 `Discussão`. Revisor que recebe só os artefatos avalia coerência interna contra esses dois, não cobertura da conversa.
 
 ---
 
@@ -19,7 +19,7 @@ Raiz do repositório: <RAIZ_DO_REPO>
 Você audita o contrato de produto contra o código real: cada decisão e cada critério de aceite dos artefatos deve declarar de onde veio e ser sustentado por algo que exista. Sua leitura é a última chance de impedir que uma suposição do modelo ou um path morto alimente o executor.
 
 REGRA DE ORDEM, OBRIGATÓRIA
-1. Ler as fontes de discussão (a §4 `Discussão` de cada sprint file é a fonte de intenção; a conversa que originou os artefatos é deliberadamente negada).
+1. Ler as fontes de discussão (oráculo = §2 ∪ §4 `Discussão` de cada sprint file; a conversa que originou os artefatos é deliberadamente negada).
 2. Ler o código real relevante na raiz do repositório.
 3. Só então julgar o backlog mestre e os sprint files.
 Um artefato lido contra si mesmo sempre fecha. O defeito de produto omitido só aparece contra a intenção registrada; o defeito técnico só aparece contra o código.
@@ -31,6 +31,7 @@ Código, testes, config e qualquer path fora da lista acima são read-only. Não
 Você é responsável por aplicar nos artefatos as correções que comprovou e relatar o que alterou. Não deixe finding reparável para quem chamou corrigir.
 
 O QUE CONFRONTAR, EM ORDEM DE PRIORIDADE
+0. **Intenção §2 (L2):** §2 com `Intenção status: rascunho` e qualquer gatilho T1–T7 ainda aberto → classifique ENTREVISTA NECESSÁRIA (`interview_required`); **proibido inventar R1**, anti-escopo ou eixo para «fechar» o artefato — saturação é `talos-sprint-interview`, não reparo frio.
 1. Toda linha `Origem: premissa`, começando pelas que sustentam sprint `Must`/`P0` — premissa não sustenta aceite de sprint prioritária; o gate de procedência bloqueia, e o revisor corrige o artefato antes que o gate seja a última palavra.
 2. `Origem: derivado:<path>` cujo arquivo existe mas não diz o que a linha afirma — o gate prova que o path existe; só a leitura prova que ele sustenta a decisão.
 3. `AC-*` cujo `behavior` não é observável ou não é falseável.

@@ -10,8 +10,10 @@ import {
   parseDecisionRows,
   validateSprintFileConformance,
   validateAcceptanceSeal,
+  validateIntentSeal,
   parseAcceptanceContract,
   traceabilityMode,
+  verifyIntentRefs,
 } from '../skills/_shared/scripts/document_quality.mjs';
 import {
   traceabilityHandler,
@@ -2016,9 +2018,9 @@ function scanAcceptance(args = {}) {
         ? renderBanner('aceite_ok', {})
         : renderBanner('aceite_lacunas', { n: blockingMatches.length }),
       blocking_matches: blockingMatches,
-      next_action: blockingMatches.length === 0 ? 'avançar' : 'entrevista',
+      next_action: blockingMatches.length === 0 ? 'consultar_maturidade' : 'entrevista',
       message: blockingMatches.length === 0
-        ? 'Ambiguity scan: 0 padrões bloqueantes — entrevista pulada'
+        ? 'Ambiguity scan: 0 padrões bloqueantes na §7 — L2 de intenção segue o limiar de maturidade (não pula só por scan=0)'
         : 'Ambiguity scan: padrões bloqueantes encontrados — entrevista obrigatória',
     };
   }
@@ -2056,7 +2058,7 @@ function verifyRequiredSections(headings, requiredSections) {
     ));
 }
 
-function verifyPlanConformance(content, { requireSprintFile = false } = {}) {
+function verifyPlanConformance(content, { requireSprintFile = false, sprintMarkdown = null } = {}) {
   // §7 Slices só é obrigatória em `execution_mode: orchestrated-per-slice` (template).
   // Em `sequencial` a seção é dispensável — não force "§7 Não aplicável" só para passar
   // o gate (S1). Verdade forte = presença do literal orchestrated-per-slice no cabeçalho.
@@ -2095,6 +2097,17 @@ function verifyPlanConformance(content, { requireSprintFile = false } = {}) {
         'referenciar_eval_manifest',
       ));
     }
+    if (sprintMarkdown == null) {
+      pendencies.push(conformancePending(
+        'intent_refs',
+        'intent_sprint_ausente',
+        null,
+        'Sprint file ausente para validar intent_refs.',
+        'vincular_sprint_file',
+      ));
+    } else {
+      pendencies.push(...verifyIntentRefs(content, sprintMarkdown));
+    }
   }
 
   if (!/####\s+T\d+\./.test(content)) {
@@ -2118,6 +2131,52 @@ function verifyPlanConformance(content, { requireSprintFile = false } = {}) {
   }
 
   return pendencies;
+}
+
+function extractPlanSprintPath(planMarkdown) {
+  const match = /^\|\s*\*\*Sprint file\*\*\s*\|\s*(.+)\s*\|/im.exec(planMarkdown);
+  if (!match) return null;
+  const cell = match[1].trim();
+  const link = /\[[^\]]+\]\(([^)#]+)(?:#[^)]*)?\)/.exec(cell);
+  if (link) return link[1].trim();
+  const bare = cell.split(/[—–-]/)[0].trim();
+  const cleaned = bare.replace(/^[`'"]+|[`'"]+$/g, '').trim();
+  return cleaned || null;
+}
+
+function resolvePlanSiblingPath(planAbsolutePath, relativePath, args = {}) {
+  const root = consumerRoot(args);
+  if (path.isAbsolute(relativePath)) return relativePath;
+  const fromPlan = path.resolve(path.dirname(planAbsolutePath), relativePath);
+  if (fs.existsSync(fromPlan)) return fromPlan;
+  return path.resolve(root, relativePath);
+}
+
+function readPlanSprintMarkdown(planMarkdown, planAbsolutePath, args = {}) {
+  const sprintRel = extractPlanSprintPath(planMarkdown);
+  if (!sprintRel) return null;
+  const sprintAbs = resolvePlanSiblingPath(planAbsolutePath, sprintRel, args);
+  try {
+    const sprintMarkdown = fs.readFileSync(sprintAbs, 'utf8');
+    return sprintMarkdown.trim() === '' ? null : sprintMarkdown;
+  } catch {
+    return null;
+  }
+}
+
+function resolveLedgerPlanPath(dispatch = {}) {
+  if (typeof dispatch.plan_path === 'string' && dispatch.plan_path.trim()) {
+    return dispatch.plan_path.trim();
+  }
+  const checkpoints = [
+    ...(dispatch.active?.liveness?.checkpoints ?? []),
+    ...(dispatch.execute_liveness?.checkpoints ?? []),
+  ];
+  for (let index = checkpoints.length - 1; index >= 0; index -= 1) {
+    const planPath = checkpoints[index]?.plan_path;
+    if (typeof planPath === 'string' && planPath.trim()) return planPath.trim();
+  }
+  return null;
 }
 
 function verifyTemplateConformance(args = {}) {
@@ -2154,7 +2213,10 @@ function verifyTemplateConformance(args = {}) {
         next_action: 'corrigir_artefato',
       };
     } else {
-      const pendencies = verifyPlanConformance(content, { requireSprintFile });
+      const sprintMarkdown = requireSprintFile
+        ? readPlanSprintMarkdown(content, absolutePath, args)
+        : null;
+      const pendencies = verifyPlanConformance(content, { requireSprintFile, sprintMarkdown });
       result = {
         gate: 'template_conformance',
         status: pendencies.length === 0 ? 'passed' : 'blocked',
@@ -2199,6 +2261,10 @@ function verifyTemplateConformance(args = {}) {
 
 function verifySprintFile(args = {}) {
   const runId = validateRunId(args.run_id);
+  const requireLevel = args.require ?? 'plan_ready';
+  if (requireLevel !== 'stub' && requireLevel !== 'plan_ready') {
+    throw rpcError(-32602, 'invalid_params: require deve ser stub|plan_ready.');
+  }
   const sprintPath = requiredString(args, 'sprint_path');
   const sprintId = optionalString(args, 'sprint_id');
   const backlogPath = optionalString(args, 'backlog_path');
@@ -2247,6 +2313,7 @@ function verifySprintFile(args = {}) {
         valid: false,
         pending_count: 1,
         premissa_count: 0,
+        maturity: 'stub',
         pendencies: [conformancePending('documento', 'arquivo_vazio', null, 'Sprint file vazio não pode passar.', 'preencher_sprint_file')],
       }
       : validateSprintFileConformance(content, {
@@ -2260,6 +2327,7 @@ function verifySprintFile(args = {}) {
         ...(traceabilityLedger !== undefined ? { traceability: traceabilityLedger } : {}),
         // D5 (v0.16.0): root do consumidor para resolver `derivado:<path>`.
         root: consumerRoot(args),
+        require: requireLevel,
       });
     const pendencies = [...validation.pendencies, ...extraPendencies];
     result = {
@@ -2268,6 +2336,8 @@ function verifySprintFile(args = {}) {
       sprint_path: sprintPath,
       sprint_id: sprintId ?? null,
       backlog_path: backlogPath ?? null,
+      require: requireLevel,
+      maturity: validation.maturity ?? 'stub',
       timestamp,
       pending_count: pendencies.length,
       // D6 (v0.16.0): contagem de `premissa` sempre presente, inclusive zero.
@@ -2279,6 +2349,10 @@ function verifySprintFile(args = {}) {
       next_action: pendencies.length === 0 ? 'avançar' : pendencies[0].next_action,
     };
   } catch (error) {
+    if (error?.code === -32602) throw error;
+    if (error?.message === 'INVALID_REQUIRE') {
+      throw rpcError(-32602, 'invalid_params: require deve ser stub|plan_ready.');
+    }
     result = {
       gate: 'sprint_file_conformance',
       status: 'blocked',
@@ -2329,8 +2403,11 @@ function sprintMetadataValue(markdown, label) {
 }
 
 function sprintDorStatus(markdown) {
-  const match = /^\*\*Status DoR:\*\*\s*\[?([^\]\n]+)\]?/im.exec(markdown);
-  return match ? match[1].trim().toLowerCase() : null;
+  const match = /^\*\*Status DoR:\*\*\s*(.+)$/im.exec(markdown);
+  if (!match) return null;
+  const raw = match[1].trim().replace(/^\[|\]$/g, '').trim();
+  if (!/^(verde|amarelo|vermelho)$/i.test(raw)) return null;
+  return raw.toLowerCase();
 }
 
 function detectBacklogCycle(rows) {
@@ -2442,6 +2519,7 @@ function inspectBacklogIndex(args = {}) {
           // `derivado:<path>` ficaria inerte aqui e o gate de backlog daria
           // veredicto diferente do gate de sprint para o mesmo artefato.
           root: consumerRoot(args),
+          require: 'stub',
         });
         const sprintStatus = sprintMetadataValue(sprintMarkdown, 'Status');
         info.sprint_file_status = validation.valid ? 'valid' : 'invalid';
@@ -2451,6 +2529,10 @@ function inspectBacklogIndex(args = {}) {
         info.contrato_status = sprintMetadataValue(sprintMarkdown, 'Contrato status');
         const seal = validateAcceptanceSeal(sprintMarkdown);
         info.contrato_sealed = seal.sealed && !seal.tampered;
+        info.intencao_status = sprintMetadataValue(sprintMarkdown, 'Intenção status');
+        const intentSeal = validateIntentSeal(sprintMarkdown);
+        info.intencao_sealed = intentSeal.sealed && !intentSeal.tampered;
+        info.maturity = validation.maturity;
         if (sprintStatus && sprintStatus !== row.state) {
           pendencies.push(conformancePending('status_drift', row.id, null, `Status divergente em ${row.id}: backlog=${row.state}, sprint_file=${sprintStatus}.`, 'sincronizar_status_backlog_sprint'));
         }
@@ -2598,16 +2680,20 @@ function compareSprintCandidates(a, b) {
  * Próxima ação canônica pós-seleção (pipeline 0.14+), mode-aware:
  * - §7 draft / sem selo → sprint_interview (qualquer modo)
  * - interview-only → sprint_interview (mesmo com §7 selado)
- * - direct + §7 selado → plan_execute (direct_execute; sem plan_handoff)
+ * - maturity !== plan_ready (selo sem corpo L2) → sprint_interview
+ * - direct + plan_ready → plan_execute (direct_execute; sem plan_handoff)
  * - full/execute + PLAN real → plan_execute
- * - full/execute + §7 selado sem PLAN → plan_handoff
+ * - full/execute + plan_ready sem PLAN → plan_handoff
  * Verbos alinhados a WORKFLOW_CONFIG / expectedNextPhase. Nunca `gerar_prd`.
  */
 function nextActionForSelectedSprint(info, mode = 'full') {
-  const sealed = /^aprovado$/i.test(info?.contrato_status ?? '') && info?.contrato_sealed === true;
+  const contratoOk = /^aprovado$/i.test(info?.contrato_status ?? '') && info?.contrato_sealed === true;
+  const intentOk = /^saturada$/i.test(info?.intencao_status ?? '') && info?.intencao_sealed === true;
+  const planReady = info?.maturity === 'plan_ready';
   const hasPlan = Boolean(info?.plan && !pendingPathToken(info.plan));
-
-  if (!sealed || mode === 'interview-only') return 'sprint_interview';
+  if (info?.state === 'backlog') return 'sprint_interview';
+  if (!contratoOk || mode === 'interview-only') return 'sprint_interview';
+  if (!intentOk || !planReady) return 'sprint_interview';
   if (mode === 'direct') return 'plan_execute';
   if (hasPlan) return 'plan_execute';
   return 'plan_handoff';
@@ -3285,9 +3371,9 @@ function selectNextSprint(args = {}) {
   const runId = validateRunId(args.run_id);
   const backlogPath = requiredString(args, 'backlog_path');
   const mode = typeof args.mode === 'string' && args.mode.trim() ? args.mode.trim() : 'full';
-  // `loop` é opt-in estrito para esta seleção. Não reutiliza `options.loop`
-  // do dispatch porque a seleção acontece antes de existir uma fase ativa.
-  // Ausente preserva literalmente a seleção normal (CN7).
+  // `loop` é opt-in estrito da esteira serial (CN7). Não reutiliza
+  // `options.loop` do dispatch: a seleção acontece antes da fase ativa.
+  // Ausente/false não desliga a fila de maturação (DEC-048).
   if (args.loop !== undefined && typeof args.loop !== 'boolean') {
     throw rpcError(-32602, 'invalid_params: loop deve ser boolean.');
   }
@@ -3298,37 +3384,31 @@ function selectNextSprint(args = {}) {
     const index = inspectBacklogIndex(args);
     const rowsById = new Map(index.rows.map((row) => [row.id, row]));
     const candidates = [];
-    const loopMaturationCandidates = [];
+    const maturationCandidates = [];
     const rejected = [];
     for (const info of index.sprints) {
       const row = rowsById.get(info.id);
       const unmet = depsSatisfied(row, rowsById);
       const reasons = [];
-      const loopMaturation = loop && info.state === 'backlog';
-      if (info.state !== 'ready' && !loopMaturation) reasons.push(`state=${info.state}`);
+      const maturationEligible = info.state === 'backlog';
+      if (info.state !== 'ready' && !maturationEligible) reasons.push(`state=${info.state}`);
       if (unmet.length > 0) reasons.push(`unmet_dependencies=${unmet.map((dep) => `${dep.id}:${dep.state}`).join(',')}`);
       if (info.sprint_file_status !== 'valid') reasons.push(`sprint_file=${info.sprint_file_status}`);
-      // Apenas a pré-etapa do loop pode maturar um backlog em DoR amarelo.
-      // `ready` permanece exigindo verde mesmo no loop; vermelho/ausente nunca
-      // é candidata em qualquer modo.
-      const dorAllowed = loopMaturation
+      // Backlog na fila de maturação aceita DoR amarelo/verde; `ready` exige verde.
+      const dorAllowed = maturationEligible
         ? (info.dor_status === 'amarelo' || info.dor_status === 'verde')
         : info.dor_status === 'verde';
       if (!dorAllowed) reasons.push(`dor=${info.dor_status ?? 'ausente'}`);
       if (reasons.length === 0) {
-        if (loopMaturation) loopMaturationCandidates.push(info);
+        if (maturationEligible) maturationCandidates.push(info);
         else candidates.push(info);
       }
       else rejected.push({ id: info.id, reasons });
     }
     candidates.sort(compareSprintCandidates);
-    loopMaturationCandidates.sort(compareSprintCandidates);
-    // O loop primeiro esgota a fila de maturação. Misturar `ready` e
-    // `backlog` no mesmo ranking faria uma ready P0 pular uma entrevista
-    // pendente, quebrando a promessa de continuação automática do §7.
-    const orderedCandidates = loop
-      ? [...loopMaturationCandidates, ...candidates]
-      : candidates;
+    maturationCandidates.sort(compareSprintCandidates);
+    // A fila de maturação precede sempre `ready` — backlog P3 antes de ready P0.
+    const orderedCandidates = [...maturationCandidates, ...candidates];
     const candidateSelected = orderedCandidates[0] ?? null;
 
     let ledger = null;
@@ -3404,14 +3484,14 @@ function selectNextSprint(args = {}) {
 
     let nextAction = blocked
       ? (structuralPendencies[0]?.next_action ?? 'atualizar_sprint_file_ou_dependencias')
-      : (loop && selected.state === 'backlog' ? 'sprint_interview' : nextActionForSelectedSprint(selected, mode));
+      : nextActionForSelectedSprint(selected, mode);
 
     let banner = blocked
       ? renderBanner('preflight_fail', { motivo: selected ? `backlog index: ${structuralPendencies.length} pendências` : 'nenhuma sprint executável' })
       : renderBanner('preflight_ok', { caps: `next=${selected.id}` });
 
     let pendenciesList = structuralPendencies.length > 0 ? structuralPendencies : (selected ? [] : [
-      conformancePending('seleção', 'next_sprint', null, 'Nenhuma sprint executável: exige state=ready, deps done ou manual_validation_pending, sprint file válido e DoR verde.', 'atualizar_sprint_file_ou_dependencias'),
+      conformancePending('seleção', 'next_sprint', null, 'Nenhuma sprint executável: exige state=ready ou backlog (fila de maturação), deps done ou manual_validation_pending, sprint file válido (stub/ready) e DoR verde (ready) ou amarelo/verde (backlog).', 'atualizar_sprint_file_ou_dependencias'),
     ]);
     let pendingCount = blocked ? (structuralPendencies.length || 1) : 0;
 
@@ -3447,9 +3527,14 @@ function selectNextSprint(args = {}) {
         state_path: selected.state_file,
         contrato_status: selected.contrato_status,
         contrato_sealed: selected.contrato_sealed === true,
+        intencao_status: selected.intencao_status ?? null,
+        intencao_sealed: selected.intencao_sealed === true,
+        maturity: selected.maturity ?? 'stub',
         reason: loop && selected.state === 'backlog'
           ? 'loop: sprint backlog maturável + deps done/manual_validation_pending + sprint file válido + DoR amarelo/verde + maior prioridade determinística'
-          : 'ready + deps done/manual_validation_pending + sprint file válido + DoR verde + maior prioridade determinística',
+          : selected.state === 'backlog'
+            ? 'backlog maturável + deps done/manual_validation_pending + sprint file válido (stub) + DoR amarelo/verde + maior prioridade determinística'
+            : 'ready + deps done/manual_validation_pending + sprint file válido + DoR verde + maior prioridade determinística',
       } : null,
       candidates: orderedCandidates.map((item) => item.id),
       rejected,
@@ -8104,6 +8189,57 @@ function assertAfterPlan(args = {}) {
         expected_phase: 'plan_execute',
         next_action: 'dispatch_plan_execute_blocking',
       };
+      const ledgerPlanPath = resolveLedgerPlanPath(dispatch);
+      if (ledgerPlanPath && ledgerPlanPath !== DIRECT_MODE_PLAN_PATH_SENTINEL) {
+        try {
+          const planAbs = resolveConsumerPath(ledgerPlanPath, args);
+          const planMarkdown = fs.readFileSync(planAbs, 'utf8');
+          const sprintMarkdown = readPlanSprintMarkdown(planMarkdown, planAbs, args);
+          const intentPendencies = sprintMarkdown
+            ? verifyIntentRefs(planMarkdown, sprintMarkdown)
+            : [conformancePending(
+              'intent_refs',
+              'intent_sprint_ausente',
+              null,
+              'Sprint file ausente para validar intent_refs no G11.',
+              'vincular_sprint_file',
+            )];
+          if (intentPendencies.length > 0) {
+            result = {
+              gate: 'G11',
+              action: 'assert_after_plan',
+              phase: 'after_plan',
+              status: 'blocked',
+              timestamp,
+              pending_count: intentPendencies.length,
+              pendencies: intentPendencies,
+              error: 'PLAN intent_refs não cobre a §2 saturada.',
+              current_phase: dispatch.previous_phase ?? null,
+              expected_phase: 'plan_execute',
+              next_action: intentPendencies[0].next_action,
+            };
+          }
+        } catch (error) {
+          result = {
+            gate: 'G11',
+            action: 'assert_after_plan',
+            phase: 'after_plan',
+            status: 'blocked',
+            timestamp,
+            pending_count: 1,
+            pendencies: [conformancePending(
+              'intent_refs',
+              ledgerPlanPath,
+              null,
+              `Plano ilegível para validar intent_refs: ${ledgerPlanPath}`,
+            )],
+            error: `Plano ilegível para validar intent_refs: ${ledgerPlanPath}`,
+            current_phase: dispatch.previous_phase ?? null,
+            expected_phase: 'plan_execute',
+            next_action: 'corrigir_intent_refs',
+          };
+        }
+      }
     } else {
       result = {
         gate: 'G11',
@@ -8261,6 +8397,7 @@ function toolsList() {
             sprint_path: { type: 'string', minLength: 1 },
             sprint_id: { type: 'string', pattern: '^S\\d{2}(?:[a-z]|\\.\\d+)?$' },
             backlog_path: { type: 'string', minLength: 1 },
+            require: { type: 'string', enum: ['stub', 'plan_ready'] },
           },
         },
       },
@@ -8296,7 +8433,7 @@ function toolsList() {
             },
             loop: {
               type: 'boolean',
-              description: 'Opt-in estrito da seleção de maturação do --loop: permite somente sprint backlog válida, deps satisfeitas e DoR amarelo/verde para sprint_interview. Ausente/false preserva a seleção normal.',
+              description: 'Fila de maturação (`state=backlog`, sprint file stub válido, DoR amarelo/verde) sempre precede qualquer `ready`, com ou sem este arg. `loop:true` ativa a esteira de execução serial do orquestrador (`--loop`, CN7) — re-seleciona em cada ciclo/retomada; não é o único opt-in de maturação. Ausente ou `false` não limita a seleção só a `ready`.',
             },
           },
         },
