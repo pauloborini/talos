@@ -4,6 +4,49 @@
 
 - Sem entradas no momento.
 
+## 0.23.0 - 2026-09-05
+
+Tipo: **runtime**. **Com breaking**. Schema MCP: v5 (inalterado). Disco: v3 (inalterado).
+
+Resumo: saturação de intenção na §2 do sprint file antes do plano (SDD). Entrevista dual L1/L2; `talos_scan_acceptance` com zero padrões (G5=0) não pula mais a saturação L2. `talos_verify_sprint_file` default `require: plan_ready`; stubs válidos só com `require: stub` **e** linhas §1 de intenção preenchidas (não placeholder). Sem atalho `legacy_sealed` (DEC-049). `talos_select_next_sprint` matura stub (`backlog`/`ready`) sem `--loop`. Plano exige `intent_refs` por task (`SF-*`/`R1`) validado por `talos_assert_after_plan`. Bump major de contrato documental 0.22.0 → 0.23.0 (DEC-040–049).
+
+Mudanças:
+- **`packages/mcp-server/server.js`** — intenção na §2 (`Intenção status`, `Selo da intenção`, eixo, `SF-*`, `AS-*`, `R1`); `verifySprintFile` com limiar `stub` vs `plan_ready` (default `plan_ready`); G5=0 não dispensa L2; `selectNextSprint` inclui fila `backlog` stub válido sem `--loop` (`next_action: sprint_interview`); `assertAfterPlan` valida `intent_refs` ⊆ §2 (`SF-*`/`R1`); selo de intenção write-once com hash do corpo §2. **Sem `legacy_sealed`.**
+- **`packages/skills/talos-sprint-interview/SKILL.md`** — entrevista L2 de saturação do eixo na §2 antes de derivar §7; densidade Talos (T1–T7); pergunta dirigida tema ∩ eixo ∩ T* residual.
+- **`packages/skills/talos-backlog-generator/SKILL.md`** — entrevista L1 de recorte do ciclo; quantidade de sprints nunca é pergunta (DEC-042).
+- **`packages/skills/talos-plan-handoff/SKILL.md`** — exige `plan_ready` (dois selos + AC); cada task declara `intent_refs`; proíbe expandir anti-escopo da §2.
+- **`packages/orchestrator/skills/talos/SKILL.md`** — ordem SDD eixo → §2 saturada → §7 → plano; G5≠pular L2; roteamento `sprint_interview` para stub.
+- **`packages/templates/SPRINT_TEMPLATE.md`** — campos de intenção na §2; `Intenção status`/`Selo da intenção` na §1.
+- **`packages/templates/PLAN_TEMPLATE.md`** — campo `intent_refs` por task.
+- **`build/check-consistency.mjs`** — guards de saturação de intenção (skills, templates, orquestrador).
+- **`packages/mcp-server/server.test.js`** — bateria de regressão da saturação (sem `legacy_sealed`; §1 intenção obrigatória no stub).
+- **Bump `0.23.0`** via `build/bump-version.mjs` (bundles `plugins/`/`hosts/` regenerados; VERSION/manifests/READMEs sincronizados).
+
+Migração:
+- Sprints abertas (`backlog`/`ready`/`doing`/`review`) **migram** o sprint file para o template 0.23: linhas `Intenção status` + `Selo da intenção` na §1; se forem executar, L2 até `saturada` + selo íntegro. Sem essas linhas o gate falha até em `require: stub`.
+- `doing`/`review` com §7 `aprovado` **não** ganham atalho — completam L2 antes do próximo `plan_handoff`/`direct`.
+- Sprint `done` não é reaberta.
+- Callers de `talos_verify_sprint_file` que não passam `require` recebem default `plan_ready`; generator e `select_next` usam `require: stub`.
+
+Impacto:
+- `scan=0` não pula mais entrevista de intenção — sprint sem §2 saturada bloqueia plano/direct.
+- `select_next` sem `--loop` pode retornar `next_action: sprint_interview` para stub em `backlog`.
+- Plano sem `intent_refs` ou com IDs fora da §2 falha em `talos_assert_after_plan`.
+- Schema MCP v5 e disco v3 inalterados; topologia sibling/G4 intacta.
+
+Arquivos/artefatos:
+- `packages/mcp-server/server.js`, `packages/mcp-server/server.test.js`, `build/tests/etapa3.test.mjs`.
+- Skills: `talos-sprint-interview`, `talos-backlog-generator`, `talos-plan-handoff`, `talos-direct-execute`, orquestrador `talos`.
+- Templates: `SPRINT_TEMPLATE.md`, `PLAN_TEMPLATE.md`.
+- DECs: 040–049 em `_app-vault/docs/decisions/`.
+- Bump: `VERSION`, manifests, READMEs, bundles `plugins/` e `hosts/`.
+
+Validação:
+- `node --test packages/mcp-server/server.test.js` — 416/416
+- `node --test build/tests/etapa3.test.mjs` — 34/34
+- `node build/check-consistency.mjs`
+- `claude plugin validate ./ --strict`
+
 ## 0.22.0 - 2026-09-04
 
 Tipo: **runtime**. **Sem breaking**. Schema MCP: v5 (inalterado). Disco: v3 (inalterado).

@@ -425,29 +425,60 @@ if (nodeFindingsGate == null) errors.push('portabilidade-regressão: gate Node d
 const interviewSkill = read('packages/skills/talos-sprint-interview/SKILL.md');
 if (interviewSkill != null) {
   if (/AskUserQuestion/.test(interviewSkill)) errors.push('interview-regressão: skill hardcoda AskUserQuestion');
-  for (const token of ['talos_capabilities', 'question_prompt', 'persistInterviewRound', 'pendingInterviewQuestions']) {
+  for (const token of ['talos_capabilities', 'question_prompt', 'persistInterviewRound', 'pendingInterviewQuestions', 'applyIntentField', 'approveIntentSaturation', 'Intenção status', 'Eixo do ataque']) {
     if (!interviewSkill.includes(token)) errors.push(`interview-regressão: contrato não cita '${token}'`);
+  }
+  if (!/catálogo do inútil|nunca perguntar/i.test(interviewSkill)) {
+    errors.push('interview-regressão: talos-sprint-interview não cita catálogo do inútil / nunca perguntar (§5.4)');
+  }
+  if (/INTENT\.md/i.test(interviewSkill) && !/proibido/i.test(interviewSkill)) {
+    errors.push('interview-regressão: cita INTENT.md sem proibição explícita');
   }
 }
 const backlogSkill = read('packages/skills/talos-backlog-generator/SKILL.md');
 if (backlogSkill != null) {
-  for (const token of ['routing.document_flow.priority = backlog_first', 'próxima sprint executável', 'talos_verify_backlog_index', 'talos_select_next_sprint', 'Não gerar plano/código']) {
+  for (const token of ['routing.document_flow.priority = backlog_first', 'próxima sprint executável', 'talos_verify_backlog_index', 'talos_select_next_sprint', 'Não gerar plano/código', 'Proibido perguntar', 'quantas sprints', 'require: stub', 'Status DoR: amarelo']) {
     if (!backlogSkill.includes(token)) {
       errors.push(`backlog-regressão: talos-backlog-generator não cita '${token}'`);
     }
   }
+  if (/perguntar.*quantas sprints/i.test(backlogSkill) && !/Proibido perguntar.*quantas sprints/i.test(backlogSkill)) {
+    errors.push('backlog-regressão: generator instrui perguntar quantas sprints sem proibição explícita');
+  }
+}
+const planHandoffSkill = read('packages/skills/talos-plan-handoff/SKILL.md');
+if (planHandoffSkill != null) {
+  for (const token of ['plan_ready', 'intent_refs', 'Intenção status']) {
+    if (!planHandoffSkill.includes(token)) {
+      errors.push(`handoff-regressão: talos-plan-handoff não cita '${token}'`);
+    }
+  }
+}
+const directExecuteSkill = read('packages/skills/talos-direct-execute/SKILL.md');
+if (directExecuteSkill != null) {
+  for (const token of ['plan_ready', 'AS-*', 'R1']) {
+    if (!directExecuteSkill.includes(token)) {
+      errors.push(`direct-regressão: talos-direct-execute não cita '${token}'`);
+    }
+  }
 }
 if (orchestratorSkill != null) {
-  for (const token of ['routing.document_flow.priority = backlog_first', 'talos-backlog-generator', 'talos_verify_backlog_index', 'talos_select_next_sprint', 'talos_update_sprint_status', 'Não avançar ao plano direto do macro input']) {
+  for (const token of ['routing.document_flow.priority = backlog_first', 'talos-backlog-generator', 'talos_verify_backlog_index', 'talos_select_next_sprint', 'talos_update_sprint_status', 'Não avançar ao plano direto do macro input', 'plan_ready']) {
     if (!orchestratorSkill.includes(token)) {
       errors.push(`backlog-regressão: orquestrador não cita '${token}'`);
     }
+  }
+  if (/legacy_sealed/i.test(orchestratorSkill)) {
+    errors.push('orquestrador-regressão: legacy_sealed foi removido — migrar sprint, não atalho');
+  }
+  if (/fluxo normal não muda/i.test(orchestratorSkill)) {
+    errors.push('orquestrador-regressão: select_next matura stub sem --loop (DEC-048) — não ensinar fluxo inalterado');
   }
 }
 
 const sprintTemplate = read('packages/templates/SPRINT_TEMPLATE.md');
 if (sprintTemplate != null) {
-  for (const token of ['eval_manifest:', 'policy_manifest:', 'Evidence-to-claim', 'Backlog mestre', 'State / evidência', 'critical_review:']) {
+  for (const token of ['eval_manifest:', 'policy_manifest:', 'Evidence-to-claim', 'Backlog mestre', 'State / evidência', 'critical_review:', 'Intenção status', 'Selo da intenção', 'SF-01', 'R1:']) {
     if (!sprintTemplate.includes(token)) {
       errors.push(`sprint-template-regressão: SPRINT_TEMPLATE.md não contém '${token}'`);
     }
@@ -455,10 +486,16 @@ if (sprintTemplate != null) {
 }
 const documentQuality = read('packages/skills/_shared/scripts/document_quality.mjs');
 if (documentQuality != null) {
-  for (const token of ['validateSprintFileConformance', 'sprint_file:', 'state_file:', 'policy_manifest']) {
+  for (const token of ['validateSprintFileConformance', 'sprint_file:', 'state_file:', 'policy_manifest', 'applyIntentField', 'approveIntentSaturation']) {
     if (!documentQuality.includes(token)) {
       errors.push(`sprint-harness-regressão: document_quality.mjs não contém '${token}'`);
     }
+  }
+  if (/function isLegacySealed|maturity = 'legacy_sealed'/.test(documentQuality)) {
+    errors.push('sprint-harness-regressão: document_quality.mjs ainda implementa legacy_sealed');
+  }
+  if (!documentQuality.includes('intentBulletPlaceholder')) {
+    errors.push('sprint-harness-regressão: filledIntentBullets deve recusar placeholder §2');
   }
 }
 const mcpServer = read('packages/mcp-server/server.js');
@@ -467,6 +504,9 @@ if (mcpServer != null) {
     if (!mcpServer.includes(token)) {
       errors.push(`sprint-harness-regressão: server.js não contém '${token}'`);
     }
+  }
+  if (!mcpServer.includes("maturity === 'plan_ready'")) {
+    errors.push('select-next-regressão: nextActionForSelectedSprint deve exigir maturity plan_ready');
   }
 }
 const stateSchema = read('packages/templates/STATE_FILE_SCHEMA.md');

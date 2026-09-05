@@ -16,6 +16,8 @@ Regra: este arquivo guarda **escopo, estado, decisões locais, dependências, ga
 | Backlog mestre | [path + anchor da linha S<NN> — ou `Não aplicável (standalone)`] |
 | Contrato status | [draft / aprovado] |
 | Selo do contrato | [pendente até aprovação] |
+| Intenção status | [rascunho / saturada] |
+| Selo da intenção | [pendente até saturação] |
 | PLAN | [pendente ou path] |
 | State / evidência | [pendente ou path] |
 | Revalidação | [false — flag `true` ligada pelo MCP quando `M` falhou em sprint da qual esta depende (cone de revalidação, D2/D20)] |
@@ -38,6 +40,23 @@ Regra: este arquivo guarda **escopo, estado, decisões locais, dependências, ga
 **Resultado observável:** [o que estará comprovavelmente diferente ao fim]
 
 **Se não fizer:** [impacto de adiar]
+
+**Eixo do ataque:** `dados` \| `ux` \| `estrutura` \| `contrato` \| `misto` — [premissa / usuario / derivado:<path>]
+
+**Aferição T\*:** [T1–T7 disparados / zerados — uma linha]
+
+**Entrevista:** [pendente \| dispensada: <motivo>]
+
+**Superfícies (SF-\*):**
+- **SF-01** — [enunciado; path:symbol só com `[não verificado]`] — [usuario / derivado:<path> / premissa]
+
+**Anti-escopo tentador (AS-\*):**
+- **AS-01** — [tentação concreta de implementação/eixo; genérico não conta] — [usuario / derivado:<path> / premissa]
+
+**Recusa:**
+- **R1:** eu recuso a sprint se [efeito observável] — [usuario / derivado:<path> / premissa]
+
+**Regras do repo:** [seguir <path> \| exceção usuario: <motivo> \| N/A (eixo não toca produto)]
 
 ---
 
@@ -116,7 +135,7 @@ Decisões locais que moldam esta sprint. Decisão de produto que vira aceite dev
 
 ## 7. Contrato de produto (congelado)
 
-Casa única de produto desta sprint: decisões D*, cenários UX e aceite binário. O validador frio nota código contra este bloco (não contra o PLAN). Fluxo de congelamento: `draft` (maturação) → ao aprovar, gravar `Contrato status: aprovado` + `Selo do contrato: sha256:<hash do §7>`; qualquer edição do bloco aprovado sem re-aprovação é tamper (`FROZEN_ACCEPTANCE_TAMPERED`). Para reeditar: voltar a `draft` (limpa o selo), editar, re-aprovar.
+Casa única de produto desta sprint: decisões D*, cenários UX e aceite binário. O aceite §7 deriva da §2 saturada; o validador frio nota código contra este bloco (não contra o PLAN). Fluxo de congelamento: `draft` (maturação) → ao aprovar, gravar `Contrato status: aprovado` + `Selo do contrato: sha256:<hash do §7>`; qualquer edição do bloco aprovado sem re-aprovação é tamper (`FROZEN_ACCEPTANCE_TAMPERED`). Para reeditar: voltar a `draft` (limpa o selo), editar, re-aprovar.
 
 ### 7.1 Decisões de produto (D*)
 
@@ -198,6 +217,7 @@ Tipos de evidência (D4): `I` implementação, `T-outcome` resultado observável
 - [ ] Dependências críticas resolvidas.
 - [ ] Bloqueios críticos resolvidos ou registrados.
 - [ ] Contrato §7 completo (D*, cenários UX, `AC-*` em YAML `acceptance`) e `Contrato status` preenchido.
+- [ ] Intenção saturada (selo §1) — obrigatório para DoR verde / `plan_ready`.
 - [ ] `eval_manifest` mínimo preenchido.
 - [ ] Próxima ação explícita.
 
