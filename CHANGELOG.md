@@ -35,14 +35,15 @@ Impacto:
 - Schema MCP v5 e disco v3 inalterados; topologia sibling/G4 intacta.
 
 Arquivos/artefatos:
-- `packages/mcp-server/server.js`, `packages/mcp-server/server.test.js`.
+- `packages/mcp-server/server.js`, `packages/mcp-server/server.test.js`, `build/tests/etapa3.test.mjs`.
 - Skills: `talos-sprint-interview`, `talos-backlog-generator`, `talos-plan-handoff`, `talos-direct-execute`, orquestrador `talos`.
 - Templates: `SPRINT_TEMPLATE.md`, `PLAN_TEMPLATE.md`.
 - DECs: 040–049 em `_app-vault/docs/decisions/`.
 - Bump: `VERSION`, manifests, READMEs, bundles `plugins/` e `hosts/`.
 
 Validação:
-- `node --test packages/mcp-server/server.test.js` — 403/403
+- `node --test packages/mcp-server/server.test.js` — 416/416
+- `node --test build/tests/etapa3.test.mjs` — 34/34
 - `node build/check-consistency.mjs`
 - `claude plugin validate ./ --strict`
 
