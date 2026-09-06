@@ -4,6 +4,36 @@
 
 - Sem entradas no momento.
 
+## 0.23.1 - 2026-09-06
+
+Tipo: **runtime** + **packaging**. **Sem breaking**. Schema MCP: v5 (inalterado). Disco: v3 (inalterado).
+
+Resumo: destravar o handoff `--loop` S03→S04 (drain congela o FSM; salto terminal sem hops; reset de G4/`slice_review` no mesmo `run_id`) e incluir `references/` das skills no bundle instalado.
+
+Mudanças:
+- **`packages/mcp-server/server.js`** — `drain_required` grava `dispatch.next_phase=drain_pendencies`; `lock_dispatch(start)` recusa o ciclo seguinte até `select_next` sem drain; salto `backlog→done|manual_validation_pending` com pipeline completo (review no ledger só se `--loop` ou `critical_review`); `repair_closed` só bloqueia retry na mesma `state_path`; `lock_dispatch(start)` de fase de entrada reseta `validator_cycle` e limpa `gates.slice_review`/`review_cycle`.
+- **Skills** — orquestrador: few-shot S03→S04 + guard legado de retry; `talos-escalation-repair` modo drain com `{pd_ids_fixed[], do_not_request_validator_retry: true}`.
+- **Packaging** — `.gitignore` ignora só `/references/` na raiz; Plugin V1 copia o diretório da skill (não só `SKILL.md`); guard `skill-refs` falha se SKILL.md citar path ausente. `.npmignore` exclui `.app-work/`, `/references/` e `.git.backup-prefilterrepo/` do tarball npx.
+- **Anti-drift** — testes `mode=full`+`plan_handoff` sob drain e fail-open de `slice_review` cross-sprint; `guardHandoffLoop`.
+- **Bump `0.23.1`** via `build/bump-version.mjs`.
+
+Impacto:
+- `--loop` com PDs abertas não inicia `plan_handoff`/`plan_execute` da sprint seguinte até o drain.
+- Sprint seguinte no mesmo `run_id` abre G4; `repair_closed` da anterior não gruda.
+- Instalação from-source/npx leva `COLD_BACKLOG_REVIEW_PROMPT.md` e `_shared/references/stack-profiles.md`.
+
+Arquivos/artefatos:
+- `packages/mcp-server/server.js`, `packages/mcp-server/server.test.js`
+- Skills: orquestrador `talos`, `talos-escalation-repair`
+- `build/loop-guard.mjs`, `build/skill-refs-guard.mjs`, `build/cli/talos-init.mjs`, `build/install-host.sh`, `.npmignore`
+- Bundles `plugins/` e `hosts/` regenerados
+
+Validação:
+- `node build/check-consistency.mjs`
+- `node --test packages/mcp-server/server.test.js`
+- `node --test build/check-consistency.guard.test.mjs`
+- `bash build/build-plugins.sh`
+
 ## 0.23.0 - 2026-09-05
 
 Tipo: **runtime**. **Com breaking**. Schema MCP: v5 (inalterado). Disco: v3 (inalterado).

@@ -253,9 +253,16 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `talos-*` para o
 
 ---
 
-**Plugin version:** 0.23.0
+**Plugin version:** 0.23.1
 **Author:** Paulo Borini
-**Last updated:** 2026-09-05
+**Last updated:** 2026-09-06
+
+### Novidades v0.23.1 — handoff `--loop` S03→S04 + `references/` no bundle
+
+- **Drain congela o FSM.** `select_next` com `drain_required` grava `dispatch.next_phase=drain_pendencies`; `lock_dispatch(start)` recusa `plan_handoff`/`plan_execute` até `select_next` sem drain.
+- **Mesmo `run_id`, sprint nova.** Start de fase de entrada reseta `validator_cycle` e limpa `gates.slice_review`; `repair_closed` só bloqueia retry na mesma slice.
+- **Fechamento terminal sem hops.** `backlog→done|manual_validation_pending` com pipeline completo; erro de transição não sugere `ready`/`doing`/`review`.
+- **Bundle leva `references/`.** Mandato COLD_BACKLOG e `_shared/references` entram em `hosts/`/`plugins/` e no Plugin V1 (cópia do diretório da skill).
 
 ### Novidades v0.23.0 — saturação de intenção na §2 antes do plano (BREAKING 0.23)
 

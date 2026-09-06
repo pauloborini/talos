@@ -218,3 +218,32 @@ export function guardEnumCatalog({ server, template }) {
   }
   return violations;
 }
+
+/**
+ * Handoff --loop (S03→S04): skill do orquestrador precisa do verbo de drain,
+ * do close-and-reselect (não retry G4), da proibição de hops e do reset de
+ * ciclo no mesmo run_id. Sem isso o MCP pode estar certo e o orquestrador
+ * reimproviza a empacada.
+ */
+export function guardHandoffLoop(text) {
+  if (text == null) {
+    return ['guard handoff loop: SKILL do orquestrador ausente'];
+  }
+  const violations = [];
+  if (!/drain_pendencies/.test(text)) {
+    violations.push('guard handoff loop: next_action drain_pendencies ausente na SKILL do orquestrador');
+  }
+  if (!/close_pendencies_and_reselect/.test(text)) {
+    violations.push('guard handoff loop: close_pendencies_and_reselect ausente na SKILL do orquestrador');
+  }
+  if (!/advance_blocked/.test(text)) {
+    violations.push('guard handoff loop: advance_blocked ausente na SKILL do orquestrador');
+  }
+  if (!/sem hops/.test(text)) {
+    violations.push('guard handoff loop: proibição de hops no fechamento ausente na SKILL do orquestrador');
+  }
+  if (!/validator_cycle/.test(text)) {
+    violations.push('guard handoff loop: reset de validator_cycle no mesmo run_id ausente na SKILL do orquestrador');
+  }
+  return violations;
+}

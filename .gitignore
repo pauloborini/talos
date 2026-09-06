@@ -37,11 +37,9 @@ node_modules/
 .git.backup-prefilterrepo/
 
 
-references/
-# Exceção: mandato canônico da revisão fria do backlog (VC2 — precisa ser versionado e empacotado)
-!packages/skills/talos-backlog-generator/references/
-# Exceção: contrato de adapters referenciado pelo README público
-!packages/orchestrator/references/
-!packages/orchestrator/references/host-adapters.md
+# Dumps privados na raiz (PII / filter-repo). Skills e orquestrador versionam
+# o próprio `references/` — a regra antiga `references/` (qualquer profundidade)
+# impedia os espelhos hosts/**/plugins/** de entrar no bundle instalado.
+/references/
 
 

@@ -3662,13 +3662,14 @@ test('talos_update_sprint_status: manual_validation_pending exige validator term
 
 // Fixture do run de loop: preflight + lock_dispatch(start, options.loop) — a
 // ORIGEM real do VC3 (a flag nasce no ledger por lockDispatch, nunca à mão).
-function startLoopRun(root, runId, { withFlag = true } = {}) {
+function startLoopRun(root, runId, { withFlag = true, mode = 'execute' } = {}) {
   preflight({
-    run_id: runId, project_root: root, mode: 'execute',
+    run_id: runId, project_root: root, mode,
     host: 'claude', host_capabilities: { subagent_available: true, mcp_available: true },
   });
+  const phase = mode === 'full' ? 'plan_handoff' : 'plan_execute';
   return lockDispatch({
-    run_id: runId, project_root: root, action: 'start', phase: 'plan_execute',
+    run_id: runId, project_root: root, action: 'start', phase,
     ...(withFlag ? { options: { loop: true } } : {}),
   });
 }
@@ -9858,8 +9859,13 @@ test('Plano 02: drain_required no select_next (AC-02.4.3)', () => {
   assert.equal(r2.drain_required.required, true, '3 PDs abertas atingem o teto');
   assert.ok(r2.drain_required.reasons.includes('threshold'));
   assert.equal(r2.drain_required.open_pd_count, 3);
-  assert.equal(r2.status, 'passed', 'drain_required anexa informação, não bloqueia a seleção');
+  assert.equal(r2.drain_required.threshold_crossed, true);
+  assert.equal(r2.status, 'passed', 'drain anexa informação sem falhar o índice');
   assert.equal(r2.selected.sprint_id, 'S02');
+  assert.equal(r2.next_action, 'drain_pendencies');
+  assert.equal(r2.advance_blocked, true);
+  assert.ok(Array.isArray(r2.drain_required.pd_ids) && r2.drain_required.pd_ids.length === 3);
+  assert.match(r2.banner, /drain obrigatório \(teto 3 PDs, open_pd_count=3\) antes de S02/);
 
   // Falsificador: PDs closed não contam no limiar.
   for (const pdId of ['PD-S02-01', 'PD-S02-02', 'PD-S02-03']) {
@@ -9878,6 +9884,279 @@ test('Plano 02: drain_required no select_next (AC-02.4.3)', () => {
   assert.equal(r4.drain_required.required, true, 'PD de DEP-ancestral dispara');
   assert.ok(r4.drain_required.reasons.includes('dep_cone'));
   assert.equal(r4.drain_required.open_pd_count, 1);
+  assert.equal(r4.next_action, 'drain_pendencies');
+  assert.equal(r4.advance_blocked, true);
+  assert.deepEqual(r4.drain_required.pd_ids, ['PD-S01-01']);
+});
+
+test('handoff loop: update_sprint_status terminal a partir de backlog com pipeline completo', () => {
+  const root = tmpRoot();
+  writeHandoffTemplateFixture(root);
+  writeSprintFixture(root, 'S01', {
+    status: 'backlog',
+    dorStatus: 'verde',
+    contratoStatus: 'aprovado',
+    intencaoStatus: 'saturada',
+  });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | backlog | — | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+  writeStateWithAcceptance(root, 'S01.json', [
+    { id: 'AC-001', status: 'proved', proof_types: ['I:present', 'T-outcome:proved'] },
+  ]);
+
+  startLoopRun(root, 'jump-ok', { withFlag: true });
+  const blocked = updateSprintStatus({
+    run_id: 'jump-ok', project_root: root, backlog_path: 'BACKLOG.md', sprint_id: 'S01',
+    status: 'done', validator_verdict: 'pass', plan_path: 'PLAN_S01.md',
+    state_path: '.talos/state/S01.json', evidence: 'validator pass',
+  });
+  assert.equal(blocked.status, 'blocked', 'loop sem slice_review no ledger recusa o salto');
+  const trans = blocked.pendencies.find((p) => p.category === 'status_transition');
+  assert.ok(trans);
+  assert.ok(Array.isArray(trans.allowed_transitions) && trans.allowed_transitions.includes('ready'));
+  assert.equal(trans.suggested_path, null, 'fechamento terminal não sugere hops ready/doing/review');
+  assert.match(trans.message, /salto terminal/);
+
+  runSliceReview(root, 'jump-ok', { verdict: 'pass_with_observations' });
+  const ok = updateSprintStatus({
+    run_id: 'jump-ok', project_root: root, backlog_path: 'BACKLOG.md', sprint_id: 'S01',
+    status: 'done', validator_verdict: 'pass', plan_path: 'PLAN_S01.md',
+    state_path: '.talos/state/S01.json', evidence: 'validator pass',
+  });
+  assert.equal(ok.status, 'passed', `salto terminal backlog→done: ${ok.error ?? ok.pendencies?.[0]?.message ?? ''}`);
+  assert.equal(ok.previous_status, 'backlog');
+  assert.equal(ok.next_status, 'done');
+});
+
+test('handoff loop: update_sprint_status terminal backlog→manual_validation_pending', () => {
+  const root = tmpRoot();
+  writeHandoffTemplateFixture(root);
+  writeSprintFixture(root, 'S01', {
+    status: 'backlog',
+    dorStatus: 'verde',
+    contratoStatus: 'aprovado',
+    intencaoStatus: 'saturada',
+  });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | backlog | — | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+  writeStateWithAcceptance(root, 'S01.json', [
+    { id: 'AC-001', status: 'manual_pending', proof_types: ['I:present', 'M:pending'] },
+  ]);
+  startLoopRun(root, 'jump-mvp', { withFlag: true });
+  runSliceReview(root, 'jump-mvp', { verdict: 'pass_with_observations' });
+  const ok = updateSprintStatus({
+    run_id: 'jump-mvp', project_root: root, backlog_path: 'BACKLOG.md', sprint_id: 'S01',
+    status: 'manual_validation_pending', validator_verdict: 'pass', plan_path: 'PLAN_S01.md',
+    state_path: '.talos/state/S01.json', evidence: 'validator pass',
+  });
+  assert.equal(ok.status, 'passed', `salto MVP: ${ok.error ?? ok.pendencies?.[0]?.message ?? ''}`);
+  assert.equal(ok.next_status, 'manual_validation_pending');
+});
+
+test('handoff loop: salto terminal sem review quando review não é exigida', () => {
+  const root = tmpRoot();
+  writeHandoffTemplateFixture(root);
+  writeSprintFixture(root, 'S01', {
+    status: 'backlog',
+    dorStatus: 'verde',
+    contratoStatus: 'aprovado',
+    intencaoStatus: 'saturada',
+  });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Runtime | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | backlog | — | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+  ]));
+  writeStateWithAcceptance(root, 'S01.json', [
+    { id: 'AC-001', status: 'proved', proof_types: ['I:present', 'T-outcome:proved'] },
+  ]);
+  startLoopRun(root, 'jump-noreview', { withFlag: false });
+  const ok = updateSprintStatus({
+    run_id: 'jump-noreview', project_root: root, backlog_path: 'BACKLOG.md', sprint_id: 'S01',
+    status: 'done', validator_verdict: 'pass', plan_path: 'PLAN_S01.md',
+    state_path: '.talos/state/S01.json', evidence: 'validator pass',
+  });
+  assert.equal(ok.status, 'passed', `salto sem review: ${ok.error ?? ok.pendencies?.[0]?.message ?? ''}`);
+});
+
+test('handoff loop: repair_complete origin=escalation não pede retry de validator', () => {
+  const root = tmpRoot();
+  const statePath = plan02PostReviewSetup(root, 'esc-drain');
+  const slice = lockValidator({
+    run_id: 'esc-drain', project_root: root, action: 'repair_start',
+    state_path: statePath, origin: 'slice_review',
+  });
+  assert.equal(slice.status, 'passed');
+  const sliceDone = lockValidator({
+    run_id: 'esc-drain', project_root: root, action: 'repair_complete',
+    repair_run_id: slice.repair_run_id, state_path: statePath,
+    data: resolvedRepair(root, statePath),
+  });
+  assert.equal(sliceDone.status, 'passed');
+  assert.equal(sliceDone.next_action, 'dispatch_task_validator_retry', 'ramo slice_review preserva retry');
+
+  const esc = lockValidator({
+    run_id: 'esc-drain', project_root: root, action: 'repair_start',
+    state_path: statePath, origin: 'escalation',
+  });
+  assert.equal(esc.status, 'passed');
+  const escDone = lockValidator({
+    run_id: 'esc-drain', project_root: root, action: 'repair_complete',
+    repair_run_id: esc.repair_run_id, state_path: statePath,
+    data: resolvedRepair(root, statePath),
+  });
+  assert.equal(escDone.status, 'passed', escDone.error ?? '');
+  assert.equal(escDone.next_action, 'close_pendencies_and_reselect');
+  assert.notEqual(escDone.next_action, 'dispatch_task_validator_retry');
+  assert.equal(escDone.validator_status, 'repair_closed');
+  const retry = lockValidator({
+    run_id: 'esc-drain', project_root: root, action: 'start', state_path: statePath,
+  });
+  assert.equal(retry.status, 'blocked');
+  assert.equal(retry.next_action, 'close_pendencies_and_reselect');
+
+  const nextExec = lockDispatch({
+    run_id: 'esc-drain', project_root: root, action: 'start', phase: 'plan_execute',
+  });
+  assert.equal(nextExec.status, 'passed', nextExec.error ?? '');
+  const afterReset = readRunJson(root, 'esc-drain');
+  assert.equal(afterReset.data.validator_cycle.status, 'idle');
+  assert.equal(afterReset.data.validator_cycle.attempts_used, 0);
+  assert.equal(afterReset.data.gates.slice_review, undefined);
+  const nextSlice = `.talos/state/esc-drain/S04.json`;
+  const nextG4 = lockValidator({
+    run_id: 'esc-drain', project_root: root, action: 'start', state_path: nextSlice,
+  });
+  assert.equal(nextG4.status, 'passed', nextG4.error ?? '');
+});
+
+test('handoff loop: select_next com drain congela FSM (não inicia ciclo seguinte)', () => {
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S01', { status: 'done', dorStatus: 'verde' });
+  writeSprintFixture(root, 'S02', { status: 'ready', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Base | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | done | — | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+    '| S02 | Presa | F0 | objetivo | Must | Médio | Baixo | P1 | pendente | S01 | ready | — | `.talos/backlog/sprints/SPRINT_S02_runtime.md` | pendente | pendente |',
+  ]));
+  startLoopRun(root, 'fsm-drain', { withFlag: true });
+  runSliceReview(root, 'fsm-drain', { verdict: 'pass' });
+  for (let i = 0; i < 3; i += 1) {
+    pendenciesHandler({
+      run_id: 'fsm-drain', project_root: root, backlog_path: 'BACKLOG.md',
+      action: 'append', sprint_id: 'S01', severity: 'P3', files: [],
+      recommendation: 'melhorar', fix_validation: 'node --test',
+    });
+  }
+  const drained = selectNextSprint({
+    run_id: 'fsm-drain', project_root: root, backlog_path: 'BACKLOG.md', loop: true,
+  });
+  assert.equal(drained.next_action, 'drain_pendencies');
+  const held = runState({ action: 'get', run_id: 'fsm-drain', project_root: root });
+  assert.equal(held.data.dispatch.next_phase, 'drain_pendencies');
+  const blockedHandoff = lockDispatch({
+    run_id: 'fsm-drain', project_root: root, action: 'start', phase: 'plan_handoff',
+  });
+  assert.equal(blockedHandoff.status, 'blocked');
+  assert.equal(blockedHandoff.expected_phase, 'drain_pendencies');
+  const blockedInterview = lockDispatch({
+    run_id: 'fsm-drain', project_root: root, action: 'start', phase: 'sprint_interview',
+  });
+  assert.equal(blockedInterview.status, 'blocked');
+  assert.equal(blockedInterview.next_action, 'drain_pendencies');
+
+  for (const pdId of ['PD-S01-01', 'PD-S01-02', 'PD-S01-03']) {
+    pendenciesHandler({
+      run_id: 'fsm-drain', project_root: root, backlog_path: 'BACKLOG.md',
+      action: 'close', pd_id: pdId,
+    });
+  }
+  const clean = selectNextSprint({
+    run_id: 'fsm-drain', project_root: root, backlog_path: 'BACKLOG.md', loop: true,
+  });
+  assert.notEqual(clean.next_action, 'drain_pendencies');
+  const lifted = runState({ action: 'get', run_id: 'fsm-drain', project_root: root });
+  assert.notEqual(lifted.data.dispatch.next_phase, 'drain_pendencies');
+  const resume = lockDispatch({
+    run_id: 'fsm-drain', project_root: root, action: 'start', phase: 'plan_execute',
+  });
+  assert.equal(resume.status, 'passed', resume.error ?? '');
+});
+
+test('handoff loop: mode=full congela plan_handoff sob drain (caso ZCode)', () => {
+  const root = tmpRoot();
+  writeSprintFixture(root, 'S01', { status: 'done', dorStatus: 'verde' });
+  writeSprintFixture(root, 'S02', { status: 'ready', dorStatus: 'verde' });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Base | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | done | — | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+    '| S02 | Presa | F0 | objetivo | Must | Médio | Baixo | P1 | pendente | S01 | ready | — | `.talos/backlog/sprints/SPRINT_S02_runtime.md` | pendente | pendente |',
+  ]));
+  startLoopRun(root, 'fsm-full', { withFlag: true, mode: 'full' });
+  lockDispatch({ run_id: 'fsm-full', project_root: root, action: 'complete', phase: 'plan_handoff' });
+  lockDispatch({ run_id: 'fsm-full', project_root: root, action: 'start', phase: 'plan_execute' });
+  runSliceReview(root, 'fsm-full', { verdict: 'pass' });
+  for (let i = 0; i < 3; i += 1) {
+    pendenciesHandler({
+      run_id: 'fsm-full', project_root: root, backlog_path: 'BACKLOG.md',
+      action: 'append', sprint_id: 'S01', severity: 'P3', files: [],
+      recommendation: 'melhorar', fix_validation: 'node --test',
+    });
+  }
+  const drained = selectNextSprint({
+    run_id: 'fsm-full', project_root: root, backlog_path: 'BACKLOG.md', loop: true, mode: 'full',
+  });
+  assert.equal(drained.next_action, 'drain_pendencies');
+  const blockedHandoff = lockDispatch({
+    run_id: 'fsm-full', project_root: root, action: 'start', phase: 'plan_handoff',
+  });
+  assert.equal(blockedHandoff.status, 'blocked');
+  assert.equal(blockedHandoff.expected_phase, 'drain_pendencies');
+  assert.notEqual(blockedHandoff.next_action, 'dispatch_plan_handoff');
+  const blockedExecute = lockDispatch({
+    run_id: 'fsm-full', project_root: root, action: 'start', phase: 'plan_execute',
+  });
+  assert.equal(blockedExecute.status, 'blocked');
+  assert.equal(blockedExecute.expected_phase, 'drain_pendencies');
+});
+
+test('handoff loop: slice_review da sprint anterior não fecha a seguinte no mesmo run_id', () => {
+  const root = tmpRoot();
+  writeHandoffTemplateFixture(root);
+  writeSprintFixture(root, 'S01', {
+    status: 'backlog', dorStatus: 'verde', contratoStatus: 'aprovado', intencaoStatus: 'saturada',
+  });
+  writeSprintFixture(root, 'S02', {
+    status: 'ready', dorStatus: 'verde', contratoStatus: 'aprovado', intencaoStatus: 'saturada',
+  });
+  fs.writeFileSync(path.join(root, 'BACKLOG.md'), backlogWithRows([
+    '| S01 | Base | F0 | objetivo | Must | Alto | Baixo | P0 | pendente | — | backlog | — | `.talos/backlog/sprints/SPRINT_S01_runtime.md` | pendente | pendente |',
+    '| S02 | Segue | F0 | objetivo | Must | Médio | Baixo | P1 | pendente | S01 | ready | — | `.talos/backlog/sprints/SPRINT_S02_runtime.md` | pendente | pendente |',
+  ]));
+  writeStateWithAcceptance(root, 'S01.json', [
+    { id: 'AC-001', status: 'proved', proof_types: ['I:present', 'T-outcome:proved'] },
+  ]);
+  writeStateWithAcceptance(root, 'S02.json', [
+    { id: 'AC-001', status: 'proved', proof_types: ['I:present', 'T-outcome:proved'] },
+  ]);
+  startLoopRun(root, 'stale-review', { withFlag: true });
+  runSliceReview(root, 'stale-review', { verdict: 'pass' });
+  const closed = updateSprintStatus({
+    run_id: 'stale-review', project_root: root, backlog_path: 'BACKLOG.md', sprint_id: 'S01',
+    status: 'done', validator_verdict: 'pass', plan_path: 'PLAN_S01.md',
+    state_path: '.talos/state/S01.json', evidence: 'validator pass',
+  });
+  assert.equal(closed.status, 'passed', closed.error ?? '');
+  const nextExec = lockDispatch({
+    run_id: 'stale-review', project_root: root, action: 'start', phase: 'plan_execute',
+  });
+  assert.equal(nextExec.status, 'passed', nextExec.error ?? '');
+  assert.equal(readRunJson(root, 'stale-review').data.gates.slice_review, undefined);
+  const stolen = updateSprintStatus({
+    run_id: 'stale-review', project_root: root, backlog_path: 'BACKLOG.md', sprint_id: 'S02',
+    status: 'done', validator_verdict: 'pass', plan_path: 'PLAN_S02.md',
+    state_path: '.talos/state/S02.json', evidence: 'validator pass',
+  });
+  assert.equal(stolen.status, 'blocked', 'S02 não herda slice_review da S01');
+  assert.ok(stolen.pendencies.some((p) => p.category === 'loop_review' || p.category === 'status_transition'));
 });
 
 // AC-02.5.1 (INV7/CN9): commit repair sem slot correspondente é recusado —

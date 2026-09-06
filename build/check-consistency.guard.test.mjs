@@ -23,6 +23,10 @@ import {
   scanDirDr,
 } from './dr-guard.mjs';
 import {
+  extractSkillReferencePaths,
+  scanSkillReferenceGaps,
+} from './skill-refs-guard.mjs';
+import {
   DISPATCHED_EXEC_AGENTS,
   guardReviewReadonly,
   guardReviewBranch,
@@ -30,6 +34,7 @@ import {
   guardViolatedP0,
   guardVerificationAnchor,
   guardEnumCatalog,
+  guardHandoffLoop,
 } from './loop-guard.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -263,4 +268,48 @@ test('guard enum e catálogo loop (AC-06.2.1): drift de enum/catálogo é reprov
   // Falso-positivo: id do sidecar fora de DISPATCHED_EXEC_AGENTS.
   assert.ok(DISPATCHED_EXEC_AGENTS.includes('talos-escalation-repair'), 'sidecar registrado em DISPATCHED_EXEC_AGENTS (5 hosts via shim-drift/M4)');
   assert.deepEqual(guardEnumCatalog({ server: SERVER_JS, template: BACKLOG_TMPL }), [], 'repo correto não produz violação de enum/catálogo');
+});
+
+test('guard handoff loop: skill sem drain/reset é reprovada; repo passa', () => {
+  const semDrain = ORCH_SKILL.replaceAll('drain_pendencies', 'drenar_pendencias');
+  assert.notEqual(semDrain, ORCH_SKILL);
+  assert.ok(guardHandoffLoop(semDrain).some((v) => v.includes('drain_pendencies')), `guard reprova skill sem drain: ${JSON.stringify(guardHandoffLoop(semDrain))}`);
+  const semReset = ORCH_SKILL.replaceAll('validator_cycle', 'ciclo_validator');
+  assert.ok(guardHandoffLoop(semReset).some((v) => v.includes('validator_cycle')), `guard reprova skill sem reset de ciclo: ${JSON.stringify(guardHandoffLoop(semReset))}`);
+  assert.deepEqual(guardHandoffLoop(ORCH_SKILL), [], 'repo correto não produz violação de handoff loop');
+  assert.deepEqual(guardHandoffLoop(null), ['guard handoff loop: SKILL do orquestrador ausente']);
+});
+
+test('skill refs: citação packages/skills/.../references/ ausente no espelho falha', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'skill-refs-'));
+  plant(root, 'packages/skills/talos-backlog-generator/SKILL.md',
+    'leia `packages/skills/talos-backlog-generator/references/COLD_BACKLOG_REVIEW_PROMPT.md`\n');
+  plant(root, 'packages/skills/talos-backlog-generator/references/COLD_BACKLOG_REVIEW_PROMPT.md', 'mandato\n');
+  plant(root, 'hosts/zcode/skills/talos-backlog-generator/SKILL.md',
+    'leia `packages/skills/talos-backlog-generator/references/COLD_BACKLOG_REVIEW_PROMPT.md`\n');
+  const gaps = scanSkillReferenceGaps(root);
+  assert.ok(gaps.some((g) => g.rel.includes('hosts/zcode') && g.cited.includes('COLD_BACKLOG_REVIEW_PROMPT')),
+    `espelho sem references/ deve falhar, gaps=${JSON.stringify(gaps)}`);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('skill refs: ../_shared/references citado e presente passa; ausente falha', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'skill-refs-shared-'));
+  plant(root, 'packages/skills/talos-task-validator/SKILL.md',
+    'baseline `../_shared/references/stack-profiles.md`\n');
+  const missing = scanSkillReferenceGaps(root);
+  assert.ok(missing.some((g) => g.cited.includes('stack-profiles.md')), 'shared ausente falha');
+  plant(root, 'packages/skills/_shared/references/stack-profiles.md', '# perfis\n');
+  assert.deepEqual(scanSkillReferenceGaps(root), [], 'shared presente passa');
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('skill refs: extract cobre packages/skills e _shared', () => {
+  const paths = extractSkillReferencePaths(
+    'a `packages/skills/talos-backlog-generator/references/COLD_BACKLOG_REVIEW_PROMPT.md` e `../_shared/references/stack-profiles.md`',
+  );
+  assert.deepEqual(paths.sort(), [
+    '../_shared/references/stack-profiles.md',
+    'packages/skills/talos-backlog-generator/references/COLD_BACKLOG_REVIEW_PROMPT.md',
+  ]);
 });
