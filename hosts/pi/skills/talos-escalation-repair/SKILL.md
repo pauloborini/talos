@@ -96,8 +96,19 @@ Entrada alternativa: lista de PDs `open` de `talos_pendencies(list)` como packet
 
 1. Para cada PD, corrigir de forma bounded conforme `recommendation`, dentro do boundary declarado; `repair[].finding_id` carrega o `pd_id` (a fonte de IDs sem packet é o próprio delta do repair).
 2. Rodar o check declarado em `fix_validation` da PD como check focado do commit.
-3. Devolver resultado **por `pd_id`**: `{pd_id, status: resolved|blocked, files_touched, checks_run}`.
-4. O `close` da PD é SEMPRE via MCP (`talos_pendencies(action=close, pd_id)`) - nunca Write/Edit do `PENDENCIAS_<slug>.md` pela skill. O close é decisão do orquestrador dono do ciclo, após a verification do delta do drain; a skill apenas reporta.
+3. Commitar via `talos_commit_state(repair[])` no mesmo `state_path` (único writer do JSON).
+4. Devolver **obrigatoriamente** este JSON (campos extras permitidos; estes três são o contrato do drain):
+
+```json
+{
+  "pd_ids_fixed": ["PD-S03-01"],
+  "commit_state": { "state_path": "<mesmo path>", "state_sha256": "<sha do commit>" },
+  "do_not_request_validator_retry": true
+}
+```
+
+Também devolver resultado **por `pd_id`**: `{pd_id, status: resolved|blocked, files_touched, checks_run}` (alimenta `pd_ids_fixed` = ids `resolved`).
+5. **Proibido** pedir ou ecoar `dispatch_task_validator_retry`. Drain não reabre G4. O `close` de cada PD é SEMPRE via MCP (`talos_pendencies(action=close, pd_id)`), decisão do orquestrador após o sidecar — nunca Write/Edit de `PENDENCIAS_<slug>.md`.
 
 Mesmas regras duras do modo residual: mesmo `state_path`, commit único via MCP, sem auto-validação, budget `escalation` = 1 sem retry.
 

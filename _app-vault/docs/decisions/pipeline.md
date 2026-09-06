@@ -38,3 +38,19 @@ Desde v0.15.0: aceite de produto atômico (`AC-*` no §7.3 com YAML `acceptance`
 
 A slice não exige commit git do código do produto. `files_changed` segue DEC-031 (porcelain Δ t0 ∪ range git). Exigir commit git dos files da slice é pack/DEC futura, não este contrato.
 
+### DEC-040 — Intenção saturada mora na §2 do sprint file
+
+Não existe artefato `INTENT.md` na cadeia Talos. Intenção (eixo, `SF-*`, `AS-*`, `R1`, regras do repo) vive no corpo da §2 do sprint file. `Intenção status` e `Selo da intenção` moram na §1 (fora do hash), igual ao contrato §7. §7–§10 não são renumeradas. Spec: `_app-vault/specs/SPEC_INTENT_SATURATION_SDD.md`.
+
+### DEC-043 — Densidade de intenção é Talos, não piso de 10 Dx
+
+Entrevista de intenção dispara por gatilhos T1–T7 da spec (campos vazios, `premissa`/comportamento `derivado:`, superfície sem efeito, recusa tautológica, anti-escopo genérico, regra do repo sem seguir/exceção, `misto` sem Must). Não se copia o piso pack-intent de 10 decisões `usuario:`. Pular só com zero gatilho, campos preenchidos e motivo gravado na §2.
+
+### DEC-044 — Oráculo frio documental é §2 ∪ §4
+
+DEC-025 permanece: §4 Discussão é obrigatória. Revisor frio de backlog/sprint confronta intenção na §2 saturada **e** a Discussão. Código do produto no validator frio de execução continua notando contra a §7 (DEC-013).
+
+### DEC-045 — Plano e direct não expandem a §2
+
+`talos-plan-handoff` e `talos-direct-execute` exigem selo de intenção íntegro (`plan_ready`). Task cujo lastro é só inferência ou que cita `AS-*` em `intent_refs` é defeito. G11 permanece. Recorte PLAN ⊆ §2 é mecânico: cada `#### Tnn` declara `intent_refs` só com `SF-*`/`R1` existentes; todo `SF-*` e `R1` têm ≥1 task; o MCP julga (`talos_assert_after_plan` + TC). Spec §9.3.
+

@@ -10,8 +10,10 @@ import {
   parseDecisionRows,
   validateSprintFileConformance,
   validateAcceptanceSeal,
+  validateIntentSeal,
   parseAcceptanceContract,
   traceabilityMode,
+  verifyIntentRefs,
 } from '../skills/_shared/scripts/document_quality.mjs';
 import {
   traceabilityHandler,
@@ -1239,6 +1241,7 @@ function compactLedgerEvent(event = {}) {
     'stale_discarded', 'challenge_verified', 'challenge_file',
     'challenge_failures', 'challenge_failures_max', 'applied_validator_status',
     'last_verdict', 'validator_output_path', 'repair_budget', 'pending_count',
+    'advance_blocked',
   ];
   const arrayKeys = [
     'finding_ids', 'missing_finding_ids', 'unresolved_finding_ids',
@@ -1408,6 +1411,26 @@ function patchGateResult(runId, gate, result, args = {}) {
     },
   };
 
+  // P1.8: select_next com drain não pode rearmar o FSM da próxima sprint
+  // (expected_phase cai em plan_handoff/plan_execute e o drain tenta
+  // lock_dispatch no ciclo seguinte). Congela next_phase até select sem drain.
+  if (gate === 'select_next_sprint') {
+    const prevDispatch = previous?.data?.dispatch ?? {};
+    if (result.advance_blocked === true && result.next_action === 'drain_pendencies') {
+      data.dispatch = {
+        ...prevDispatch,
+        next_phase: 'drain_pendencies',
+        next_action: 'drain_pendencies',
+      };
+    } else if (prevDispatch.next_phase === 'drain_pendencies') {
+      data.dispatch = {
+        ...prevDispatch,
+        next_phase: null,
+        next_action: result.next_action ?? null,
+      };
+    }
+  }
+
   return upsertState({
     run_id: runId,
     project_root: args.project_root,
@@ -1469,6 +1492,23 @@ function patchRoutingResult(runId, result, args = {}) {
     status: result.status === 'passed' ? 'preflight_passed' : 'preflight_blocked',
     summary: `G10: ${result.status}`,
     data,
+  });
+}
+
+function validatorCycleIsClosedForPreviousSlice(cycle) {
+  const status = cycle?.status;
+  return status === 'repair_closed'
+    || VALIDATOR_PASSED_STATUSES.has(status)
+    || status === 'failed'
+    || status === 'blocked'
+    || status === 'challenge_exhausted';
+}
+
+function resetValidatorCycleForNewSprint(cycle) {
+  return normalizeValidatorCycle({
+    dispatch_token: cycle.dispatch_token,
+    history: cycle.history,
+    applied: cycle.applied,
   });
 }
 
@@ -1540,6 +1580,16 @@ function patchDispatchResult(runId, result, args = {}) {
       }
       : {}),
   };
+
+  // Loop no mesmo run_id: start da sprint seguinte não herda G4/review da anterior.
+  if (result.status === 'passed' && result.action === 'start' && SPRINT_ENTRY_PHASES.has(result.phase)) {
+    const prevCycle = normalizeValidatorCycle(previous.data?.validator_cycle ?? {});
+    if (validatorCycleIsClosedForPreviousSlice(prevCycle)) {
+      data.validator_cycle = compactValidatorCycleForLedger(resetValidatorCycleForNewSprint(prevCycle));
+    }
+    delete data.gates.slice_review;
+    delete data.review_cycle;
+  }
 
   return upsertState({
     run_id: runId,
@@ -2016,9 +2066,9 @@ function scanAcceptance(args = {}) {
         ? renderBanner('aceite_ok', {})
         : renderBanner('aceite_lacunas', { n: blockingMatches.length }),
       blocking_matches: blockingMatches,
-      next_action: blockingMatches.length === 0 ? 'avançar' : 'entrevista',
+      next_action: blockingMatches.length === 0 ? 'consultar_maturidade' : 'entrevista',
       message: blockingMatches.length === 0
-        ? 'Ambiguity scan: 0 padrões bloqueantes — entrevista pulada'
+        ? 'Ambiguity scan: 0 padrões bloqueantes na §7 — L2 de intenção segue o limiar de maturidade (não pula só por scan=0)'
         : 'Ambiguity scan: padrões bloqueantes encontrados — entrevista obrigatória',
     };
   }
@@ -2056,7 +2106,7 @@ function verifyRequiredSections(headings, requiredSections) {
     ));
 }
 
-function verifyPlanConformance(content, { requireSprintFile = false } = {}) {
+function verifyPlanConformance(content, { requireSprintFile = false, sprintMarkdown = null } = {}) {
   // §7 Slices só é obrigatória em `execution_mode: orchestrated-per-slice` (template).
   // Em `sequencial` a seção é dispensável — não force "§7 Não aplicável" só para passar
   // o gate (S1). Verdade forte = presença do literal orchestrated-per-slice no cabeçalho.
@@ -2095,6 +2145,17 @@ function verifyPlanConformance(content, { requireSprintFile = false } = {}) {
         'referenciar_eval_manifest',
       ));
     }
+    if (sprintMarkdown == null) {
+      pendencies.push(conformancePending(
+        'intent_refs',
+        'intent_sprint_ausente',
+        null,
+        'Sprint file ausente para validar intent_refs.',
+        'vincular_sprint_file',
+      ));
+    } else {
+      pendencies.push(...verifyIntentRefs(content, sprintMarkdown));
+    }
   }
 
   if (!/####\s+T\d+\./.test(content)) {
@@ -2118,6 +2179,52 @@ function verifyPlanConformance(content, { requireSprintFile = false } = {}) {
   }
 
   return pendencies;
+}
+
+function extractPlanSprintPath(planMarkdown) {
+  const match = /^\|\s*\*\*Sprint file\*\*\s*\|\s*(.+)\s*\|/im.exec(planMarkdown);
+  if (!match) return null;
+  const cell = match[1].trim();
+  const link = /\[[^\]]+\]\(([^)#]+)(?:#[^)]*)?\)/.exec(cell);
+  if (link) return link[1].trim();
+  const bare = cell.split(/[—–-]/)[0].trim();
+  const cleaned = bare.replace(/^[`'"]+|[`'"]+$/g, '').trim();
+  return cleaned || null;
+}
+
+function resolvePlanSiblingPath(planAbsolutePath, relativePath, args = {}) {
+  const root = consumerRoot(args);
+  if (path.isAbsolute(relativePath)) return relativePath;
+  const fromPlan = path.resolve(path.dirname(planAbsolutePath), relativePath);
+  if (fs.existsSync(fromPlan)) return fromPlan;
+  return path.resolve(root, relativePath);
+}
+
+function readPlanSprintMarkdown(planMarkdown, planAbsolutePath, args = {}) {
+  const sprintRel = extractPlanSprintPath(planMarkdown);
+  if (!sprintRel) return null;
+  const sprintAbs = resolvePlanSiblingPath(planAbsolutePath, sprintRel, args);
+  try {
+    const sprintMarkdown = fs.readFileSync(sprintAbs, 'utf8');
+    return sprintMarkdown.trim() === '' ? null : sprintMarkdown;
+  } catch {
+    return null;
+  }
+}
+
+function resolveLedgerPlanPath(dispatch = {}) {
+  if (typeof dispatch.plan_path === 'string' && dispatch.plan_path.trim()) {
+    return dispatch.plan_path.trim();
+  }
+  const checkpoints = [
+    ...(dispatch.active?.liveness?.checkpoints ?? []),
+    ...(dispatch.execute_liveness?.checkpoints ?? []),
+  ];
+  for (let index = checkpoints.length - 1; index >= 0; index -= 1) {
+    const planPath = checkpoints[index]?.plan_path;
+    if (typeof planPath === 'string' && planPath.trim()) return planPath.trim();
+  }
+  return null;
 }
 
 function verifyTemplateConformance(args = {}) {
@@ -2154,7 +2261,10 @@ function verifyTemplateConformance(args = {}) {
         next_action: 'corrigir_artefato',
       };
     } else {
-      const pendencies = verifyPlanConformance(content, { requireSprintFile });
+      const sprintMarkdown = requireSprintFile
+        ? readPlanSprintMarkdown(content, absolutePath, args)
+        : null;
+      const pendencies = verifyPlanConformance(content, { requireSprintFile, sprintMarkdown });
       result = {
         gate: 'template_conformance',
         status: pendencies.length === 0 ? 'passed' : 'blocked',
@@ -2199,6 +2309,10 @@ function verifyTemplateConformance(args = {}) {
 
 function verifySprintFile(args = {}) {
   const runId = validateRunId(args.run_id);
+  const requireLevel = args.require ?? 'plan_ready';
+  if (requireLevel !== 'stub' && requireLevel !== 'plan_ready') {
+    throw rpcError(-32602, 'invalid_params: require deve ser stub|plan_ready.');
+  }
   const sprintPath = requiredString(args, 'sprint_path');
   const sprintId = optionalString(args, 'sprint_id');
   const backlogPath = optionalString(args, 'backlog_path');
@@ -2247,6 +2361,7 @@ function verifySprintFile(args = {}) {
         valid: false,
         pending_count: 1,
         premissa_count: 0,
+        maturity: 'stub',
         pendencies: [conformancePending('documento', 'arquivo_vazio', null, 'Sprint file vazio não pode passar.', 'preencher_sprint_file')],
       }
       : validateSprintFileConformance(content, {
@@ -2260,6 +2375,7 @@ function verifySprintFile(args = {}) {
         ...(traceabilityLedger !== undefined ? { traceability: traceabilityLedger } : {}),
         // D5 (v0.16.0): root do consumidor para resolver `derivado:<path>`.
         root: consumerRoot(args),
+        require: requireLevel,
       });
     const pendencies = [...validation.pendencies, ...extraPendencies];
     result = {
@@ -2268,6 +2384,8 @@ function verifySprintFile(args = {}) {
       sprint_path: sprintPath,
       sprint_id: sprintId ?? null,
       backlog_path: backlogPath ?? null,
+      require: requireLevel,
+      maturity: validation.maturity ?? 'stub',
       timestamp,
       pending_count: pendencies.length,
       // D6 (v0.16.0): contagem de `premissa` sempre presente, inclusive zero.
@@ -2279,6 +2397,10 @@ function verifySprintFile(args = {}) {
       next_action: pendencies.length === 0 ? 'avançar' : pendencies[0].next_action,
     };
   } catch (error) {
+    if (error?.code === -32602) throw error;
+    if (error?.message === 'INVALID_REQUIRE') {
+      throw rpcError(-32602, 'invalid_params: require deve ser stub|plan_ready.');
+    }
     result = {
       gate: 'sprint_file_conformance',
       status: 'blocked',
@@ -2329,8 +2451,11 @@ function sprintMetadataValue(markdown, label) {
 }
 
 function sprintDorStatus(markdown) {
-  const match = /^\*\*Status DoR:\*\*\s*\[?([^\]\n]+)\]?/im.exec(markdown);
-  return match ? match[1].trim().toLowerCase() : null;
+  const match = /^\*\*Status DoR:\*\*\s*(.+)$/im.exec(markdown);
+  if (!match) return null;
+  const raw = match[1].trim().replace(/^\[|\]$/g, '').trim();
+  if (!/^(verde|amarelo|vermelho)$/i.test(raw)) return null;
+  return raw.toLowerCase();
 }
 
 function detectBacklogCycle(rows) {
@@ -2442,6 +2567,7 @@ function inspectBacklogIndex(args = {}) {
           // `derivado:<path>` ficaria inerte aqui e o gate de backlog daria
           // veredicto diferente do gate de sprint para o mesmo artefato.
           root: consumerRoot(args),
+          require: 'stub',
         });
         const sprintStatus = sprintMetadataValue(sprintMarkdown, 'Status');
         info.sprint_file_status = validation.valid ? 'valid' : 'invalid';
@@ -2451,6 +2577,10 @@ function inspectBacklogIndex(args = {}) {
         info.contrato_status = sprintMetadataValue(sprintMarkdown, 'Contrato status');
         const seal = validateAcceptanceSeal(sprintMarkdown);
         info.contrato_sealed = seal.sealed && !seal.tampered;
+        info.intencao_status = sprintMetadataValue(sprintMarkdown, 'Intenção status');
+        const intentSeal = validateIntentSeal(sprintMarkdown);
+        info.intencao_sealed = intentSeal.sealed && !intentSeal.tampered;
+        info.maturity = validation.maturity;
         if (sprintStatus && sprintStatus !== row.state) {
           pendencies.push(conformancePending('status_drift', row.id, null, `Status divergente em ${row.id}: backlog=${row.state}, sprint_file=${sprintStatus}.`, 'sincronizar_status_backlog_sprint'));
         }
@@ -2598,16 +2728,20 @@ function compareSprintCandidates(a, b) {
  * Próxima ação canônica pós-seleção (pipeline 0.14+), mode-aware:
  * - §7 draft / sem selo → sprint_interview (qualquer modo)
  * - interview-only → sprint_interview (mesmo com §7 selado)
- * - direct + §7 selado → plan_execute (direct_execute; sem plan_handoff)
+ * - maturity !== plan_ready (selo sem corpo L2) → sprint_interview
+ * - direct + plan_ready → plan_execute (direct_execute; sem plan_handoff)
  * - full/execute + PLAN real → plan_execute
- * - full/execute + §7 selado sem PLAN → plan_handoff
+ * - full/execute + plan_ready sem PLAN → plan_handoff
  * Verbos alinhados a WORKFLOW_CONFIG / expectedNextPhase. Nunca `gerar_prd`.
  */
 function nextActionForSelectedSprint(info, mode = 'full') {
-  const sealed = /^aprovado$/i.test(info?.contrato_status ?? '') && info?.contrato_sealed === true;
+  const contratoOk = /^aprovado$/i.test(info?.contrato_status ?? '') && info?.contrato_sealed === true;
+  const intentOk = /^saturada$/i.test(info?.intencao_status ?? '') && info?.intencao_sealed === true;
+  const planReady = info?.maturity === 'plan_ready';
   const hasPlan = Boolean(info?.plan && !pendingPathToken(info.plan));
-
-  if (!sealed || mode === 'interview-only') return 'sprint_interview';
+  if (info?.state === 'backlog') return 'sprint_interview';
+  if (!contratoOk || mode === 'interview-only') return 'sprint_interview';
+  if (!intentOk || !planReady) return 'sprint_interview';
   if (mode === 'direct') return 'plan_execute';
   if (hasPlan) return 'plan_execute';
   return 'plan_handoff';
@@ -2625,15 +2759,72 @@ function derivedSprintGateStatus(status, validatorVerdict) {
   return '—';
 }
 
-function assertSprintStatusTransition(from, to, allowReopenDone = false) {
+const TERMINAL_CLOSE_STATUSES = new Set(['done', 'manual_validation_pending']);
+const TERMINAL_JUMP_FROM = new Set(['backlog', 'ready', 'doing', 'review']);
+const SPRINT_ENTRY_PHASES = new Set(['sprint_interview', 'plan_handoff', 'plan_execute', 'direct_execute']);
+
+function suggestedStatusPath(from, to) {
+  if (from === to) return [from];
+  const queue = [[from]];
+  const seen = new Set([from]);
+  while (queue.length > 0) {
+    const current = queue.shift();
+    const last = current[current.length - 1];
+    for (const next of SPRINT_STATUS_TRANSITIONS[last] ?? []) {
+      if (seen.has(next)) continue;
+      const path = [...current, next];
+      if (next === to) return path;
+      seen.add(next);
+      queue.push(path);
+    }
+  }
+  return null;
+}
+
+function terminalCloseJumpAllowed({ from, to, args, runLedger, sprintMarkdown }) {
+  if (!TERMINAL_CLOSE_STATUSES.has(to) || !TERMINAL_JUMP_FROM.has(from)) return false;
+  if (!TERMINAL_VALIDATOR_VERDICTS.has(args.validator_verdict ?? 'not_run')) return false;
+  if (!args.state_path) return false;
+  const reviewRequired = runLedger?.data?.options?.loop === true
+    || sprintCriticalReviewRequired(sprintMarkdown);
+  if (!reviewRequired) return true;
+  return runLedger?.data?.gates?.slice_review?.status === 'passed';
+}
+
+function statusTransitionPending(from, to) {
+  const allowed = [...(SPRINT_STATUS_TRANSITIONS[from] ?? [])].sort();
+  const jumpingClose = TERMINAL_CLOSE_STATUSES.has(to) && TERMINAL_JUMP_FROM.has(from);
+  const suggested_path = jumpingClose ? null : suggestedStatusPath(from, to);
+  const hint = jumpingClose
+    ? 'hint: salto terminal exige validator terminal + state_path + slice_review no ledger quando --loop ou critical_review; hops ready/doing/review não fecham a sprint'
+    : suggested_path
+      ? `hint: caminho ${suggested_path.join('→')} ou salto terminal com pipeline completo`
+      : 'hint: usar status em allowed_transitions ou salto terminal com pipeline completo';
+  return {
+    ...conformancePending(
+      'status_transition',
+      `${from}->${to}`,
+      null,
+      `Transição de status inválida: ${from} -> ${to}. allowed=[${allowed.join(', ')}]. ${hint}.`,
+      'corrigir_fluxo_status_sprint',
+    ),
+    allowed_transitions: allowed,
+    suggested_path,
+  };
+}
+
+function assertSprintStatusTransition(from, to, allowReopenDone = false, { jump = false } = {}) {
   if (!BACKLOG_STATES.has(to)) {
     return conformancePending('status', to, null, `Status inválido: ${to}.`, 'usar_status_valido');
   }
   if (from === 'done' && to !== 'done' && allowReopenDone !== true) {
     return conformancePending('status_transition', `${from}->${to}`, null, 'Sprint done não pode ser reaberta sem allow_reopen_done=true.', 'criar_nova_sprint_ou_autorizar_reabertura');
   }
+  if (jump === true && TERMINAL_CLOSE_STATUSES.has(to) && TERMINAL_JUMP_FROM.has(from)) {
+    return null;
+  }
   if (!SPRINT_STATUS_TRANSITIONS[from]?.has(to) && !(allowReopenDone === true && from === 'done')) {
-    return conformancePending('status_transition', `${from}->${to}`, null, `Transição de status inválida: ${from} -> ${to}.`, 'corrigir_fluxo_status_sprint');
+    return statusTransitionPending(from, to);
   }
   return null;
 }
@@ -2868,12 +3059,9 @@ function updateSprintStatus(args = {}) {
     const row = rows.find((entry) => entry.id === sprintId);
     if (!row) {
       pendencies.push(conformancePending('backlog_index', sprintId, null, `Backlog não contém sprint ${sprintId}.`, 'corrigir_backlog_index'));
-    } else {
-      const transitionPending = assertSprintStatusTransition(row.state, status, args.allow_reopen_done === true);
-      if (transitionPending) pendencies.push(transitionPending);
-      if (pendingPathToken(row.sprint_file)) {
-        pendencies.push(conformancePending('sprint_file', sprintId, null, `Linha ${sprintId} não aponta Sprint file real.`, 'preencher_sprint_file_no_backlog'));
-      }
+    }
+    if (row && pendingPathToken(row.sprint_file)) {
+      pendencies.push(conformancePending('sprint_file', sprintId, null, `Linha ${sprintId} não aponta Sprint file real.`, 'preencher_sprint_file_no_backlog'));
     }
     // Plano 01 (loop): sink do VC3 — a flag `--loop` gravada no ledger pela
     // origem (lockDispatch start, options.loop) é consumida aqui como exigência
@@ -2885,17 +3073,33 @@ function updateSprintStatus(args = {}) {
     // ou ilegível ⇒ sem flag ⇒ sem gate novo (comportamento aditivo, D18).
     // Sprint file lido cedo: o gate v1 de fechamento (Plano 03) cruza o
     // metadado `Traceability` e os `source_refs` ANTES de qualquer write.
-    const sprintPath = cleanBacklogPathToken(row.sprint_file);
-    const sprintAbs = resolveConsumerPath(sprintPath, args);
-    const sprintBefore = fs.readFileSync(sprintAbs, 'utf8');
+    const sprintPath = row ? cleanBacklogPathToken(row.sprint_file) : null;
+    const sprintAbs = sprintPath ? resolveConsumerPath(sprintPath, args) : null;
+    const sprintBefore = sprintAbs ? fs.readFileSync(sprintAbs, 'utf8') : '';
+    let runLedgerForStatus = null;
+    try {
+      runLedgerForStatus = readState(runId, args);
+    } catch {
+      runLedgerForStatus = null;
+    }
+    if (row) {
+      const jump = terminalCloseJumpAllowed({
+        from: row.state,
+        to: status,
+        args,
+        runLedger: runLedgerForStatus,
+        sprintMarkdown: sprintBefore,
+      });
+      const transitionPending = assertSprintStatusTransition(
+        row.state,
+        status,
+        args.allow_reopen_done === true,
+        { jump },
+      );
+      if (transitionPending) pendencies.push(transitionPending);
+    }
     if (status === 'done' || status === 'manual_validation_pending') {
-      let loopReviewRequired = false;
-      try {
-        const runLedger = readState(runId, args);
-        loopReviewRequired = runLedger?.data?.options?.loop === true;
-      } catch {
-        loopReviewRequired = false;
-      }
+      const loopReviewRequired = runLedgerForStatus?.data?.options?.loop === true;
       // D06/D09: a segunda origem da exigência é o próprio sprint file. Até aqui
       // `policy_manifest.critical_review.required: true` só existia como prosa em
       // SKILL.md — o MCP nunca lia o campo, então a review "obrigatória" era
@@ -2904,13 +3108,7 @@ function updateSprintStatus(args = {}) {
       const criticalReviewRequired = sprintCriticalReviewRequired(sprintBefore);
       const reviewRequired = loopReviewRequired || criticalReviewRequired;
       if (reviewRequired) {
-        let reviewGate = null;
-        try {
-          const runLedger = readState(runId, args);
-          reviewGate = runLedger?.data?.gates?.slice_review ?? null;
-        } catch {
-          reviewGate = null;
-        }
+        const reviewGate = runLedgerForStatus?.data?.gates?.slice_review ?? null;
         if (reviewGate?.status !== 'passed') {
           const origem = loopReviewRequired && criticalReviewRequired
             ? '--loop + policy_manifest.critical_review'
@@ -3249,45 +3447,59 @@ function sprintScopePaths(sprintMarkdown) {
   )];
 }
 
-// Plano 02 (loop): drain gate aditivo do select_next (CN4/D20). required é
-// informação para a esteira (Plano 05 decide drenar) — NUNCA bloqueia a seleção.
-// Dispara com: teto de 3 PDs abertas (reason threshold); PD open cuja sprint de
-// origem está no cone DEP do candidato (reason dep_cone); overlap entre files da
-// PD e os paths do escopo do sprint file do candidato quando declarados (reason
-// files_overlap). Backlog sem PENDENCIAS ⇒ required false, retorno idêntico.
+// Plano 02 (loop): drain gate do select_next (CN4/D20). required=true anexa
+// next_action=drain_pendencies e advance_blocked — selected fica informativo,
+// sem verbo de avanço (interview/plan). Dispara com: teto de 3 PDs abertas
+// (reason threshold); PD open cuja sprint de origem está no cone DEP do
+// candidato (reason dep_cone); overlap entre files da PD e os paths do escopo
+// do sprint file do candidato quando declarados (reason files_overlap).
+// Backlog sem PENDENCIAS ⇒ required false, retorno idêntico.
 function drainRequiredFor(backlogPath, args, rows, candidate) {
-  const base = { required: false, reasons: [], open_pd_count: 0 };
+  const base = { required: false, reasons: [], open_pd_count: 0, pd_ids: [], threshold_crossed: false };
   const open = readOpenPendencies(backlogPath, args);
   base.open_pd_count = open.openCount;
   if (open.error || open.open.length === 0) return base;
   const reasons = new Set();
-  if (open.openCount >= PENDENCIES_DRAIN_THRESHOLD) reasons.add('threshold');
+  const triggering = [];
+  if (open.openCount >= PENDENCIES_DRAIN_THRESHOLD) {
+    reasons.add('threshold');
+    triggering.push(...open.open.map((pd) => pd.id));
+  }
   if (candidate) {
     const cone = transitiveDependencyCone(rows, candidate.id);
-    if (open.open.some((pd) => cone.has(pd.sprint_id))) reasons.add('dep_cone');
+    const conePds = open.open.filter((pd) => cone.has(pd.sprint_id));
+    if (conePds.length > 0) {
+      reasons.add('dep_cone');
+      triggering.push(...conePds.map((pd) => pd.id));
+    }
     if (candidate.sprint_file) {
       try {
         const sprintMarkdown = fs.readFileSync(resolveConsumerPath(candidate.sprint_file, args), 'utf8');
         const scopePaths = new Set(sprintScopePaths(sprintMarkdown));
-        if (scopePaths.size > 0
-          && open.open.some((pd) => (pd.files ?? []).some((file) => scopePaths.has(file)))) {
-          reasons.add('files_overlap');
+        if (scopePaths.size > 0) {
+          const overlapPds = open.open.filter((pd) => (pd.files ?? []).some((file) => scopePaths.has(file)));
+          if (overlapPds.length > 0) {
+            reasons.add('files_overlap');
+            triggering.push(...overlapPds.map((pd) => pd.id));
+          }
         }
       } catch {
         // Sprint file ilegível: overlap não dispara (teto e DEP-cone seguem).
       }
     }
   }
-  return { ...base, required: reasons.size > 0, reasons: [...reasons] };
+  const pd_ids = [...new Set(triggering)];
+  const threshold_crossed = reasons.has('threshold');
+  return { ...base, required: reasons.size > 0, reasons: [...reasons], pd_ids, threshold_crossed };
 }
 
 function selectNextSprint(args = {}) {
   const runId = validateRunId(args.run_id);
   const backlogPath = requiredString(args, 'backlog_path');
   const mode = typeof args.mode === 'string' && args.mode.trim() ? args.mode.trim() : 'full';
-  // `loop` é opt-in estrito para esta seleção. Não reutiliza `options.loop`
-  // do dispatch porque a seleção acontece antes de existir uma fase ativa.
-  // Ausente preserva literalmente a seleção normal (CN7).
+  // `loop` é opt-in estrito da esteira serial (CN7). Não reutiliza
+  // `options.loop` do dispatch: a seleção acontece antes da fase ativa.
+  // Ausente/false não desliga a fila de maturação (DEC-048).
   if (args.loop !== undefined && typeof args.loop !== 'boolean') {
     throw rpcError(-32602, 'invalid_params: loop deve ser boolean.');
   }
@@ -3298,37 +3510,31 @@ function selectNextSprint(args = {}) {
     const index = inspectBacklogIndex(args);
     const rowsById = new Map(index.rows.map((row) => [row.id, row]));
     const candidates = [];
-    const loopMaturationCandidates = [];
+    const maturationCandidates = [];
     const rejected = [];
     for (const info of index.sprints) {
       const row = rowsById.get(info.id);
       const unmet = depsSatisfied(row, rowsById);
       const reasons = [];
-      const loopMaturation = loop && info.state === 'backlog';
-      if (info.state !== 'ready' && !loopMaturation) reasons.push(`state=${info.state}`);
+      const maturationEligible = info.state === 'backlog';
+      if (info.state !== 'ready' && !maturationEligible) reasons.push(`state=${info.state}`);
       if (unmet.length > 0) reasons.push(`unmet_dependencies=${unmet.map((dep) => `${dep.id}:${dep.state}`).join(',')}`);
       if (info.sprint_file_status !== 'valid') reasons.push(`sprint_file=${info.sprint_file_status}`);
-      // Apenas a pré-etapa do loop pode maturar um backlog em DoR amarelo.
-      // `ready` permanece exigindo verde mesmo no loop; vermelho/ausente nunca
-      // é candidata em qualquer modo.
-      const dorAllowed = loopMaturation
+      // Backlog na fila de maturação aceita DoR amarelo/verde; `ready` exige verde.
+      const dorAllowed = maturationEligible
         ? (info.dor_status === 'amarelo' || info.dor_status === 'verde')
         : info.dor_status === 'verde';
       if (!dorAllowed) reasons.push(`dor=${info.dor_status ?? 'ausente'}`);
       if (reasons.length === 0) {
-        if (loopMaturation) loopMaturationCandidates.push(info);
+        if (maturationEligible) maturationCandidates.push(info);
         else candidates.push(info);
       }
       else rejected.push({ id: info.id, reasons });
     }
     candidates.sort(compareSprintCandidates);
-    loopMaturationCandidates.sort(compareSprintCandidates);
-    // O loop primeiro esgota a fila de maturação. Misturar `ready` e
-    // `backlog` no mesmo ranking faria uma ready P0 pular uma entrevista
-    // pendente, quebrando a promessa de continuação automática do §7.
-    const orderedCandidates = loop
-      ? [...loopMaturationCandidates, ...candidates]
-      : candidates;
+    maturationCandidates.sort(compareSprintCandidates);
+    // A fila de maturação precede sempre `ready` — backlog P3 antes de ready P0.
+    const orderedCandidates = [...maturationCandidates, ...candidates];
     const candidateSelected = orderedCandidates[0] ?? null;
 
     let ledger = null;
@@ -3404,14 +3610,14 @@ function selectNextSprint(args = {}) {
 
     let nextAction = blocked
       ? (structuralPendencies[0]?.next_action ?? 'atualizar_sprint_file_ou_dependencias')
-      : (loop && selected.state === 'backlog' ? 'sprint_interview' : nextActionForSelectedSprint(selected, mode));
+      : nextActionForSelectedSprint(selected, mode);
 
     let banner = blocked
       ? renderBanner('preflight_fail', { motivo: selected ? `backlog index: ${structuralPendencies.length} pendências` : 'nenhuma sprint executável' })
       : renderBanner('preflight_ok', { caps: `next=${selected.id}` });
 
     let pendenciesList = structuralPendencies.length > 0 ? structuralPendencies : (selected ? [] : [
-      conformancePending('seleção', 'next_sprint', null, 'Nenhuma sprint executável: exige state=ready, deps done ou manual_validation_pending, sprint file válido e DoR verde.', 'atualizar_sprint_file_ou_dependencias'),
+      conformancePending('seleção', 'next_sprint', null, 'Nenhuma sprint executável: exige state=ready ou backlog (fila de maturação), deps done ou manual_validation_pending, sprint file válido (stub/ready) e DoR verde (ready) ou amarelo/verde (backlog).', 'atualizar_sprint_file_ou_dependencias'),
     ]);
     let pendingCount = blocked ? (structuralPendencies.length || 1) : 0;
 
@@ -3447,9 +3653,14 @@ function selectNextSprint(args = {}) {
         state_path: selected.state_file,
         contrato_status: selected.contrato_status,
         contrato_sealed: selected.contrato_sealed === true,
+        intencao_status: selected.intencao_status ?? null,
+        intencao_sealed: selected.intencao_sealed === true,
+        maturity: selected.maturity ?? 'stub',
         reason: loop && selected.state === 'backlog'
           ? 'loop: sprint backlog maturável + deps done/manual_validation_pending + sprint file válido + DoR amarelo/verde + maior prioridade determinística'
-          : 'ready + deps done/manual_validation_pending + sprint file válido + DoR verde + maior prioridade determinística',
+          : selected.state === 'backlog'
+            ? 'backlog maturável + deps done/manual_validation_pending + sprint file válido (stub) + DoR amarelo/verde + maior prioridade determinística'
+            : 'ready + deps done/manual_validation_pending + sprint file válido + DoR verde + maior prioridade determinística',
       } : null,
       candidates: orderedCandidates.map((item) => item.id),
       rejected,
@@ -3457,10 +3668,21 @@ function selectNextSprint(args = {}) {
       pendencies: pendenciesList,
       banner,
       next_action: nextAction,
-      // Plano 02 (loop): bloco aditivo (CN4) — drain gate informativo; nenhum
-      // campo existente muda de valor (AC-02.4.3 caso negativo).
+      // Plano 02 (loop): bloco drain (CN4). required=true troca o verbo de
+      // avanço por drain_pendencies; selected permanece informativo.
       drain_required: drainRequiredFor(backlogPath, args, index.rows, selected),
     };
+    if (!blocked && result.drain_required.required === true && result.selected) {
+      result.next_action = 'drain_pendencies';
+      result.advance_blocked = true;
+      const teto = result.drain_required.reasons.includes('threshold');
+      const openCount = result.drain_required.open_pd_count;
+      result.banner = renderBanner('preflight_ok', {
+        caps: teto
+          ? `drain obrigatório (teto ${PENDENCIES_DRAIN_THRESHOLD} PDs, open_pd_count=${openCount}) antes de ${result.selected.sprint_id}`
+          : `drain obrigatório antes de ${result.selected.sprint_id}`,
+      });
+    }
   } catch (error) {
     result = {
       gate: 'select_next_sprint',
@@ -3476,7 +3698,7 @@ function selectNextSprint(args = {}) {
       error: `Backlog mestre ausente ou ilegível: ${backlogPath}`,
       cause: error.message,
       next_action: 'corrigir_backlog_path',
-      drain_required: { required: false, reasons: [], open_pd_count: 0 },
+      drain_required: { required: false, reasons: [], open_pd_count: 0, pd_ids: [], threshold_crossed: false },
     };
   }
   patchGateResult(runId, 'select_next_sprint', result, args);
@@ -4598,6 +4820,20 @@ function startDispatch(args, context) {
       baseSha = null;
     }
     worktreeBaseline = captureWorktreeSnapshot(consumerRoot(args));
+  }
+
+  if (context.dispatch.next_phase === 'drain_pendencies') {
+    return {
+      gate: 'G7',
+      action: 'start',
+      phase,
+      status: 'blocked',
+      timestamp,
+      error: 'Drain de pendências ativo: não inicia ciclo da próxima sprint até fechar PDs e re-selecionar.',
+      current_phase: context.dispatch.previous_phase ?? null,
+      expected_phase: 'drain_pendencies',
+      next_action: 'drain_pendencies',
+    };
   }
 
   if (context.dispatch.active) {
@@ -6017,6 +6253,22 @@ function validatorStart(args, context) {
   const timestamp = nowIso();
   const cycle = normalizeValidatorCycle(context.state.data?.validator_cycle ?? {});
 
+  if (cycle.status === 'repair_closed' && (
+    context.dispatch.next_phase === 'drain_pendencies'
+    || cycle.last_state_path === null
+    || cycle.last_state_path === statePathValue
+  )) {
+    return {
+      gate: 'G4',
+      action: 'start',
+      status: 'blocked',
+      timestamp,
+      error: 'Repair de escalation/drain concluído; não reabre validator (G8). Feche PDs e re-selecione.',
+      validator_status: 'repair_closed',
+      next_action: 'close_pendencies_and_reselect',
+    };
+  }
+
   if (context.dispatch.active?.phase !== 'plan_execute') {
     return {
       gate: 'G4',
@@ -7379,6 +7631,8 @@ function validatorRepairComplete(args, context) {
     verification = normalizeVerificationForLedger(repairData.verification);
   }
 
+  const origin = cycle.repair?.origin ?? 'validator';
+  const escalationDrain = origin === 'escalation';
   return {
     gate: 'G4',
     action: 'repair_complete',
@@ -7386,12 +7640,14 @@ function validatorRepairComplete(args, context) {
     timestamp,
     validator_attempt: cycle.attempts_used,
     repair_run_id: activeRepairRunId,
-    validator_status: 'ready_for_retry',
+    validator_status: escalationDrain ? 'repair_closed' : 'ready_for_retry',
     state_path: statePathValue,
-    next_action: 'dispatch_task_validator_retry',
-    banner: renderBanner('validacao', { status: 'ready_for_retry' }),
+    next_action: escalationDrain ? 'close_pendencies_and_reselect' : 'dispatch_task_validator_retry',
+    banner: renderBanner('validacao', {
+      status: escalationDrain ? 'close_pendencies_and_reselect' : 'ready_for_retry',
+    }),
     validator_cycle: {
-      status: 'ready_for_retry',
+      status: escalationDrain ? 'repair_closed' : 'ready_for_retry',
       active: null,
       last_state_path: statePathValue,
       repair: {
@@ -8104,6 +8360,57 @@ function assertAfterPlan(args = {}) {
         expected_phase: 'plan_execute',
         next_action: 'dispatch_plan_execute_blocking',
       };
+      const ledgerPlanPath = resolveLedgerPlanPath(dispatch);
+      if (ledgerPlanPath && ledgerPlanPath !== DIRECT_MODE_PLAN_PATH_SENTINEL) {
+        try {
+          const planAbs = resolveConsumerPath(ledgerPlanPath, args);
+          const planMarkdown = fs.readFileSync(planAbs, 'utf8');
+          const sprintMarkdown = readPlanSprintMarkdown(planMarkdown, planAbs, args);
+          const intentPendencies = sprintMarkdown
+            ? verifyIntentRefs(planMarkdown, sprintMarkdown)
+            : [conformancePending(
+              'intent_refs',
+              'intent_sprint_ausente',
+              null,
+              'Sprint file ausente para validar intent_refs no G11.',
+              'vincular_sprint_file',
+            )];
+          if (intentPendencies.length > 0) {
+            result = {
+              gate: 'G11',
+              action: 'assert_after_plan',
+              phase: 'after_plan',
+              status: 'blocked',
+              timestamp,
+              pending_count: intentPendencies.length,
+              pendencies: intentPendencies,
+              error: 'PLAN intent_refs não cobre a §2 saturada.',
+              current_phase: dispatch.previous_phase ?? null,
+              expected_phase: 'plan_execute',
+              next_action: intentPendencies[0].next_action,
+            };
+          }
+        } catch (error) {
+          result = {
+            gate: 'G11',
+            action: 'assert_after_plan',
+            phase: 'after_plan',
+            status: 'blocked',
+            timestamp,
+            pending_count: 1,
+            pendencies: [conformancePending(
+              'intent_refs',
+              ledgerPlanPath,
+              null,
+              `Plano ilegível para validar intent_refs: ${ledgerPlanPath}`,
+            )],
+            error: `Plano ilegível para validar intent_refs: ${ledgerPlanPath}`,
+            current_phase: dispatch.previous_phase ?? null,
+            expected_phase: 'plan_execute',
+            next_action: 'corrigir_intent_refs',
+          };
+        }
+      }
     } else {
       result = {
         gate: 'G11',
@@ -8261,6 +8568,7 @@ function toolsList() {
             sprint_path: { type: 'string', minLength: 1 },
             sprint_id: { type: 'string', pattern: '^S\\d{2}(?:[a-z]|\\.\\d+)?$' },
             backlog_path: { type: 'string', minLength: 1 },
+            require: { type: 'string', enum: ['stub', 'plan_ready'] },
           },
         },
       },
@@ -8296,7 +8604,7 @@ function toolsList() {
             },
             loop: {
               type: 'boolean',
-              description: 'Opt-in estrito da seleção de maturação do --loop: permite somente sprint backlog válida, deps satisfeitas e DoR amarelo/verde para sprint_interview. Ausente/false preserva a seleção normal.',
+              description: 'Fila de maturação (`state=backlog`, sprint file stub válido, DoR amarelo/verde) sempre precede qualquer `ready`, com ou sem este arg. `loop:true` ativa a esteira de execução serial do orquestrador (`--loop`, CN7) — re-seleciona em cada ciclo/retomada; não é o único opt-in de maturação. Ausente ou `false` não limita a seleção só a `ready`.',
             },
           },
         },

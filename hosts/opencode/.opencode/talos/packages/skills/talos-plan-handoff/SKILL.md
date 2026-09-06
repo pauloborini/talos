@@ -62,7 +62,7 @@ No workflow `full`, `talos-plan-handoff` é autoria documental do agente princip
      - Campo `Backlog mestre` aponta para um path/backlog real → `source_mode: sprint-bound`.
      - Campo `Backlog mestre` com valor literal `Não aplicável (standalone)` → `source_mode: standalone`.
      - Nenhum dos dois padrões reconhecível → bloquear: sprint file precisa declarar explicitamente um dos dois.
-   - Chamar `talos_verify_sprint_file`; se sprint file estiver ausente, inválido, sem contrato §7, sem `eval_manifest`/`policy_manifest` (quando exigido) ou com gate bloqueado/indisponível, bloquear com ação corretiva. Preferir `Contrato status: aprovado` com selo íntegro; se `draft` com gaps bloqueantes, encaminhar a `talos-sprint-interview`.
+   - **Antes de escrever o PLAN**, chamar `talos_verify_sprint_file` (default **`plan_ready`** — omitir `require` ou explícito `require: plan_ready`). Gate `blocked` → **não gerar** plano. Exige `Intenção status: saturada` + selo §2 íntegro, `Contrato status: aprovado` + selo §7 íntegro. Se intenção `rascunho` ou contrato `draft` com gaps, encaminhar a `talos-sprint-interview`.
    - Em `standalone`: validar que a §7 tem D*, cenários UX e aceite binário observáveis suficientes para derivar Eval/Policy. §7 insuficiente bloqueia com ação corretiva.
 3. **Grounding no código:** confirme padrões, contratos, manifests e comandos reais antes de inferir. Resolva baseline/perfis via `../_shared/references/stack-profiles.md` + `detectStackProfiles(project_root, declared_commands, boundary_paths)`; não presuma Flutter nem aplique perfil fora do package correspondente.
 4. **Decisões estáveis:** sanar bloqueios com perguntas ao usuário; registrar no plano (não recopiar tabela D* da §7 — referenciar `Sprint §7.1`; não copiar YAML integral — referenciar `Sprint §9/§10` e IDs).
@@ -98,7 +98,7 @@ Regras:
 
 - O que será implementado e o resultado observável técnico.
 - Padrão de referência no monorepo e tabela **referência vs esta entrega** (ligar a `Sprint §7.1` D*, não recopiar a tabela).
-- Link ao sprint file: `Sprint §2` objetivo/escopo, `Sprint §7` contrato.
+- Link ao sprint file: `Sprint §2` objetivo/escopo/intenção (SF/AS/R1), `Sprint §7` contrato.
 
 ### 2. Invariantes de execução (derivados do sprint)
 
@@ -121,6 +121,7 @@ Tarefas `#### T01.` … `#### TNN.` com schema de `BOUNDARY_SPRINT_PLAN.md` can�
 
 - **Objetivo**
 - **Referência** (módulo/padrão no monorepo — evite listas longas de paths; o executor descobre no repo)
+- **intent_refs:** `[SF-01, R1, …]` — **obrigatório** em cada task; só IDs `SF-*` ou `R1` declarados na §2 saturada; **proibido** `AS-*`. Todo `SF-*` da §2 deve aparecer em ≥1 task; `R1` em ≥1 task. O MCP julga via `talos_assert_after_plan` / TC com `require_sprint_file=true`.
 - **Pré-condições**
 - **Mudança esperada**
 - **Invariantes preservados**

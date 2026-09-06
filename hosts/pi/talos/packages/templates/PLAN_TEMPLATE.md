@@ -67,6 +67,7 @@ Política: [BOUNDARY_SPRINT_PLAN.md](./BOUNDARY_SPRINT_PLAN.md).
 #### T01. <Título curto>
 
 - **Objetivo:** <resultado observável>
+- intent_refs: [SF-01, R1]
 - **Referência:** <módulo/padrão no monorepo — opcional>
 - **Pré-condições:** <nenhuma \| T0X>
 - **Mudança esperada:** <o que muda de forma concreta>
@@ -86,11 +87,14 @@ Política: [BOUNDARY_SPRINT_PLAN.md](./BOUNDARY_SPRINT_PLAN.md).
 
 #### T02. <…>
 
+<!-- repetir até TNN; cada task declara intent_refs após Objetivo (ex.: [SF-01, R1] ou [R1]) -->
+
 <repetir até TNN>
 
 #### TNN. Validação final
 
 - **Objetivo:** gates locais + regressão de entregas dependentes + aceite manual mínimo (Sprint §7.3; em `sprint-bound` também Sprint §9).
+- intent_refs: [R1]
 - **Dependências:** T01–T(N-1)
 - **Critério de done:** zero issues; testes verdes
 - **Validação local:**

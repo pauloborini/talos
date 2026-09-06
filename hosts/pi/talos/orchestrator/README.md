@@ -42,9 +42,9 @@ Pipeline completo executado automaticamente:
 
 ### Flags
 
-- `--interview` — Força entrevista do contrato §7 do sprint mesmo sem ambiguidades
+- `--interview` — Força L2 dual (intenção §2 + contrato §7) mesmo sem ambiguidades G5
 - `--review` — Executa slice-review ao final (senão opcional; sprints com `policy_manifest.critical_review.required: true` no §10 tornam a review obrigatória — G8)
-- `--loop` — Esteira serial de sprints com auto-correção (introduzida em v0.20.0 e endurecida em v0.21.2): em cada seleção passa `loop:true` ao MCP e, antes das `ready`, pode maturar uma sprint `backlog` válida com deps satisfeitas e DoR amarelo/verde pela entrevista do §7; depois a reseleciona antes de plano/execução. Corrige residual de review in-loop (repair origem `slice_review` → verification), despacha o sidecar `talos-escalation-repair` se o residual persistir, estaciona sprint irrecuperável em `detached_repair` e drena `PENDENCIAS_<slug>.md` sob demanda (`drain_required` do MCP); implica review crítica (G8) sem editar `policy_manifest` por sprint. Sem a flag, o pipeline atual não muda
+- `--loop` — Esteira serial de sprints com auto-correção (v0.20.0, endurecida em v0.23.0): em cada seleção passa `loop:true` ao MCP, re-seleciona após fechar, corrige residual de review in-loop (repair origem `slice_review` → verification), despacha o sidecar `talos-escalation-repair` se o residual persistir, estaciona sprint irrecuperável em `detached_repair` e drena `PENDENCIAS_<slug>.md` sob demanda (`drain_required` do MCP); implica review crítica (G8) sem editar `policy_manifest` por sprint. Sem a flag, **esta esteira** não roda (CN7); a fila de maturação de stubs em `select_next` **ainda existe** (DEC-048)
 - `--handoff` — Só em `audit`: grava `.talos/plans/PLAN_AUDIT_*.md` TC-conforme
 - `--scope <descrição>` — Só em `audit`: restringe o boundary textual
 - `--help` — Mostra sintaxe completa
@@ -253,9 +253,24 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `talos-*` para o
 
 ---
 
-**Plugin version:** 0.22.0
+**Plugin version:** 0.23.1
 **Author:** Paulo Borini
-**Last updated:** 2026-09-04
+**Last updated:** 2026-09-06
+
+### Novidades v0.23.1 — handoff `--loop` S03→S04 + `references/` no bundle
+
+- **Drain congela o FSM.** `select_next` com `drain_required` grava `dispatch.next_phase=drain_pendencies`; `lock_dispatch(start)` recusa `plan_handoff`/`plan_execute` até `select_next` sem drain.
+- **Mesmo `run_id`, sprint nova.** Start de fase de entrada reseta `validator_cycle` e limpa `gates.slice_review`; `repair_closed` só bloqueia retry na mesma slice.
+- **Fechamento terminal sem hops.** `backlog→done|manual_validation_pending` com pipeline completo; erro de transição não sugere `ready`/`doing`/`review`.
+- **Bundle leva `references/`.** Mandato COLD_BACKLOG e `_shared/references` entram em `hosts/`/`plugins/` e no Plugin V1 (cópia do diretório da skill).
+
+### Novidades v0.23.0 — saturação de intenção na §2 antes do plano (BREAKING 0.23)
+
+- **Intenção mora na §2 do sprint file.** Eixo, superfícies (`SF-*`), anti-escopo tentador (`AS-*`), recusa (`R1`) e regras do repo vivem no corpo da §2; `Intenção status` e `Selo da intenção` na §1 (write-once, hash do corpo §2). Sem artefato `INTENT.md`.
+- **Entrevista dual L1/L2.** L1 (`talos-backlog-generator`) recorta o ciclo; L2 (`talos-sprint-interview`) satura a §2 no eixo da sprint **antes** de derivar a §7. G5=0 (`talos_scan_acceptance` sem padrões) não pula mais L2.
+- **`verify_sprint_file` com limiar `stub` vs `plan_ready`.** Default `plan_ready` (callers antigos não afrouxam). Generator e `select_next` usam `require: stub`; plano/direct/`assert_after_plan` exigem dois selos + AC. Sprint file sem linhas `Intenção status`/`Selo da intenção` é inválido mesmo no stub. Sem atalho `legacy_sealed`.
+- **`select_next` matura stub sem `--loop`.** Fila `backlog` com stub válido precede `ready`; retorna `next_action: sprint_interview`. `--loop` continua sendo só a esteira de execução (CN7 intacto).
+- **PLAN ⊆ §2 via `intent_refs`.** Cada task declara `SF-*`/`R1` existentes na §2; `talos_assert_after_plan` valida cobertura mecânica. Task com inferência ou citando `AS-*` é defeito.
 
 ### Novidades v0.22.0 — veredito tipado da slice review e gate de fechamento derivado pelo MCP
 
@@ -290,7 +305,7 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `talos-*` para o
 
 ### Novidades v0.20.0 — esteira `--loop` de sprints com auto-correção (minor aditiva, D18)
 
-- **Flag `--loop`** — esteira serial de sprints: puxa a próxima sprint `ready` sozinha após fechar a atual (única pausa = entrevista), com repair in-loop, sidecar de escalation, drain de pendências e estacionamento. Flag gravada no ledger (`options.loop`); sem a flag, o pipeline atual não muda (CN7) e o gate de review crítica sob `policy_manifest` segue como estava.
+- **Flag `--loop`** — esteira serial de sprints: puxa a próxima sprint `ready` sozinha após fechar a atual (única pausa = entrevista L2), com repair in-loop, sidecar de escalation, drain de pendências e estacionamento. Flag gravada no ledger (`options.loop`); sem a flag, **esta esteira** não roda (CN7) e o gate de review crítica sob `policy_manifest` segue como estava. Maturação de stub via `select_next` não depende da flag (DEC-048).
 - **Residual da review — auto-correção (D3/D4/D17).** P0/P1 na review abre `repair_start` com origem `slice_review` (budget 1 fail-closed por provenance) → `talos-findings-repair` → **verification pontual** (fase nova da `talos-slice-review`: delta do `repair_evidence`, executa os checks declarados antes de julgar, veredito `resolved`/`not_resolved`/`regression` por finding) → veredito persistido via `repair_complete` (`data.verification` validado pelo MCP; `resolved` sem check executado é recusado). Nunca 2º `talos-task-validator` nem nova review completa no ramo da review (LEG1 cortado no G8/bloco EXEC; G4 do validator preservado).
 - **Sidecar `talos-escalation-repair` (D7).** Residual P0/P1 persistente abre slot com origem `escalation` (budget próprio, 1 dispatch por sprint) e é corrigido serial, sem self-validation; falha do sidecar estaciona a sprint em **`detached_repair`** (novo status: não `done`, não satisfaz DEP, não emite handoff; saída `→ready`/`→blocked`) enquanto a campanha segue para a próxima independente.
 - **PENDENCIAS + drain (D9/D10/D20).** Residual P2/P3 vira `PD-<sprint>-<NN>` em `.talos/backlog/PENDENCIAS_<slug>.md` (writer exclusivo do MCP, id monotônico por arquivo); `talos_select_next_sprint` retorna `drain_required` com ≥3 PDs abertas, PD no cone DEP do candidato ou overlap de files — drenada pelo sidecar em modo drain antes do avanço.

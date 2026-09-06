@@ -58,13 +58,14 @@ Ask at most 1-3 blocking questions only when a reasonable assumption could chang
 
 Read the user-provided sprint file/spec/task and any directly referenced files needed to resolve scope. If the input names repo artifacts, verify those artifacts exist before editing.
 
-When the input is or references a sprint file, call `talos_verify_sprint_file` before implementation. Extract `sprint_id`, `sprint_file_path`, contrato §7 (aceite §7.3), `eval_manifest` (`EVAL-*`) and `policy_manifest`; these become mandatory state evidence. Prefer `Contrato status: aprovado` with intact seal. If the sprint file is absent, invalid, or policy forbids the required change, return `blocked`.
+When the input is or references a sprint file, call `talos_verify_sprint_file` (default **`plan_ready`**) before implementation. Gate `blocked` → return `blocked` — do not mutate code with intenção `rascunho`. Extract `sprint_id`, `sprint_file_path`, §2 (eixo, SF-*, AS-*, R1, anti-escopo tentador), contrato §7 (aceite §7.3), `eval_manifest` (`EVAL-*`) and `policy_manifest`; these become mandatory state evidence. Prefer `Intenção status: saturada` + selo §2 íntegro and `Contrato status: aprovado` with intact seal. If the sprint file is absent, invalid, or policy forbids the required change, return `blocked`.
 
 Extract only execution-relevant items:
 
-- in scope / out of scope
+- in scope / out of scope (§3 + **anti-escopo tentador §2 `AS-*`**)
 - acceptance criteria from Sprint §7.3 and required deliverables
 - accepted decisions from Sprint §7.1
+- **Recusa R1 and surfaces SF-* from Sprint §2** (obligations must trace to these IDs)
 - UX scenarios from Sprint §7.2
 - invariants and "do not change" rules
 - contracts, entities, routes, schemas, wrappers, generated files
@@ -139,7 +140,7 @@ For each task, keep a tiny task contract:
 - focused check
 - repair budget
 
-Do not widen scope for opportunistic cleanup.
+Do not widen scope for opportunistic cleanup. **Proibido** task ou mudança cujo único lastro seja inferência do modelo e que contradiga anti-escopo `AS-*` ou recusa `R1` da §2 — inferência silenciosa contra intenção saturada é escopo inválido.
 
 **Minimalism rung (per task, before writing):** prefer the minimal viable implementation that satisfies the obligation — reuse existing repo code/symbol before introducing a new abstraction; use a stdlib/native platform feature before a new dependency; avoid indirection, factory, wrapper, extra layer, config option, or extra file not required by an obligation or invariant. This rung constrains only new abstraction/indirection/file/dependency. It never reduces trust-boundary validation, error handling, data-loss handling, invariants, scenario/test coverage, or negative paths. When minimal and safe conflict, choose safe.
 
