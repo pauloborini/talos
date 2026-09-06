@@ -1,8 +1,8 @@
 # Talos MCP Server
 
-Servidor MCP do plugin Talos v0.23.0.
+Servidor MCP do plugin Talos v0.23.1.
 
-## Destaques v0.23.0
+## Destaques v0.23.1
 
 - **Hardening de `reconcile` para slices `direct`.** O MCP ignora o sentinel interno `.talos/plans/direct.md` ao reidratar `plan_path` a partir do state em disco; uma slice `direct` recuperada continua `contract_kind=direct`.
 - **Ledger e disco voltam a falar a mesma verdade após o validator.** Quando o complete do validador persiste `acceptance_results`, o MCP ressincroniza `liveness.slice_commit_sha256`; o próximo commit pós-fail continua sendo `role=repair`, preservando o enforcement de subconjunto sobre `repair[].files`.

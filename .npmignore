@@ -8,6 +8,9 @@ dist/
 .build-stage/
 node_modules/
 .DS_Store
+.app-work/
+.git.backup-prefilterrepo/
+/references/
 
 # --- estado local do pipeline (run artifacts) + config local do Claude ---
 .talos/
