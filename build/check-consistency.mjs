@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { collectExecuteSkillDirs, scanDirDr } from './dr-guard.mjs';
+import { scanSkillReferenceGaps } from './skill-refs-guard.mjs';
 import {
   DISPATCHED_EXEC_AGENTS,
   guardReviewReadonly,
@@ -16,6 +17,7 @@ import {
   guardViolatedP0,
   guardVerificationAnchor,
   guardEnumCatalog,
+  guardHandoffLoop,
 } from './loop-guard.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -500,7 +502,7 @@ if (documentQuality != null) {
 }
 const mcpServer = read('packages/mcp-server/server.js');
 if (mcpServer != null) {
-  for (const token of ['talos_verify_sprint_file', 'verifySprintFile', 'sprint_file_conformance', 'talos_verify_backlog_index', 'talos_select_next_sprint', 'talos_update_sprint_status', 'verifyBacklogIndex', 'selectNextSprint', 'updateSprintStatus', 'require_sprint_file', 'eval_results', 'evidence_to_claim', 'policy_scope']) {
+  for (const token of ['talos_verify_sprint_file', 'verifySprintFile', 'sprint_file_conformance', 'talos_verify_backlog_index', 'talos_select_next_sprint', 'talos_update_sprint_status', 'verifyBacklogIndex', 'selectNextSprint', 'updateSprintStatus', 'require_sprint_file', 'eval_results', 'evidence_to_claim', 'policy_scope', 'drain_pendencies', 'repair_closed', 'close_pendencies_and_reselect', 'threshold_crossed', 'SPRINT_ENTRY_PHASES', 'resetValidatorCycleForNewSprint']) {
     if (!mcpServer.includes(token)) {
       errors.push(`sprint-harness-regressão: server.js não contém '${token}'`);
     }
@@ -532,6 +534,7 @@ for (const v of guardNoReopen(sliceReviewSkill)) errors.push(v);
 for (const v of guardViolatedP0(sliceReviewSkill)) errors.push(v);
 for (const v of guardVerificationAnchor(sliceReviewSkill)) errors.push(v);
 for (const v of guardEnumCatalog({ server: mcpServer, template: backlogTemplate })) errors.push(v);
+for (const v of guardHandoffLoop(orchestratorSkill)) errors.push(v);
 
 // Codex custom agents não podem depender apenas do bundle do plugin: o instalador
 // precisa copiar os talos-*.toml para CODEX_HOME/agents, que é o caminho nativo que
@@ -575,6 +578,10 @@ for (const dir of collectExecuteSkillDirs(ROOT)) {
   for (const { rel, dr } of scanDirDr(ROOT, dir)) {
     errors.push(`${dr} drift: ${rel} reensina âncora morta (execute/repair não ensinam Write/schema/events/acceptance_results nem baseline no first_write/filtro proofs)`);
   }
+}
+
+for (const { rel, cited, missing } of scanSkillReferenceGaps(ROOT)) {
+  errors.push(`skill-refs: ${rel} cita \`${cited}\` ausente em ${missing}`);
 }
 
 if (errors.length) {

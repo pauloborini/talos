@@ -624,7 +624,7 @@ function installMavis(opts) {
     JSON.stringify(mcpServers, null, 2) + '\n',
   );
 
-  // Skills — copia SKILL.md de cada packages/skills/<talos-*>/ (ou plugins/talos/skills/)
+  // Skills — diretório inteiro (SKILL.md + references/), não só SKILL.md.
   const skillsSrc = [
     path.join(ROOT, 'packages', 'skills'),
     path.join(ROOT, 'plugins', 'talos', 'packages', 'skills'),
@@ -633,12 +633,20 @@ function installMavis(opts) {
   let skillCount = 0;
   if (skillsSrc) {
     for (const name of fs.readdirSync(skillsSrc)) {
+      const srcDir = path.join(skillsSrc, name);
+      if (!fs.statSync(srcDir).isDirectory()) continue;
+      if (name === '_shared') {
+        const destDir = path.join(pluginDir, 'skills', '_shared');
+        if (fs.existsSync(destDir)) fs.rmSync(destDir, { recursive: true, force: true });
+        fs.cpSync(srcDir, destDir, { recursive: true });
+        continue;
+      }
       if (!name.startsWith('talos-')) continue;
-      const skillMd = path.join(skillsSrc, name, 'SKILL.md');
+      const skillMd = path.join(srcDir, 'SKILL.md');
       if (!fs.existsSync(skillMd)) continue;
       const destDir = path.join(pluginDir, 'skills', name);
-      fs.mkdirSync(destDir, { recursive: true });
-      fs.copyFileSync(skillMd, path.join(destDir, 'SKILL.md'));
+      if (fs.existsSync(destDir)) fs.rmSync(destDir, { recursive: true, force: true });
+      fs.cpSync(srcDir, destDir, { recursive: true });
       skillCount += 1;
     }
   }

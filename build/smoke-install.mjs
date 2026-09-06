@@ -244,6 +244,10 @@ esac
   assert(mcpArgs.some((a) => a.includes('${ZCODE_PLUGIN_ROOT}')), 'MCP zcode no cache não referencia ${ZCODE_PLUGIN_ROOT}');
   assert(exists(path.join(CACHE, 'packages/mcp-server/server.js')), 'zcode não copiou server.js para o cache do marketplace');
   assert(exists(path.join(CACHE, 'skills/talos/SKILL.md')), 'zcode não copiou a skill orquestradora talos para o cache');
+  assert(exists(path.join(CACHE, 'packages/skills/talos-backlog-generator/references/COLD_BACKLOG_REVIEW_PROMPT.md')), 'zcode cache sem mandato COLD_BACKLOG em packages/skills');
+  assert(exists(path.join(CACHE, 'skills/talos-backlog-generator/references/COLD_BACKLOG_REVIEW_PROMPT.md')), 'zcode cache sem mandato COLD_BACKLOG em skills/');
+  assert(exists(path.join(CACHE, 'packages/skills/_shared/references/stack-profiles.md')), 'zcode cache sem stack-profiles em packages/skills/_shared');
+  assert(exists(path.join(CACHE, 'skills/_shared/references/stack-profiles.md')), 'zcode cache sem stack-profiles em skills/_shared');
   assert(exists(path.join(CACHE, 'agents/talos-task-validator.md')), 'zcode não copiou o subagente validator para o cache');
   // Catálogo do marketplace materializado com marketplace.json na raiz (o ZCode lê da raiz).
   assert(exists(path.join(MK, 'marketplace.json')), 'zcode não criou marketplace.json no catálogo do marketplace');
@@ -345,6 +349,8 @@ esac
   assert(exists(path.join(dataDir, 'plugins/talos/.minimax-plugin/plugin.json')), 'minimaxcode não criou manifest');
   assert(exists(path.join(dataDir, 'plugins/talos/servers/mcp.json')), 'minimaxcode não criou servers/mcp.json');
   assert(exists(path.join(dataDir, 'plugins/talos/skills/talos-task-validator/SKILL.md')), 'minimaxcode não copiou skills');
+  assert(exists(path.join(dataDir, 'plugins/talos/skills/talos-backlog-generator/references/COLD_BACKLOG_REVIEW_PROMPT.md')), 'minimaxcode não copiou references/ da skill');
+  assert(exists(path.join(dataDir, 'plugins/talos/skills/_shared/references/stack-profiles.md')), 'minimaxcode plugin sem stack-profiles em skills/_shared');
   assert(exists(path.join(dataDir, 'agents/talos-task-validator/agent.md')), 'minimaxcode não criou custom agent');
   assert(exists(path.join(dataDir, 'agents/talos-task-validator/config.yaml')), 'minimaxcode não criou config.yaml do agent');
 

@@ -217,14 +217,22 @@ EOF
 }
 EOF
 
-  # 4) Skills — copia todos os SKILL.md de packages/skills/<name>/ para o Plugin V1
+  # 4) Skills — diretório inteiro (SKILL.md + references/ + scripts), não só SKILL.md.
+  # _shared entra em PLUGIN_DIR/skills/_shared para paths relativos das skills
+  # (`../_shared/references/...`); a cópia sibling em PLUGINS_ROOT/skills/_shared
+  # (passo 2) continua resolvendo o import do server.js.
   if [[ -d "$ROOT/packages/skills" ]]; then
     for skill_dir in "$ROOT/packages/skills"/*/; do
       [[ -d "$skill_dir" ]] || continue
       name="$(basename "$skill_dir")"
+      if [[ "$name" == "_shared" ]]; then
+        rm -rf "$PLUGIN_DIR/skills/_shared"
+        cp -R "$skill_dir" "$PLUGIN_DIR/skills/_shared"
+        continue
+      fi
       [[ -f "$skill_dir/SKILL.md" ]] || continue
-      mkdir -p "$PLUGIN_DIR/skills/$name"
-      cp "$skill_dir/SKILL.md" "$PLUGIN_DIR/skills/$name/SKILL.md"
+      rm -rf "$PLUGIN_DIR/skills/$name"
+      cp -R "$skill_dir" "$PLUGIN_DIR/skills/$name"
     done
   fi
 
