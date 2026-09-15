@@ -2,7 +2,22 @@
 
 ## Unreleased
 
-- Sem entradas no momento.
+Adoção da estrutura hephaestus no repositório (2026-09-15). **Sem bump** — entra no próximo release; os itens de packaging ficam para o patch seguinte.
+
+Mudanças:
+- `AGENTS.md` passa a ser contrato centralizador (postura, parada obrigatória, workflow, precedência, âncoras de produto e regras universais) e nasce `project-rules/` com 6 índices de triagem e 2 regras — as normas de engenharia que viviam diluídas no contrato.
+- `CLAUDE.md` deixa de ser um segundo contrato vivo (era cópia de `AGENTS.md` com drift real na descrição do host MinimaxCode) e passa a ser a ponte `@AGENTS.md`.
+- **Mudança de procedimento:** `build/check-consistency.mjs` passa a exigir a linha `Versão: \`X.Y.Z\`` **só** em `AGENTS.md` e confere `CLAUDE.md` como ponte exata; `build/bump-version.mjs` deixa de substituir a linha no `CLAUDE.md` — a âncora antiga faria o próximo bump falhar.
+- `DEC-050` promove a decisão de marca (Atlas Agents é o produto; Argus/Talos/Athena são módulos com codinome próprio) para o domínio novo `marca`; o `INDEX.md` do vault passa a derivar `## Por feature` dos campos `Afeta:`.
+- Resíduo vivo do desenho de state promovido a specs: `SPEC_STATE_EVENTOS_RESEAL.md`, `SPEC_SPRINT_PREF.md` e `ECOSSISTEMA_RENAMES.md`.
+
+Impacto:
+- Bump futuro ancora a versão em `AGENTS.md`; `CLAUDE.md` não carrega versão própria.
+- Processo do repo passa a viver só no espelho local (`.app-work/`), coerente com o ignore da raiz.
+
+Pendente para o próximo patch (packaging):
+- `project-rules/` ainda entra no tarball do `npx` — falta a linha no `.npmignore`, com bump próprio.
+
 
 ## 0.23.1 - 2026-09-06
 
