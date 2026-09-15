@@ -14,6 +14,7 @@ import {
   parseAcceptanceContract,
   traceabilityMode,
   verifyIntentRefs,
+  LABEL_ALIASES,
 } from '../skills/_shared/scripts/document_quality.mjs';
 import {
   traceabilityHandler,
@@ -164,7 +165,7 @@ const ROUTED_MODE_BY_TYPE = {
 const BACKLOG_PRIORITY_INPUT_TYPES = new Set(['idea', 'briefing', 'roadmap', 'conversation', 'spec-macro']);
 const BACKLOG_STATES = new Set(['backlog', 'ready', 'doing', 'review', 'manual_validation_pending', 'done', 'blocked', 'detached_repair']);
 const BACKLOG_MOSCOW = new Set(['Must', 'Should', 'Could', "Won't now"]);
-const BACKLOG_LEVEL = new Set(['alto', 'médio', 'baixo']);
+const BACKLOG_LEVEL = new Set(['alto', 'médio', 'medio', 'baixo', 'high', 'medium', 'low']);
 const BACKLOG_PRIORITY = new Set(['P0', 'P1', 'P2', 'P3']);
 const SPRINT_DEP_RE = /S\d{2}(?:[a-z]|\.\d+)?/g;
 const VALIDATOR_VERDICTS = new Set(['pass', 'pass_with_observations', 'fail', 'not_run']);
@@ -2445,17 +2446,27 @@ function sprintDeps(value) {
 }
 
 function sprintMetadataValue(markdown, label) {
-  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const match = new RegExp(`^\\|\\s*${escaped}\\s*\\|\\s*(.*?)\\s*\\|\\s*$`, 'im').exec(markdown);
-  return match ? match[1].trim() : null;
+  const labels = Array.isArray(label)
+    ? label
+    : (LABEL_ALIASES[label] ?? [label]);
+  for (const l of labels) {
+    const escaped = l.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const match = new RegExp(`^\\|\\s*${escaped}\\s*\\|\\s*(.*?)\\s*\\|\\s*$`, 'im').exec(markdown);
+    if (match) return match[1].trim();
+  }
+  return null;
 }
 
 function sprintDorStatus(markdown) {
-  const match = /^\*\*Status DoR:\*\*\s*(.+)$/im.exec(markdown);
+  const match = /^\*\*(?:Status DoR|DoR status):\*\*\s*(.+)$/im.exec(markdown);
   if (!match) return null;
   const raw = match[1].trim().replace(/^\[|\]$/g, '').trim();
-  if (!/^(verde|amarelo|vermelho)$/i.test(raw)) return null;
-  return raw.toLowerCase();
+  if (!/^(verde|amarelo|vermelho|green|yellow|red)$/i.test(raw)) return null;
+  const normalized = raw.toLowerCase();
+  if (normalized === 'green') return 'verde';
+  if (normalized === 'yellow') return 'amarelo';
+  if (normalized === 'red') return 'vermelho';
+  return normalized;
 }
 
 function detectBacklogCycle(rows) {
@@ -2483,7 +2494,7 @@ function detectBacklogCycle(rows) {
 
 function backlogIndexBasePendencies(markdown, rows) {
   const pendencies = [];
-  if (!/^##\s+7\.\s+Registro de sprints\s*$/im.test(markdown)) {
+  if (!/^##\s+7\.\s+(?:Registro de sprints|Sprint registry)\s*$/im.test(markdown)) {
     pendencies.push(conformancePending('seção_obrigatória', '§7 Registro de sprints', null, 'Backlog sem seção §7 Registro de sprints.', 'corrigir_backlog_index'));
   }
   if (rows.length === 0) {
@@ -3723,7 +3734,7 @@ function manualValidationReportRel(backlogPath, reportPath = null) {
 // parser YAML próprio do Plano 1).
 function parseManualValidationReport(markdown) {
   const lines = markdown.split(/\r?\n/);
-  const heading = lines.findIndex((line) => /^##\s+Pendências\s*$/i.test(line.trim()));
+  const heading = lines.findIndex((line) => /^##\s+(?:Pendências|Pending validations|Pendencies|Pending items)\s*$/i.test(line.trim()));
   if (heading < 0) return { rows: [], error: 'Seção ## Pendências ausente no relatório.' };
   const rows = [];
   for (let i = heading + 1; i < lines.length; i += 1) {

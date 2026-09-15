@@ -1,352 +1,352 @@
-# Sprint viva — S<NN> — [NOME_DA_SPRINT]
+# Live sprint — S<NN> — [SPRINT_NAME]
 
-Arquivo vivo da sprint **S<NN>**. Este documento conecta o backlog macro ao PLAN sem inflar nenhum dos dois.
+Live sprint file for **S<NN>**. This document connects the macro backlog to the PLAN without bloating either.
 
-Regra: este arquivo guarda **escopo, estado, decisões locais, dependências, gates, evidência e aprendizado da sprint**, e o **contrato de produto congelado** (§7: decisões D*, cenários UX e aceite binário). O PLAN guarda execução técnica. Variante standalone: `Backlog mestre: Não aplicável (standalone)`.
+Rule: this file stores **scope, state, local decisions, dependencies, gates, evidence, and sprint learnings**, and the **frozen product contract** (§7: D* decisions, UX scenarios, and binary acceptance). The PLAN stores technical execution. Standalone variant: `Master backlog: Not applicable (standalone)`.
 
 ---
 
-## 1. Metadados
+## 1. Metadata
 
-| Campo | Valor |
+| Field | Value |
 |---|---|
 | Sprint ID | S<NN> |
-| Nome | [nome curto] |
+| Name | [short name] |
 | Status | [backlog / ready / doing / review / manual_validation_pending / done / blocked] |
-| Backlog mestre | [path + anchor da linha S<NN> — ou `Não aplicável (standalone)`] |
-| Contrato status | [draft / aprovado] |
-| Selo do contrato | [pendente até aprovação] |
-| Intenção status | [rascunho / saturada] |
-| Selo da intenção | [pendente até saturação] |
-| PLAN | [pendente ou path] |
-| State / evidência | [pendente ou path] |
-| Revalidação | [false — flag `true` ligada pelo MCP quando `M` falhou em sprint da qual esta depende (cone de revalidação, D2/D20)] |
-| Traceability | [legacy — default; `v1` (opt-in) exige `source_refs` em todo AC da §7.3 e par consistente no ledger `.talos/traceability/<slug>.json`] |
-| Fase | [F0/F1/F2/F3/F4/F5] |
+| Master backlog | [path + anchor of line S<NN> — or `Not applicable (standalone)`] |
+| Contract status | [draft / approved] |
+| Contract seal | [pending until approval] |
+| Intent status | [draft / saturated] |
+| Intent seal | [pending until saturation] |
+| PLAN | [pending or path] |
+| State / evidence | [pending or path] |
+| Revalidation | [false — flag `true` enabled by MCP when `M` failed in a sprint this depends on (revalidation cone, D2/D20)] |
+| Traceability | [legacy — default; `v1` (opt-in) requires `source_refs` in every AC of §7.3 and consistent peer in ledger `.talos/traceability/<slug>.json`] |
+| Phase | [F0/F1/F2/F3/F4/F5] |
 | MoSCoW | [Must / Should / Could / Won't now] |
-| Prioridade | [P0/P1/P2/P3] |
-| Responsável | [papel/nome] |
-| Criado em | [YYYY-MM-DD] |
-| Última atualização | [YYYY-MM-DD] |
+| Priority | [P0/P1/P2/P3] |
+| Owner | [role/name] |
+| Created at | [YYYY-MM-DD] |
+| Last updated | [YYYY-MM-DD] |
 
 ---
 
-## 2. Objetivo e valor
+## 2. Goal and value
 
-**Objetivo único:** [uma frase]
+**Single goal:** [one sentence]
 
-**Valor esperado:** [benefício de produto, operação, risco ou desbloqueio]
+**Expected value:** [product, operational, risk, or unlock benefit]
 
-**Resultado observável:** [o que estará comprovavelmente diferente ao fim]
+**Observable outcome:** [what will be demonstrably different at the end]
 
-**Se não fizer:** [impacto de adiar]
+**If not done:** [impact of postponing]
 
-**Eixo do ataque:** `dados` \| `ux` \| `estrutura` \| `contrato` \| `misto` — [premissa / usuario / derivado:<path>]
+**Attack axis:** `data` \| `ux` \| `structure` \| `contract` \| `mixed` — [assumption / user / derived:<path>]
 
-**Aferição T\*:** [T1–T7 disparados / zerados — uma linha]
+**T* verification:** [T1–T7 triggered / cleared — one line]
 
-**Entrevista:** [pendente \| dispensada: <motivo>]
+**Interview:** [pending | waived: <reason>]
 
-**Superfícies (SF-\*):**
-- **SF-01** — [enunciado; path:symbol só com `[não verificado]`] — [usuario / derivado:<path> / premissa]
+**Surfaces (SF-*):**
+- **SF-01** — [statement; path:symbol only with `[unverified]`] — [user / derived:<path> / assumption]
 
-**Anti-escopo tentador (AS-\*):**
-- **AS-01** — [tentação concreta de implementação/eixo; genérico não conta] — [usuario / derivado:<path> / premissa]
+**Tempting anti-scope (AS-*):**
+- **AS-01** — [concrete implementation/axis temptation; generic does not count] — [user / derived:<path> / assumption]
 
-**Recusa:**
-- **R1:** eu recuso a sprint se [efeito observável] — [usuario / derivado:<path> / premissa]
+**Refusal:**
+- **R1:** I refuse the sprint if [observable effect fails] — [user / derived:<path> / assumption]
 
-**Regras do repo:** [seguir <path> \| exceção usuario: <motivo> \| N/A (eixo não toca produto)]
-
----
-
-## 3. Escopo da sprint
-
-### Em escopo
-
-- [ ] [capacidade/entrega 1]
-- [ ] [capacidade/entrega 2]
-- [ ] [capacidade/entrega 3]
-
-### Fora de escopo
-
-- [ ] [adjacente tentador que não entra]
-- [ ] [melhoria futura]
-- [ ] [risco de expansão que deve ser evitado]
-
-### Limite de tamanho
-
-- [ ] Objetivo único confirmado.
-- [ ] Sem mais de uma entrega vertical complexa.
-- [ ] Se o PLAN estimar mais de 8 tasks, quebrar antes de executar.
+**Repo rules:** [follow <path> | user exception: <reason> | N/A (axis does not touch product)]
 
 ---
 
-## 4. Contexto e fontes
+## 3. Sprint scope
 
-| Tipo | Fonte | Uso nesta sprint |
+### In scope
+
+- [ ] [capability/deliverable 1]
+- [ ] [capability/deliverable 2]
+- [ ] [capability/deliverable 3]
+
+### Out of scope
+
+- [ ] [tempting adjacent item that does not enter]
+- [ ] [future improvement]
+- [ ] [scope expansion risk to avoid]
+
+### Size limit
+
+- [ ] Single goal confirmed.
+- [ ] No more than one complex vertical deliverable.
+- [ ] If the PLAN estimates more than 8 tasks, break before executing.
+
+---
+
+## 4. Context and sources
+
+| Type | Source | Use in this sprint |
 |---|---|---|
-| Backlog | [path/anchor] | [escopo macro/dependência] |
-| Produto | [doc/link] | [regra/decisão] |
-| Contrato/API | [doc/link] | [campo/integração] |
-| Código real | [path/símbolo opcional] | [padrão/estado atual] |
-| Discussão | [link/resumo] | [decisão/contexto] |
+| Master backlog | [path/anchor] | [macro scope/dependency] |
+| Product | [doc/link] | [rule/decision] |
+| Contract/API | [doc/link] | [field/integration] |
+| Real code | [path/symbol optional] | [pattern/current state] |
+| Discussion | [link/summary] | [decision/context] |
 
-> A linha `Discussão` é **obrigatória** (v0.16.0, CN6): todo sprint file declara a discussão de onde nasceu — é a fonte de intenção que o revisor frio usa como oráculo. Célula vazia ou placeholder (`[link/resumo]`, `[...]`, `—`, `N/A`) faz `talos_verify_sprint_file` recusar o artefato, inclusive em sprint standalone. Exemplo preenchido:
+> The `Discussion` row is **mandatory** (v0.16.0, CN6): every sprint file declares the discussion from which it was born — it is the source of intent that the cold reviewer uses as an oracle. Empty cell or placeholder (`[link/summary]`, `[...]`, `—`, `N/A`) causes `talos_verify_sprint_file` to reject the artifact, including in standalone sprints. Filled example:
 
-| Tipo | Fonte | Uso nesta sprint |
+| Type | Source | Use in this sprint |
 |---|---|---|
-| Discussão | `_app-vault/docs/decisions/artefatos.md` (DEC-027) | decisão/contexto da origem |
+| Discussion | `_app-vault/docs/decisions/artefatos.md` (DEC-027) | origin decision/context |
 
-Notas:
+Notes:
 
-- Não copiar implementação aqui.
-- Se uma fonte virar contrato de produto, refletir na §7.
-- Se uma fonte virar task técnica, refletir no PLAN.
-
----
-
-## 5. Dependências e bloqueios
-
-### Dependências
-
-| ID | Tipo | Descrição | Status | Evidência |
-|---|---|---|---|---|
-| S<NN-1> | sprint | [dependência] | [done/open/blocked] | [link] |
-| DEP-001 | externa | [contrato/acesso/decisão] | [open/done/blocked] | [link] |
-
-### Bloqueios atuais
-
-| ID | Bloqueio | Dono | Ação | Status |
-|---|---|---|---|---|
-| BLK-001 | [bloqueio] | [dono] | [ação] | [open/resolvido] |
+- Do not copy implementation here.
+- If a source becomes a product contract, reflect in §7.
+- If a source becomes a technical task, reflect in PLAN.
 
 ---
 
-## 6. Decisões da sprint
+## 5. Dependencies and blockers
 
-Decisões locais que moldam esta sprint. Decisão de produto que vira aceite deve aparecer na §7.1 (D*).
+### Dependencies
 
-| ID | Decisão | Fonte | Impacto | Status |
+| ID | Type | Description | Status | Evidence |
 |---|---|---|---|---|
-| SD-001 | [decisão] | [fonte] | [impacto] | [proposta/aprovada/revertida] |
+| S<NN-1> | sprint | [dependency] | [done/open/blocked] | [link] |
+| DEP-001 | external | [contract/access/decision] | [open/done/blocked] | [link] |
+
+### Current blockers
+
+| ID | Blocker | Owner | Action | Status |
+|---|---|---|---|---|
+| BLK-001 | [blocker] | [owner] | [action] | [open/resolved] |
 
 ---
 
-## 7. Contrato de produto (congelado)
+## 6. Sprint decisions
 
-Casa única de produto desta sprint: decisões D*, cenários UX e aceite binário. O aceite §7 deriva da §2 saturada; o validador frio nota código contra este bloco (não contra o PLAN). Fluxo de congelamento: `draft` (maturação) → ao aprovar, gravar `Contrato status: aprovado` + `Selo do contrato: sha256:<hash do §7>`; qualquer edição do bloco aprovado sem re-aprovação é tamper (`FROZEN_ACCEPTANCE_TAMPERED`). Para reeditar: voltar a `draft` (limpa o selo), editar, re-aprovar.
+Local decisions shaping this sprint. Product decisions becoming acceptance must appear in §7.1 (D*).
 
-### 7.1 Decisões de produto (D*)
+| ID | Decision | Source | Impact | Status |
+|---|---|---|---|---|
+| SD-001 | [decision] | [source] | [impact] | [proposed/approved/reverted] |
 
-> SSoT das decisões de produto. Demais seções referenciam por `D-id`. Toda decisão declara procedência na coluna `Origem` (v0.16.0).
+---
 
-| ID | Decisão | Origem |
+## 7. Product contract (frozen)
+
+Single home of product for this sprint: D* decisions, UX scenarios, and binary acceptance. The §7 acceptance derives from saturated §2; the cold validator scores code against this block (not against PLAN). Freeze flow: `draft` (maturation) → upon approval, record `Contract status: approved` + `Contract seal: sha256:<hash of §7>`; any edit to the approved block without re-approval is tampering (`FROZEN_ACCEPTANCE_TAMPERED`). To re-edit: return to `draft` (clearing seal), edit, re-approve.
+
+### 7.1 Product decisions (D*)
+
+> SSoT for product decisions. Other sections reference by `D-id`. Every decision declares provenance in the `Origin` column (v0.16.0).
+
+| ID | Decision | Origin |
 |---|---|---|
-| D1 | [decisão fechada — produto, não implementação — dada pelo usuário] | usuario |
-| D2 | [decisão lida do código ou contrato real] | derivado:packages/exemplo.js |
-| D3 | [decisão inferida pelo modelo — fechar por entrevista antes de sustentar aceite Must/P0] | premissa |
+| D1 | [closed decision — product, not implementation — given by user] | user |
+| D2 | [decision read from real code or contract] | derived:packages/example.js |
+| D3 | [decision inferred by model — close via interview before supporting Must/P0 acceptance] | assumption |
 
-Legenda `Origem` (enum):
+Provenance `Origin` legend (enum):
 
-- `usuario` — resposta de entrevista ou citação direta do brainstorm.
-- `derivado:<path>` — lida do código/contrato real; `<path>` relativo à raiz do repo; sufixo ` (novo)` quando o arquivo ainda será criado (ex.: `derivado:packages/novo_modulo.js (novo)`).
-- `premissa` — inferida pelo modelo; não sustenta aceite de sprint `Must`/`P0` enquanto não for confirmada.
+- `user` — interview response or direct brainstorm quote.
+- `derived:<path>` — read from real code/contract; `<path>` relative to repo root; suffix ` (new)` when the file is yet to be created (e.g.: `derived:packages/new_module.js (new)`).
+- `assumption` — inferred by model; does not support `Must`/`P0` sprint acceptance until confirmed.
 
-### 7.2 Cenários UX
+### 7.2 UX scenarios
 
-> Por cenário: Entrada / Comportamento (loading · vazio · erro) / Sucesso.
+> Per scenario: Input / Behavior (loading · empty · error) / Success.
 
-### 7.2.1 [Cenário A — ex.: criar / carregar]
+### 7.2.1 [Scenario A — e.g.: create / load]
 
-- **Entrada:** [de onde o usuário vem]
-- **Comportamento:** [passo a passo; loading / vazio / erro]
-- **Sucesso:** [o que o usuário vê]
+- **Input:** [where the user comes from]
+- **Behavior:** [step by step; loading / empty / error]
+- **Success:** [what the user sees]
 
-### 7.2.2 [Cenário B — ex.: editar / dados insuficientes]
+### 7.2.2 [Scenario B — e.g.: edit / insufficient data]
 
-- **Entrada:** […]
-- **Comportamento:** […]
-- **Sucesso:** […]
+- **Input:** [...]
+- **Behavior:** [...]
+- **Success:** [...]
 
-### 7.3 Aceite binário
+### 7.3 Binary acceptance
 
-> Critérios observáveis e atômicos (`AC-*`). Hierarquia: `AC-*` ⊃ `EVAL-*`. Todo `EVAL-*` do `eval_manifest` §9 deve ser referenciado por ≥1 `AC-*`. Granularidade: ≥1 `AC-*` por cenário §7.2 + ≥1 de regressão quando houver regressão material.
+> Observable and atomic criteria (`AC-*`). Hierarchy: `AC-*` ⊃ `EVAL-*`. Every `EVAL-*` of `eval_manifest` §9 must be referenced by ≥1 `AC-*`. Granularity: ≥1 `AC-*` per §7.2 scenario + ≥1 regression when there is material regression.
 
 ```yaml
 acceptance:
   - id: AC-001
-    origin: "usuario"
-    behavior: "[efeito observável]"
+    origin: "user"
+    behavior: "[observable effect]"
     source_refs: [REQ-001]
     decisions: [D1]
-    scenario: "[cenário §7.2]"
+    scenario: "[§7.2 scenario]"
     evals: [EVAL-001]
     evidence:
       required: [I, T-outcome, W]
       manual: null
   - id: AC-002
-    origin: "derivado:packages/exemplo.js"
-    behavior: "[efeito observável que requer smoke manual]"
+    origin: "derived:packages/example.js"
+    behavior: "[observable effect requiring manual smoke]"
     source_refs: [REQ-002]
     decisions: [D2]
-    scenario: "[cenário §7.2]"
+    scenario: "[§7.2 scenario]"
     evals: [EVAL-002]
     evidence:
       required: [I, T-outcome, M]
       manual:
-        severity: alta
-        scenario: "[passos mínimos humanos]"
-        expected_evidence: "[resultado observável]"
+        severity: high
+        scenario: "[minimal human steps]"
+        expected_evidence: "[observable result]"
         impact_paths: ["packages/foo.js"]
 ```
 
-Todo `AC-*` declara `origin` (mesmo enum da §7.1: `usuario` | `derivado:<path>` | `premissa`). `premissa` não sustenta aceite em sprint `Must`/`P0`: o gate `talos_verify_sprint_file` bloqueia nomeando o `AC-*` até a premissa ser fechada em entrevista.
+Every `AC-*` declares `origin` (same enum as §7.1: `user` | `derived:<path>` | `assumption`). `assumption` does not support acceptance in a `Must`/`P0` sprint: the `talos_verify_sprint_file` gate blocks naming the `AC-*` until the assumption is closed in an interview.
 
-Tipos de evidência (D4): `I` implementação, `T-outcome` resultado observável (assert de retorno/efeito), `W` wiring, `M` smoke manual. `manual` deve ser `null` quando `required` não inclui `M`; objeto (severity/scenario/expected_evidence/impact_paths) quando inclui.
+Evidence types (D4): `I` implementation, `T-outcome` observable outcome (return/effect assert), `W` wiring, `M` manual smoke. `manual` must be `null` when `required` does not include `M`; object (severity/scenario/expected_evidence/impact_paths) when it does.
 
-> Rastreabilidade opt-in (v1): com o metadado `Traceability: v1` **e** `ledger.sprints[<id>].schema: traceability_v1`, todo `AC-*` declara `source_refs: [REQ-*]` (sem comentário na mesma linha — o parser lê apenas a lista) com ids existentes no ledger `.talos/traceability/<slug>.json` (registrado via `talos_traceability` action `upsert`); REQ `included` atribuído à sprint precisa aparecer em ≥1 AC; vínculo fora de 1:1 (um REQ em vários ACs ou AC com vários REQs) exige `reason` em `reqs[<id>].links[]` do ledger. Sem a marca (legacy), os gates atuais valem — nenhum campo novo é exigido e `source_refs` é ignorada.
+> Opt-in traceability (v1): with metadata `Traceability: v1` **and** `ledger.sprints[<id>].schema: traceability_v1`, every `AC-*` declares `source_refs: [REQ-*]` (no inline comment on same line — parser reads only list) with ids existing in ledger `.talos/traceability/<slug>.json` (registered via `talos_traceability` action `upsert`); REQ `included` assigned to sprint must appear in ≥1 AC; non-1:1 link requires `reason` in `reqs[<id>].links[]` of ledger. Without mark (legacy), current gates apply — no new field required and `source_refs` is ignored.
 
 ---
 
 ## 8. Definition of Ready
 
-- [ ] Backlog aponta para este sprint file (exceto standalone).
-- [ ] Este sprint file aponta para o backlog (ou `Não aplicável (standalone)`).
-- [ ] Objetivo único e escopo fechado.
-- [ ] Dependências críticas resolvidas.
-- [ ] Bloqueios críticos resolvidos ou registrados.
-- [ ] Contrato §7 completo (D*, cenários UX, `AC-*` em YAML `acceptance`) e `Contrato status` preenchido.
-- [ ] Intenção saturada (selo §1) — obrigatório para DoR verde / `plan_ready`.
-- [ ] `eval_manifest` mínimo preenchido.
-- [ ] Próxima ação explícita.
+- [ ] Backlog points to this sprint file (except standalone).
+- [ ] This sprint file points to backlog (or `Not applicable (standalone)`).
+- [ ] Single goal and closed scope.
+- [ ] Critical dependencies resolved.
+- [ ] Critical blockers resolved or logged.
+- [ ] Contract §7 complete (D*, UX scenarios, `AC-*` in YAML `acceptance`) and `Contract status` filled.
+- [ ] Saturated intent (§1 seal) — mandatory for green DoR / `plan_ready`.
+- [ ] Minimal `eval_manifest` filled.
+- [ ] Explicit next action.
 
-**Status DoR:** [verde / amarelo / vermelho]
+**DoR status:** [green / yellow / red]
 
 ---
 
 ## 9. Eval manifest
 
-Manifesto mínimo de avaliação da sprint. Serve para PLAN, executor e validator saberem o que precisa ser comprovado. `EVAL-*` é meio de prova subordinado a `AC-*` via `evals:` na §7.3. Smoke manual (M) mora no `evidence.manual` do AC; não há `manual_checks` solto aqui como autoridade de aceite.
+Minimal sprint evaluation manifest. Informs PLAN, executor, and validator on what needs proving. `EVAL-*` is subordinate proof medium to `AC-*` via `evals:` in §7.3. Manual smoke (M) lives in AC's `evidence.manual`; there are no loose `manual_checks` here as acceptance authority.
 
 ```yaml
 eval_manifest:
   sprint_id: "S<NN>"
-  objective: "[objetivo curto]"
+  objective: "[short objective]"
   must_prove:
     - id: "EVAL-001"
-      claim: "[claim verificável]"
-      source: "[Sprint §7 / PLAN §8 / state path / teste]"
-      evidence_required: "[teste, comando, print, state, log, fixture]"
+      claim: "[verifiable claim]"
+      source: "[Sprint §7 / PLAN §8 / state path / test]"
+      evidence_required: "[test, command, screenshot, state, log, fixture]"
   regression_guards:
-    - "[fluxo/regra que não pode quebrar]"
+    - "[flow/rule that cannot break]"
   negative_paths:
-    - "[erro/permissão/vazio/retry relevante]"
+    - "[relevant error/permission/empty/retry]"
 ```
 
 ---
 
 ## 10. Policy manifest
 
-Regras locais da sprint. Não substitui AGENTS.md nem regras do projeto.
-Áreas previstas pertencem ao escopo da sprint/PLAN; não use lista positiva como lista permitida de arquivos.
+Local sprint rules. Does not replace AGENTS.md or project rules.
+Planned areas belong to sprint/PLAN scope; do not use positive list as allowlist of files.
 
 ```yaml
 policy_manifest:
   forbidden_scope:
-    - "[área/módulo proibido]"
+    - "[forbidden area/module]"
   data_safety:
-    - "[sem apagar dados / sem migrar contrato / sem segredo em log]"
+    - "[no deleting data / no migrating contract / no secrets in logs]"
   required_gates:
     - "talos_verify_sprint_file"
     - "talos_verify_template_conformance:plan"
     - "talos-task-validator"
-  critical_review:               # opcional — true torna slice-review obrigatória (D06/D09)
+  critical_review:               # optional — true makes slice-review mandatory (D06/D09)
     required: false
-    reasons: []                  # enum fixo: authorization | payment | data_migration | public_contract | host_adapter_dispatch
+    reasons: []                  # fixed enum: authorization | payment | data_migration | public_contract | host_adapter_dispatch
 ```
 
 ---
 
-## 11. Guia e sensores
+## 11. Guide and sensors
 
-### Guias
+### Guides
 
-- [ ] [padrão de produto/código/processo a seguir]
-- [ ] [referência útil]
+- [ ] [product/code/process pattern to follow]
+- [ ] [useful reference]
 
-### Sensores de drift
+### Drift sensors
 
-- [ ] Escopo crescendo além do objetivo único.
-- [ ] Contrato §7 copiando implementação.
-- [ ] PLAN copiando roadmap.
-- [ ] Claim sem evidência.
-- [ ] Dependência não-done tratada como pronta.
-- [ ] Decisão reaberta sem histórico.
+- [ ] Scope growing beyond single goal.
+- [ ] Contract §7 copying implementation.
+- [ ] PLAN copying roadmap.
+- [ ] Claim without evidence.
+- [ ] Non-done dependency treated as ready.
+- [ ] Decision reopened without history.
 
 ---
 
 ## 12. Evidence-to-claim
 
-Tabela viva para fechar o loop entre promessa e prova.
+Living table to close the loop between promise and proof.
 
-| Claim | Onde foi prometido | Evidência esperada | Evidência real | Status |
+| Claim | Where promised | Expected evidence | Actual evidence | Status |
 |---|---|---|---|---|
-| [claim] | [Sprint §7 / PLAN § / backlog] | [teste/gate/state] | [path/link] | [pending/pass/fail] |
+| [claim] | [Sprint §7 / PLAN § / backlog] | [test/gate/state] | [path/link] | [pending/pass/fail] |
 
 ---
 
 ## 13. PLAN
 
-> O aceite de produto mora na §7 deste sprint file. Esta seção só rastreia o PLAN de execução.
+> Product acceptance lives in §7 of this sprint file. This section only tracks the execution PLAN.
 
-| Campo | Valor |
+| Field | Value |
 |---|---|
-| Status | [pendente / draft / aprovado / executado] |
+| Status | [pending / draft / approved / executed] |
 | Path | [path] |
-| Execution mode | [sequencial / orchestrated-per-slice] |
-| Observações | [resumo] |
+| Execution mode | [sequential / orchestrated-per-slice] |
+| Observations | [summary] |
 
 ---
 
-## 14. Execução e validação
+## 14. Execution and validation
 
-### Gates esperados
+### Expected gates
 
-| Gate | Status | Evidência |
+| Gate | Status | Evidence |
 |---|---|---|
-| Sprint file válido | [pending/pass/fail] | [path/resultado] |
-| Contrato §7 | [pending/pass/fail] | [status + selo] |
-| PLAN válido | [pending/pass/fail] | [path/resultado] |
-| Execução concluída | [pending/pass/fail] | [state path] |
-| Validator frio | [pending/pass/fail] | [veredito/path] |
+| Valid sprint file | [pending/pass/fail] | [path/result] |
+| Contract §7 | [pending/pass/fail] | [status + seal] |
+| Valid PLAN | [pending/pass/fail] | [path/result] |
+| Execution completed | [pending/pass/fail] | [state path] |
+| Cold validator | [pending/pass/fail] | [verdict/path] |
 
 ### Definition of Done
 
-- [ ] Critérios de aceite §7.3 (`AC-*`) verdes.
-- [ ] PLAN executado dentro do boundary.
-- [ ] Validações locais registradas.
-- [ ] Validator frio `pass` ou `pass_with_observations`.
-- [ ] Evidence-to-claim completo.
-- [ ] Backlog atualizado com status e links.
-- [ ] Aprendizados relevantes registrados.
+- [ ] Acceptance criteria §7.3 (`AC-*`) green.
+- [ ] PLAN executed within boundary.
+- [ ] Local validations recorded.
+- [ ] Cold validator `pass` or `pass_with_observations`.
+- [ ] Evidence-to-claim complete.
+- [ ] Backlog updated with status and links.
+- [ ] Relevant learnings recorded.
 
-**Status DoD:** [verde / amarelo / vermelho]
+**DoD status:** [green / yellow / red]
 
 ---
 
-## 15. Aprendizados e handoff para próximas sprints
+## 15. Learnings and handoff for next sprints
 
-| Tipo | Aprendizado | Afeta | Ação |
+| Type | Learning | Affects | Action |
 |---|---|---|---|
-| produto | [aprendizado] | [SNN/backlog] | [ação] |
-| técnico | [aprendizado] | [PLAN/futura sprint] | [ação] |
-| operação | [aprendizado] | [runbook/QA] | [ação] |
+| product | [learning] | [SNN/backlog] | [action] |
+| technical | [learning] | [PLAN/future sprint] | [action] |
+| operational | [learning] | [runbook/QA] | [action] |
 
 ---
 
-## 16. Histórico
+## 16. History
 
-| Data | Autor | Mudança |
+| Date | Author | Change |
 |---|---|---|
-| [YYYY-MM-DD] | [nome/agente] | Criação do sprint file |
+| [YYYY-MM-DD] | [name/agent] | Sprint file creation |

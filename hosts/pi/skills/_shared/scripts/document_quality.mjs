@@ -5,8 +5,8 @@ import path from 'node:path';
 
 const VALID = Object.freeze({
   moscow: new Set(['Must', 'Should', 'Could', "Won't now"]),
-  gain: new Set(['alto', 'médio', 'baixo']),
-  effort: new Set(['alto', 'médio', 'baixo']),
+  gain: new Set(['alto', 'médio', 'medio', 'baixo', 'high', 'medium', 'low']),
+  effort: new Set(['alto', 'médio', 'medio', 'baixo', 'high', 'medium', 'low']),
   priority: new Set(['P0', 'P1', 'P2', 'P3']),
   // D8 (loop): detached_repair é estacionamento do backlog (BACKLOG_STATES do
   // MCP); o sprint file sincroniza o status via update_sprint_status, então o
@@ -140,7 +140,10 @@ function parseTable(markdown, heading) {
 }
 
 export function parseSprintRows(markdown) {
-  const rows = parseTable(markdown, '## 7. Registro de sprints');
+  let rows = parseTable(markdown, '## 7. Registro de sprints');
+  if (!rows || rows.length === 0) {
+    rows = parseTable(markdown, '## 7. Sprint registry');
+  }
   const header = rows.findIndex((row) => row[0] === 'ID');
   if (header < 0) return [];
   return rows.slice(header + 1).filter((row) => SPRINT_ID_REGEX.test(row[0])).map((row) => ({
@@ -161,10 +164,37 @@ function lineOf(markdown, pattern) {
   return index < 0 ? null : index + 1;
 }
 
+export const LABEL_ALIASES = {
+  'Sprint ID': ['Sprint ID'],
+  'Nome': ['Nome', 'Name'],
+  'Status': ['Status'],
+  'Backlog mestre': ['Backlog mestre', 'Master backlog'],
+  'Contrato status': ['Contrato status', 'Contract status'],
+  'Selo do contrato': ['Selo do contrato', 'Contract seal'],
+  'Intenção status': ['Intenção status', 'Intent status'],
+  'Selo da intenção': ['Selo da intenção', 'Intent seal'],
+  'PLAN': ['PLAN'],
+  'State / evidência': ['State / evidência', 'State / evidence'],
+  'Revalidação': ['Revalidação', 'Revalidation'],
+  'Traceability': ['Traceability'],
+  'Fase': ['Fase', 'Phase'],
+  'MoSCoW': ['MoSCoW'],
+  'Prioridade': ['Prioridade', 'Priority'],
+  'Responsável': ['Responsável', 'Owner'],
+  'Criado em': ['Criado em', 'Created at'],
+  'Última atualização': ['Última atualização', 'Last updated'],
+};
+
 function tableValue(markdown, label) {
-  const re = new RegExp(`^\\|\\s*${label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\|\\s*(.*?)\\s*\\|\\s*$`, 'im');
-  const match = re.exec(markdown);
-  return match ? match[1].trim() : null;
+  const labels = Array.isArray(label)
+    ? label
+    : (LABEL_ALIASES[label] ?? [label]);
+  for (const l of labels) {
+    const re = new RegExp(`^\\|\\s*${l.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\|\\s*(.*?)\\s*\\|\\s*$`, 'im');
+    const match = re.exec(markdown);
+    if (match) return match[1].trim();
+  }
+  return null;
 }
 
 function fencedYamlBlock(markdown, key) {
@@ -395,12 +425,13 @@ function sprintConformancePending(category, item, line, message, nextAction = 'c
 }
 
 function isStandaloneBacklog(value) {
-  return typeof value === 'string' && /^Não aplicável \(standalone\)$/i.test(value.trim());
+  return typeof value === 'string' && /^(?:Não aplicável \(standalone\)|Not applicable \(standalone\))$/i.test(value.trim());
 }
 
 /**
  * Procedência por linha (v0.16.0, D3/D5). Enum: `usuario` | `premissa` |
- * `derivado:<path>`. Para `derivado:` sem sufixo ` (novo)`, resolve o path
+ * `derivado:<path>` (e aliases EN: `user` | `assumption` | `derived:<path>`).
+ * Para `derivado:` sem sufixo ` (novo)` / ` (new)`, resolve o path
  * contra `root` com `fs.existsSync` quando `root` é fornecido; sem `root`,
  * pula a resolução e devolve `kind: 'derivado'` sem julgar existência
  * (parse puro sem acesso a disco). Erro de leitura no path conta como
@@ -411,12 +442,17 @@ export function validateOriginToken(raw, { root = null } = {}) {
     return { valid: false, kind: null, path: null, reason: 'origem ausente' };
   }
   const token = raw.trim();
-  if (token === 'usuario') return { valid: true, kind: 'usuario', path: null, reason: null };
-  if (token === 'premissa') return { valid: true, kind: 'premissa', path: null, reason: null };
-  if (token.startsWith('derivado:')) {
-    let target = token.slice('derivado:'.length).trim();
-    const isNew = target.endsWith('(novo)');
-    if (isNew) target = target.slice(0, -(('(novo)').length)).trim();
+  if (token === 'usuario' || token === 'user') return { valid: true, kind: 'usuario', path: null, reason: null };
+  if (token === 'premissa' || token === 'assumption') return { valid: true, kind: 'premissa', path: null, reason: null };
+  if (token.startsWith('derivado:') || token.startsWith('derived:')) {
+    const prefix = token.startsWith('derivado:') ? 'derivado:' : 'derived:';
+    let target = token.slice(prefix.length).trim();
+    const isNew = target.endsWith('(novo)') || target.endsWith('(new)');
+    if (isNew) {
+      target = target.endsWith('(novo)')
+        ? target.slice(0, -(('(novo)').length)).trim()
+        : target.slice(0, -(('(new)').length)).trim();
+    }
     if (!target) return { valid: false, kind: 'derivado', path: null, reason: 'derivado sem path' };
     if (isNew || !root) return { valid: true, kind: 'derivado', path: target, reason: null };
     const normalized = target.replaceAll('\\', '/').replace(/^\.\//, '');
@@ -457,7 +493,7 @@ function contractDecisionRows(markdown) {
   const headerIndex = tableRows.findIndex((cells) => cells[0] === 'ID');
   if (headerIndex < 0) return { hasOriginColumn: false, rows: [] };
   const header = tableRows[headerIndex];
-  const originIndex = header.findIndex((cell) => /^Origem$/i.test(cell));
+  const originIndex = header.findIndex((cell) => /^(Origem|Origin)$/i.test(cell));
   const rows = tableRows.slice(headerIndex + 1)
     .filter((cells) => /^D\d+$/.test(cells[0]))
     .map((cells) => ({
@@ -474,6 +510,41 @@ function extractSectionMarkdown(markdown, sectionNumber) {
   const tail = markdown.slice(from + start[0].length);
   const next = /\n##\s+\d+\./.exec(tail);
   return next ? markdown.slice(from, from + start[0].length + next.index) : markdown.slice(from);
+}
+
+function presentTableLabel(markdown, canonical) {
+  const labels = LABEL_ALIASES[canonical] ?? [canonical];
+  for (const label of labels) {
+    const re = new RegExp(`^\\|\\s*${label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\|`, 'im');
+    if (re.test(markdown)) return label;
+  }
+  return null;
+}
+
+function lineOfTableLabel(markdown, canonical) {
+  const labels = LABEL_ALIASES[canonical] ?? [canonical];
+  const pattern = new RegExp(
+    `^\\|\\s*(?:${labels.map((label) => label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})\\s*\\|`,
+    'i',
+  );
+  return lineOf(markdown, pattern);
+}
+
+function englishIntentBody(markdown) {
+  const section2 = extractSectionMarkdown(markdown, 2) ?? '';
+  return /^\*\*(?:Attack axis|Surfaces|Tempting anti-scope|Refusal|Repo rules|T\* verification):/m.test(section2);
+}
+
+function englishDecisionTable(markdown) {
+  const scope = extractSectionMarkdown(markdown, 7) ?? markdown;
+  return /\| ID \| Decision \| Origin \|/.test(scope);
+}
+
+function defaultOriginToken(markdown) {
+  if (englishIntentBody(markdown) || englishDecisionTable(markdown)) return 'user';
+  if (presentTableLabel(markdown, 'Intenção status') === 'Intent status') return 'user';
+  if (presentTableLabel(markdown, 'Contrato status') === 'Contract status') return 'user';
+  return 'usuario';
 }
 
 function normalizeAcceptanceBlock(text) {
@@ -513,7 +584,7 @@ export function computeAcceptanceSeal(markdown) {
  */
 export function validateAcceptanceSeal(markdown) {
   const status = tableValue(markdown, 'Contrato status');
-  if (!status || !/^aprovado$/i.test(status.trim())) {
+  if (!status || !/^(aprovado|approved)$/i.test(status.trim())) {
     return { sealed: false, tampered: false };
   }
   const sealRaw = tableValue(markdown, 'Selo do contrato');
@@ -557,7 +628,7 @@ export function computeIntentSeal(markdown) {
  */
 export function validateIntentSeal(markdown) {
   const status = tableValue(markdown, 'Intenção status');
-  if (!status || !/^saturada$/i.test(status.trim())) {
+  if (!status || !/^(saturada|saturated)$/i.test(status.trim())) {
     return { sealed: false, tampered: false };
   }
   const sealRaw = tableValue(markdown, 'Selo da intenção');
@@ -576,10 +647,13 @@ export function validateIntentSeal(markdown) {
 
 /** Aprova saturação da intenção: `Intenção status: saturada` + `Selo da intenção` (sha256 do §2). */
 export function approveIntentSaturation(markdown) {
-  let updated = setTableValue(markdown, 'Intenção status', 'saturada');
+  const currentStatusKey = tableValue(markdown, 'Intent status') != null ? 'Intent status' : 'Intenção status';
+  const currentSealKey = tableValue(markdown, 'Intent seal') != null ? 'Intent seal' : 'Selo da intenção';
+  const statusValue = currentStatusKey === 'Intent status' ? 'saturated' : 'saturada';
+  let updated = setTableValue(markdown, currentStatusKey, statusValue);
   const seal = computeIntentSeal(updated);
   if (!seal) throw new Error('INTENT_BLOCK_MISSING');
-  updated = setTableValue(updated, 'Selo da intenção', seal);
+  updated = setTableValue(updated, currentSealKey, seal);
   return updated;
 }
 
@@ -593,7 +667,7 @@ function replaceSection2Line(markdown, labelRe, replacementLine) {
   return markdown.slice(0, start) + nextScope + markdown.slice(start + section2.length);
 }
 
-function upsertBulletList(markdown, headingRe, idPrefix, items) {
+function upsertBulletList(markdown, headingRe, idPrefix, items, originFallback = 'usuario') {
   const section2 = extractSectionMarkdown(markdown, 2) ?? '';
   const headingMatch = headingRe.exec(section2);
   if (!headingMatch) throw new Error(`INTENT_HEADING_MISSING:${idPrefix}`);
@@ -603,7 +677,7 @@ function upsertBulletList(markdown, headingRe, idPrefix, items) {
   let nextList = listBlock;
   for (const item of items) {
     const id = item.id.toUpperCase();
-    const line = `- **${id}** — ${item.text} — ${item.origin ?? 'usuario'}`;
+    const line = `- **${id}** — ${item.text} — ${item.origin ?? originFallback}`;
     const rowRe = new RegExp(`^-\\s*\\*\\*${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\*\\*.*$`, 'm');
     nextList = rowRe.test(nextList) ? nextList.replace(rowRe, line) : `${nextList.trimEnd()}\n${line}\n`;
   }
@@ -622,56 +696,71 @@ function upsertBulletList(markdown, headingRe, idPrefix, items) {
 export function applyIntentField(markdown, fields = {}, options = {}) {
   const { approve = false } = options;
   let updated = markdown;
-  const intentStatus = tableValue(updated, 'Intenção status');
-  if (intentStatus && /^saturada$/i.test(intentStatus.trim())) {
-    updated = setTableValue(updated, 'Intenção status', 'rascunho');
-    updated = setTableValue(updated, 'Selo da intenção', 'pendente até saturação');
+  const statusKey = presentTableLabel(updated, 'Intenção status') ?? 'Intenção status';
+  const sealKey = presentTableLabel(updated, 'Selo da intenção') ?? 'Selo da intenção';
+  const intentStatus = tableValue(updated, statusKey);
+  if (intentStatus && /^(saturada|saturated)$/i.test(intentStatus.trim())) {
+    const draftValue = statusKey === 'Intent status' ? 'draft' : 'rascunho';
+    const pendingSeal = sealKey === 'Intent seal' ? 'pending until saturation' : 'pendente até saturação';
+    updated = setTableValue(updated, statusKey, draftValue);
+    updated = setTableValue(updated, sealKey, pendingSeal);
   }
+  const en = englishIntentBody(updated);
+  const originFallback = defaultOriginToken(updated);
   if (fields.eixo) {
-    const origin = fields.eixo_origin ?? 'usuario';
+    const origin = fields.eixo_origin ?? originFallback;
+    const heading = en ? 'Attack axis' : 'Eixo do ataque';
     updated = replaceSection2Line(
       updated,
-      /^\*\*Eixo do ataque:\*\*.*$/m,
-      `**Eixo do ataque:** \`${fields.eixo}\` — ${origin}`,
+      /^\*\*(?:Eixo do ataque|Attack axis):\*\*.*$/m,
+      `**${heading}:** \`${fields.eixo}\` — ${origin}`,
     );
   }
   if (Array.isArray(fields.surfaces) && fields.surfaces.length > 0) {
     updated = upsertBulletList(
       updated,
-      /^\*\*Superfícies \(SF-\\?\*\):\*\*\s*$/m,
+      /^\*\*(?:Superfícies|Surfaces) \(SF-\\?\*\):\*\*\s*$/m,
       'SF',
       fields.surfaces,
+      originFallback,
     );
   }
   if (Array.isArray(fields.anti_scope) && fields.anti_scope.length > 0) {
     updated = upsertBulletList(
       updated,
-      /^\*\*Anti-escopo tentador \(AS-\\?\*\):\*\*\s*$/m,
+      /^\*\*(?:Anti-escopo tentador|Tempting anti-scope) \(AS-\\?\*\):\*\*\s*$/m,
       'AS',
       fields.anti_scope,
+      originFallback,
     );
   }
   if (fields.recusa) {
-    const origin = fields.recusa_origin ?? 'usuario';
+    const origin = fields.recusa_origin ?? originFallback;
+    const recusaText = en
+      ? `I refuse the sprint if ${fields.recusa}`
+      : `eu recuso a sprint se ${fields.recusa}`;
     updated = upsertBulletList(
       updated,
-      /^\*\*Recusa:\*\*\s*$/m,
+      /^\*\*(?:Recusa|Refusal):\*\*\s*$/m,
       'R1',
-      [{ id: 'R1:', text: `eu recuso a sprint se ${fields.recusa}`, origin }],
+      [{ id: 'R1:', text: recusaText, origin }],
+      originFallback,
     );
   }
   if (fields.repo_rules != null) {
+    const heading = en ? 'Repo rules' : 'Regras do repo';
     updated = replaceSection2Line(
       updated,
-      /^\*\*Regras do repo:\*\*.*$/m,
-      `**Regras do repo:** ${fields.repo_rules}`,
+      /^\*\*(?:Regras do repo|Repo rules):\*\*.*$/m,
+      `**${heading}:** ${fields.repo_rules}`,
     );
   }
   if (fields.afericao != null) {
+    const heading = en ? 'T* verification' : 'Aferição T*';
     updated = replaceSection2Line(
       updated,
-      /^\*\*Aferição T\\?\*:\*\*.*$/m,
-      `**Aferição T*:** ${fields.afericao}`,
+      /^\*\*(?:Aferição T\\?\*|T\* verification):\*\*.*$/m,
+      `**${heading}:** ${fields.afericao}`,
     );
   }
   if (approve) updated = approveIntentSaturation(updated);
@@ -809,10 +898,10 @@ export function verifyIntentRefs(planMarkdown, sprintMarkdown) {
   return pendencies;
 }
 
-const INTENT_ORIGIN_RE = '(usuario|derivado:\\S+|premissa)';
+const INTENT_ORIGIN_RE = '(usuario|user|derivado:\\S+|derived:\\S+|premissa|assumption)';
 
 function intentBulletPlaceholder(line) {
-  return /\[enunciado|\[tentação|\[efeito observável|\[…/i.test(line);
+  return /\[enunciado|\[statement|\[tentação|\[temptation|\[efeito observável|\[observable effect|\[…/i.test(line);
 }
 
 function filledIntentBullets(section2, idRe) {
@@ -825,20 +914,20 @@ function filledIntentBullets(section2, idRe) {
 
 function validateIntentPlanReady(markdown, pendencies) {
   const section2 = extractSectionMarkdown(markdown, 2) ?? '';
-  const eixoMatch = /^\*\*Eixo do ataque:\*\*\s*`(dados|ux|estrutura|contrato|misto)`\s+—\s+(\S+)\s*$/im.exec(section2);
+  const eixoMatch = /^\*\*(?:Eixo do ataque|Attack axis):\*\*\s*`(dados|ux|estrutura|contrato|misto|data|ux|structure|contract|mixed)`\s+—\s+(\S+)\s*$/im.exec(section2);
   if (!eixoMatch) {
     pendencies.push(sprintConformancePending(
       'intencao',
       'eixo',
-      lineOf(markdown, /^\*\*Eixo do ataque:\*\*/i),
+      lineOf(markdown, /^\*\*(?:Eixo do ataque|Attack axis):\*\*/i),
       '§2 sem eixo do ataque válido (esperado `dados|ux|estrutura|contrato|misto` — origem).',
       'preencher_eixo_intencao',
     ));
-  } else if (/^premissa$/i.test(eixoMatch[2])) {
+  } else if (/^(premissa|assumption)$/i.test(eixoMatch[2])) {
     pendencies.push(sprintConformancePending(
       'intencao',
       'eixo_premissa',
-      lineOf(markdown, /^\*\*Eixo do ataque:\*\*/i),
+      lineOf(markdown, /^\*\*(?:Eixo do ataque|Attack axis):\*\*/i),
       'premissa no eixo não sustenta Intenção status: saturada.',
       'entrevistar_eixo_intencao',
     ));
@@ -848,7 +937,7 @@ function validateIntentPlanReady(markdown, pendencies) {
     pendencies.push(sprintConformancePending(
       'intencao',
       'superficies',
-      lineOf(markdown, /^\*\*Superfícies/i),
+      lineOf(markdown, /^\*\*(?:Superfícies|Surfaces)/i),
       '§2 sem superfície SF-NN preenchida (placeholder do template não conta).',
       'preencher_superficies_intencao',
     ));
@@ -858,27 +947,27 @@ function validateIntentPlanReady(markdown, pendencies) {
     pendencies.push(sprintConformancePending(
       'intencao',
       'anti_escopo',
-      lineOf(markdown, /^\*\*Anti-escopo/i),
+      lineOf(markdown, /^\*\*(?:Anti-escopo|Tempting anti-scope)/i),
       '§2 sem anti-escopo AS-NN preenchido (placeholder do template não conta).',
       'preencher_anti_escopo_intencao',
     ));
   }
-  const r1Rows = filledIntentBullets(section2, 'R1:');
+  const r1Rows = filledIntentBullets(section2, 'R1:?');
   if (r1Rows.length !== 1) {
     pendencies.push(sprintConformancePending(
       'intencao',
       'recusa',
-      lineOf(markdown, /^\*\*Recusa:\*\*/i),
+      lineOf(markdown, /^\*\*(?:Recusa|Refusal):\*\*/i),
       `§2 exige exatamente uma recusa R1 preenchida (encontradas: ${r1Rows.length}).`,
       'preencher_recusa_intencao',
     ));
   }
   const intentStatus = tableValue(markdown, 'Intenção status');
-  if (!intentStatus || !/^saturada$/i.test(intentStatus.trim())) {
+  if (!intentStatus || !/^(saturada|saturated)$/i.test(intentStatus.trim())) {
     pendencies.push(sprintConformancePending(
       'intencao',
       'Intenção status',
-      lineOf(markdown, /^\|\s*Intenção status\s*\|/i),
+      lineOfTableLabel(markdown, 'Intenção status'),
       `Intenção status inválido ou ausente: ${intentStatus ?? '<ausente>'} (esperado saturada para plan_ready).`,
       'saturar_intencao',
     ));
@@ -896,11 +985,11 @@ function validateIntentPlanReady(markdown, pendencies) {
     ));
   }
   const contratoStatus = tableValue(markdown, 'Contrato status');
-  if (!contratoStatus || !/^aprovado$/i.test(contratoStatus.trim())) {
+  if (!contratoStatus || !/^(aprovado|approved)$/i.test(contratoStatus.trim())) {
     pendencies.push(sprintConformancePending(
       'contrato_produto',
       'Contrato status',
-      lineOf(markdown, /^\|\s*Contrato status\s*\|/i),
+      lineOfTableLabel(markdown, 'Contrato status'),
       `Contrato status deve ser aprovado para plan_ready: ${contratoStatus ?? '<ausente>'}.`,
       'aprovar_contrato',
     ));
@@ -1040,27 +1129,30 @@ export function validateSprintFileConformance(markdown, {
   const moscowValue = tableValue(markdown, 'MoSCoW');
   const prioridadeValue = tableValue(markdown, 'Prioridade');
   const prioridadeSprint = moscowValue === 'Must' || prioridadeValue === 'P0';
-  const requiredSections = [
-    '1. Metadados',
-    '2. Objetivo e valor',
-    '3. Escopo da sprint',
-    '4. Contexto e fontes',
-    '5. Dependências e bloqueios',
-    '6. Decisões da sprint',
-    '7. Contrato de produto (congelado)',
-    '8. Definition of Ready',
-    '9. Eval manifest',
-    '10. Policy manifest',
-    '11. Guia e sensores',
-    '12. Evidence-to-claim',
-    '13. PLAN',
-    '14. Execução e validação',
-    '15. Aprendizados e handoff para próximas sprints',
-    '16. Histórico',
+  const REQUIRED_SECTIONS = [
+    { num: 1, labels: ['1. Metadados', '1. Metadata'] },
+    { num: 2, labels: ['2. Objetivo e valor', '2. Goal and value', '2. Purpose and value'] },
+    { num: 3, labels: ['3. Escopo da sprint', '3. Sprint scope'] },
+    { num: 4, labels: ['4. Contexto e fontes', '4. Context and sources'] },
+    { num: 5, labels: ['5. Dependências e bloqueios', '5. Dependencies and blockers'] },
+    { num: 6, labels: ['6. Decisões da sprint', '6. Sprint decisions'] },
+    { num: 7, labels: ['7. Contrato de produto (congelado)', '7. Product contract (frozen)'] },
+    { num: 8, labels: ['8. Definition of Ready'] },
+    { num: 9, labels: ['9. Eval manifest'] },
+    { num: 10, labels: ['10. Policy manifest'] },
+    { num: 11, labels: ['11. Guia e sensores', '11. Guide and sensors'] },
+    { num: 12, labels: ['12. Evidence-to-claim'] },
+    { num: 13, labels: ['13. PLAN'] },
+    { num: 14, labels: ['14. Execução e validação', '14. Execution and validation'] },
+    { num: 15, labels: ['15. Aprendizados e handoff para próximas sprints', '15. Learnings and handoff for next sprints'] },
+    { num: 16, labels: ['16. Histórico', '16. History'] },
   ];
-  for (const section of requiredSections) {
-    if (!new RegExp(`^##\\s+${section.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`, 'im').test(markdown)) {
-      pendencies.push(sprintConformancePending('seção_obrigatória', section, null, `Seção obrigatória ausente: ${section}`));
+  for (const { labels } of REQUIRED_SECTIONS) {
+    const present = labels.some((label) =>
+      new RegExp(`^##\\s+${label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`, 'im').test(markdown)
+    );
+    if (!present) {
+      pendencies.push(sprintConformancePending('seção_obrigatória', labels[0], null, `Seção obrigatória ausente: ${labels[0]}`));
     }
   }
 
@@ -1068,13 +1160,13 @@ export function validateSprintFileConformance(markdown, {
   // de intenção que o revisor frio usa como oráculo (D1). "Sempre obrigatória",
   // inclusive standalone (decisão de autoria: sem detectar a origem da sprint).
   // A §4 é tabela de TRÊS colunas (`Tipo | Fonte | Uso nesta sprint`): o
-  // casamento é pelo rótulo da primeira célula (`Discussão`), não por posição e
+  // casamento é pelo rótulo da primeira célula (`Discussão` ou `Discussion`), não por posição e
   // não via `tableValue` (que só casa linha de duas colunas). §4 ausente por
   // completo já é coberta pela pendência `seção_obrigatória` acima — aqui a
   // pendência é única por sprint file, com a linha da §4 no campo `line`.
   const section4 = extractSectionMarkdown(markdown, 4);
   if (section4 != null) {
-    const discussaoRow = /^\|\s*Discussão\s*\|\s*([^|\n]*)/im.exec(section4);
+    const discussaoRow = /^\|\s*(?:Discussão|Discussion)\s*\|\s*([^|\n]*)/im.exec(section4);
     const fonte = discussaoRow ? discussaoRow[1].trim() : '';
     const semFonte = discussaoRow == null
       || fonte === ''
@@ -1089,14 +1181,14 @@ export function validateSprintFileConformance(markdown, {
       pendencies.push(sprintConformancePending(
         'fonte_discussao_ausente',
         'Discussão',
-        lineOf(markdown, /^\|\s*Discussão\s*\|/i),
+        lineOf(markdown, /^\|\s*(?:Discussão|Discussion)\s*\|/i),
         '§4 sem fonte de discussão preenchida — a sprint não declara a discussão de onde nasceu (obrigatória no schema 0.16.0, inclusive standalone).',
         'preencher_fonte_discussao',
       ));
     }
   }
 
-  const titleSprint = new RegExp(`^#\\s+Sprint viva\\s+—\\s+(${SPRINT_ID_SOURCE})\\b`, 'im').exec(markdown)?.[1] ?? null;
+  const titleSprint = new RegExp(`^#\\s+(?:Sprint viva|Live sprint)\\s+—\\s+(${SPRINT_ID_SOURCE})\\b`, 'im').exec(markdown)?.[1] ?? null;
   const metadataSprint = tableValue(markdown, 'Sprint ID');
   const expectedSprintId = sprintId ?? metadataSprint ?? titleSprint;
   if (!metadataSprint || !SPRINT_ID_REGEX.test(metadataSprint)) {
@@ -1141,26 +1233,26 @@ export function validateSprintFileConformance(markdown, {
   const backlog = tableValue(markdown, 'Backlog mestre');
   const standalone = isStandaloneBacklog(backlog);
   if (!standalone && (!backlog || sprintFilePending(backlog))) {
-    pendencies.push(sprintConformancePending('metadados', 'Backlog mestre', lineOf(markdown, /^\|\s*Backlog mestre\s*\|/i), 'Backlog mestre ausente no sprint file.', 'vincular_backlog_mestre'));
+    pendencies.push(sprintConformancePending('metadados', 'Backlog mestre', lineOfTableLabel(markdown, 'Backlog mestre'), 'Backlog mestre ausente no sprint file.', 'vincular_backlog_mestre'));
   }
 
   const contratoStatus = tableValue(markdown, 'Contrato status');
-  if (!contratoStatus || !/^(draft|aprovado)$/i.test(contratoStatus)) {
+  if (!contratoStatus || !/^(draft|aprovado|approved)$/i.test(contratoStatus)) {
     pendencies.push(sprintConformancePending(
       'contrato_produto',
       'Contrato status',
-      lineOf(markdown, /^\|\s*Contrato status\s*\|/i),
+      lineOfTableLabel(markdown, 'Contrato status'),
       `Contrato status inválido ou ausente: ${contratoStatus ?? '<ausente>'} (esperado draft|aprovado).`,
       'preencher_contrato_status',
     ));
   }
 
   const intentStatusMeta = tableValue(markdown, 'Intenção status');
-  if (!intentStatusMeta || !/^(rascunho|saturada)$/i.test(intentStatusMeta.trim())) {
+  if (!intentStatusMeta || !/^(rascunho|saturada|draft|saturated)$/i.test(intentStatusMeta.trim())) {
     pendencies.push(sprintConformancePending(
       'metadados',
       'Intenção status',
-      lineOf(markdown, /^\|\s*Intenção status\s*\|/i),
+      lineOfTableLabel(markdown, 'Intenção status'),
       `Intenção status ausente ou placeholder: ${intentStatusMeta ?? '<ausente>'} (esperado rascunho|saturada).`,
       'preencher_metadados_intencao',
     ));
@@ -1168,13 +1260,13 @@ export function validateSprintFileConformance(markdown, {
   const intentSealMeta = tableValue(markdown, 'Selo da intenção');
   const intentSealOk = intentSealMeta
     && !/^\[/.test(intentSealMeta.trim())
-    && (/^pendente até saturação$/i.test(intentSealMeta.trim())
+    && (/^(?:pendente até saturação|pending until saturation)$/i.test(intentSealMeta.trim())
       || /^sha256:[a-f0-9]{64}$/i.test(intentSealMeta.trim()));
   if (!intentSealOk) {
     pendencies.push(sprintConformancePending(
       'metadados',
       'Selo da intenção',
-      lineOf(markdown, /^\|\s*Selo da intenção\s*\|/i),
+      lineOfTableLabel(markdown, 'Selo da intenção'),
       `Selo da intenção ausente ou placeholder: ${intentSealMeta ?? '<ausente>'} (esperado 'pendente até saturação' ou sha256:<hex>).`,
       'preencher_metadados_intencao',
     ));
@@ -1538,7 +1630,7 @@ export function validateSprintFileConformance(markdown, {
     }
   }
 
-  const evidenceLine = lineOf(markdown, /^\|\s*Claim\s*\|\s*Onde foi prometido\s*\|\s*Evidência esperada\s*\|\s*Evidência real\s*\|\s*Status\s*\|/i);
+  const evidenceLine = lineOf(markdown, /^\|\s*Claim\s*\|\s*(?:Onde foi prometido|Where promised)\s*\|\s*(?:Evidência esperada|Expected evidence)\s*\|\s*(?:Evidência real|Actual evidence)\s*\|\s*Status\s*\|/i);
   if (!evidenceLine) {
     pendencies.push(sprintConformancePending('evidence_to_claim', 'tabela', lineOf(markdown, /^##\s+12\./i), 'Tabela Evidence-to-claim ausente ou inválida.', 'criar_evidence_to_claim'));
   }
@@ -1577,13 +1669,16 @@ export function validateSprintFileConformance(markdown, {
 }
 
 export function parseDecisionRows(markdown) {
-  const rows = parseTable(markdown, '### Decisões bloqueantes');
+  let rows = parseTable(markdown, '### Decisões bloqueantes');
+  if (!rows || rows.length === 0) {
+    rows = parseTable(markdown, '### Blocking decisions');
+  }
   const header = rows.findIndex((row) => row[0] === 'ID');
   if (header < 0) return [];
   // v0.16.0: coluna `Origem` resolvida pela posição do cabeçalho, não por
   // índice fixo; ausência da coluna deixa `origin: null` (pendência na validação).
   const headerCells = rows[header];
-  const originIndex = headerCells.findIndex((cell) => /^Origem$/i.test(cell));
+  const originIndex = headerCells.findIndex((cell) => /^(Origem|Origin)$/i.test(cell));
   const statusIndex = headerCells.findIndex((cell) => /^Status$/i.test(cell));
   return rows.slice(header + 1).filter((row) => /^D\d+$/.test(row[0])).map((row) => ({
     id: row[0],
@@ -1619,7 +1714,7 @@ function findCycle(rows) {
 }
 
 function changeLogBody(markdown) {
-  const match = /^##\s+(?:Registro de alterações|Histórico de alterações)\s*$/im.exec(markdown);
+  const match = /^##\s+(?:Registro de alterações|Histórico de alterações|Changelog|Change log)\s*$/im.exec(markdown);
   if (!match) return null;
   const tail = markdown.slice(match.index + match[0].length);
   const end = tail.search(/\n##\s+/);
@@ -1646,7 +1741,7 @@ export function validateBacklogUpdate(before, after, { authorizedIds = [] } = {}
   for (const [id, row] of oldDecisions) {
     const next = newDecisions.get(id);
     if (!next) errors.push(`DECISION_REMOVED:${id}`);
-    else if (/^(decidido|fechado|aprovado)$/i.test(row.status)
+    else if (/^(decidido|fechado|aprovado|decided|closed|approved)$/i.test(row.status)
       && JSON.stringify(row.raw) !== JSON.stringify(next.raw) && !authorized.has(id)) errors.push(`CLOSED_DECISION_CHANGED:${id}`);
   }
   // v0.16.0 (D3/D17): toda decisão do backlog declara `Origem` dentro do enum.
@@ -1687,12 +1782,17 @@ export function resolveSprintAuthority({ sprintId, explicitPath, canonicalPath, 
 }
 
 function setTableValue(markdown, label, value) {
-  const re = new RegExp(
-    `^(\\|\\s*${label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\|\\s*)(.*?)(\\s*\\|\\s*)$`,
-    'im',
-  );
-  if (re.test(markdown)) return markdown.replace(re, `$1${value}$3`);
-  const contratoStatus = /^\|\s*Contrato status\s*\|.*$/im;
+  const labels = Array.isArray(label)
+    ? label
+    : (LABEL_ALIASES[label] ?? [label]);
+  for (const l of labels) {
+    const re = new RegExp(
+      `^(\\|\\s*${l.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\|\\s*)(.*?)(\\s*\\|\\s*)$`,
+      'im',
+    );
+    if (re.test(markdown)) return markdown.replace(re, `$1${value}$3`);
+  }
+  const contratoStatus = /^\|\s*(?:Contrato status|Contract status)\s*\|.*$/im;
   if (contratoStatus.test(markdown)) {
     return markdown.replace(contratoStatus, (row) => `${row}\n| ${label} | ${value} |`);
   }
@@ -1715,10 +1815,13 @@ export function pendingInterviewQuestions(markdown, questions) {
  * Status/selo vivem no §1 — fora do bloco hasheado — mesma normalização de `validateAcceptanceSeal`.
  */
 export function approveAcceptanceContract(markdown) {
-  let updated = setTableValue(markdown, 'Contrato status', 'aprovado');
+  const currentStatusKey = tableValue(markdown, 'Contract status') != null ? 'Contract status' : 'Contrato status';
+  const currentSealKey = tableValue(markdown, 'Contract seal') != null ? 'Contract seal' : 'Selo do contrato';
+  const statusValue = currentStatusKey === 'Contract status' ? 'approved' : 'aprovado';
+  let updated = setTableValue(markdown, currentStatusKey, statusValue);
   const seal = computeAcceptanceSeal(updated);
   if (!seal) throw new Error('ACCEPTANCE_BLOCK_MISSING');
-  updated = setTableValue(updated, 'Selo do contrato', seal);
+  updated = setTableValue(updated, currentSealKey, seal);
   return updated;
 }
 
@@ -1740,13 +1843,13 @@ function applyDecisionRow(markdown, decisionId, value, origin = null) {
   if (rowRe.test(scope)) {
     const existing = rowRe.exec(scope)[0];
     const cells = existing.split('|').slice(1, -1).map((cell) => cell.trim());
-    const resolvedOrigin = origin ?? (cells.length >= 3 && cells[2] !== '' ? cells[2] : 'usuario');
+    const resolvedOrigin = origin ?? (cells.length >= 3 && cells[2] !== '' ? cells[2] : defaultOriginToken(markdown));
     const replacement = `| ${decisionId} | ${value} | ${resolvedOrigin} |`;
     nextScope = scope.replace(rowRe, replacement);
-  } else if (/(\| ID \| Decisão \| Origem \|\n\|[-| ]+\|)/.test(scope)) {
-    const resolvedOrigin = origin ?? 'usuario';
+  } else if (/(\| ID \| (?:Decisão|Decision) \| (?:Origem|Origin) \|\n\|[-| ]+\|)/.test(scope)) {
+    const resolvedOrigin = origin ?? defaultOriginToken(markdown);
     const replacement = `| ${decisionId} | ${value} | ${resolvedOrigin} |`;
-    nextScope = scope.replace(/(\| ID \| Decisão \| Origem \|\n\|[-| ]+\|)/, `$1\n${replacement}`);
+    nextScope = scope.replace(/(\| ID \| (?:Decisão|Decision) \| (?:Origem|Origin) \|\n\|[-| ]+\|)/, `$1\n${replacement}`);
   } else {
     throw new Error(`DECISION_TABLE_MISSING:${decisionId}`);
   }
@@ -1769,19 +1872,27 @@ export function applyInterviewRound(markdown, answers, date = new Date().toISOSt
     ids.add(answer.decision_id);
   }
   let updated = markdown;
-  const status = tableValue(updated, 'Contrato status');
-  if (status && /^aprovado$/i.test(status.trim())) {
-    updated = setTableValue(updated, 'Contrato status', 'draft');
-    updated = setTableValue(updated, 'Selo do contrato', 'pendente até aprovação');
+  const statusKey = presentTableLabel(updated, 'Contrato status') ?? 'Contrato status';
+  const sealKey = presentTableLabel(updated, 'Selo do contrato') ?? 'Selo do contrato';
+  const status = tableValue(updated, statusKey);
+  if (status && /^(aprovado|approved)$/i.test(status.trim())) {
+    const pendingSeal = sealKey === 'Contract seal' ? 'pending until approval' : 'pendente até aprovação';
+    updated = setTableValue(updated, statusKey, 'draft');
+    updated = setTableValue(updated, sealKey, pendingSeal);
   }
+  const originToken = defaultOriginToken(updated);
   for (const answer of answers) {
-    // Toda resposta de entrevista é resposta do usuário: procedência `usuario`.
-    updated = applyDecisionRow(updated, answer.decision_id, answer.value, 'usuario');
+    updated = applyDecisionRow(updated, answer.decision_id, answer.value, originToken);
   }
   const log = `${date} — entrevista: ${answers.map((answer) => answer.decision_id).join(', ')} persistida(s)`;
-  updated = /\*\*Histórico:\*\*/.test(updated)
-    ? updated.replace(/(\*\*Histórico:\*\*[^\n]*)/, `$1 · ${log}`)
-    : `${updated.trimEnd()}\n\n**Histórico:** ${log}\n`;
+  if (/\*\*(?:Histórico|History):\*\*/.test(updated)) {
+    updated = updated.replace(/(\*\*(?:Histórico|History):\*\*[^\n]*)/, `$1 · ${log}`);
+  } else {
+    const historyHeading = englishDecisionTable(updated) || presentTableLabel(updated, 'Contrato status') === 'Contract status'
+      ? 'History'
+      : 'Histórico';
+    updated = `${updated.trimEnd()}\n\n**${historyHeading}:** ${log}\n`;
+  }
   if (approve) updated = approveAcceptanceContract(updated);
   return updated;
 }

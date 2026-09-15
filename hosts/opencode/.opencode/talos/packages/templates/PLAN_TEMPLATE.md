@@ -1,158 +1,158 @@
-# PLAN <ID> — <Título> (execução)
+# PLAN <ID> — <Title> (execution)
 
-| Campo | Valor |
+| Field | Value |
 |-------|-------|
-| **Sprint file** | [SPRINT_S<NN>_<slug>.md](./<caminho-relativo>) — `eval_manifest` §9 — ou `Não aplicável (standalone)` quando `Source mode: standalone` |
-| **Package / app** | `<packages/... \| apps/...>` |
-| **Tipo** | `<feature \| ui \| navigation \| …>` |
-| **execution_mode** | `<sequencial (T01→TN) \| orchestrated-per-slice>` |
-| **Data** | <YYYY-MM-DD> |
+| **Sprint file** | [SPRINT_S<NN>_<slug>.md](./<relative-path>) — `eval_manifest` §9 — or `Not applicable (standalone)` when `Source mode: standalone` |
+| **Package / app** | `<packages/... | apps/...>` |
+| **Type** | `<feature | ui | navigation | …>` |
+| **execution_mode** | `<sequential (T01→TN) | orchestrated-per-slice>` |
+| **Date** | <YYYY-MM-DD> |
 
-**Escopo técnico:** Sprint §3 + contrato §7. **Fora:** <bullets derivados do fora de escopo do sprint — não recopiar §3 inteiro>.
+**Technical scope:** Sprint §3 + contract §7. **Out of scope:** <bullets derived from sprint out-of-scope — do not recopy entire §3>.
 
-**Eval source:** Sprint §7/§9 (ou `Sprint §7 (standalone)` quando sem backlog).
+**Eval source:** Sprint §7/§9 (or `Sprint §7 (standalone)` when without backlog).
 
-Política: [BOUNDARY_SPRINT_PLAN.md](./BOUNDARY_SPRINT_PLAN.md).
-
----
-
-## 1. Tradução executiva
-
-<O que será implementado em 1 parágrafo + resultado observável técnico.>
-
-**Fonte de recorte:** <Sprint file §2–§4 + contrato §7>
-
-**Padrão de referência no monorepo:** <ex.: “espelhar módulo X em …”>
-
-**Diferenças obrigatórias vs referência (não copiar cegamente)**
-
-| Tema | Referência (rejeitar) | Esta entrega (Sprint §7) |
-|------|----------------------|-------------------|
-| <…> | <…> | <D* ou regra> |
-
-<Capacidades já existentes no código que esta slice só integra — ex.: use cases GF04 prontos.>
+Policy: [BOUNDARY_SPRINT_PLAN.md](./BOUNDARY_SPRINT_PLAN.md).
 
 ---
 
-## 2. Invariantes de execução (derivados do Sprint §7)
+## 1. Executive summary
 
-- <invariante técnico derivado de Sprint §7 D*/cenários — ex.: sem refetch ao filtrar>
-- <`sprint-bound`: invariante/gate derivado de sprint file §9/§10 — ex.: preservar boundary X. `standalone`: invariante/gate derivado direto de Sprint §7>
+<What will be implemented in 1 paragraph + observable technical outcome.>
+
+**Scope source:** <Sprint file §2–§4 + contract §7>
+
+**Reference pattern in monorepo:** <e.g.: "mirror module X in ...">
+
+**Mandatory differences vs reference (do not copy blindly)**
+
+| Topic | Reference (reject) | This deliverable (Sprint §7) |
+|-------|--------------------|-----------------------------|
+| <…> | <…> | <D* or rule> |
+
+<Existing capabilities in code that this slice only integrates — e.g.: ready GF04 use cases.>
+
+---
+
+## 2. Execution invariants (derived from Sprint §7)
+
+- <technical invariant derived from Sprint §7 D*/scenarios — e.g.: no refetch when filtering>
+- <`sprint-bound`: invariant/gate derived from sprint file §9/§10 — e.g.: preserve boundary X. `standalone`: invariant/gate derived directly from Sprint §7>
 - <…>
 
-> Não recopiar a tabela de decisões do contrato nem o YAML do sprint file; referenciar `Sprint §7 D12` e, em `sprint-bound`, `Sprint §9 EVAL-001`. Em `standalone`, referenciar só `Sprint §7`.
+> Do not recopy the contract decision table or the sprint file YAML; reference `Sprint §7 D12` and, in `sprint-bound`, `Sprint §9 EVAL-001`. In `standalone`, reference only `Sprint §7`.
 
 ---
 
 ## 3. Pitfalls
 
-- <anti-padrão comum no repo> → <correção>
+- <common anti-pattern in repo> → <correction>
 - <…>
 
 ---
 
-## 4. Estado na abertura da sprint (pré-implementação)
+## 4. State at sprint opening (pre-implementation)
 
-> Se a entrega **já estiver no código**, não reimplementar: usar como checklist de verificação contra Sprint §7.3 e PLAN §8. O executor **lê o repo** e confirma o que falta.
+> If the deliverable is **already in the code**, do not reimplement: use as verification checklist against Sprint §7.3 and PLAN §8. The executor **reads the repo** and confirms what is missing.
 
-- **Sprint status:** <status do sprint file + bloqueios relevantes>
-- <3–6 bullets do que bloqueia hoje — comportamento ou ausência, não lista de 15 arquivos>
+- **Sprint status:** <status from sprint file + relevant blockers>
+- <3–6 bullets of what blocks today — behavior or absence, not list of 15 files>
 
 ---
 
-## 5. Tarefas de execução
+## 5. Execution tasks
 
-<!-- Para execution_mode: orchestrated-per-slice, agrupar com ### Slice A — … -->
+<!-- For execution_mode: orchestrated-per-slice, group with ### Slice A — … -->
 
-#### T01. <Título curto>
+#### T01. <Short title>
 
-- **Objetivo:** <resultado observável>
+- **Objective:** <observable outcome>
 - intent_refs: [SF-01, R1]
-- **Referência:** <módulo/padrão no monorepo — opcional>
-- **Pré-condições:** <nenhuma \| T0X>
-- **Mudança esperada:** <o que muda de forma concreta>
-- **Invariantes preservados:** <§2 ou Sprint §7>
-- **Eval/Policy:** <`sprint-bound`: Sprint §9 EVAL-* / §10 policy relevante. `standalone`: Sprint §7 aceite relevante>
-- **Não mudar:** <…>
-- **Não fazer:** <atalhos proibidos>
-- **Dependências:** <nenhuma \| T0X>
-- **Riscos:** <se relevante>
-- **Critério de done:** <sinal objetivo>
-- **Validação local:**
+- **Reference:** <module/pattern in monorepo — optional>
+- **Preconditions:** <none | T0X>
+- **Expected change:** <what concretely changes>
+- **Preserved invariants:** <§2 or Sprint §7>
+- **Eval/Policy:** <`sprint-bound`: Sprint §9 EVAL-* / §10 relevant policy. `standalone`: Sprint §7 relevant acceptance>
+- **Do not change:** <…>
+- **Do not do:** <forbidden shortcuts>
+- **Dependencies:** <none | T0X>
+- **Risks:** <if relevant>
+- **Done criterion:** <objective signal>
+- **Local validation:**
   ```bash
-  cd <package-ou-repo> && <comando>
+  cd <package-or-repo> && <command>
   ```
-- **Quality gates:** <opcional — itens verificáveis desta task>
-- **Casos mínimos:** <somente em tasks de teste — lista numerada>
+- **Quality gates:** <optional — verifiable items of this task>
+- **Minimal cases:** <only in test tasks — numbered list>
 
 #### T02. <…>
 
-<!-- repetir até TNN; cada task declara intent_refs após Objetivo (ex.: [SF-01, R1] ou [R1]) -->
+<!-- repeat up to TNN; each task declares intent_refs after Objective (e.g.: [SF-01, R1] or [R1]) -->
 
-<repetir até TNN>
+<repeat up to TNN>
 
-#### TNN. Validação final
+#### TNN. Final validation
 
-- **Objetivo:** gates locais + regressão de entregas dependentes + aceite manual mínimo (Sprint §7.3; em `sprint-bound` também Sprint §9).
+- **Objective:** local gates + regression of dependent deliverables + minimal manual acceptance (Sprint §7.3; in `sprint-bound` also Sprint §9).
 - intent_refs: [R1]
-- **Dependências:** T01–T(N-1)
-- **Critério de done:** zero issues; testes verdes
-- **Validação local:**
+- **Dependencies:** T01–T(N-1)
+- **Done criterion:** zero issues; green tests
+- **Local validation:**
   ```bash
   cd <package> && flutter analyze
   cd <package> && flutter test
   ```
-- **Verificação manual (recomendada):**
-  1. <passo alinhado aos cenários UX do Sprint §7.2>
+- **Manual verification (recommended):**
+  1. <step aligned with UX scenarios of Sprint §7.2>
   2. <…>
 
 ---
 
-## 6. Contratos técnicos (só ambiguidade Sprint §7 → código)
+## 6. Technical contracts (only ambiguity Sprint §7 → code)
 
-### 6.1 <Domínio / persistência / API>
+### 6.1 <Domain / persistence / API>
 
-| <Camada> | Regra |
-|----------|--------|
+| <Layer> | Rule |
+|---------|------|
 | <…> | <…> |
 
-### 6.2 <Falhas / estados / pipeline — se aplicável>
+### 6.2 <Failures / states / pipeline — if applicable>
 
-| <Code ou etapa> | <Comportamento na store/UI> |
-|-----------------|----------------------------|
+| <Code or step> | <Behavior in store/UI> |
+|----------------|------------------------|
 
 ---
 
-## 7. Slices (somente se `execution_mode: orchestrated-per-slice`)
+## 7. Slices (only if `execution_mode: orchestrated-per-slice`)
 
-| Slice | Tasks | Objetivo |
+| Slice | Tasks | Objective |
 |-------|-------|----------|
 | A | T01–T03 | <…> |
 | B | T04–T05 | <…> |
 
-Ordem: **A → B → …**. Validator: boundary do diff por slice + §2 e §7.
+Order: **A → B → …**. Validator: diff boundary per slice + §2 and §7.
 
 ---
 
-## 8. Validação e checklist (validator)
+## 8. Validation and checklist (validator)
 
-Referência **Sprint §7** + invariantes **§2** deste plano. Em `sprint-bound`, soma `eval_manifest` do sprint file §9. Em `standalone`, declarar `Eval source: Sprint §7` — sem manifest de sprint obrigatório além do contrato.
+Reference **Sprint §7** + invariants **§2** of this plan. In `sprint-bound`, add `eval_manifest` of sprint file §9. In `standalone`, declare `Eval source: Sprint §7` — no mandatory sprint manifest beyond contract.
 
 ```bash
 cd <package> && flutter analyze
 cd <package> && flutter test
 ```
 
-- [ ] <critério derivado de Sprint §7 D*/aceite ou Sprint §9 EVAL-*>
+- [ ] <criterion derived from Sprint §7 D*/acceptance or Sprint §9 EVAL-*>
 - [ ] <…>
 
 ---
 
-## O que este template NÃO inclui (propositalmente)
+## What this template DOES NOT include (by design)
 
-- Handoff prompt final
-- Gate de prontidão do planejador
-- § “Regras carregadas” do `project-rules` (AGENTS carrega)
-- Cópia da tabela D* do contrato §7
-- Cópia integral do `eval_manifest`/`policy_manifest`
-- Inventário global de arquivos tocados
+- Final handoff prompt
+- Planner readiness gate
+- § "Loaded rules" from `project-rules` (AGENTS loads)
+- Copy of D* table from contract §7
+- Full copy of `eval_manifest`/`policy_manifest`
+- Global inventory of touched files
