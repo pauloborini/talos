@@ -1,6 +1,6 @@
 ---
 vault_version: 1
-updated: 2026-09-05
+updated: 2026-09-15
 scope: Plugin Talos — pipeline determinística multi-host
 ---
 
@@ -8,10 +8,11 @@ scope: Plugin Talos — pipeline determinística multi-host
 
 ## Domínios
 
-- [pipeline](docs/decisions/pipeline.md) — missão, invariantes, topologia, aceite e contrato de produto
-- [distribuicao](docs/decisions/distribuicao.md) — install, hosts, packaging e versão
-- [determinismo](docs/decisions/determinismo.md) — gates PREREQ/DISPATCH, adapters e join
-- [artefatos](docs/decisions/artefatos.md) — backlog, sprint file, procedência 0.16 e entrevista dual
+- [artefatos](docs/decisions/artefatos.md) — artefatos
+- [determinismo](docs/decisions/determinismo.md) — determinismo
+- [distribuicao](docs/decisions/distribuicao.md) — distribuição
+- [pipeline](docs/decisions/pipeline.md) — pipeline
+- [marca](docs/decisions/marca.md) — marca e ecossistema
 
 ## Features válidas
 
@@ -19,27 +20,22 @@ scope: Plugin Talos — pipeline determinística multi-host
 
 ## Por feature
 
-- pipeline → pipeline, determinismo
-- orquestrador → pipeline, determinismo
-- validator → pipeline, determinismo
-- sprint → pipeline, artefatos
-- plano → pipeline, artefatos
 - backlog → artefatos
+- distribuicao → distribuicao, marca
 - generator → artefatos
-- distribuicao → distribuicao
+- hosts → determinismo, distribuicao
 - install → distribuicao
-- hosts → distribuicao, determinismo
 - mcp → determinismo
+- orquestrador → determinismo, pipeline
+- pipeline → determinismo, marca, pipeline
+- plano → pipeline
+- sprint → artefatos, pipeline
+- validator → pipeline
 
 ## Histórico
 
-- 2026-08-06 — Migração AppVault (`vault-migrate` passos 1–6). `DEC-006` nunca atribuído (lacuna
-  intencional na numeração legada).
+- 2026-08-06 — Migração AppVault (`vault-migrate` passos 1–6). `DEC-006` nunca atribuído (lacuna intencional na numeração legada).
 - 2026-08-30 — `DEC-028` atribuído: rastreabilidade v1 opt-in por sprint (0.19.0), domínio `artefatos`.
-- 2026-09-03 — `DEC-029`–`DEC-037` (determinismo: evidência de slice, G4/G12, repair, loop);
-  `DEC-038` (pipeline: dirty worktree válido); `DEC-039` (distribuição: 0.21.0 BREAKING boundary).
-- 2026-09-05 — `DEC-040`/`043`–`045` (pipeline: intenção §2, densidade T*, oráculo frio, plano⊆§2);
-  `DEC-041`/`042`/`046`–`049` (artefatos: entrevista dual, sem N, pergunta dirigida, stub/plan_ready, select_next, sem legacy_sealed);
-  spec `_app-vault/specs/SPEC_INTENT_SATURATION_SDD.md`;
-  plano `_app-vault/plans/2026-09-05-intent-saturation.md`.
-- 2026-09-05 — plano `_app-vault/plans/2026-09-05-intent-saturation.md` (impl saturação §2).
+- 2026-09-03 — `DEC-029`–`DEC-037` (determinismo: evidência de slice, G4/G12, repair, loop); `DEC-038` (pipeline: dirty worktree válido); `DEC-039` (distribuição: 0.21.0 BREAKING boundary).
+- 2026-09-05 — `DEC-040`/`043`–`045` (pipeline: intenção §2, densidade T*, oráculo frio, plano⊆§2); `DEC-041`/`042`/`046`–`049` (artefatos: entrevista dual, sem N, pergunta dirigida, stub/plan_ready, select_next, sem legacy_sealed); spec `_app-vault/specs/SPEC_INTENT_SATURATION_SDD.md`.
+- 2026-09-15 — `DEC-050` atribuído: identidade dos produtos do ecossistema (domínio novo `marca`). Promovida da decisão de marca que vivia na raiz (`NAMING.md`, ID legado `DEC-ECO-001`); a casca foi para o espelho de processo.

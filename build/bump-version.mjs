@@ -64,7 +64,8 @@ const edits = [
   ['hosts/opencode/.opencode/talos/orchestrator/README.md', (t) => replaceOnce(t, `**Plugin version:** ${current}`, `**Plugin version:** ${next}`, 'hosts/opencode orchestrator/README.md (Plugin version)')],
 
   // --- Docs com versão inline ---
-  ['CLAUDE.md', (t) => replaceOnce(t, `Versão: \`${current}\``, `Versão: \`${next}\``, 'CLAUDE.md')],
+  // CLAUDE.md é ponte (@AGENTS.md) e não carrega versão: apenas confirma a ponte.
+  ['CLAUDE.md', (t) => { if (t.trim() !== '@AGENTS.md') die('CLAUDE.md deve ser a ponte "@AGENTS.md"'); return t; }],
   ['AGENTS.md', (t) => replaceOnce(t, `Versão: \`${current}\``, `Versão: \`${next}\``, 'AGENTS.md')],
 ];
 

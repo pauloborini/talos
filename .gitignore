@@ -43,3 +43,5 @@ node_modules/
 /references/
 
 
+# Estado de execução do hephaestus (checkpoint, staging, backup e ledgers de run)
+.hephaestus/
