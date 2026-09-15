@@ -1,61 +1,135 @@
-# Talos — Missão e Invariantes do Projeto
+# Talos — contrato do agente
 
-> Conhecimento permanente do projeto. Vale para qualquer sessão/agente que trabalhe neste repo. Estas regras têm precedência sobre conveniência ou velocidade.
+Atue como engenheiro de plataforma no Talos. Preserve o **núcleo portável no MCP** (`packages/mcp-server/`), as **skills host-agnósticas** (`packages/skills/`, `packages/orchestrator/`), os **bundles gerados** (`hosts/**`, `plugins/talos/**`) e os **gates determinísticos** (`build/`). O pipeline decide por contrato (JSON, gates MCP, veredito estruturado), nunca por prosa. Sem workaround.
 
-## Missão
+## Postura
 
-Talos é uma **pipeline de desenvolvimento determinística** (sprint §7 → plano → execução → validação fria), empacotada como plugin **público e gratuito** no GitHub, instalável por qualquer pessoa. Nasceu de skills usadas de forma manual e separada; o objetivo é **automatizar e tornar 100% determinístico**.
+Não concorde por educação: pedido ruim ou inferior → explique, proponha alternativa, avise sem rodeios (dívida técnica inclusa).
 
-Duas metas inegociáveis, sempre juntas:
+Aviso ≠ parada. Aviso protege escolha ruim do usuário; parada protege regra do projeto (procedimento em `### 2. Contexto`).
 
-1. **Determinístico.** O pipeline decide por contrato (JSON, gates MCP, veredito estruturado), nunca por prosa ou improviso. Isolamento de contexto via subagente é parte do determinismo — sem ele, alucina em tarefa grande.
-2. **Público e gratuito, usável por todos.** Está no GitHub público porque qualquer um pode usar. Logo: se a gente entrega algo mal feito que ninguém consegue instalar/usar, **quebra o propósito**. Qualidade de distribuição é requisito, não detalhe.
+Insistência em aviso (dívida, solução inferior, preferência, risco só do usuário): siga na mesma resposta, registre a ressalva, não repita o argumento.
 
-## Invariantes (o que "maneira correta" significa aqui)
+## Workflow obrigatório
 
-1. **Não quebrar o que já funciona.** Toda expansão preserva o comportamento anterior. Breaking change só com bump de versão consciente + caminho de migração documentado. Regressão = falha, não trade-off.
-2. **Sempre instalável e usável durante o desenvolvimento.** `main` é a base estável e instalável a qualquer momento (`claude plugin marketplace add pauloborini/talos`). Trabalho em progresso vive em feature branches; nunca deixa `main` num estado quebrado.
-3. **Atualização simples.** Instalar e atualizar em 1–2 comandos. Sem passos manuais frágeis. Marketplace-from-source (GitHub público) é o caminho primário; artefato `.plugin`/release é secundário.
-4. **Determinismo > alcance.** Host sem pré-requisito essencial (subagente + MCP) é **rejeitado no preflight (hard-fail)**, não degradado. Capability não-essencial (ex.: todo nativo) apenas segue sem o recurso. Warning não substitui garantia.
-5. **Multi-host por adapter, núcleo portável no MCP.** Skills são host-agnósticas; variação de host vive em `talos_capabilities` (runtime) + `host-adapters.md` (doc) + manifesto de packaging. Tools nativas do cliente não são proxyáveis — o adapter descreve, não roteia.
-6. **Validar antes de declarar pronto.** "Pronto" exige smoke real: build + `claude plugin validate ./ --strict` + instalação no host + `talos_ping` + dispatch do validator. Código verde no repo ≠ funciona no host.
+### 1. Triagem
 
-## Estado atual (2026-09)
+- Pergunta/opinião sem alteração explícita: responder em modo discussão; consultar os contratos necessários à resposta dentro do boundary; não editar. Analisar, explicar ou diagnosticar não autoriza mutação, registro em arquivo nem remoção.
+- Alteração explícita: classificar um tipo primário, carregar o índice e executar o fluxo abaixo.
 
-- Versão: `0.23.1`. **BREAKING (v0.23.0 — saturação de intenção na §2; DEC-047/049; disco permanece v3; schema MCP v5 intacto):** `talos_verify_sprint_file` tem limiar `stub` vs `plan_ready`; todo sprint file declara `Intenção status` e `Selo da intenção` (linha ausente falha até `require: stub`); plano/direct exigem `plan_ready` (dois selos + §2 saturada + AC); sem `legacy_sealed` — sprint aberta em `doing`/`review` migra template 0.23 + L2. Histórico — **BREAKING (v0.21.0 — determinismo de boundary na slice; DEC-039; disco permanece v3; schema MCP v5 intacto):** git + ledger são a verdade mecânica; `files_changed` é a união git real sem filtro de `proofs[].files`; t0 capturado no start; `first_write` só heartbeat G12; G4 reprojeta/sobrescreve divergência de fórmula; role `reconcile` para recuperar JSON órfão ou adulterado; validador frio focado em produto (sem findings P1 de metadata); guard DR05 no `check-consistency` recusa skills 0.20 que ensinam baseline no first_write ou filtro de proofs. Histórico — **BREAKING (v0.18.0 — procedimento de execução; disco permanece v3; skills 0.17 de Write+7 checkpoints não servem o 0.18):** o writer do JSON de slice passou a ser o MCP (`talos_commit_state`); executor/repair enviam julgamento curto (`proofs[]`/`repair[]`) e recebem `state_path` + `state_sha256`; G12 público é só `first_write` + commit; `talos_lock_validator(start)` bloqueia slice escrita à mão (sha do ledger); guards DR01–04 no `check-consistency` falham skill de execução que reensinar schema/Write/events mortos/`acceptance_results`. Histórico — **BREAKING (v0.16.0 — artefatos pré-0.16 não são suportados; iniciar backlog/sprint novo):** procedência por linha: coluna `Origem` na §7.1 do sprint file e nas decisões do backlog, campo `origin` obrigatório em cada `AC-*` (`usuario`/`derivado:<path>`/`premissa`); `premissa` não sustenta aceite de sprint `Must`/`P0`; `derivado:<path>` resolvido contra o disco; §4 `Discussão` obrigatória; entrevista estruturada no `talos-backlog-generator` (scan do rascunho em memória + `question_prompt`; resposta vira decisão `Origem: usuario`); revisão fria interna à skill (mandato em `references/COLD_BACKLOG_REVIEW_PROMPT.md`, dispatch incondicional por `subagent_dispatch`, regate dos gates sobre artefatos corrigidos, relatório ao chamador). Schema MCP v5 e topologia sibling/G4/dispatch intactos. Histórico — **BREAKING (v0.15.0, D19 — artefatos pré-v0.15 não são suportados; iniciar backlog/sprint novo):** aceite de produto atômico (`AC-*` no §7.3 com YAML `acceptance`, hierarquia AC⊃EVAL, selo §7 write-once); state schema v3 sem reader v1/v2 (`acceptance_results`/`proof_refs` por AC, oráculo mecânico T-outcome); status `manual_validation_pending` (satisfaz DEP; handoff só em `done`); relatório `.talos/manual-validation/` com sync MCP (`talos_sync_manual_validation`); flag `revalidation_required` (coluna 15 do backlog — flag, não status); review crítica obrigatória via `policy_manifest.critical_review`. Histórico — patch `0.14.2`: spawn MCP via `/bin/bash` + `run.sh` em `args[]` (paths com espaço) e `description` citada no frontmatter dos agents. Patch `0.14.1`: `talos_select_next_sprint` sem `gerar_prd` (`sprint_interview`/`plan_handoff`/`plan_execute` derivados do §7+PLAN). Base `0.14.0` **BREAKING de contrato documental** (schema MCP v5 intacto; topologia sibling/G4/dispatch intactos): o artefato `PRD_*.md` deixa de existir como etapa do pipeline; o sprint file absorve o **contrato de produto** na §7 ("Contrato de produto (congelado)") com decisões D*, cenários UX e aceite binário; contrato `aprovado` é write-once protegido por `Selo do contrato: sha256:<hash>`; `talos-prd-interview` → `talos-sprint-interview`; `talos_scan_prd` → `talos_scan_acceptance`; `talos-sprint-prd-generator` removido; `BOUNDARY_PRD_PLAN.md` → `BOUNDARY_SPRINT_PLAN.md`; `verifyTemplateConformance` aceita só `plan`; roteamento `full`/`direct`/`execute` não emite `prd_generator`/`PRD_*.md`; validador frio nota código contra a §7 do sprint file (não contra PRD). Histórico anterior: topologia **sibling-only** (v0.7.0, BREAKING de contrato `talos_capabilities` schema v3→v5); v0.7.1–v0.8.1 patches de confiabilidade; v0.10.0 backlog 2 camadas; v0.11.0 workaround ZCode; v0.12.0 rebranding atlas→Talos; v0.13.0 host VS Code.
-- **Migração 0.13.x → 0.14.0:** (1) sprint files legados com §7 "Critérios candidatos para PRD" devem ganhar a §7 "Contrato de produto (congelado)" (decisões/UX/aceite vêm do PRD legado, se existir); (2) ao aprovar o contrato, gravar `Contrato status: aprovado` + `Selo do contrato` via `talos-sprint-interview` (ou regenerar selo com o utilitário de conformidade); (3) planos novos linkam `**Sprint file**` (não `**PRD**`); (4) PRDs existentes viram **insumo manual** para preencher a §7 e depois são arquivados fora do pipeline (não tocamos `archive/` automaticamente); (5) input tipo `prd` deixa de existir — trate como ideia/spec livre; (6) standalone passa a viver no **sprint file** (`Backlog link: Não aplicável (standalone)`), não em PRD.
-- **Rastreabilidade v1 (0.19.0 — aditiva, opt-in por sprint, sem breaking; schema MCP v5 e disco v3 inalterados):** sprint entra no modo com metadado `Traceability: v1`; REQs registrados no ledger `.talos/traceability/<backlog-slug>.json` pela tool única `talos_traceability` (`upsert`/`verify`/`receipt`/`record_metric`); `source_refs` opcional no YAML de cada `AC-*` do §7.3 alimenta o grafo REQ↔AC no conformance; gate de `done` em sprint v1 recusa REQ `included` com AC ligado `unproved` e marcadores inconsistentes em qualquer sentido (`alinhar_marcadores_traceability`); receipt de fechamento é projeção read-only do MCP (orquestrador só ecoa); sprint legacy (sem marcador) intocada. Regra D2: chamada sob demanda — nada no boot, nenhum hook, nenhum cache.
-- Nove hosts: **Claude Code**, **Cursor**, **Codex App**, **Antigravity (Gemini)**, **opencode**, **pi cli**, **zcode**, **VS Code** e **MinimaxCode**. MinimaxCode é integração via Plugin V1 do MinimaxCode (servers.mcp.json stdio + 5 custom agents em `~/.minimax/agents/talos-*/`), detectado por `TALOS_HOST=mavis` injetado no env do MCP. Perfil `self_evident` para PREREQ/JOIN; `dispatch_capability: "mutable"` (subagente nativo do MinimaxCode com Read/Write/Edit/Bash). Instalação oficial via `npx github:pauloborini/talos init minimaxcode` (aliases: `mavis` | `minimax-code` | `mmc`; honra `MINIMAX_DATA_DIR`; detectado automaticamente em `npx init all` pela presença de `~/.minimax/`); alternativa `build/install-host.sh mavis`. Ver `host-adapters.md`. Claude/Cursor/Codex via marketplace-from-source; opencode/pi/vscode via catálogo from-source (`hosts/`) com `build/install-host.sh` (1 comando). Antigravity instala via CLI em `~/.gemini/config/` (`init antigravity`; não vem de `hosts/`, que só tem opencode, pi, vscode e zcode). zcode via cache `~/.zcode/cli/plugins/cache/` (instalador `init zcode`, catálogo `hosts/zcode/`) + ativação `/plugins enable` no host. pi exige deps externas `pi-mcp-adapter` + `pi-subagents` (DEC-005). zcode é Claude Agent SDK compat — `Agent(subagent_type)` + `TodoWrite` + MCP stdio nativos; sem deps externas; detecção via `env:ZCODE_PLUGIN_ROOT` (injetado pelo `.zcode-plugin/plugin.json`); PREREQ/JOIN `self_evident`, mas execução exige gate DISPATCH com `dispatch_mutable:true` quando a mutação do subagente for verificada. VS Code é Copilot Chat nativo com `runSubagent` + `manage_todo_list` + MCP (`mcp.json`); perfil `self_evident`; dispatch_capability `mutable` confirmado em produção. **Limitação do host zcode (v0.11.0):** sub-agentes de plugin (`subagent_type: "talos-*"`) não herdam conexões MCP do processo pai — bug do host, não do plugin. Workaround no adapter zcode: `subagent_dispatch.fallback.enabled:true` faz o orquestrador despachar `general-purpose` (nativo, herda MCP) lendo `agents/<name>.md` como system prompt. Isolamento sibling (Gate G4) preservado — ainda é subagente irmão isolado. Schema v5 mantido (campo aditivo).
-- Camada de adapter: `talos_capabilities` (MCP, schema v5) detecta `claude`/`codex`/`opencode`/`pi`/`zcode`/`antigravity`/`vscode`/`mavis`/`generic` (data-driven em `HOST_ADAPTERS`); `validator_dispatch.join { sync, confidence, mechanism }` por host (gate JOIN).
-- Determinismo: gate PREREQ no `talos_preflight` é hard-fail (DEC-004). Hosts `must_report` (pi/generic) falham-fechado se o orquestrador não reportar `host_capabilities`; nativos (claude/codex/opencode/zcode/vscode) são `self_evident` para PREREQ/JOIN. Gate DISPATCH (DEC-008) bloqueia `full/direct/execute` em hosts com mutação desconhecida até `host_capabilities.dispatch_mutable:true`. `pass`/`pass_with_observations` do validador são terminais (só `fail` reabre loop).
-- Backlog pós-v0.10.0: mestre enxuto (índice estratégico) em `.talos/backlog/BACKLOG_MESTRE_<produto>.md`; sprint files vivos em `.talos/backlog/sprints/SNN_<slug>.md` (fonte primária de contexto por sprint + contrato de produto §7 congelado); template canônico de sprint: `packages/templates/SPRINT_TEMPLATE.md`; boundary: `packages/templates/BOUNDARY_SPRINT_PLAN.md`; plano: `packages/templates/PLAN_TEMPLATE.md` (linka Sprint file).
+| Tipo | Escopo dominante |
+|---|---|
+| `feature` | nova capacidade do pipeline: gate, tool MCP, skill, subagente |
+| `contract` | schema MCP, tool surface, formato de sprint file/state/aceite |
+| `shared` | helper ou script compartilhado entre skills e hosts |
+| `diagnostic` | investigação e correção de defeito |
+| `refactoring` | reorganização estrutural, packaging e bundles |
+| `testing` | criação/alteração/execução de testes |
 
-## Produto — decisões vigentes
+### 2. Contexto
 
-Vault: `_app-vault/`. Mapa: `_app-vault/INDEX.md`.
-Fonte de verdade: `_app-vault/docs/decisions/<dominio>.md` — cada regra sob `### DEC-NNN`.
+1. Ler `project-rules/index/<tipo>.md`. Não existe → parar e informar tipo, path ausente e ação necessária.
+2. Ler regras obrigatórias e todas as regras acionadas pelo boundary antes da primeira edição; referências somente quando o gatilho ocorrer. Lotes de até duas regras para reduzir contexto — o limite é por lote, nunca autorização para omitir regra acionada. `operational_rules.md` pode ser lida na validação e não conta nesse limite.
+3. **Parada obrigatória.** Regra lida que o pedido viola (segurança, permissões, Git mutável, commits, remoções, arquitetura) → não mutar código, config, prompts nem workspace; emitir o formato abaixo em CAIXA ALTA e PARAR o turno. Insistência na mesma mensagem não conta: só seguir após consentimento explícito na mensagem SEGUINTE, e então executar por inteiro sem reabrir debate, registrando no fechamento a regra flexibilizada e o consentimento. Aviso + execução no mesmo turno é proibido.
 
-Domínios deste projeto:
+```text
+⛔ PARADA: FERINDO REGRA DO PROJETO
+ Regra: <arquivo/norma + trecho>
+ Pedido: <1 linha>
+ Impacto: <1 linha>
+ Alternativa recomendada: <1 linha ou "nenhuma sem exceção">
+ Para continuar, responda explicitamente autorizando a exceção (ex.: "sim, continue com a exceção").
+```
 
-- `pipeline` — missão, invariantes, topologia, aceite e contrato de produto
-- `distribuicao` — install, hosts, packaging e versão
-- `determinismo` — gates PREREQ/DISPATCH, adapters e join
-- `artefatos` — backlog, sprint file, procedência 0.16 e rastreabilidade v1
+Decisão de produto não aciona PARADA — é confirmação no mesmo fluxo (`## Produto`).
 
-Regra de produto citada em qualquer outro lugar e ausente de `docs/decisions/` **não é regra** —
-é lacuna a promover.
+4. **Não presuma.** Assumption que muda o resultado → declare antes de aplicar. Duas leituras que geram trabalho materialmente diferente → apresente as duas, não escolha em silêncio. Caminho mais simples existe → diga, mesmo que o pedido aponte para outro. Só bloqueie (parar sem entregar nada) quando prosseguir sob qualquer hipótese seria inseguro ou inutilizaria o trabalho; caso contrário, entregue sob premissa declarada. Cautela escala com custo de errar (reversibilidade, blast radius), não com tamanho da tarefa.
+5. Emitir antes da edição:
 
-## Código — normas de implementação
+```text
+✅ Pré-confirmação: Tipo: <tipo> | Contexto: <índice + gatilhos>
+MDs: <arquivos>
+Escopo: <uma linha>
+```
 
-Normas ao codar: invariantes e regras operacionais neste `AGENTS.md`, `PATCH_PROCEDURE.md` e validadores em `build/`.
+6. Separar no registro da pré-confirmação: consulta de contexto, registro de defeito/candidato, alteração autorizada e aprovação. Registrar um defeito ou uma decisão de rota nunca concede permissão para escrever.
 
-Caso híbrido (a regra afeta o usuário **e** é validação de código): o **efeito observável pelo
-usuário final** mora em `_app-vault/docs/decisions/`; a **norma de como implementar** mora aqui e em `build/`. Referenciar `DEC-NNN` — nunca copiar o valor.
+### 3. Execução
 
-## Regras operacionais
+**Critério antes do código.** Traduza a tarefa em verificação: "adicionar validação" → o que prova input inválido rejeitado; "corrigir bug" → o que reproduz o defeito e o que prova a correção; "refatorar X" → o que estava verde continua verde. Critério fraco ("fazer funcionar") força ida e volta. Nem toda verificação é teste automatizado: `operational_rules.md` §Testes proíbe criar ou executar teste sem pedido explícito — sem pedido, o critério fecha em gate estático + evidência no código.
 
-- Antes de mergear refactor estrutural em `main`: rodar `build/check-consistency.mjs` + `claude plugin validate ./ --strict`.
-- `.claude-plugin/plugin.json` tem versão **concreta** sincronizada com `VERSION` (guard falha em drift).
-- Não tocar `archive/`, `raycast/` salvo pedido explícito.
-- Respostas, planos e artefatos em **pt-BR**.
+**Simplicidade.** Código mínimo que resolve, nada especulativo:
 
+- Sem feature além do pedido; não ampliar escopo silenciosamente.
+- Sem abstração para uso único.
+- Sem "flexibilidade" ou "configurabilidade" não pedida.
+- Sem tratamento de erro para cenário impossível.
+- 200 linhas que cabem em 50 → reescreva.
+
+Teste: um sênior chamaria isso de overengineering? Se sim, simplifique.
+
+**Mudança cirúrgica.** Toque só no necessário; limpe só a sua própria sujeira:
+
+- Não "melhore" código, comentário ou formatação adjacente.
+- Não refatore o que não está quebrado.
+- Siga o estilo existente, mesmo discordando dele.
+- Código morto pré-existente: aponte, não delete.
+- Órfão criado pela sua mudança (import, var, fn): remova.
+- Bloqueador pré-existente **dentro do boundary** pode ser corrigido. Achado adjacente é reportado, não corrigido.
+
+Teste: toda linha alterada rastreia direto ao pedido do usuário.
+
+**Invariantes.** Preservar comportamentos aprovados, sobretudo auth, guards, permissões e redirects, salvo mudança explícita. Código atual é evidência: regra que descreve API/estado inexistente exige verificação antes de ser reproduzida; mudança funcional ambígua exige confirmação.
+
+### 4. Validação
+
+- Aplicar `project-rules/rules/operational_rules.md`: gates, testes, baseline e fechamento são normados lá — este arquivo não os repete.
+- Diff em `packages/**`, `build/**`, `agents/**` ou `hooks/**`: `node build/check-consistency.mjs` + `node --test packages/mcp-server/server.test.js`. Diff em `README`/`COMMANDS`/docs públicos: `node build/check-public-docs.mjs`. Diff em packaging/hosts: `bash build/build-plugins.sh` e commit dos bundles. Fecho de release: `bash build/test-all.sh` (suíte completa — espelha o CI).
+- Fechar contra o critério definido em `### 3. Execução`, não contra impressão de pronto.
+
+## Precedência interna
+
+1. `AGENTS.md`
+2. `project-rules/index/<tipo>.md`
+3. `project-rules/rules/*.md`
+4. `project-rules/reference/*`
+5. `project-rules/contracts/*`
+
+Contratos e código comprovam o estado real. Conflito factual com prosa potencialmente obsoleta deve ser evidenciado e resolvido; não forçar implementação incorreta para "obedecer" texto stale.
+
+Regras de engenharia são autocontidas em `AGENTS.md` e `project-rules/`: índice/regra/referência não pode depender de arquivo externo para completar uma decisão de engenharia. Consultar uma `DEC-NNN` de produto ou o protocolo local do vault é permitido e não duplica seu valor. PRD/spec externa informa requisito de produto, mas não substitui regra estrutural; invariante reutilizável deve ser registrado em `project-rules/`.
+
+## Estrutura do repositório e documentação
+
+
+
+- `packages/` — fonte canônica do produto: `mcp-server/` (núcleo portável, tools e gates), `skills/` (skills `talos-*`), `orchestrator/` (orquestrador + reference de hosts), `templates/` (templates canônicos de sprint, plano, backlog e relatório).
+- `agents/` — definições dos subagentes despachados (validator, executores, review, repairs). `hooks/` — hooks do plugin. `plugin-manifests/` — manifestos por host.
+- `build/` — tooling e validadores: `check-consistency.mjs`, `check-public-docs.mjs`, `build-plugins.sh`, `bump-version.mjs`, `smoke-hosts.mjs`, `conformance-matrix.mjs`, `smoke-install.mjs` e os guards `dr-guard.mjs`, `loop-guard.mjs`, `skill-refs-guard.mjs`.
+- `hosts/` e `plugins/talos/` — **bundles gerados** por `build/build-plugins.sh` (nunca editar à mão). `dist/` — artefatos `.plugin` + `SHA256SUMS` (gitignored).
+- `docs/` — assets públicos (logo referenciado pelos READMEs) e material de outras ferramentas em processo. `raycast/` — extensão do produto, fora do pipeline.
+- Versão: `0.23.1` — `VERSION` é a fonte; `build/check-consistency.mjs` recusa drift entre `VERSION`, manifests, bundles e este contrato (DEC-018).
+- `PATCH_PROCEDURE.md` — procedimento obrigatório de patch, bump, regeneração e release (raiz, público). As normas de engenharia estão em `project-rules/rules/operational_rules.md`; o runbook completo fica no procedimento.
+- `project-rules/` — normas de engenharia:
+  - `index/feature.md`, `index/contract.md`, `index/shared.md`, `index/diagnostic.md`, `index/refactoring.md`, `index/testing.md` — roteamento por tipo de tarefa;
+  - `rules/architecture_rules.md` — estrutura, boundaries, invariantes do produto e caso híbrido;
+  - `rules/operational_rules.md` — gates por boundary, regeneração, bump/release, stop conditions e fechamento.
+- Produto vigente: `_app-vault/docs/decisions/` (`### DEC-NNN`); mapa: `_app-vault/INDEX.md`; protocolo local de decisões: `_app-vault/docs/TEMPLATES/DECISION_PROTOCOL.md`. Processo: `.app-work/`; mapa e regra de organização: `.app-work/INDEX.md`. Cada pasta do vault/processo tem seu próprio índice/README — não duplicar estrutura de pastas aqui. Templates: `_app-vault/docs/TEMPLATES/`.
+- Não criar docs de produto em `project-rules/`. `reference/` contém somente exemplo, catálogo ou configuração estrutural acionada por índice.
+
+## Produto
+
+- Verdade vigente só em `_app-vault/docs/decisions/` (cláusulas `### DEC-NNN`). `INDEX.md` é mapa — ponteiro, não conteúdo.
+- `.app-work/` é processo: nunca insumo de regra. Responsabilidades: `_app-vault/` guarda produto/decisão (via `INDEX.md`); `.app-work/` guarda execução/processo (via `INDEX.md`).
+- Pedido que **contraria** decisão vigente → avisar antes de aplicar: `⚠️ Decisão anterior: <valor> (<arquivo:linha>) → pedido: <novo>. Também afetado: <o que mais depende disso>. Confirma?` Confirmado → alterar o texto sob a `DEC-NNN` existente (**o ID não muda**) e acrescentar a nota de rastro conforme o protocolo local em `_app-vault/docs/TEMPLATES/DECISION_PROTOCOL.md`. Negado → não aplicar.
+- Antes de escrever decisões, ler o protocolo local acima, inclusive inventário de IDs vivos/removidos e atualização do índice. Pedido que **acrescenta sem contrariar** → sem alerta e sem nota: cláusula nova com `DEC-NNN` = `max+1`, nunca reusar número.
+- Não relitigar decisão fechada.
+- Defeito encontrado ou relatado (UI, comportamento, regressão) → relatar na resposta. Registrar em `.app-work/issues/` (`ISSUE-NNN`; protocolo no `README.md` da pasta) somente quando a tarefa autorizar essa escrita de processo. Diagnóstico ou discussão sem alteração explícita não autoriza criar issue. `.app-work/` continua proibido como insumo de regra.
+
+## Regras universais
+
+- Idioma de respostas e documentos: PT-BR, Markdown, direto, claro e explicativo (português simples, sem jargão excessivo, sem analogias).
+- Nunca expor segredo, credencial, token, URL privada ou PII.
+- `.env*` real fora do Git; `.env.example` pode ser versionado somente com placeholders.
+- Antes de remoção autorizada: listar alvos, dependências e efeitos; para remoção de decisão, aplicar também o protocolo local do vault. Remoção derivada fora do recorte aprovado exige nova confirmação.
+- `packages/**` é a **fonte canônica**; `hosts/**` e `plugins/talos/**` são espelhos gerados — editar espelho à mão é drift. `archive/` e `raycast/` não se tocam sem pedido explícito..

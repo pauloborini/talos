@@ -1668,13 +1668,13 @@ test('applyIntentField: headings do SPRINT_TEMPLATE (SF-\\*/AS-\\*) upsertam', (
     recusa: 'o efeito observável falhar',
     afericao: 'T*=0',
   });
-  assert.match(updated, /\*\*Eixo do ataque:\*\* `ux` — usuario/);
+  assert.match(updated, /\*\*(?:Eixo do ataque|Attack axis):\*\* `ux` — (?:usuario|user)/);
   assert.match(updated, /- \*\*SF-01\*\* — superfície saturada — usuario/);
   assert.match(updated, /- \*\*AS-01\*\* — anti-escopo concreto — usuario/);
   const sfIdx = updated.indexOf('- **SF-01** — superfície saturada');
-  const asHead = updated.indexOf('**Anti-escopo tentador');
+  const asHead = Math.max(updated.indexOf('**Anti-escopo tentador'), updated.indexOf('**Tempting anti-scope'));
   assert.ok(sfIdx >= 0 && asHead > sfIdx, 'SF novo deve ficar no bloco Superfícies, antes do heading AS');
-  assert.match(updated, /\*\*Aferição T\*:\*\* T\*=0/);
+  assert.match(updated, /\*\*(?:Aferição T\*|T\* verification):\*\* T\*=0/);
 });
 
 test('talos_verify_sprint_file: saturada sem selo em doing bloqueia (sem atalho legacy)', () => {
@@ -2079,10 +2079,10 @@ test('talos_verify_sprint_file: require inválido → -32602', () => {
 
 test('SPRINT_TEMPLATE: §7 contrato congelado com 7.1/7.2/7.3 e YAML acceptance AC-* (AC-1.1.1)', () => {
   const template = fs.readFileSync(SPRINT_TEMPLATE_PATH, 'utf8');
-  assert.match(template, /^## 7\. Contrato de produto \(congelado\)\s*$/m);
-  assert.match(template, /^### 7\.1 Decisões de produto \(D\*\)\s*$/m);
-  assert.match(template, /^### 7\.2 Cenários UX\s*$/m);
-  assert.match(template, /^### 7\.3 Aceite binário\s*$/m);
+  assert.match(template, /^## 7\. (?:Contrato de produto \(congelado\)|Product contract \(frozen\))\s*$/m);
+  assert.match(template, /^### 7\.1 (?:Decisões de produto \(D\*|Product decisions \(D\*)\)\s*$/m);
+  assert.match(template, /^### 7\.2 (?:Cenários UX|UX scenarios)\s*$/m);
+  assert.match(template, /^### 7\.3 (?:Aceite binário|Binary acceptance)\s*$/m);
   assert.match(template, /^```ya?ml\s*$/m);
   assert.match(template, /acceptance:\s*\n\s*-\s+id:\s+AC-\d+/m);
   assert.match(template, /evidence:\s*\n\s+required:/m);
@@ -2095,18 +2095,18 @@ test('SPRINT_TEMPLATE: §7 contrato congelado com 7.1/7.2/7.3 e YAML acceptance 
 
 test('SPRINT_TEMPLATE: §1 contém Contrato status (AC-1.1.2)', () => {
   const template = fs.readFileSync(SPRINT_TEMPLATE_PATH, 'utf8');
-  assert.match(template, /^\|\s*Contrato status\s*\|\s*\[draft \/ aprovado\]\s*\|/m);
+  assert.match(template, /^\|\s*(?:Contrato status|Contract status)\s*\|\s*\[(?:draft \/ aprovado|draft \/ approved)\]\s*\|/m);
 });
 
 test('SPRINT_TEMPLATE: §1 intenção + §2 IDs SF/AS/R1 (DEC-040)', () => {
   const template = fs.readFileSync(SPRINT_TEMPLATE_PATH, 'utf8');
-  assert.match(template, /^\|\s*Intenção status\s*\|\s*\[rascunho \/ saturada\]\s*\|/m);
-  assert.match(template, /^\|\s*Selo da intenção\s*\|\s*\[pendente até saturação\]\s*\|/m);
-  assert.match(template, /\*\*Eixo do ataque:\*\*\s*`dados`\s*\\\|\s*`ux`/);
+  assert.match(template, /^\|\s*(?:Intenção status|Intent status)\s*\|\s*\[(?:rascunho \/ saturada|draft \/ saturated)\]\s*\|/m);
+  assert.match(template, /^\|\s*(?:Selo da intenção|Intent seal)\s*\|\s*\[(?:pendente até saturação|pending until saturation)\]\s*\|/m);
+  assert.match(template, /\*\*(?:Eixo do ataque|Attack axis):\*\*\s*`(?:dados|data)`\s*\\\|\s*`ux`/);
   assert.match(template, /\*\*SF-01\*\*/);
   assert.match(template, /\*\*AS-01\*\*/);
   assert.match(template, /\*\*R1:\*\*/);
-  assert.match(template, /Intenção saturada \(selo §1\)/);
+  assert.match(template, /(?:Intenção saturada \(selo §1\)|Saturated intent \(§1 seal\))/);
   assert.doesNotMatch(template, /INTENT\.md/);
 });
 
@@ -2130,25 +2130,27 @@ test('SPRINT_TEMPLATE: exemplo §7.3 parseia source_refs em todo AC (Plano F —
 
 test('SPRINT_TEMPLATE: numeração 1–16 preservada; §9/§10/§12/§13/§16 intactas (AC-1.1.3)', () => {
   const template = fs.readFileSync(SPRINT_TEMPLATE_PATH, 'utf8');
-  for (const heading of [
-    '## 1. Metadados',
-    '## 2. Objetivo e valor',
-    '## 3. Escopo da sprint',
-    '## 4. Contexto e fontes',
-    '## 5. Dependências e bloqueios',
-    '## 6. Decisões da sprint',
-    '## 7. Contrato de produto (congelado)',
-    '## 8. Definition of Ready',
-    '## 9. Eval manifest',
-    '## 10. Policy manifest',
-    '## 11. Guia e sensores',
-    '## 12. Evidence-to-claim',
-    '## 13. PLAN',
-    '## 14. Execução e validação',
-    '## 15. Aprendizados e handoff para próximas sprints',
-    '## 16. Histórico',
-  ]) {
-    assert.match(template, new RegExp(`^${heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`, 'm'));
+  const headings = [
+    ['## 1. Metadados', '## 1. Metadata'],
+    ['## 2. Objetivo e valor', '## 2. Goal and value', '## 2. Purpose and value'],
+    ['## 3. Escopo da sprint', '## 3. Sprint scope'],
+    ['## 4. Contexto e fontes', '## 4. Context and sources'],
+    ['## 5. Dependências e bloqueios', '## 5. Dependencies and blockers'],
+    ['## 6. Decisões da sprint', '## 6. Sprint decisions'],
+    ['## 7. Contrato de produto (congelado)', '## 7. Product contract (frozen)'],
+    ['## 8. Definition of Ready'],
+    ['## 9. Eval manifest'],
+    ['## 10. Policy manifest'],
+    ['## 11. Guia e sensores', '## 11. Guide and sensors'],
+    ['## 12. Evidence-to-claim'],
+    ['## 13. PLAN'],
+    ['## 14. Execução e validação', '## 14. Execution and validation'],
+    ['## 15. Aprendizados e handoff para próximas sprints', '## 15. Learnings and handoff for next sprints'],
+    ['## 16. Histórico', '## 16. History'],
+  ];
+  for (const group of headings) {
+    const matched = group.some((h) => new RegExp(`^${h.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`, 'm').test(template));
+    assert.ok(matched, `template sem heading ${group[0]}`);
   }
   assert.doesNotMatch(template, /^## 7\. Critérios candidatos para PRD\s*$/m);
 });
@@ -2542,7 +2544,7 @@ test('talos_verify_sprint_file: aprovado intacto → passed plan_ready com ambos
 
 test('SPRINT_TEMPLATE: §1 contém Selo do contrato (AC-2.2.3)', () => {
   const template = fs.readFileSync(SPRINT_TEMPLATE_PATH, 'utf8');
-  assert.match(template, /^\|\s*Selo do contrato\s*\|\s*\[pendente até aprovação\]\s*\|/m);
+  assert.match(template, /^\|\s*(?:Selo do contrato|Contract seal)\s*\|\s*\[(?:pendente até aprovação|pending until approval)\]\s*\|/m);
 });
 
 test('talos_verify_sprint_file: premissa_count numérico em passed e blocked (AC-01.4.2)', () => {
@@ -3428,10 +3430,10 @@ test('BACKLOG_MESTRE_TEMPLATE: §5.1 e DoR alinhados a manual_validation_pending
   assert.match(template, /backlog → ready → doing → review → manual_validation_pending → done/);
   assert.match(template, /\| manual_validation_pending \|/);
   // DoR: dependências aceitam done OU manual_validation_pending (não só done).
-  const dorLine = template.split('\n').find((line) => line.includes('Dependências anteriores'));
+  const dorLine = template.split('\n').find((line) => line.includes('Dependências anteriores') || line.includes('Previous dependencies'));
   assert.ok(dorLine, 'DoR global com linha de dependências anteriores');
   assert.match(dorLine, /manual_validation_pending/);
-  assert.doesNotMatch(dorLine, /^\- \[ \] Dependências anteriores `done` ou explicitamente não bloqueantes\.\s*$/);
+  assert.doesNotMatch(dorLine, /^\- \[ \] (?:Dependências anteriores|Previous dependencies) `done` (?:ou explicitamente não bloqueantes|or explicitly non-blocking)\.\s*$/);
 });
 
 test('update_sprint_status done emite handoff quando AC proved sem M (AC-3.2.1 / CN1)', () => {
@@ -4074,8 +4076,8 @@ test('MANUAL_VALIDATION_REPORT_TEMPLATE: estrutura canônica do relatório (Plan
     '../templates/MANUAL_VALIDATION_REPORT_TEMPLATE.md',
   );
   const template = fs.readFileSync(templatePath, 'utf8');
-  assert.match(template, /## Pendências/);
-  assert.match(template, /\| ID \| Sprint \/ AC \| Severidade \| Status \| Cenário \| Ambiente \| Evidência esperada \| Resultado \/ justificativa \|/);
+  assert.match(template, /## (?:Pendências|Pending validations|Pendencies|Pending items)/);
+  assert.match(template, /\| ID \| Sprint \/ AC \| (?:Severidade|Severity) \| Status \| (?:Cenário|Scenario) \| (?:Ambiente|Environment) \| (?:Evidência esperada|Expected evidence) \| (?:Resultado \/ justificativa|Result \/ justification) \|/);
   assert.match(template, /MV-S01-AC-002/);
   assert.match(template, /fix_manual_validation_report/);
 });
@@ -4619,8 +4621,8 @@ test('BACKLOG_MESTRE_TEMPLATE: coluna Revalidação após State no fim do índic
   const template = fs.readFileSync(templatePath, 'utf8');
   const headerLine = template.split('\n').find((line) => /^\| ID \| Sprint \|/.test(line));
   assert.ok(headerLine, 'header do registro de sprints');
-  assert.match(headerLine, /\| State \| Revalidação \|\s*$/, 'Revalidação é a última coluna (índice 15)');
-  assert.match(template, /Revalidação \(flag, não status\)/);
+  assert.match(headerLine, /\| State \| (?:Revalidação|Revalidation) \|\s*$/, 'Revalidação é a última coluna (índice 15)');
+  assert.match(template, /(?:Revalidação|Revalidation) \(flag, (?:não status|not status)\)/);
   // flag não vira status na cadeia §5.1.
   assert.doesNotMatch(template, /→ revalidation_required →/);
   assert.doesNotMatch(template, /manual_validation_pending → revalidation_required/);
@@ -4632,8 +4634,8 @@ test('SPRINT_TEMPLATE: metadado Revalidação no §1 (D2)', () => {
     '../templates/SPRINT_TEMPLATE.md',
   );
   const template = fs.readFileSync(templatePath, 'utf8');
-  assert.match(template, /^\| Revalidação \|/m);
-  assert.match(template, /cone de revalidação, D2\/D20/);
+  assert.match(template, /^\|\s*(?:Revalidação|Revalidation)\s*\|/m);
+  assert.match(template, /(?:cone de revalidação|revalidation cone), D2\/D20/);
 });
 
 test('talos_classify_input: plano → banner roteia com modo=execute (T07)', () => {
