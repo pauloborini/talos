@@ -341,10 +341,12 @@ if (versionFile != null) {
     }
   }
 
+  // CLAUDE.md é ponte, nunca contrato paralelo: não carrega versão nem conteúdo próprio.
+  // A versão vigente mora em AGENTS.md (conferida acima) e chega a quem só lê CLAUDE.md pela ponte.
   const claudeMd = read('CLAUDE.md');
   if (claudeMd != null) {
-    if (!claudeMd.includes(`Versão: \`${want}\``)) {
-      errors.push(`Drift de versão em CLAUDE.md: deve conter "Versão: \`${want}\`"`);
+    if (claudeMd.trim() !== '@AGENTS.md') {
+      errors.push('CLAUDE.md deve ser exatamente a ponte "@AGENTS.md" (contrato único em AGENTS.md)');
     }
   }
 }
