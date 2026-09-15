@@ -480,9 +480,21 @@ if (orchestratorSkill != null) {
 
 const sprintTemplate = read('packages/templates/SPRINT_TEMPLATE.md');
 if (sprintTemplate != null) {
-  for (const token of ['eval_manifest:', 'policy_manifest:', 'Evidence-to-claim', 'Backlog mestre', 'State / evidência', 'critical_review:', 'Intenção status', 'Selo da intenção', 'SF-01', 'R1:']) {
-    if (!sprintTemplate.includes(token)) {
-      errors.push(`sprint-template-regressão: SPRINT_TEMPLATE.md não contém '${token}'`);
+  const tokenGroups = [
+    ['eval_manifest:'],
+    ['policy_manifest:'],
+    ['Evidence-to-claim'],
+    ['Backlog mestre', 'Master backlog'],
+    ['State / evidência', 'State / evidence'],
+    ['critical_review:'],
+    ['Intenção status', 'Intent status'],
+    ['Selo da intenção', 'Intent seal'],
+    ['SF-01'],
+    ['R1:'],
+  ];
+  for (const group of tokenGroups) {
+    if (!group.some((t) => sprintTemplate.includes(t))) {
+      errors.push(`sprint-template-regressão: SPRINT_TEMPLATE.md não contém '${group[0]}'`);
     }
   }
 }
