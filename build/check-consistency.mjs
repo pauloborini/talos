@@ -261,6 +261,7 @@ if (versionFile != null) {
   const want = versionFile.trim();
   for (const rel of [
     '.claude-plugin/plugin.json',
+    '.cursor-plugin/plugin.json',
     'plugins/talos/.codex-plugin/plugin.json',
     'package.json',
     // Fonte de versão lida pelo server em runtime (SERVER_DIR/package.json):
@@ -268,11 +269,21 @@ if (versionFile != null) {
     'packages/mcp-server/package.json',
   ]) {
     const raw = read(rel);
-    if (raw == null) continue;
+    if (raw == null) {
+      errors.push(`ausente: ${rel}`);
+      continue;
+    }
     let got = null;
     try { got = JSON.parse(raw).version; } catch { errors.push(`${rel}: JSON inválido`); continue; }
     if (got != null && got !== want) {
       errors.push(`Drift de versão: ${rel} (${got}) != VERSION (${want})`);
+    }
+    if (rel === '.cursor-plugin/plugin.json') {
+      let logo = null;
+      try { logo = JSON.parse(raw).logo; } catch { /* já reportado */ }
+      if (typeof logo === 'string' && logo !== '' && !/^https?:\/\//i.test(logo) && read(logo) == null) {
+        errors.push(`.cursor-plugin/plugin.json: logo ausente (${logo})`);
+      }
     }
   }
   // Catálogos from-source e mirror de packaging carregam VERSION crua.

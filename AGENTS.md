@@ -107,8 +107,9 @@ Regras de engenharia são autocontidas em `AGENTS.md` e `project-rules/`: índic
 - `agents/` — definições dos subagentes despachados (validator, executores, review, repairs). `hooks/` — hooks do plugin. `plugin-manifests/` — manifestos por host.
 - `build/` — tooling e validadores: `check-consistency.mjs`, `check-public-docs.mjs`, `build-plugins.sh`, `bump-version.mjs`, `smoke-hosts.mjs`, `conformance-matrix.mjs`, `smoke-install.mjs` e os guards `dr-guard.mjs`, `loop-guard.mjs`, `skill-refs-guard.mjs`.
 - `hosts/` e `plugins/talos/` — **bundles gerados** por `build/build-plugins.sh` (nunca editar à mão). `dist/` — artefatos `.plugin` + `SHA256SUMS` (gitignored).
+- `.claude-plugin/` e `.cursor-plugin/` — manifests from-source (Claude Code / Cursor Marketplace); não são bundles gerados.
 - `docs/` — assets públicos (logo referenciado pelos READMEs) e material de outras ferramentas em processo. `raycast/` — extensão do produto, fora do pipeline.
-- Versão: `0.23.1` — `VERSION` é a fonte; `build/check-consistency.mjs` recusa drift entre `VERSION`, manifests, bundles e este contrato (DEC-018).
+- Versão: `0.23.2` — `VERSION` é a fonte; `build/check-consistency.mjs` recusa drift entre `VERSION`, manifests, bundles e este contrato (DEC-018).
 - `PATCH_PROCEDURE.md` — procedimento obrigatório de patch, bump, regeneração e release (raiz, público). As normas de engenharia estão em `project-rules/rules/operational_rules.md`; o runbook completo fica no procedimento.
 - `project-rules/` — normas de engenharia:
   - `index/feature.md`, `index/contract.md`, `index/shared.md`, `index/diagnostic.md`, `index/refactoring.md`, `index/testing.md` — roteamento por tipo de tarefa;

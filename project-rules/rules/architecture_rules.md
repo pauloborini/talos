@@ -22,7 +22,7 @@ Definir a estrutura do produto, os boundaries entre fonte e artefato gerado, e o
 2. **Núcleo portável no MCP, variação de host no adapter.** Skills não citam tool nativa do cliente; a variação vive em `talos_capabilities` (runtime), `host-adapters.md` (doc) e no manifesto de packaging. O adapter descreve, não roteia (DEC-003, DEC-007).
 3. **Determinismo > alcance.** Host sem pré-requisito essencial (subagente + MCP) é rejeitado no preflight, não degradado. Warning não substitui garantia (DEC-004, DEC-008).
 4. **Não quebrar o que já funciona.** Toda expansão preserva o comportamento anterior; regressão é falha, não trade-off. Breaking change exige bump consciente e caminho de migração documentado (DEC-009).
-5. **Versão concreta e única.** `VERSION`, `package.json`, `packages/mcp-server/package.json`, `.claude-plugin/plugin.json` e os manifests concretos dos bundles carregam a mesma versão; drift é falha de gate (DEC-018).
+5. **Versão concreta e única.** `VERSION`, `package.json`, `packages/mcp-server/package.json`, `.claude-plugin/plugin.json`, `.cursor-plugin/plugin.json` e os manifests concretos dos bundles carregam a mesma versão; drift é falha de gate (DEC-018).
 6. **Contrato antes de código.** Mudança de formato de sprint file, de state ou de tool MCP é mudança de contrato: exige a `DEC-NNN` correspondente no vault antes da implementação.
 
 ## Caso híbrido (regra de produto × norma de implementação)

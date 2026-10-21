@@ -10,13 +10,16 @@ Mudanças:
 - **Mudança de procedimento:** `build/check-consistency.mjs` passa a exigir a linha `Versão: \`X.Y.Z\`` **só** em `AGENTS.md` e confere `CLAUDE.md` como ponte exata; `build/bump-version.mjs` deixa de substituir a linha no `CLAUDE.md` — a âncora antiga faria o próximo bump falhar.
 - `DEC-050` promove a decisão de marca (Atlas Agents é o produto; Argus/Talos/Athena são módulos com codinome próprio) para o domínio novo `marca`; o `INDEX.md` do vault passa a derivar `## Por feature` dos campos `Afeta:`.
 - Resíduo vivo do desenho de state promovido a specs: `SPEC_STATE_EVENTOS_RESEAL.md`, `SPEC_SPRINT_PREF.md` e `ECOSSISTEMA_RENAMES.md`.
+- `.npmignore` barra `project-rules/` (contrato de mantenedor, como `AGENTS.md`) e o estado local de agente/ferramenta (`.hephaestus/`, `.zcode/`, `.commandcode/`) — o tarball do `npx` deixa de distribuí-los.
 
 Impacto:
 - Bump futuro ancora a versão em `AGENTS.md`; `CLAUDE.md` não carrega versão própria.
 - Processo do repo passa a viver só no espelho local (`.app-work/`), coerente com o ignore da raiz.
+- Tarball do `npx` deixa de levar contrato de mantenedor e estado local de agente; a limpeza só alcança o usuário quando o bump do próximo patch publicar.
 
 Pendente para o próximo patch (packaging):
-- `project-rules/` ainda entra no tarball do `npx` — falta a linha no `.npmignore`, com bump próprio.
+- O fix do `.npmignore` já está na árvore; falta o **bump** que o publica — mudança de packaging não sai sem versão nova.
+- Manifest Cursor Marketplace (`.cursor-plugin/plugin.json`, logo `docs/assets/talos-logo.png`) entra no mesmo bump; `check-consistency`/`bump-version` passam a sincronizar a versão desse arquivo.
 
 
 ## 0.23.1 - 2026-09-06

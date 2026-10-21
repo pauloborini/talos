@@ -16,12 +16,18 @@ node_modules/
 .talos/
 .claude/settings.local.json
 
+# --- estado local de agentes/ferramentas do host (nunca vai ao tarball) ---
+.hephaestus/
+.zcode/
+.commandcode/
+
 # --- catálogo marketplace / distribuição primária (não usado pelo CLI npm) ---
 archive/
 raycast/
 reports/
 _app-vault/
 .claude-plugin/
+.cursor-plugin/
 .agents/
 plugin-manifests/
 hooks/
@@ -52,6 +58,7 @@ CLAUDE.md
 CHANGELOG.md
 COMMANDS.md
 PATCH_PROCEDURE.md
+project-rules/
 
 # --- catálogos top-level de agents/ (o CLI usa hosts/<host>/.opencode/agents
 #     e hosts/<host>/.pi/agents, que ficam dentro de hosts/) ---
