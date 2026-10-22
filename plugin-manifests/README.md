@@ -1,6 +1,7 @@
 Manifests/configs fonte por host. A versão concreta é injetada do `VERSION` na raiz pelo build.
 
-- `claude/` — manifest Claude Code; Cursor usa o mesmo artefato Claude.
+- `claude/` — manifest Claude Code; o zip `talos-claude.plugin` continua compartilhado com Cursor.
+- Cursor Marketplace (from-source na raiz): `.cursor-plugin/plugin.json` — não é gerado por este diretório.
 - `codex/` — manifest Codex App.
 - `opencode/` — config/catálogo from-source para opencode.
 - `pi/` — config/catálogo from-source para pi cli.

@@ -38,6 +38,7 @@ const edits = [
   ['package.json', (t) => replaceOnce(t, `"version": "${current}"`, `"version": "${next}"`, 'package.json')],
   ['packages/mcp-server/package.json', (t) => replaceOnce(t, `"version": "${current}"`, `"version": "${next}"`, 'mcp-server/package.json')],
   ['.claude-plugin/plugin.json', (t) => replaceOnce(t, `"version": "${current}"`, `"version": "${next}"`, '.claude-plugin/plugin.json')],
+  ['.cursor-plugin/plugin.json', (t) => replaceOnce(t, `"version": "${current}"`, `"version": "${next}"`, '.cursor-plugin/plugin.json')],
   // Prosa de versão atual — replace-all é seguro (sem changelog embutido).
   ['README.md', (t) => replaceAll(t, esc, next, 'README.md')],
   ['README.pt-BR.md', (t) => replaceAll(t, esc, next, 'README.pt-BR.md')],

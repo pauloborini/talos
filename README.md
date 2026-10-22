@@ -3,11 +3,11 @@
   <img src="docs/assets/talos-logo.png" alt="Talos" width="200" height="200">
 </p>
 
-# Talos v0.23.1
+# Talos v0.23.2
 
 **Talos** is a deterministic development pipeline: product contract (§7) → plan → isolated execution → cold validation. It ships as one public, free plugin for Claude Code, Cursor, Codex App, Antigravity, ZCode, OpenCode, Pi CLI, VS Code, and MinimaxCode.
 
-**Version:** [`VERSION`](VERSION) (`0.23.1`) · **Command reference:** [COMMANDS.md](COMMANDS.md) · **Portuguese guide:** [README.pt-BR.md](README.pt-BR.md)
+**Version:** [`VERSION`](VERSION) (`0.23.2`) · **Command reference:** [COMMANDS.md](COMMANDS.md) · **Portuguese guide:** [README.pt-BR.md](README.pt-BR.md)
 
 ## Install
 
@@ -32,6 +32,8 @@ Claude Code and Cursor can also use their native marketplace:
 claude plugin marketplace add pauloborini/talos
 claude plugin install talos@talos
 ```
+
+Cursor Marketplace listing uses `.cursor-plugin/plugin.json` at the repo root (logo: `docs/assets/talos-logo.png`). The Claude install path above still works.
 
 For Codex, use `init codex`: it installs the plugin and the custom `talos-*` agents needed for isolated dispatch. Full install, update, uninstall, paths, and troubleshooting are in [COMMANDS.md](COMMANDS.md).
 
@@ -96,7 +98,7 @@ Automated proof can end at `manual_validation_pending` when a human smoke check 
 
 ## Contract, acceptance, and manual validation
 
-Talos v0.23.1 rejects pre-v0.16 artifacts: start a new backlog and sprint rather than migrating an incomplete legacy contract. A sprint's §7 is the frozen product contract. Each acceptance criterion (`AC-*`) has an `origin` (`usuario`, `derivado:<path>`, or `premissa`); an assumption cannot support a Must/P0 acceptance criterion.
+Talos v0.23.2 rejects pre-v0.16 artifacts: start a new backlog and sprint rather than migrating an incomplete legacy contract. A sprint's §7 is the frozen product contract. Each acceptance criterion (`AC-*`) has an `origin` (`usuario`, `derivado:<path>`, or `premissa`); an assumption cannot support a Must/P0 acceptance criterion.
 
 An execution state uses schema v3. `done` requires every `AC-*` to be proved and no pending manual check. When automated proof is complete but a human smoke check remains, Talos records `manual_validation_pending`: dependencies may proceed, but no handoff is emitted. Complete the report in `.talos/manual-validation/` with `talos_sync_manual_validation`; it either promotes the sprint to `done` or blocks the source when the smoke check fails.
 
