@@ -5,9 +5,9 @@
 
 # Talos
 
-Plugin **Talos** v0.23.1 — pipeline determinístico (contrato §7 → plano → execução → validação) com skills `talos-*`, templates e MCP. Um pacote, nove hosts: **Claude Code**, **Cursor**, **Codex App**, **Antigravity (Gemini)**, **ZCode**, **OpenCode**, **Pi CLI**, **VS Code** e **MinimaxCode**.
+Plugin **Talos** v0.23.2 — pipeline determinístico (contrato §7 → plano → execução → validação) com skills `talos-*`, templates e MCP. Um pacote, nove hosts: **Claude Code**, **Cursor**, **Codex App**, **Antigravity (Gemini)**, **ZCode**, **OpenCode**, **Pi CLI**, **VS Code** e **MinimaxCode**.
 
-**Versão:** [`VERSION`](VERSION) (`0.23.1`) · **Repo:** https://github.com/pauloborini/talos
+**Versão:** [`VERSION`](VERSION) (`0.23.2`) · **Repo:** https://github.com/pauloborini/talos
 
 ## Hosts
 
@@ -23,7 +23,7 @@ Plugin **Talos** v0.23.1 — pipeline determinístico (contrato §7 → plano �
 | VS Code | Instalador from-source (`init vscode`) → `~/.vscode-talos/` (global) ou `.vscode/` (projeto) | `talos-vscode.plugin` | — |
 | MinimaxCode | Instalador from-source (`init minimaxcode`) → `~/.minimax/plugins/talos/` (Plugin V1; já global) | — (cópia direta do Plugin V1, sem artefato `.plugin`) | — |
 
-**Cursor:** não há pacote nem marketplace próprios — o plugin instalado via `claude plugin` no escopo do usuário já vale para o Cursor (mesmo manifest `.claude-plugin/`). Limitação de packaging, não do pipeline.
+**Cursor:** o listing do Cursor Marketplace usa `.cursor-plugin/plugin.json` na raiz (logo em `docs/assets/talos-logo.png`). Instalar via `claude plugin` no escopo do usuário continua válido (mesmo runtime; manifest `.claude-plugin/`).
 
 **ZCode:** subagentes de plugin (`subagent_type: "talos-*"`) não herdam conexões MCP do processo pai — bug do host, não do Talos. O adapter zcode contorna isso com fallback automático: o orquestrador despacha `general-purpose` (nativo, herda MCP) lendo `agents/<name>.md` como system prompt. O isolamento sibling (Gate G4) é preservado — ainda é subagente irmão isolado.
 
@@ -323,7 +323,7 @@ Gates MCP dedicados (`talos_verify_backlog_index`, `talos_verify_sprint_file`, `
 
 Cadeia automática de execução: `talos-sprint-interview` → `talos-plan-handoff` → `talos-plan-execute` (full) ou `talos-direct-execute` (direct) → `talos-task-validator` → `talos-findings-repair` (só após `fail`, em qualquer host) → `talos-slice-review` (com `--review` ou quando `critical_review.required:true`)
 
-Residual da review — auto-correção (v0.23.1): P0/P1 na review abre repair com origem `slice_review` (budget 1 por provenance) → **verification pontual** (delta do `repair_evidence`; executa os checks declarados antes de julgar) → sidecar `talos-escalation-repair` (origem `escalation`) se o residual persistir; P2/P3 vira entrada `PD-<sprint>-<NN>` em `PENDENCIAS_<slug>.md` (writer exclusivo do MCP), drenada sob demanda. Sprint com residual irrecuperável no `--loop` estaciona em `detached_repair` (não satisfaz DEP); nunca há 2º validator nem nova review completa no ramo da review.
+Residual da review — auto-correção (v0.23.2): P0/P1 na review abre repair com origem `slice_review` (budget 1 por provenance) → **verification pontual** (delta do `repair_evidence`; executa os checks declarados antes de julgar) → sidecar `talos-escalation-repair` (origem `escalation`) se o residual persistir; P2/P3 vira entrada `PD-<sprint>-<NN>` em `PENDENCIAS_<slug>.md` (writer exclusivo do MCP), drenada sob demanda. Sprint com residual irrecuperável no `--loop` estaciona em `detached_repair` (não satisfaz DEP); nunca há 2º validator nem nova review completa no ramo da review.
 
 Modo sem execução: `talos-audit` roda no fio principal, não altera código, não chama executor e pode gravar handoff Talos-style em `.talos/plans/` com `--handoff`.
 
@@ -342,7 +342,7 @@ Além da cadeia automática, estas skills também podem ser chamadas diretamente
 - `talos-task-validator` — faz a validação fria da slice executada (nota código contra o §7 / `AC-*`). Use como veredito final de conformidade, nunca como ação manual de rotina.
 - `talos-findings-repair` — corrige findings P0/P1/P2 depois de um `fail` do validator sem reabrir a execução completa. Use só no caminho de retry.
 - `talos-slice-review` — revisão fria após a execução. Opcional com `--review`; **obrigatória** quando `policy_manifest.critical_review.required: true` (antes de fechar status). Roda também a fase de **verification** (pós-repair): revisão pontual do delta do `repair_evidence` com veredito `resolved`/`not_resolved`/`regression` por finding, ecoado ao orquestrador — read-only, nunca despacha validator.
-- `talos-escalation-repair` — sidecar serial do loop `--loop` (v0.23.1): corrige residual P0/P1 que sobreviveu à verification, dentro do boundary da slice e com slot `escalation` já aberto pelo orquestrador; consome PDs delegadas pelo drain. Não se auto-valida.
+- `talos-escalation-repair` — sidecar serial do loop `--loop` (v0.23.2): corrige residual P0/P1 que sobreviveu à verification, dentro do boundary da slice e com slot `escalation` já aberto pelo orquestrador; consome PDs delegadas pelo drain. Não se auto-valida.
 
 ### Memória pós-validação
 
@@ -372,7 +372,7 @@ O validador frio (`talos-task-validator`) **sempre** roda isolado e **sempre** c
 
 **Loop de reparo (sibling):** se o validator retorna `fail` com P0/P1/P2, o orquestrador abre o lock de reparo (`repair_start`), dispara `talos-findings-repair` com os findings estruturados, fecha com `repair_run_id` e só então roda o **2º e último** validator. `validator_run_id` e `repair_run_id` existem para descartar retornos stale/duplicados. Se o 2º validator ainda falhar, a slice termina em `blocked` — **3º validator é proibido**.
 
-**Residual da review — auto-correção (v0.23.1):** P0/P1 na review abre repair com origem `slice_review` (budget 1 por provenance), roda a verification pontual (executa os checks declarados antes de julgar) e ecoa o veredito por finding (`resolved`/`not_resolved`/`regression`) via `repair_complete`. Residual persistente vai ao sidecar `talos-escalation-repair` (origem `escalation`, serial, sem self-validation); P2/P3 vira `PD-<sprint>-<NN>` em `PENDENCIAS_<slug>.md` com drain sob demanda (teto de 3 PDs abertas, overlap de files ou DEP). No `--loop`, sprint irrecuperável estaciona em `detached_repair`; **nunca** há 2º validator nem nova review completa no ramo da review — o 2º e último validator é só do ramo G4.
+**Residual da review — auto-correção (v0.23.2):** P0/P1 na review abre repair com origem `slice_review` (budget 1 por provenance), roda a verification pontual (executa os checks declarados antes de julgar) e ecoa o veredito por finding (`resolved`/`not_resolved`/`regression`) via `repair_complete`. Residual persistente vai ao sidecar `talos-escalation-repair` (origem `escalation`, serial, sem self-validation); P2/P3 vira `PD-<sprint>-<NN>` em `PENDENCIAS_<slug>.md` com drain sob demanda (teto de 3 PDs abertas, overlap de files ou DEP). No `--loop`, sprint irrecuperável estaciona em `detached_repair`; **nunca** há 2º validator nem nova review completa no ramo da review — o 2º e último validator é só do ramo G4.
 
 **Proof-of-work (R20, v0.8.0):** ao abrir o slot, `talos_lock_validator(start)` emite um `challenge` (sha256 de um arquivo do boundary do `state_path`); o validator irmão computa o hash desse arquivo e devolve em `challenge_response`. No `complete`, o MCP recomputa o hash do disco e bloqueia (`challenge_failed`) em divergência/ausência, sem fechar o slot — re-despacho do mesmo validator, **bounded** por attempt (esgotado o teto, fecha terminal `challenge_exhausted`, fail-closed). É atestação **mecânica** de que o veredito leu o boundary; o hash esperado nunca é persistido em estado legível. Não é prova de isolamento não-forjável (o MCP fala stdio com um único caller) — fecha o atalho preguiçoso de afirmar `pass` sem ler código.
 

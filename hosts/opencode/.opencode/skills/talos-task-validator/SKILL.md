@@ -117,6 +117,16 @@ Monorepo pode ativar múltiplos perfis, sempre restritos ao boundary corresponde
 
 ---
 
+## Semantic proof for each obligation
+
+Preserve the current state schema and mechanical acceptance oracle. The oracle's `proved` label is an eligibility check, not a substitute for your cold judgment of the required behavior. A file appearing in the full delta, or an assert appearing in an unrelated test, does not prove an AC, EVAL, or task outcome.
+
+For every AC and every referenced EVAL/task, read the frozen requirement, the actual implementation/wiring, and the relevant check or observation. Establish the link between the requirement, the exercised input/action, the asserted or observed result, and the concrete evidence. Confirm that the reported result is current and belongs to this boundary. Distinguish unit/static proof from provider, application, device, or package proof required by the obligation.
+
+Use the existing `observations` entries (`file`, `line`, `msg`) to record each satisfied obligation's ID and its requirement-to-implementation-to-result link, with the concrete file/check/result and limitations. Do not introduce a new universal map or invent a file-to-AC attribution when the sprint contract does not provide one. Shared delta coverage only identifies the boundary; it never assigns semantic ownership of a file to every obligation.
+
+If a required automatic link or result (I, W, or T-outcome) cannot be demonstrated, emit a P1 finding in the existing findings shape. Identify the obligation in `failure_mode` and cite the missing/mismatched evidence in `evidence`; set `verdict: "fail"`. Do not downgrade an unproved behavior to an observation or approve it because the oracle classified its formal refs as `proved`. Continue to echo `acceptance_results` according to the current oracle contract; the independent finding prevents promotion. Manual evidence is never supplied or waived by the validator. An open M obligation is the expected `manual_pending` state, not a P1 merely because the human observation is still pending; automatic requirements must still be demonstrated. Preserve that pending classification and the engine-controlled manual transition without claiming done.
+
 ## Output contract
 
 Return strict JSON as the final output. Do not wrap it in Markdown and do not prepend prose.

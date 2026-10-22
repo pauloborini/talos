@@ -253,7 +253,7 @@ Veja este README, `packages/mcp-server/README.md` e os SKILL.md `talos-*` para o
 
 ---
 
-**Plugin version:** 0.23.1
+**Plugin version:** 0.23.2
 **Author:** Paulo Borini
 **Last updated:** 2026-09-06
 

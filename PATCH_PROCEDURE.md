@@ -78,6 +78,7 @@ Ele toca:
 - `package.json`
 - `packages/mcp-server/package.json`
 - `.claude-plugin/plugin.json`
+- `.cursor-plugin/plugin.json`
 - `README.md`
 - `COMMANDS.md`
 - `packages/mcp-server/README.md`
@@ -107,6 +108,7 @@ Se rodar o bump a mao em vez do script, atualizar:
 - `package.json`
 - `packages/mcp-server/package.json`
 - `.claude-plugin/plugin.json`
+- `.cursor-plugin/plugin.json`
 - `README.md`
 - `COMMANDS.md`
 - `CLAUDE.md`
